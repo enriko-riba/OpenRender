@@ -26,6 +26,7 @@ public class Scene
     protected ICamera? camera;
     protected KeyboardState KeyboardState = default!;
     protected MouseState MouseState = default!;
+
     internal bool isLoaded;
     internal SceneManager scm = default!;    
 

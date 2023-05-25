@@ -1,5 +1,7 @@
-﻿using OpenTK.Windowing.Common;
+﻿using OpenTK.Graphics.OpenGL4;
+using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 using System.Diagnostics;
 
 namespace OpenRender.SceneManagement;
@@ -12,14 +14,20 @@ public class SceneManager : GameWindow
 
     private long lastFpsTime = 0;
     private int frames;
-
+   
     public SceneManager(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings) :
         base(gameWindowSettings, nativeWindowSettings)
-    { 
+    {
         UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
         Resize += (e) => activeScene?.OnResize(e);
         MouseMove += (e) => activeScene?.OnMouseMove(e);
         MouseWheel += (e) => activeScene?.OnMouseWheel(e);
+        Load += () =>
+        {
+            GL.Enable(EnableCap.Multisample);
+            GL.Hint(HintTarget.LineSmoothHint, HintMode.Nicest);
+            //GL.Hint(HintTarget.PolygonSmoothHint, HintMode.Nicest);
+        };
     }
 
 
@@ -28,6 +36,11 @@ public class SceneManager : GameWindow
         var existing = sceneList.FirstOrDefault(s => s.Name == scene.Name);
         if (existing != null) throw new ArgumentException($"Scene {existing.Name} is already added to the scene manager!", nameof(scene));
         sceneList.Add(scene);
+    }
+    
+    public void ActivateScene(Scene scene)
+    {
+        ActivateScene(scene.Name);
     }
 
     public void ActivateScene(string sceneName)
@@ -46,7 +59,7 @@ public class SceneManager : GameWindow
     protected override void OnRenderFrame(FrameEventArgs e)
     {
         activeScene?.RenderFrame(e.Time);
-        base.OnRenderFrame(e);
+        //base.OnRenderFrame(e);
         SwapBuffers();
 
         frames++;

@@ -10,7 +10,9 @@ var nativeWindowSettings = new NativeWindowSettings()
     Title = "OpenRender",    
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on macos
     Vsync = VSyncMode.Off,
-    APIVersion = new Version(4, 6)
+    API = ContextAPI.OpenGL,
+    APIVersion = new Version(4, 6),
+    NumberOfSamples = 4,
 };
 
 using (var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings))
