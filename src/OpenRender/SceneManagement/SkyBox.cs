@@ -8,7 +8,7 @@ namespace OpenRender.SceneManagement;
 
 public class SkyBox : SceneNode
 {
-    public SkyBox(string[] texturePaths) : base(null, default)
+    public SkyBox(string[] texturePaths) : base(default, default)
     {
         ArgumentNullException.ThrowIfNull(texturePaths);
         if (texturePaths.Length != 6) throw new ArgumentException("SkyBox needs 6 images", nameof(texturePaths));

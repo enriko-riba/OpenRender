@@ -63,6 +63,5 @@ public class Camera3D : CameraBase
         up = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
         view = Matrix4.LookAt(Position, Position + front, up);
         projection = Matrix4.CreatePerspectiveFieldOfView(fov, AspectRatio, nearPlane, farPlane);
-        isDirty = false;
     }
 }

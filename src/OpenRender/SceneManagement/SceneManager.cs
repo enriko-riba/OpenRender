@@ -1,9 +1,7 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 using System.Diagnostics;
-
 namespace OpenRender.SceneManagement;
 
 public class SceneManager : GameWindow
@@ -14,7 +12,7 @@ public class SceneManager : GameWindow
 
     private long lastFpsTime = 0;
     private int frames;
-   
+
     public SceneManager(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings) :
         base(gameWindowSettings, nativeWindowSettings)
     {
@@ -37,7 +35,7 @@ public class SceneManager : GameWindow
         if (existing != null) throw new ArgumentException($"Scene {existing.Name} is already added to the scene manager!", nameof(scene));
         sceneList.Add(scene);
     }
-    
+
     public void ActivateScene(Scene scene)
     {
         ActivateScene(scene.Name);

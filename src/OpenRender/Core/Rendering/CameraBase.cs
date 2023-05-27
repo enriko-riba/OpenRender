@@ -16,7 +16,7 @@ public abstract class CameraBase : ICamera
     private Vector3 position;
     private float aspectRatio;
 
-    protected bool isDirty = true;
+    protected bool isDirty;
     protected readonly float nearPlane;
     protected readonly float farPlane;
 
@@ -140,13 +140,14 @@ public abstract class CameraBase : ICamera
     protected abstract void UpdateMatrices();
 
     /// <summary>
-    /// Updates the camera. Recalculates the matrices if necessary.
+    /// Updates the camera. Recalculates the matrices if necessary and resets the dirty flag.
     /// </summary>
-    public void Update()
+    public bool Update()
     {
-        if (isDirty)
-        {
-            UpdateMatrices();
-        }
+        if (!isDirty) return false;
+
+        UpdateMatrices();
+        isDirty = false;
+        return true;
     }
 }

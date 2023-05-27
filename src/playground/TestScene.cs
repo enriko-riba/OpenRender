@@ -204,7 +204,7 @@ internal class TestScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 2000;
+        const int NodeCount = 4000;
         var vbBox = GeometryHelper.CreateBox(true);
         var vbSphere = GeometryHelper.CreateSphere(2, 32, 48);
         var matSphere = Material.Create(
@@ -222,8 +222,19 @@ internal class TestScene : Scene
             }
             else
             {
+                var texture =  (i % 5) switch {
+                    0 => new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
+                    1 => new TextureDescriptor[] { new TextureDescriptor("Resources/container.png", TextureType: TextureType.Diffuse) },
+                    2 => new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
+                    3 => new TextureDescriptor[] { new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse) },
+                    4 => new TextureDescriptor[] { new TextureDescriptor("Resources/xneg.png", TextureType: TextureType.Diffuse) },
+                    5 => new TextureDescriptor[] { new TextureDescriptor("Resources/xpos.png", TextureType: TextureType.Diffuse) },
+                    6 => new TextureDescriptor[] { new TextureDescriptor("Resources/yneg.png", TextureType: TextureType.Diffuse) },
+                    7 => new TextureDescriptor[] { new TextureDescriptor("Resources/ypos.jpg", TextureType: TextureType.Diffuse) },
+                    _ => null
+                };
                 var mat1 = Material.Create(
-                    null,
+                    texture,
                     new Vector3((float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble()),
                     Vector3.One,
                     (float)Random.Shared.NextDouble() * 0.7f);

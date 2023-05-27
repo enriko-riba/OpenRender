@@ -4,20 +4,26 @@ using OpenTK.Mathematics;
 
 namespace OpenRender.Core;
 
-public class Material
+public struct Material
 {
     public const int MaxTextures = 8;
 
     private static uint counter;
     private bool isInitialized;
+    private int[]? textureHandles;
 
-    private Material() { }
+    public Material()
+    {
+    }
+
 
     public uint Id { get; init; }
 
-    public bool IsInitialized => isInitialized;
+    public readonly bool IsInitialized => isInitialized;
 
-    public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
+    public readonly IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
+
+    public readonly bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
@@ -58,6 +64,7 @@ public class Material
     public void Initialize()
     {
         Textures = Texture.CreateFromMaterial(this);
+        textureHandles = Textures.Select(t => t.Handle).ToArray();
         isInitialized = true;
     }
 

@@ -12,5 +12,10 @@ public interface ICamera
     float Fov { get; set; }
     float AspectRatio { get; set; }
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
-    void Update();
+
+    /// <summary>
+    /// If dirty, updates camera matrices.
+    /// </summary>
+    /// <returns>true if camera has been updated else false</returns>
+    bool Update();
 }

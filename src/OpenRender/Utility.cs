@@ -70,7 +70,7 @@ public static class Utility
     /// <returns></returns>
     public static Quaternion CreateLookAtRotation(in Vector3 eyeDirection, in Vector3 targetDirection)
     {
-        CreateLookAtRotation(in eyeDirection, in targetDirection, out Quaternion tmp);
+        CreateLookAtRotation(in eyeDirection, in targetDirection, out var tmp);
         return tmp;
     }
 }

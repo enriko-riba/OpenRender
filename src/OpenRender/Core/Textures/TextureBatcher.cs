@@ -6,18 +6,18 @@ public class TextureBatcher
 {
     private readonly TextureUnitUsage[] unitUsages;
     private readonly int unitsCount;
-    private Dictionary<int, int> textureFrequency = new();
-    private List<MaterialData> materialsList = new();
+    private Dictionary<int, int> textureFrequencies = new();
+    private List<Material> materialsList = new();
 
 #if DEBUG
     private readonly List<TextureUnitUsage[]> unitsHistory = new();
     public IEnumerable<TextureUnitUsage[]> UnitsHistory => unitsHistory;
 #endif
 
-    public TextureBatcher(int unitsCount)
+    public TextureBatcher(int textureUnitsCount)
     {
-        this.unitsCount = unitsCount;
-        unitUsages = new TextureUnitUsage[unitsCount];
+        unitsCount = textureUnitsCount;
+        unitUsages = new TextureUnitUsage[textureUnitsCount];
         Reset();
     }
 
@@ -28,15 +28,16 @@ public class TextureBatcher
             unitUsages[i] = new TextureUnitUsage() { Unit = i };
         }
     }
+    public IReadOnlyCollection<Material> MaterialDataList => materialsList;
 
-    public void SortMaterials(List<MaterialData> materialsList)
+    public void SortMaterials(List<Material> materialsList)
     {
-        textureFrequency = CalculateTextureFrequency(materialsList);
-        materialsList.Sort((a, b) => GetMaxFrequency(b, textureFrequency).CompareTo(GetMaxFrequency(a, textureFrequency)));
+        textureFrequencies = CalculateTextureFrequency(materialsList);
+        materialsList.Sort((a, b) => GetMaxFrequency(b, textureFrequencies).CompareTo(GetMaxFrequency(a, textureFrequencies)));
         this.materialsList = materialsList;
     }
 
-    public TextureUnitUsage[] AssignBatch(MaterialData material)
+    public TextureUnitUsage[] AssignBatch(Material material)
     {
         foreach (var handle in material.TextureHandles)
         {
@@ -68,7 +69,7 @@ public class TextureBatcher
             {
                 var reusableUnit = unitUsages
                     .Where(r => !material.TextureHandles.Any(th => th == r.TextureHandle))
-                    .OrderBy(r => textureFrequency[r.TextureHandle ?? -1])
+                    .OrderBy(r => textureFrequencies[r.TextureHandle ?? -1])
                     .ThenBy(r => r.ChangeCount)
                     .FirstOrDefault();
 
@@ -84,19 +85,19 @@ public class TextureBatcher
             }
         }
 
-        var textureUnitUsage = unitUsages.Select(uu => new TextureUnitUsage()
-        {
-            TextureHandle = uu.TextureHandle,
-            Unit = uu.Unit,
-            ChangeCount = uu.ChangeCount
-        }).ToArray();
 
-#if DEBUG
-        //  save the history for debug purposes
-        unitsHistory.Add(textureUnitUsage);
-#endif
+//#if DEBUG
+//        var textureUnitUsage = unitUsages.Select(uu => new TextureUnitUsage()
+//        {
+//            TextureHandle = uu.TextureHandle,
+//            Unit = uu.Unit,
+//            ChangeCount = uu.ChangeCount
+//        }).ToArray();
+//        //  save the history for debug purposes
+//        unitsHistory.Add(textureUnitUsage);
+//#endif
 
-        return textureUnitUsage;
+        return unitUsages;
     }
 
     /// <summary>
@@ -104,7 +105,7 @@ public class TextureBatcher
     /// </summary>
     /// <param name="materials">The list of arrays of texture handles.</param>
     /// <returns>A dictionary containing the texture names as keys and their frequencies as values.</returns>
-    private static Dictionary<int, int> CalculateTextureFrequency(List<MaterialData> materials)
+    private static Dictionary<int, int> CalculateTextureFrequency(List<Material> materials)
     {
         var frequencies = new Dictionary<int, int>();
         foreach (var material in materials)
@@ -130,7 +131,7 @@ public class TextureBatcher
     /// <param name="material"></param>
     /// <param name="frequency"></param>
     /// <returns>The handle of the texture that has the highest frequency</returns>
-    private static int GetMaxFrequency(MaterialData material, Dictionary<int, int> frequency)
+    private static int GetMaxFrequency(Material material, Dictionary<int, int> frequency)
     {
         var maxFrequency = 0;
         foreach (var textureHandle in material.TextureHandles)
@@ -150,5 +151,3 @@ public class TextureUnitUsage
     public int Unit { get; set; }
     public int ChangeCount { get; set; }
 }
-
-public record MaterialData(string Id, int[] TextureHandles);

@@ -346,7 +346,7 @@ public static class GeometryHelper
     private static float[] CreateQuadWithoutNormals()
     {
         //  create the 4 vertices with: 3 floats for position + 2 floats for uv
-        float[] vertices = new float[]
+        var vertices = new float[]
         {
             -HALF, -HALF, 0,    0, 1,   // lower left corner
             -HALF,  HALF, 0,    0, 0,   // upper left corner
@@ -359,7 +359,7 @@ public static class GeometryHelper
     private static float[] CreateQuadWithNormals()
     {
         //  create the 4 vertices with: 3 floats for position + 3 floats for normal + 2 floats for uv 
-        float[] vertices = new float[]
+        var vertices = new float[]
         {
             -HALF, -HALF, 0,    -HALF, -HALF, 1,     0, 1,   // lower left corner
             -HALF,  HALF, 0,    -HALF, -HALF, 1,     0, 0,   // upper left corner

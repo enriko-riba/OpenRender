@@ -53,7 +53,7 @@ public class Texture
     /// <summary>
     /// Internal cache key.
     /// </summary>
-    public string CacheKey  { get; private set; }
+    public string CacheKey { get; private set; } = default!;
 
     /// <summary>
     /// Activates and binds the texture to the given unit.
@@ -178,7 +178,7 @@ public class Texture
             var additionalCount = 0;
             var cubeMapCount = 0;
             var counter = 0;
-            foreach (var textureDescriptor in material?.TextureDescriptors!)
+            foreach (var textureDescriptor in material.TextureDescriptors!)
             {
                 var unit = TextureUnit.Texture0;
                 switch (textureDescriptor.TextureType)

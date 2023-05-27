@@ -14,18 +14,10 @@ public class SceneNode
     private Matrix4 worldMatrix;
 
     private readonly List<SceneNode> children = new();
-
-    public SceneNode(Mesh? mesh, Vector3 position = default)
+    
+    public SceneNode(Mesh mesh, Vector3 position = default)
     {
-        if (mesh != null)
-        {
-            Mesh = mesh;
-            if (!Mesh.Material.IsInitialized)
-            {
-                Mesh.Material.Initialize();
-            }
-        }
-
+        Mesh = mesh;
         SetScale(Vector3.One);
         SetPosition(position);
         SetRotation(Vector3.Zero);
@@ -33,11 +25,47 @@ public class SceneNode
 
     public IEnumerable<SceneNode> Children => children;
 
+    public SceneNode? Parent { get; private set; }
+
+    public Matrix4 World => worldMatrix;
+
+    public Vector3 AngleRotation { get; private set; }
+
+    public Vector3 Position => position;
+
+    public Vector3 Scale => scale;
+
+    public Quaternion Rotation => rotation;
+
+    public Mesh Mesh;
+
+    public Action<SceneNode, double>? Update { get; set; }
+
+    public virtual void OnUpdate(Scene scene, double elapsed)
+    {
+        Update?.Invoke(this, elapsed);
+        foreach (var child in children)
+        {
+            child.OnUpdate(scene, elapsed);
+        }
+    }
+
+    public virtual void OnDraw(Scene scene, double elapsed)
+    {
+        GL.BindVertexArray(Mesh.VertexBuffer.Vao);
+        if (Mesh.DrawMode == DrawMode.Indexed)
+            GL.DrawElements(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
+        else
+            GL.DrawArrays(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length);
+        GL.BindVertexArray(0);
+    }
+
     public void AddChild(SceneNode child)
     {
         children.Add(child);
         child.Parent = this;
         Invalidate();
+        Scene?.AddNode(child); // Add the child node to the Scene's master list
     }
 
     public void RemoveChild(SceneNode child)
@@ -46,24 +74,9 @@ public class SceneNode
         {
             child.Parent = null;
             Invalidate();
+            Scene?.RemoveNode(child); // Remove the child node from the Scene's master list
         }
     }
-
-    public SceneNode? Parent
-    {
-        get;
-        private set;
-    }
-
-    /// <summary>
-    /// The nodes world matrix.
-    /// </summary>
-    public Matrix4 World => worldMatrix;
-
-    /// <summary>
-    /// Euler Rotation (in degrees).
-    /// </summary>
-    public Vector3 AngleRotation { get; private set; }
 
     /// <summary>
     /// Sets the new position.
@@ -109,35 +122,6 @@ public class SceneNode
         Invalidate();
     }
 
-    public Vector3 Position => position;
-
-    public Vector3 Scale => scale;
-
-    public Quaternion Rotation => rotation;
-
-    public Mesh? Mesh { get; set; }
-
-    public Action<SceneNode, double>? Update { get; set; }
-
-    public virtual void OnUpdate(Scene scene, double elapsed)
-    {
-        Update?.Invoke(this, elapsed);
-        foreach (var child in children)
-        {
-            child.OnUpdate(scene, elapsed);
-        }
-    }
-
-    public virtual void OnDraw(Scene scene, double elapsed)
-    {
-        GL.BindVertexArray(Mesh!.VertexBuffer.Vao);
-        if (Mesh.DrawMode == DrawMode.Indexed)
-            GL.DrawElements(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
-        else
-            GL.DrawArrays(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length);
-        GL.BindVertexArray(0);
-    }
-
     /// <summary>
     /// Calculates the world matrix (SROT).
     /// </summary>
@@ -160,4 +144,6 @@ public class SceneNode
             child.Invalidate();
         }
     }
+
+    internal Scene? Scene { get; set; } // Reference to the parent Scene
 }
