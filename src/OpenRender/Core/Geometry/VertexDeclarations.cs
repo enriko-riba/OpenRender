@@ -2,7 +2,7 @@
 
 namespace OpenRender.Core;
 
-public delegate void VertexDeclaration();
+public delegate int VertexDeclaration();
 
 public enum AttributeLocation
 {
@@ -15,13 +15,14 @@ public enum AttributeLocation
 public static class VertexDeclarations
 {
     public static readonly VertexDeclaration VertexPosition = () =>
-        {
-            const int stride = 3 * sizeof(float);
+    {
+        const int stride = 3 * sizeof(float);
 
-            var vertexLocation = (int)AttributeLocation.Position;
-            GL.EnableVertexAttribArray(vertexLocation);
-            GL.VertexAttribPointer(vertexLocation, 3, VertexAttribPointerType.Float, false, stride, 0);
-        };
+        var vertexLocation = (int)AttributeLocation.Position;
+        GL.EnableVertexAttribArray(vertexLocation);
+        GL.VertexAttribPointer(vertexLocation, 3, VertexAttribPointerType.Float, false, stride, 0);
+        return stride;
+    };
 
     public static readonly VertexDeclaration VertexPositionTexture = () =>
     {
@@ -36,6 +37,7 @@ public static class VertexDeclarations
         var texCoordLocation = (int)AttributeLocation.TextureCoord;
         GL.EnableVertexAttribArray(texCoordLocation);
         GL.VertexAttribPointer(texCoordLocation, 2, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionNormal = () =>
@@ -51,6 +53,7 @@ public static class VertexDeclarations
         var normalLocation = (int)AttributeLocation.Normal;
         GL.EnableVertexAttribArray(normalLocation);
         GL.VertexAttribPointer(normalLocation, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionNormalTexture = () =>
@@ -71,6 +74,7 @@ public static class VertexDeclarations
         var texCoordLocation = (int)AttributeLocation.TextureCoord;
         GL.EnableVertexAttribArray(texCoordLocation);
         GL.VertexAttribPointer(texCoordLocation, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionColorTexture = () =>
@@ -91,6 +95,7 @@ public static class VertexDeclarations
         var texCoordLocation = (int)AttributeLocation.TextureCoord;
         GL.EnableVertexAttribArray(texCoordLocation);
         GL.VertexAttribPointer(texCoordLocation, 2, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionColor = () =>
@@ -106,6 +111,7 @@ public static class VertexDeclarations
         var colorLocation = (int)AttributeLocation.Color;
         GL.EnableVertexAttribArray(colorLocation);
         GL.VertexAttribPointer(colorLocation, 3, VertexAttribPointerType.Float, false, stride, 3 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionNormalColor = () =>
@@ -125,6 +131,7 @@ public static class VertexDeclarations
         // vertex colors
         var colorLocation = (int)AttributeLocation.Color;
         GL.VertexAttribPointer(colorLocation, 3, VertexAttribPointerType.Float, false, stride, 6 * sizeof(float));
+        return stride;
     };
 
     public static readonly VertexDeclaration VertexPositionNormalColorTexture = () =>
@@ -150,5 +157,6 @@ public static class VertexDeclarations
         var texCoordLocation = (int)AttributeLocation.TextureCoord;
         GL.EnableVertexAttribArray(texCoordLocation);
         GL.VertexAttribPointer(texCoordLocation, 2, VertexAttribPointerType.Float, false, stride, 9 * sizeof(float));
+        return stride;
     };
 }

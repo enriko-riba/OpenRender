@@ -28,6 +28,7 @@ public class SceneManager : GameWindow
         };
     }
 
+    public Scene? ActiveScene => activeScene;
 
     public void AddScene(Scene scene)
     {

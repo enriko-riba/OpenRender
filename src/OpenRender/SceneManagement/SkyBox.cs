@@ -22,7 +22,8 @@ public class SkyBox : SceneNode
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
         var mat = Material.Create(shader, desc);
         mat.Initialize();
-        Mesh = new Mesh(vb, DrawMode.Indexed, mat);
+        var skyBoxMesh = new Mesh(vb, DrawMode.Indexed, mat);
+        SetMesh(ref skyBoxMesh);
         SetScale(5);
     }
 

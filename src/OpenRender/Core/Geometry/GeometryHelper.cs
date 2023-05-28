@@ -144,8 +144,8 @@ public static class GeometryHelper
         return vertexBuffer;
     }
 
-    public static VertexBuffer CreateSphere(float radius, int stacks, int slices)
-    {
+    public static VertexBuffer CreateSphere(int stacks, int slices)
+    {       
         var vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
         var vertices = new List<float>();
         var indices = new List<uint>();
@@ -173,7 +173,7 @@ public static class GeometryHelper
                 var s = 1 - (float)slice / slices;
                 var t = 1 - (float)stack / stacks;
 
-                vertices.AddRange(new float[] { radius * x, radius * y, radius * z, nx, ny, nz, s, t });
+                vertices.AddRange(new float[] { x, y, z, nx, ny, nz, s, t });
             }
         }
 

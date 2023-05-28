@@ -17,6 +17,8 @@
   <ItemGroup>
     <None Remove="Shaders\skybox.frag" />
     <None Remove="Shaders\skybox.vert" />
+    <None Remove="Shaders\spheremesh.frag" />
+    <None Remove="Shaders\spheremesh.vert" />
     <None Remove="Shaders\standard.frag" />
     <None Remove="Shaders\standard.vert" />
   </ItemGroup>
@@ -27,6 +29,12 @@
     </Content>
     <Content Include="Shaders\skybox.vert">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Shaders\spheremesh.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Shaders\spheremesh.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Shaders\standard.frag">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

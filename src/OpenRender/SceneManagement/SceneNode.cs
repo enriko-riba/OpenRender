@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Geometry;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 
@@ -12,15 +13,15 @@ public class SceneNode
     private Matrix4 scaleMatrix;
     private Matrix4 rotationMatrix;
     private Matrix4 worldMatrix;
-
+    private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
     
     public SceneNode(Mesh mesh, Vector3 position = default)
     {
-        Mesh = mesh;
         SetScale(Vector3.One);
         SetPosition(position);
         SetRotation(Vector3.Zero);
+        SetMesh(ref mesh);
     }
 
     public IEnumerable<SceneNode> Children => children;
@@ -37,7 +38,22 @@ public class SceneNode
 
     public Quaternion Rotation => rotation;
 
-    public Mesh Mesh;
+    private Mesh mesh;
+    public Mesh Mesh => mesh;
+    public void SetMesh(ref Mesh mesh)
+    {
+        this.mesh = mesh;
+        var bs = mesh.CalculateBoundingSphere();
+        BoundingSphere = bs with 
+        { 
+            Radius = bs.LocalRadius * Math.Max(Math.Max(scale.X, scale.Y), scale.Z),
+            Center = bs.LocalCenter + position,
+        };
+    }
+
+    public BoundingSphere BoundingSphere { get; set; }
+    
+    public bool ShowBoundingSphere { get; set; }
 
     public Action<SceneNode, double>? Update { get; set; }
 
@@ -51,13 +67,19 @@ public class SceneNode
     }
 
     public virtual void OnDraw(Scene scene, double elapsed)
-    {
+    {        
         GL.BindVertexArray(Mesh.VertexBuffer.Vao);
         if (Mesh.DrawMode == DrawMode.Indexed)
             GL.DrawElements(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
         else
             GL.DrawArrays(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length);
         GL.BindVertexArray(0);
+
+        if ((scene.ShowBoundingSphere || ShowBoundingSphere) && this is not SkyBox)
+        {
+            sphereMeshRenderer.Shader.SetMatrix4("model", sphereMeshRenderer.ScaleMatrix * World);            
+            sphereMeshRenderer.Render();
+        }
     }
 
     public void AddChild(SceneNode child)
@@ -139,6 +161,13 @@ public class SceneNode
     internal void Invalidate()
     {
         UpdateMatrix();
+
+        var bs = mesh.CalculateBoundingSphere();
+        BoundingSphere = bs with { 
+            Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
+            Center = bs.LocalCenter
+        };
+
         foreach (var child in children)
         {
             child.Invalidate();

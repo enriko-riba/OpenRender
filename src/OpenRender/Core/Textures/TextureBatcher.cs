@@ -9,10 +9,10 @@ public class TextureBatcher
     private Dictionary<int, int> textureFrequencies = new();
     private List<Material> materialsList = new();
 
-#if DEBUG
-    private readonly List<TextureUnitUsage[]> unitsHistory = new();
-    public IEnumerable<TextureUnitUsage[]> UnitsHistory => unitsHistory;
-#endif
+//#if DEBUG
+//    private readonly List<TextureUnitUsage[]> unitsHistory = new();
+//    public IEnumerable<TextureUnitUsage[]> UnitsHistory => unitsHistory;
+//#endif
 
     public TextureBatcher(int textureUnitsCount)
     {
@@ -37,7 +37,7 @@ public class TextureBatcher
         this.materialsList = materialsList;
     }
 
-    public TextureUnitUsage[] AssignBatch(Material material)
+    public TextureUnitUsage[] GetOptimalTextureUnits(Material material)
     {
         foreach (var handle in material.TextureHandles)
         {

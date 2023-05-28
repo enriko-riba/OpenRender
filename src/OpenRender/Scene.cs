@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
@@ -50,20 +51,17 @@ public class Scene
 
     public IReadOnlyCollection<LightUniform> Lights => lights;
 
+    public Shader DefaultShader => defaultShader;
+
     public string Name { get; protected set; }
+
+    public bool ShowBoundingSphere { get; set; }
 
     public void AddLight(LightUniform light)
     {
         if (lights.Count >= MaxLights) throw new ArgumentOutOfRangeException(nameof(light), $"Max lights supported is {MaxLights}");
         lights.Add(light);
     }
-
-    //public void AddNodeAt(SceneNode node, int index)
-    //{
-    //    isNodeListChanged = true;
-    //    nodes.Insert(index, node);
-    //    node.Scene = this; // Set the Scene reference for the added node
-    //}
 
     public void AddNode(SceneNode node)
     {
@@ -72,9 +70,11 @@ public class Scene
         node.Scene = this; // Set the Scene reference for the added node        
         if (!node.Mesh.Material.IsInitialized)
         {
-            var mat = node.Mesh.Material;
+            var mesh = node.Mesh;
+            var mat = mesh.Material;
             mat.Initialize();
-            node.Mesh.Material = mat;
+            mesh.Material = mat;
+            node.SetMesh(ref mesh);
         }
     }
 
@@ -193,7 +193,7 @@ public class Scene
     {
         var material = node.Mesh.Material;
         var shader = material.Shader ?? defaultShader;
-
+        shader.Use();
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
@@ -204,7 +204,7 @@ public class Scene
 
         if (shader.UniformExists("model")) shader.SetMatrix4("model", node.World);
 
-        if (lastMaterial != material.Id /*&& material != null*/)
+        if (lastMaterial != material.Id)
         {
             lastMaterial = material.Id;
             var settings = new MaterialUniform()
@@ -230,7 +230,7 @@ public class Scene
             }
         }
 
+        shader.Use();
         node.OnDraw(this, elapsed);
-        //foreach (var child in node.Children) RenderNode(child, elapsed);
     }
 }

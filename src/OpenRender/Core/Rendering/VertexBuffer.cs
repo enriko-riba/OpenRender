@@ -7,7 +7,8 @@ public class VertexBuffer
     private readonly int vao;
     private readonly int vbo;
     private readonly int ebo;
-   
+    private readonly int stride;
+
     public VertexBuffer(VertexDeclaration vertexDeclaration, float[] vertices, uint[]? indices)
     {
         Vertices = vertices;
@@ -27,12 +28,12 @@ public class VertexBuffer
         GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
         GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
 
-        //GL.BindVertexArray(vao);
-        vertexDeclaration.Invoke();
+        stride = vertexDeclaration.Invoke();
         GL.BindVertexArray(0);
     }
 
     public float[] Vertices { get; init; }
     public uint[]? Indices { get; init; }
     public int Vao => vao;
+    public int Stride => stride;
 }

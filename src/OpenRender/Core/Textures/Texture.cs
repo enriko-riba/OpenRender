@@ -1,5 +1,6 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
+using System.Reflection.Metadata;
 using PixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 
 namespace OpenRender.Core.Textures;
@@ -70,7 +71,7 @@ public class Texture
     /// </summary>
     public void Use() => Use(TextureUnit);
 
-    public override string ToString() => $"{Handle}:{TextureUnit} - {Name}";
+    public override string ToString() => $"[{Handle}] '{Name}' : '{UniformName}' : {TextureTarget}";
 
     public static Texture FromDescriptor(TextureDescriptor descriptor, TextureUnit unit)
     {
@@ -97,12 +98,10 @@ public class Texture
         bool generateMipMap = true,
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
-        Console.WriteLine($"creating texture: '{paths[0]}', type: {textureType}, target: {textureTarget}, unit: {unit}");
-
         var key = CalculateKey(paths, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget );
         if(textureCache.TryGetValue(key, out var cachedTexture))
         {
-            Console.WriteLine($"reusing texture from cache: '{paths[0]}', type: {textureType}, target: {textureTarget}");
+            Console.WriteLine($"SUCCESS | texture from cache: {cachedTexture}");
             return cachedTexture;
         }
 
@@ -156,8 +155,7 @@ public class Texture
             CacheKey = key
         };
         textureCache[key] = texture;
-        Console.WriteLine($"created texture: {handle} -> '{texture.UniformName}'");
-        Console.WriteLine("texture created: SUCCESS!");
+        Console.WriteLine($"SUCCESS | created texture: {texture}");
         return texture;
     }
 

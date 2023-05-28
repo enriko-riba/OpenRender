@@ -66,6 +66,11 @@ internal class TestScene : Scene
         {
             SceneManager.Close();
         }
+
+        if (KeyboardState.IsKeyPressed(Keys.F1)) 
+        { 
+            ShowBoundingSphere = !ShowBoundingSphere;
+        }
     }
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
@@ -204,11 +209,11 @@ internal class TestScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 4000;
+        const int NodeCount = 400;
         var vbBox = GeometryHelper.CreateBox(true);
-        var vbSphere = GeometryHelper.CreateSphere(2, 32, 48);
+        var vbSphere = GeometryHelper.CreateSphere(32, 48);
         var matSphere = Material.Create(
-            new TextureDescriptor("Resources/Ball13.jpg", TextureType: TextureType.Diffuse),
+            new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse),
             detailTextureFactor: 0f,
             shininess: 0.45f
         );
@@ -222,7 +227,8 @@ internal class TestScene : Scene
             }
             else
             {
-                var texture =  (i % 5) switch {
+                var texture = (i % 7) switch
+                {
                     0 => new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
                     1 => new TextureDescriptor[] { new TextureDescriptor("Resources/container.png", TextureType: TextureType.Diffuse) },
                     2 => new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
@@ -251,7 +257,7 @@ internal class TestScene : Scene
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),
             1.97f);
-       
+
         for (var i = 0; i < 50; i++)
         {
             var cube = new SceneNode(new Mesh(vbBox, mat));
