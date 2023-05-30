@@ -14,7 +14,7 @@ public class Camera3D : CameraBase
     /// <param name="aspectRatio">The aspect ratio of the camera's viewport.</param>
     /// <param name="nearPlane">The distance to the near clipping plane.</param>
     /// <param name="farPlane">The distance to the far clipping plane.</param>
-    public Camera3D(Vector3 position, float aspectRatio, float nearPlane = 0.001f, float farPlane = 1000) : base(position, aspectRatio, nearPlane, farPlane) { }
+    public Camera3D(Vector3 position, float aspectRatio, float nearPlane = 0.0001f, float farPlane = 5000) : base(position, aspectRatio, nearPlane, farPlane) { }
 
     /// <summary>
     /// Moves the camera forward by the specified distance.
@@ -63,5 +63,6 @@ public class Camera3D : CameraBase
         up = Vector3.Normalize(Vector3.Transform(Vector3.UnitY, orientation));
         view = Matrix4.LookAt(Position, Position + front, up);
         projection = Matrix4.CreatePerspectiveFieldOfView(fov, AspectRatio, nearPlane, farPlane);
+        viewProjection = view * projection;
     }
 }

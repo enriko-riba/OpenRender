@@ -69,7 +69,7 @@ public class TextureBatcher
             {
                 var reusableUnit = unitUsages
                     .Where(r => !material.TextureHandles.Any(th => th == r.TextureHandle))
-                    .OrderBy(r => textureFrequencies[r.TextureHandle ?? -1])
+                    .OrderBy(r => textureFrequencies[r.TextureHandle!.Value])
                     .ThenBy(r => r.ChangeCount)
                     .FirstOrDefault();
 

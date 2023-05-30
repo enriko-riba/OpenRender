@@ -1,5 +1,4 @@
 ﻿using OpenRender.Core;
-using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
@@ -21,6 +20,7 @@ public class Scene
     private readonly UniformBuffer<MaterialUniform> vboMaterial;
     private readonly UniformBuffer<LightUniform> vboLight;
     private readonly TextureBatcher textureBatcher;
+    private readonly CullingHelper cullingHelper = new();
 
     private uint lastMaterial;
     private int lastProgramHandle;
@@ -34,6 +34,8 @@ public class Scene
 
     internal bool isLoaded;
     internal SceneManager scm = default!;
+    internal IReadOnlyList<SceneNode> RenderList => renderList;
+    internal IReadOnlyList<SceneNode> Nodes => nodes;
 
     public Scene(string name)
     {
@@ -144,10 +146,20 @@ public class Scene
         //}
 
 
-        foreach (var node in nodes)
+        foreach (var node in renderList)
         {
             RenderNode(node, elapsedSeconds);
         }
+
+        //var smr = SphereMeshRenderer.DefaultSphereMeshRenderer;
+        //foreach(var node in nodes)
+        //{
+        //    if (node is not SkyBox)
+        //    {                
+        //        smr.Shader.SetMatrix4("model", node.World);
+        //        smr.Render();
+        //    }
+        //}
     }
 
     public virtual void UpdateFrame(double elapsedSeconds)
@@ -169,6 +181,11 @@ public class Scene
         }
 
         hasCameraChanged = (camera?.Update() ?? false);
+        if (hasCameraChanged && camera is not null)
+        {
+            cullingHelper.ExtractFrustumPlanes(camera.ViewProjectionMatrix);
+        }        
+        cullingHelper.CullNodes(nodes, renderList); //  TODO: optimize to cull nodes only when changed (e.g. Invalidate was invoked)
     }
 
     public virtual void OnMouseWheel(MouseWheelEventArgs e) { }

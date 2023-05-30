@@ -101,7 +101,7 @@ public class Texture
         var key = CalculateKey(paths, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget );
         if(textureCache.TryGetValue(key, out var cachedTexture))
         {
-            Console.WriteLine($"SUCCESS | texture from cache: {cachedTexture}");
+            //Console.WriteLine($"SUCCESS | texture from cache: {cachedTexture}");
             return cachedTexture;
         }
 

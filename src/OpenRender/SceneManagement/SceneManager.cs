@@ -58,7 +58,6 @@ public class SceneManager : GameWindow
     protected override void OnRenderFrame(FrameEventArgs e)
     {
         activeScene?.RenderFrame(e.Time);
-        //base.OnRenderFrame(e);
         SwapBuffers();
 
         frames++;
@@ -67,7 +66,7 @@ public class SceneManager : GameWindow
         {
             var d = (double)elapsed / frames;
             var fps = 1000 / d;
-            Title = $"OpenRender, avg frame duration: {d:G3} ms, fps: {fps:G4}";
+            Title = $"OpenRender, avg frame duration: {d:G3} ms, fps: {fps:N0}, nodes: {activeScene?.RenderList?.Count ?? 0}/{activeScene?.Nodes.Count}";
             frames = 0;
             lastFpsTime = sw.ElapsedMilliseconds;
         }

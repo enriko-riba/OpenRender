@@ -45,10 +45,7 @@ internal class TestScene : Scene
         };
         AddLight(dirLight);
 
-        camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y)
-        {
-            Position = new Vector3(-2, 2, -2)
-        };
+        camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
         //CursorState = CursorState.Hidden;
     }
 
@@ -200,7 +197,7 @@ internal class TestScene : Scene
             Update = (n, e) =>
             {
                 var rot = n.AngleRotation;
-                rot.Z += (float)e;
+                rot.Y += (float)e;
                 n.SetRotation(rot);
             }
         };
@@ -209,7 +206,7 @@ internal class TestScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 400;
+        const int NodeCount = 10000;
         var vbBox = GeometryHelper.CreateBox(true);
         var vbSphere = GeometryHelper.CreateSphere(32, 48);
         var matSphere = Material.Create(

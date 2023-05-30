@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender.SceneManagement;
+using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 
@@ -7,6 +8,7 @@ public abstract class CameraBase : ICamera
     protected Quaternion orientation = Quaternion.Identity;
     protected Matrix4 projection;
     protected Matrix4 view;
+    protected Matrix4 viewProjection;
 
     protected Vector3 front = -Vector3.UnitZ;
     protected Vector3 right = Vector3.UnitX;
@@ -15,7 +17,7 @@ public abstract class CameraBase : ICamera
 
     private Vector3 position;
     private float aspectRatio;
-
+    
     protected bool isDirty;
     protected readonly float nearPlane;
     protected readonly float farPlane;
@@ -27,7 +29,7 @@ public abstract class CameraBase : ICamera
     /// <param name="aspectRatio">The aspect ratio of the camera's viewport.</param>
     /// <param name="nearPlane">The distance to the near clipping plane.</param>
     /// <param name="farPlane">The distance to the far clipping plane.</param>
-    public CameraBase(Vector3 position, float aspectRatio, float nearPlane = 0.001f, float farPlane = 1000)
+    public CameraBase(Vector3 position, float aspectRatio, float nearPlane, float farPlane)
     {
         Position = position;
         AspectRatio = aspectRatio;
@@ -50,6 +52,11 @@ public abstract class CameraBase : ICamera
     /// Gets the view matrix of the camera.
     /// </summary>
     public Matrix4 ViewMatrix => view;
+
+    /// <summary>
+    /// Gets the view projection matrix of the camera.
+    /// </summary>
+    public Matrix4 ViewProjectionMatrix => viewProjection;
 
     /// <summary>
     /// Gets the front vector of the camera.
@@ -124,7 +131,7 @@ public abstract class CameraBase : ICamera
             aspectRatio = value;
             isDirty = true;
         }
-    }
+    }    
 
     /// <summary>
     /// Adds rotation to the camera by the specified yaw, pitch, and roll angle increments in degrees.
