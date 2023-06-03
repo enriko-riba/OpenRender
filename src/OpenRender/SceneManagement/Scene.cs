@@ -79,6 +79,8 @@ public class Scene
         node.Scene = null; // Remove the Scene reference from the removed node
     }
 
+    public readonly TextRenderer tr = new();
+
     public virtual void Load()
     {
         GL.FrontFace(FrontFaceDirection.Ccw);
@@ -95,6 +97,7 @@ public class Scene
 
         vboCamera.BindToShaderProgram(defaultShader);
         vboLight.BindToShaderProgram(defaultShader);
+        tr.LoadFont("consola.ttf", 14);
     }
 
     /// <summary>
@@ -172,7 +175,7 @@ public class Scene
         if (shader.UniformExists("model"))
         {
             node.GetWorldMatrix(out var worldMatrix);
-            shader.SetMatrix4("model", worldMatrix);
+            shader.SetMatrix4("model", ref worldMatrix);
         }
 
         if (lastMaterial != material.Id)

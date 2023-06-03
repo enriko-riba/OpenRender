@@ -1,4 +1,5 @@
 ﻿using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using System.Diagnostics;
@@ -60,6 +61,13 @@ public class SceneManager : GameWindow
     private void Render(FrameEventArgs e)
     {
         activeScene?.RenderFrame(e.Time);
+
+        if(!string.IsNullOrEmpty(fpsText))
+            activeScene?.tr.RenderText(fpsText, 5, ClientSize.Y - 20, textColor, ClientSize.X, ClientSize.Y);
+
+        nodesText = $"nodes: {activeScene?.RenderList?.Count ?? 0}/{activeScene?.Nodes.Count}";
+        activeScene?.tr.RenderText(nodesText, 5, ClientSize.Y - 40, textColor, ClientSize.X, ClientSize.Y);
+
         SwapBuffers();
 
         frames++;
@@ -68,9 +76,14 @@ public class SceneManager : GameWindow
         {
             var d = (double)elapsed / frames;
             var fps = 1000 / d;
-            Title = $"OpenRender, avg frame duration: {d:G3} ms, fps: {fps:N0}, nodes: {activeScene?.RenderList?.Count ?? 0}/{activeScene?.Nodes.Count}";
+            fpsText = $"avg frame duration: {d:G3} ms, fps: {fps:N0}";
+            Title = fpsText;
             frames = 0;
             lastFpsTime = sw.ElapsedMilliseconds;
         }
     }
+
+    private string fpsText = string.Empty;
+    private string nodesText = string.Empty;
+    private Vector3 textColor = new Vector3(0.21f, 0.21f, 0.95f);
 }

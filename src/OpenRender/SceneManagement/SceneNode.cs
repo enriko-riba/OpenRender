@@ -81,7 +81,7 @@ public class SceneNode
     {
         if (ShowBoundingSphere)
         {
-            sphereMeshRenderer.Shader.SetMatrix4("model", worldMatrix);
+            sphereMeshRenderer.Shader.SetMatrix4("model", ref worldMatrix);
             sphereMeshRenderer.Render();
         }
         else

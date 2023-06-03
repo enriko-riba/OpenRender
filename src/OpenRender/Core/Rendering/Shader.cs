@@ -81,6 +81,13 @@ public class Shader
         return index;
     }
 
+    public int GetUniformLocation(string uniformName)
+    {
+        uniformLocations.TryGetValue(uniformName, out var index);
+        return index;
+    }
+
+
     /// <summary>
     /// Queries the program for attribute location.
     /// </summary>
@@ -123,7 +130,7 @@ public class Shader
     ///   The matrix is transposed before being sent to the shader.
     ///   </para>
     /// </remarks>
-    public void SetMatrix4(string name, Matrix4 data)
+    public void SetMatrix4(string name, ref Matrix4 data)
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.UniformMatrix4(uniformLocations[name], false, ref data);
@@ -134,7 +141,7 @@ public class Shader
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
-    public void SetVector3(string name, Vector3 data)
+    public void SetVector3(string name, ref Vector3 data)
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.Uniform3(uniformLocations[name], data);
