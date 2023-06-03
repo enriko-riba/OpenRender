@@ -16,10 +16,12 @@ public class SceneManager : GameWindow
     public SceneManager(GameWindowSettings gameWindowSettings, NativeWindowSettings nativeWindowSettings) :
         base(gameWindowSettings, nativeWindowSettings)
     {
+        RenderFrame += Render;
         UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
         Resize += (e) => activeScene?.OnResize(e);
         MouseMove += (e) => activeScene?.OnMouseMove(e);
         MouseWheel += (e) => activeScene?.OnMouseWheel(e);
+
         Load += () =>
         {
             GL.Enable(EnableCap.Multisample);
@@ -55,7 +57,7 @@ public class SceneManager : GameWindow
         sw.Restart();
     }
 
-    protected override void OnRenderFrame(FrameEventArgs e)
+    private void Render(FrameEventArgs e)
     {
         activeScene?.RenderFrame(e.Time);
         SwapBuffers();

@@ -4,26 +4,18 @@ using OpenTK.Mathematics;
 
 namespace OpenRender.Core;
 
-public struct Material
+public class Material
 {
     public const int MaxTextures = 8;
 
     private static uint counter;
-    private bool isInitialized;
     private int[]? textureHandles;
-
-    public Material()
-    {
-    }
-
 
     public uint Id { get; init; }
 
-    public readonly bool IsInitialized => isInitialized;
+    public IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
 
-    public readonly IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
-
-    public readonly bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
+    public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
@@ -39,34 +31,35 @@ public struct Material
     /// If 0 the detail texture is not applied even if it is defined. 
     /// Values < 1 are stretching the detail texture while values > 1 are repeating the detail texture over the object surface.
     /// </summary>
-    public float DetailTextureFactor { get; init; }
+    public float DetailTextureFactor { get; set; }
 
     /// <summary>
     /// Diffuse color multiplied with light color.
     /// </summary>
-    public Vector3 DiffuseColor { get; init; } = Vector3.One;
+    public Vector3 DiffuseColor { get; set; } = Vector3.One;
 
     /// <summary>
     /// Specular color multiplied with light color. This should usually be white.
     /// </summary>
-    public Vector3 SpecularColor { get; init; } = Vector3.One;
+    public Vector3 SpecularColor { get; set; } = Vector3.One;
 
     /// <summary>
     /// Object shininess, used with specular color.
     /// </summary>
-    public float Shininess { get; init; } = 0.1f;
+    public float Shininess { get; set; } = 0.1f;
 
     /// <summary>
     /// Color emitted from the object surface. This color is for self luminating objects, scene lights have no effect on emissive color.
     /// </summary>
-    public Vector3 EmissiveColor { get; init; } = Vector3.Zero;
+    public Vector3 EmissiveColor { get; set; } = Vector3.Zero;
 
-    public void Initialize()
+    private void Initialize()
     {
         Textures = Texture.CreateFromMaterial(this);
         textureHandles = Textures.Select(t => t.Handle).ToArray();
-        isInitialized = true;
     }
+
+    public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
 
     public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
     {
@@ -83,9 +76,10 @@ public struct Material
             EmissiveColor = emissiveColor,
             Id = id
         };
+        mat.Initialize();
         return mat;
     }
-    
+
     public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
     {
         return Create(null, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);

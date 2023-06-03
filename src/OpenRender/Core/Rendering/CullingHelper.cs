@@ -6,7 +6,7 @@ namespace OpenRender.Core.Rendering;
 
 internal class CullingHelper
 {
-    private Vector4[] frustumPlanes = new Vector4[6];
+    private readonly Vector4[] frustumPlanes = new Vector4[6];
 
     public void CullNodes(IEnumerable<SceneNode> allNodes, List<SceneNode> renderList)
     {
@@ -109,7 +109,7 @@ internal class CullingHelper
         else
         {
             var positionOffset = (int)AttributeLocation.Position;
-            for (var i = 0; i < vb.Vertices.Length; i += vb.Stride)
+            for (var i = 0; i < vb.Vertices.Length; i += strideInFloats)
             {
                 var x = vb.Vertices[i + positionOffset];
                 var y = vb.Vertices[i + positionOffset + 1];

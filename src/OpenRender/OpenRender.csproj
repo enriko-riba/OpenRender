@@ -15,15 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Remove="Shaders\skybox.frag" />
-    <None Remove="Shaders\skybox.vert" />
-    <None Remove="Shaders\spheremesh.frag" />
-    <None Remove="Shaders\spheremesh.vert" />
-    <None Remove="Shaders\standard.frag" />
-    <None Remove="Shaders\standard.vert" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Content Include="Shaders\skybox.frag">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

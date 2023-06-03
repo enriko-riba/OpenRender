@@ -62,7 +62,7 @@ public class Shader
         }
         Console.WriteLine("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
 
-        Console.WriteLine("program {0} created: SUCCESS!", Handle);
+        Console.WriteLine("SUCCESS | created program {0}", Handle);
     }
 
     /// <summary>

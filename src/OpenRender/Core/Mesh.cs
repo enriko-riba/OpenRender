@@ -1,29 +1,24 @@
-﻿using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
-using OpenTK.Mathematics;
+﻿using OpenRender.Core.Rendering;
 
 namespace OpenRender.Core;
 
 /// <summary>
-/// Mesh is just a container for a vertex buffer, draw mode and material.
+/// Mesh is just a container for a vertex buffer and draw mode.
 /// </summary>
-public struct Mesh
+public readonly struct Mesh
 {
-    private readonly DrawMode drawMode;
+    public Mesh(VertexBuffer vertexBuffer)
+        : this(vertexBuffer, vertexBuffer.Indices == null ? DrawMode.Primitive : DrawMode.Indexed) { }
 
-    public Mesh(VertexBuffer vertexBuffer, Material material)
-        : this(vertexBuffer,
-               vertexBuffer.Indices == null ? DrawMode.Primitive : DrawMode.Indexed,
-               material) { }
-
-    public Mesh(VertexBuffer vertexBuffer, DrawMode drawMode, Material material)
+    public Mesh(VertexBuffer vertexBuffer, DrawMode drawMode)
     {
         VertexBuffer = vertexBuffer;
-        Material = material;
-        this.drawMode = drawMode;
+        DrawMode = drawMode;
     }
 
-    public readonly DrawMode DrawMode => drawMode;
-    public Material Material;
+    public readonly DrawMode DrawMode;
+
     public readonly VertexBuffer VertexBuffer;
+
+    //  TODO: this struct makes only sense if multiple sub-meshes will be supported.
 }

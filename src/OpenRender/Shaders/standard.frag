@@ -116,8 +116,8 @@ vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 wo
 		    vec3 reflectionVector = normalize(reflect(-directionToLight, worldNormal));
 		    vec3 directionToCamera = normalize(cameraPos - worldPosition);
             float d = dot(reflectionVector, directionToCamera);
-		    resultColor = lightColor * clamp(d * specularColor, 0, 1.0) * specularPower;
-		    resultColor = clamp(resultColor, 0, 1.0);
+		    resultColor = lightColor * clamp(d * specularColor, 0.0, 1.0) * specularPower;
+		    resultColor = clamp(resultColor, 0.0, 1.0);
         }
 	}	
 	return resultColor;

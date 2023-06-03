@@ -1,5 +1,4 @@
-﻿using OpenRender.SceneManagement;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 public interface ICamera
@@ -13,7 +12,7 @@ public interface ICamera
     Vector3 Position { get; set; }
     float Fov { get; set; }
     float AspectRatio { get; set; }
-    void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);    
+    void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
     /// <summary>
     /// If dirty, updates camera matrices.
     /// </summary>

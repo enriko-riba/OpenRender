@@ -4,7 +4,6 @@ using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
-using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace OpenRender.SceneManagement;
 
@@ -15,6 +14,7 @@ public class Scene
     private readonly List<SceneNode> nodes = new();
     private readonly List<SceneNode> renderList = new();
     private readonly List<LightUniform> lights = new();
+    private readonly List<Material> materialList = new();
 
     private readonly UniformBuffer<CameraUniform> vboCamera;
     private readonly UniformBuffer<MaterialUniform> vboMaterial;
@@ -29,8 +29,6 @@ public class Scene
 
     protected readonly Shader defaultShader;
     protected ICamera? camera;
-    protected KeyboardState KeyboardState = default!;
-    protected MouseState MouseState = default!;
 
     internal bool isLoaded;
     internal SceneManager scm = default!;
@@ -44,7 +42,10 @@ public class Scene
         vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         vboLight = new UniformBuffer<LightUniform>("light", 1);
         Name = name;
-        textureBatcher = new TextureBatcher(16); //  TODO: get real number of texture units
+
+        // 16 is minimum per OpenGL standard
+        GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
+        textureBatcher = new TextureBatcher(textureUnitsCount); 
     }
 
     protected SceneManager SceneManager => scm;
@@ -69,21 +70,12 @@ public class Scene
     {
         hasNodeListChanged = true;
         nodes.Add(node);
-        node.Scene = this; // Set the Scene reference for the added node        
-        if (!node.Mesh.Material.IsInitialized)
-        {
-            var mesh = node.Mesh;
-            var mat = mesh.Material;
-            mat.Initialize();
-            mesh.Material = mat;
-            node.SetMesh(ref mesh);
-        }
+        node.Scene = this; // Set the Scene reference for the added node       
     }
 
     public void RemoveNode(SceneNode node)
     {
-        hasNodeListChanged = true;
-        nodes.Remove(node);
+        hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);       
         node.Scene = null; // Remove the Scene reference from the removed node
     }
 
@@ -105,6 +97,10 @@ public class Scene
         vboLight.BindToShaderProgram(defaultShader);
     }
 
+    /// <summary>
+    /// Clears the scene, assigns camera and light uniform buffer objects and renders each node.
+    /// </summary>
+    /// <param name="elapsedSeconds"></param>
     public virtual void RenderFrame(double elapsedSeconds)
     {
         ArgumentNullException.ThrowIfNull(camera);
@@ -123,69 +119,31 @@ public class Scene
 
         if (lights.Any())
         {
+            //  TODO: pass lights array
             var dirLight = lights[0];
             vboLight.UpdateSettings(ref dirLight);
         }
-
-        //foreach (var md in textureBatcher.MaterialDataList)
-        //{
-        //    var nl = nodes.Where(n => n.Mesh.Material.Id == md.Id);
-        //    foreach(var node in nl)
-        //    {
-        //        if (node.Mesh.Material.Textures?.Any() ?? false)
-        //        {
-        //            var tus = textureBatcher.AssignBatch(md);
-        //            foreach (var texture in node.Mesh.Material.Textures!)
-        //            {
-        //                var unitUsage = tus.First(tu => tu.TextureHandle == texture.Handle);
-        //                texture.Use(TextureUnit.Texture0 + unitUsage.Unit);
-        //            }
-        //        }
-        //        RenderNode(node, elapsedSeconds);
-        //    }
-        //}
-
 
         foreach (var node in renderList)
         {
             RenderNode(node, elapsedSeconds);
         }
-
-        //var smr = SphereMeshRenderer.DefaultSphereMeshRenderer;
-        //foreach(var node in nodes)
-        //{
-        //    if (node is not SkyBox)
-        //    {                
-        //        smr.Shader.SetMatrix4("model", node.World);
-        //        smr.Render();
-        //    }
-        //}
     }
 
+    /// <summary>
+    /// Invokes <see cref="SceneNode.OnUpdate(Scene, double)"/> for each node, applies frustum culling to build 
+    /// a node render list and if node graph has changed, invokes texture batcher.
+    /// </summary>
+    /// <param name="elapsedSeconds"></param>
     public virtual void UpdateFrame(double elapsedSeconds)
     {
-        KeyboardState = SceneManager.KeyboardState;
-        MouseState = SceneManager.MouseState;
-
         foreach (var node in nodes)
         {
             node.OnUpdate(this, elapsedSeconds);
         }
 
-        if (hasNodeListChanged)
-        {
-            var materialList = CollectTextures();
-            textureBatcher.Reset();
-            textureBatcher.SortMaterials(materialList);
-            hasNodeListChanged = false;
-        }
-
-        hasCameraChanged = (camera?.Update() ?? false);
-        if (hasCameraChanged && camera is not null)
-        {
-            cullingHelper.ExtractFrustumPlanes(camera.ViewProjectionMatrix);
-        }        
-        cullingHelper.CullNodes(nodes, renderList); //  TODO: optimize to cull nodes only when changed (e.g. Invalidate was invoked)
+        CullFrustum();
+        OptimizeTextureUnitUsage();
     }
 
     public virtual void OnMouseWheel(MouseWheelEventArgs e) { }
@@ -194,21 +152,13 @@ public class Scene
 
     public virtual void OnResize(ResizeEventArgs e)
     {
-        GL.Viewport(0, 0, SceneManager.Size.X, SceneManager.Size.Y);
-        camera!.AspectRatio = SceneManager.Size.X / (float)SceneManager.Size.Y;
+        GL.Viewport(0, 0, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        camera!.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
     }
-
-    private List<Material> CollectTextures()
-    {
-        return nodes
-            .Select(n => n.Mesh.Material)
-            .DistinctBy(m => m.Id)
-            .ToList();
-    }
-
+    
     private void RenderNode(SceneNode node, double elapsed)
     {
-        var material = node.Mesh.Material;
+        var material = node.Material;
         var shader = material.Shader ?? defaultShader;
         shader.Use();
         if (lastProgramHandle != shader.Handle)
@@ -219,7 +169,11 @@ public class Scene
             vboMaterial.BindToShaderProgram(shader);
         }
 
-        if (shader.UniformExists("model")) shader.SetMatrix4("model", node.World);
+        if (shader.UniformExists("model"))
+        {
+            node.GetWorldMatrix(out var worldMatrix);
+            shader.SetMatrix4("model", worldMatrix);
+        }
 
         if (lastMaterial != material.Id)
         {
@@ -235,14 +189,15 @@ public class Scene
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
 
+            _ = textureBatcher.GetOptimalTextureUnits(material);
             for (var i = 0; i < material.Textures?.Length; i++)
             {
                 var texture = material.Textures[i];
                 if (texture != null)
                 {
-                    texture.Use();  //  TODO: use texture unit assignment from batcher instead 
-                    var id = (int)texture.TextureUnit - (int)TextureUnit.Texture0;
-                    shader.SetInt(texture.UniformName, id);
+                    var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
+                    texture.Use(TextureUnit.Texture0 + unit);                    
+                    shader.SetInt(texture.UniformName, unit);
                 }
             }
         }
@@ -250,4 +205,34 @@ public class Scene
         shader.Use();
         node.OnDraw(this, elapsed);
     }
+
+    private void CullFrustum()
+    {
+        hasCameraChanged = (camera?.Update() ?? false);
+        if (hasCameraChanged && camera is not null)
+        {
+            cullingHelper.ExtractFrustumPlanes(camera.ViewProjectionMatrix);
+        }
+        cullingHelper.CullNodes(nodes, renderList);
+    }
+
+    private void OptimizeTextureUnitUsage()
+    {
+        if (hasNodeListChanged)
+        {
+            UpdateSceneMaterials();
+            textureBatcher.Reset();
+            textureBatcher.SortMaterials(materialList);
+            hasNodeListChanged = false;
+        }
+    }
+    
+    private void UpdateSceneMaterials()
+    {
+        materialList.Clear();
+        materialList.AddRange(nodes
+            .Select(n => n.Material)
+            .DistinctBy(m => m.Id));
+    }
+
 }

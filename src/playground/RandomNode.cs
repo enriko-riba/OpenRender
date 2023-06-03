@@ -8,7 +8,7 @@ internal class RandomNode : SceneNode
 {
     private readonly int rotationAxis;
 
-    public RandomNode(Mesh mesh) : base(mesh)
+    public RandomNode(Mesh mesh, Material material) : base(mesh, material)
     {
         const int Area = 500;
         SetPosition(new Vector3(Random.Shared.Next(-Area, Area + 1), Random.Shared.Next(-Area, Area + 1), Random.Shared.Next(-Area, Area + 1)));

@@ -1,6 +1,4 @@
-﻿using System.Diagnostics;
-
-namespace OpenRender.Core.Textures;
+﻿namespace OpenRender.Core.Textures;
 
 public class TextureBatcher
 {
@@ -8,11 +6,6 @@ public class TextureBatcher
     private readonly int unitsCount;
     private Dictionary<int, int> textureFrequencies = new();
     private List<Material> materialsList = new();
-
-//#if DEBUG
-//    private readonly List<TextureUnitUsage[]> unitsHistory = new();
-//    public IEnumerable<TextureUnitUsage[]> UnitsHistory => unitsHistory;
-//#endif
 
     public TextureBatcher(int textureUnitsCount)
     {
@@ -28,7 +21,6 @@ public class TextureBatcher
             unitUsages[i] = new TextureUnitUsage() { Unit = i };
         }
     }
-    public IReadOnlyCollection<Material> MaterialDataList => materialsList;
 
     public void SortMaterials(List<Material> materialsList)
     {
@@ -41,63 +33,63 @@ public class TextureBatcher
     {
         foreach (var handle in material.TextureHandles)
         {
-            var existingTextureUnit = unitUsages.FirstOrDefault(r => r.TextureHandle == handle);
-            if (existingTextureUnit != null)
+            if (Find(r => r.TextureHandle == handle) >= 0)
             {
-                continue; // Texture name is already assigned, skip
+                // Texture is already bound to an unit, skip
+                continue; 
             }
 
-            var emptyUnit = unitUsages.FirstOrDefault(uu => !uu.TextureHandle.HasValue);
-            if (emptyUnit != null)
+            var idx = Find(uu => !uu.TextureHandle.HasValue);
+            if (idx >= 0)
             {
-                emptyUnit.TextureHandle = handle;
-                emptyUnit.ChangeCount = 0;
-                continue;   // Assigned to empty unit, counted as a texture swap
+                // empty unit found, bind texture to it, 
+                unitUsages[idx].TextureHandle = handle;
+                unitUsages[idx].ChangeCount = 0; // not counted as a texture swap
+                continue;   
             }
 
-            //  calc if there is a texture unit with an assigned texture that is not used anymore in current and all following list items
+            //  search for a texture unit bound to a texture that is not used anymore in current and all following materials
             var currentIndex = materialsList.IndexOf(material);
-            var remainingTextures = materialsList.Where((_, idx) => idx >= currentIndex).SelectMany(ml => ml.TextureHandles).Distinct().Order().ToArray();
+            var remainingTextures = materialsList.Where((_, idx) => idx >= currentIndex).SelectMany(ml => ml.TextureHandles).Distinct().Order();
             var unitWithUnusedTexture = unitUsages.LastOrDefault(uu => !remainingTextures.Any(a => a == uu.TextureHandle));
-            if (unitWithUnusedTexture != null)
+            if (unitWithUnusedTexture.TextureHandle != null)
             {
-                unitWithUnusedTexture.TextureHandle = handle;
-                unitWithUnusedTexture.ChangeCount++;
-                continue;   // Assigned to unit that was bound to texture that is not going to be used anymore
+                // found unit bound to texture that is not going to be used anymore
+                idx = unitWithUnusedTexture.Unit;
+                unitUsages[idx].TextureHandle = handle;
+                unitUsages[idx].ChangeCount++;
+                continue;   
             }
             else
             {
-                var reusableUnit = unitUsages
-                    .Where(r => !material.TextureHandles.Any(th => th == r.TextureHandle))
-                    .OrderBy(r => textureFrequencies[r.TextureHandle!.Value])
-                    .ThenBy(r => r.ChangeCount)
-                    .FirstOrDefault();
-
-                if (reusableUnit != null)
-                {
-                    reusableUnit.TextureHandle = handle;
-                    reusableUnit.ChangeCount++; // Assigning new texture and increase counter                        
-                }
-                else
-                {
-                    Debug.Assert(false, "No available texture unit found!");
-                }
+                idx = unitUsages
+                    .Where(r => !material.TextureHandles.Any(th => th == r.TextureHandle))  //  any unit not already bound to a texture in the material
+                    .OrderBy(r => textureFrequencies[r.TextureHandle!.Value])               //  sort to find unit bound to least frequent used texture
+                    .Select(r => r.Unit)
+                    .First();
+                unitUsages[idx].TextureHandle = handle;
+                unitUsages[idx].ChangeCount++;
             }
         }
-
-
-//#if DEBUG
-//        var textureUnitUsage = unitUsages.Select(uu => new TextureUnitUsage()
-//        {
-//            TextureHandle = uu.TextureHandle,
-//            Unit = uu.Unit,
-//            ChangeCount = uu.ChangeCount
-//        }).ToArray();
-//        //  save the history for debug purposes
-//        unitsHistory.Add(textureUnitUsage);
-//#endif
-
         return unitUsages;
+    }
+
+    public int GetTextureUnitWithTexture(int textureHandle)
+    {
+        var idx = Find(tu => tu.TextureHandle == textureHandle);
+        return idx == -1 ? -1 : unitUsages[idx].Unit;
+    }
+
+    private int Find(Predicate<TextureUnitUsage> predicate)
+    {
+        for (var i = 0; i < unitUsages.Length; i++)
+        {
+            if (predicate(unitUsages[i]))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /// <summary>
@@ -136,7 +128,7 @@ public class TextureBatcher
         var maxFrequency = 0;
         foreach (var textureHandle in material.TextureHandles)
         {
-            if (frequency.ContainsKey(textureHandle) && frequency[textureHandle] > maxFrequency)
+            if (/*frequency.ContainsKey(textureHandle) &&*/ frequency[textureHandle] > maxFrequency)
             {
                 maxFrequency = frequency[textureHandle];
             }
@@ -145,8 +137,10 @@ public class TextureBatcher
     }
 }
 
-public class TextureUnitUsage
+public struct TextureUnitUsage
 {
+    public static readonly TextureUnitUsage EMPTY = default;
+
     public int? TextureHandle { get; set; }
     public int Unit { get; set; }
     public int ChangeCount { get; set; }

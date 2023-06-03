@@ -20,9 +20,8 @@ public class SkyBox : SceneNode
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge);
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
-        var mat = Material.Create(shader, desc);
-        mat.Initialize();
-        var skyBoxMesh = new Mesh(vb, DrawMode.Indexed, mat);
+        Material = Material.Create(shader, desc);
+        var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
         SetMesh(ref skyBoxMesh);
         SetScale(5);
     }

@@ -11,14 +11,14 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 namespace playground;
 
 internal class TestScene : Scene
-{
+{    
+    private bool isMouseMoving;
+
     public TestScene() : base("TestScene") { }
 
     public override void Load()
     {
         base.Load();
-        GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
-
         GL.ClearColor(Color4.DarkSlateBlue);
 
         AddRotatingBoxes();
@@ -39,7 +39,7 @@ internal class TestScene : Scene
         var dirLight = new LightUniform()
         {
             Direction = new Vector3(-0.95f, -0.995f, 0.75f),
-            Ambient = new Vector3(0.025f, 0.025f, 0.025f),
+            Ambient = new Vector3(0.065f, 0.06f, 0.065f),
             Diffuse = new Vector3(0.8f),
             Specular = new Vector3(1),
         };
@@ -51,22 +51,28 @@ internal class TestScene : Scene
 
     public override void UpdateFrame(double elapsedSeconds)
     {
-        base.UpdateFrame(elapsedSeconds);
         if (!SceneManager.IsFocused)
         {
             return;
         }
-
+        base.UpdateFrame(elapsedSeconds);
+        
         HandleRotation(elapsedSeconds);
         HandleMovement(elapsedSeconds);
-        if (KeyboardState.IsKeyDown(Keys.Escape))
+        if (SceneManager.KeyboardState.IsKeyDown(Keys.Escape))
         {
             SceneManager.Close();
         }
 
-        if (KeyboardState.IsKeyPressed(Keys.F1)) 
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F1)) 
         { 
             ShowBoundingSphere = !ShowBoundingSphere;
+        }
+
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F11))
+        {
+            SceneManager.WindowState = SceneManager.WindowState == WindowState.Fullscreen ?
+                    WindowState.Normal : WindowState.Fullscreen;
         }
     }
 
@@ -75,19 +81,13 @@ internal class TestScene : Scene
         camera!.Fov -= e.OffsetY * 5;
     }
 
-    public override void OnResize(ResizeEventArgs e)
-    {
-        GL.Viewport(0, 0, SceneManager.Size.X, SceneManager.Size.Y);
-        camera!.AspectRatio = SceneManager.Size.X / (float)SceneManager.Size.Y;
-    }
 
-    private bool isMouseMoving;
     private void HandleMovement(double elapsedTime)
     {
         const float MovementSpeed = 3;
         var movementPerSecond = (float)elapsedTime * MovementSpeed;
 
-        var input = KeyboardState;
+        var input = SceneManager.KeyboardState;
         if (input.IsKeyDown(Keys.W))
         {
             camera!.Position += camera.Front * movementPerSecond; // Forward
@@ -118,20 +118,22 @@ internal class TestScene : Scene
     private void HandleRotation(double elapsedTime)
     {
         const float RotationSpeed = 25;
+
+        var mouseState = SceneManager.MouseState;
         var rotationPerSecond = (float)(elapsedTime * RotationSpeed);
-        if (KeyboardState.IsKeyDown(Keys.Q))
+        if (SceneManager.KeyboardState.IsKeyDown(Keys.Q))
         {
             camera!.AddRotation(0, 0, rotationPerSecond);
         }
-        if (KeyboardState.IsKeyDown(Keys.E))
+        if (SceneManager.KeyboardState.IsKeyDown(Keys.E))
         {
             camera!.AddRotation(0, 0, -rotationPerSecond);
         }
-        if (isMouseMoving && MouseState.IsButtonDown(MouseButton.Left))
+        if (isMouseMoving && mouseState.IsButtonDown(MouseButton.Left))
         {
-            if (MouseState.Delta.LengthSquared > 0)
+            if (SceneManager.MouseState.Delta.LengthSquared > 0)
             {
-                camera!.AddRotation(MouseState.Delta.X * rotationPerSecond, MouseState.Delta.Y * rotationPerSecond, 0);
+                camera!.AddRotation(mouseState.Delta.X * rotationPerSecond, mouseState.Delta.Y * rotationPerSecond, 0);
             }
         }
         else
@@ -139,7 +141,7 @@ internal class TestScene : Scene
             isMouseMoving = false;
         }
 
-        if (!isMouseMoving && MouseState.IsButtonPressed(MouseButton.Left))
+        if (!isMouseMoving && mouseState.IsButtonPressed(MouseButton.Left))
         {
             isMouseMoving = true;
         }
@@ -168,7 +170,7 @@ internal class TestScene : Scene
             shininess: 0.25f
         );
 
-        var n1 = new SceneNode(new Mesh(vbBox, mat1), new Vector3(3, 0, -3))
+        var n1 = new SceneNode(new Mesh(vbBox), mat1, new Vector3(3, 0, -3))
         {
             Update = (n, e) =>
             {
@@ -180,7 +182,7 @@ internal class TestScene : Scene
         };
         AddNode(n1);
 
-        var n2 = new SceneNode(new Mesh(vbCube, mat2), new Vector3(1.75f, 0.2f, 0))
+        var n2 = new SceneNode(new Mesh(vbCube), mat2, new Vector3(1.75f, 0.2f, 0))
         {
             Update = (n, e) =>
             {
@@ -192,7 +194,7 @@ internal class TestScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(vbQuad, mat1), new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(vbQuad), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {
@@ -206,7 +208,7 @@ internal class TestScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 10000;
+        const int NodeCount = 5000;
         var vbBox = GeometryHelper.CreateBox(true);
         var vbSphere = GeometryHelper.CreateSphere(32, 48);
         var matSphere = Material.Create(
@@ -219,7 +221,7 @@ internal class TestScene : Scene
         {
             if (i % 5 == 0)
             {
-                var sphere = new RandomNode(new Mesh(vbSphere, matSphere));
+                var sphere = new RandomNode(new Mesh(vbSphere), matSphere);
                 AddNode(sphere);
             }
             else
@@ -241,7 +243,7 @@ internal class TestScene : Scene
                     new Vector3((float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble()),
                     Vector3.One,
                     (float)Random.Shared.NextDouble() * 0.7f);
-                var cube = new RandomNode(new Mesh(vbBox, mat1));
+                var cube = new RandomNode(new Mesh(vbBox), mat1);
                 AddNode(cube);
             }
         }
@@ -254,10 +256,11 @@ internal class TestScene : Scene
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),
             1.97f);
+        mat.EmissiveColor = new Vector3(0.05f, 0.01f, 0.012f);
 
         for (var i = 0; i < 50; i++)
         {
-            var cube = new SceneNode(new Mesh(vbBox, mat));
+            var cube = new SceneNode(new Mesh(vbBox), mat);
             cube.SetPosition(new Vector3(-250 + i * 10, 0, -10));
             AddNode(cube);
         }

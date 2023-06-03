@@ -16,7 +16,10 @@ public class SphereMeshRenderer
         vb = GeometryHelper.CreateSphere(12, 18);
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }
-
+    /// <summary>
+    /// Scale increase factor. The sphere mesh needs to be a bit larger then the scene node.
+    /// The default factor value is 1.15f.
+    /// </summary>
     public Matrix4 ScaleMatrix { get; set; }
     public Shader Shader => shader;
 
