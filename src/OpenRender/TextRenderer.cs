@@ -118,7 +118,7 @@ public class TextRenderer : IDisposable
 
     private void LoadCharacter(char c)
     {
-        var size = TextMeasurer.Measure(c.ToString(), textOptions);
+        var size = TextMeasurer.Measure(c.ToString(), textOptions!);
         var image = new Image<Rgba32>((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height));
         image.Mutate(ctx => ctx.DrawText(c.ToString(), font, Color.White, PointF.Empty));
         //image.SaveAsBmp($"dbg_glyph-{(byte)c}.bmp");
@@ -127,7 +127,7 @@ public class TextRenderer : IDisposable
         {
             TextureID = textureID,
             Size = new Vector2(image.Width, image.Height),
-            Bearing = new Vector2(0, font.Size)
+            Bearing = new Vector2(0, font!.Size)
         };
 
         characters.Add(c, character);
@@ -148,6 +148,12 @@ public class TextRenderer : IDisposable
         return textureID;
     }
 
+    private IEnumerable<char> GetAllSupportedCharacters()
+    {
+        var allGlyphs = font?.GetGlyphs();
+        var supportedCharacters = allGlyphs.Select(g => g.Value).Distinct();
+        return supportedCharacters;
+    }
     public void Dispose()
     {
         foreach (var character in characters.Values)
