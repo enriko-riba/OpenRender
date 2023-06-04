@@ -19,13 +19,13 @@ public class Shader
     /// <param name="fragPath"></param>
     public Shader(string vertPath, string fragPath)
     {
-        Console.WriteLine($"creating shader: '{vertPath}'");
+        Log.Debug($"creating shader: '{vertPath}'");
         var shaderSource = File.ReadAllText(vertPath);
         var vertexShader = GL.CreateShader(ShaderType.VertexShader);
         GL.ShaderSource(vertexShader, shaderSource);
         CompileShader(vertexShader, vertPath);
 
-        Console.WriteLine($"creating shader: '{fragPath}'");
+        Log.Debug($"creating shader: '{fragPath}'");
         shaderSource = File.ReadAllText(fragPath);
         var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
         GL.ShaderSource(fragmentShader, shaderSource);
@@ -51,7 +51,7 @@ public class Shader
             var location = GL.GetUniformLocation(Handle, key);
             uniformLocations.Add(key, location);
         }
-        Console.WriteLine("active uniforms: {0} -> {1}", numberOfUniforms, string.Join(", ", uniformLocations.Keys));
+        Log.Debug("active uniforms: {0} -> {1}", numberOfUniforms, string.Join(", ", uniformLocations.Keys));
 
         GL.GetProgram(Handle, GetProgramParameterName.ActiveUniformBlocks, out var numberOfUniformBlocks);            
         for (var i = 0; i < numberOfUniformBlocks; i++)
@@ -60,9 +60,9 @@ public class Shader
             var idx = GL.GetUniformBlockIndex(Handle, key);
             uniformBlockIndices.Add(key, idx);
         }
-        Console.WriteLine("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
+        Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
 
-        Console.WriteLine("SUCCESS | created program {0}", Handle);
+        Log.Info("created program {0}", Handle);
     }
 
     /// <summary>
@@ -152,7 +152,7 @@ public class Shader
     {
         if (!uniformLocations.ContainsKey(name))
         {
-            Console.WriteLine($"WARNING uniform: '{name}' not found in program {Handle}!");
+            Log.Warn($"uniform: '{name}' not found in program {Handle}!");
             return false;
         }
         return true;
@@ -166,12 +166,12 @@ public class Shader
         if (code != (int)All.True)
         {
             var infoLog = GL.GetShaderInfoLog(shader);
-            Console.WriteLine($"Error compiling Shader({shader}@{path}).\n\n{infoLog}");
+            Log.Error($"error compiling Shader({shader}@{path}).\n\n{infoLog}");
             throw new Exception($"Error compiling Shader({shader}@{path}).\n\n{infoLog}");
         }
         else
         {
-            Console.WriteLine($"compiled shader: {shader}");
+            Log.Debug($"compiled shader: {shader}");
         }
     }
 
@@ -182,12 +182,12 @@ public class Shader
         if (code != (int)All.True)
         {
             var infoLog = GL.GetProgramInfoLog(program);
-            Console.WriteLine($"Error linking Program({program}).\n\n{infoLog}");
+            Log.Error($"error linking Program({program}).\n\n{infoLog}");
             throw new Exception($"Error linking Program({program}).\n\n{infoLog}");
         }
         else
         {
-            Console.WriteLine($"linked program: {program}");
+            Log.Debug($"linked program: {program}");
         }
     }
 

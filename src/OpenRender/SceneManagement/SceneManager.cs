@@ -76,8 +76,7 @@ public class SceneManager : GameWindow
         {
             var d = (double)elapsed / frames;
             var fps = 1000 / d;
-            fpsText = $"avg frame duration: {d:G3} ms, fps: {fps:N0}";
-            Title = fpsText;
+            fpsText = $"avg frame duration: {d:G3} ms, fps: {fps:N0}";            
             frames = 0;
             lastFpsTime = sw.ElapsedMilliseconds;
         }
