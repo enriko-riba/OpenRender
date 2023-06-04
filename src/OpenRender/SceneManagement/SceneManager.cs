@@ -63,10 +63,10 @@ public class SceneManager : GameWindow
         activeScene?.RenderFrame(e.Time);
 
         if(!string.IsNullOrEmpty(fpsText))
-            activeScene?.tr.RenderText(fpsText, 5, ClientSize.Y - 20, textColor, ClientSize.X, ClientSize.Y);
+            activeScene?.tr.RenderText(fpsText, 5, /*ClientSize.Y -*/ 20, textColor, ClientSize.X, ClientSize.Y);
 
         nodesText = $"nodes: {activeScene?.RenderList?.Count ?? 0}/{activeScene?.Nodes.Count}";
-        activeScene?.tr.RenderText(nodesText, 5, ClientSize.Y - 40, textColor, ClientSize.X, ClientSize.Y);
+        activeScene?.tr.RenderText(nodesText, 5, /*ClientSize.Y - */40, textColor, ClientSize.X, ClientSize.Y);
 
         SwapBuffers();
 

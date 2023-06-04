@@ -26,7 +26,7 @@ public class TextRenderer : IDisposable
     }
 
     public TextRenderer()
-    {       
+    {
         shader = new Shader("Shaders/text.vert", "Shaders/text.frag");
         vao = GL.GenVertexArray();
         GL.BindVertexArray(vao);
@@ -50,8 +50,8 @@ public class TextRenderer : IDisposable
         textOptions = new TextOptions(font);
         characters.Clear();
     }
-    
-    public void RenderText(string text, float x, float y, Vector3 color, float screenWidth, float screenHeight) 
+
+    public void RenderText(string text, float x, float y, Vector3 color, float screenWidth, float screenHeight)
         => RenderText(text, x, y, 1f, 1f, color, screenWidth, screenHeight);
 
     public void RenderText(string text, float x, float y, float scaleX, float scaleY, Vector3 color, float screenWidth, float screenHeight)
@@ -67,12 +67,12 @@ public class TextRenderer : IDisposable
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.Disable(EnableCap.DepthTest);
 
-        shader.Use();
-        var projectionMatrix = Matrix4.CreateOrthographicOffCenter(0, screenWidth, 0, screenHeight, -1, 1);
-        shader.SetMatrix4("projection", ref projectionMatrix);
-        shader.SetVector3("textColor", ref color);        
+        var projectionMatrix = Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
         GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindVertexArray(vao); // Bind the Vertex Array Object
+        GL.BindVertexArray(vao);
+        shader.Use();
+        shader.SetMatrix4("projection", ref projectionMatrix);
+        shader.SetVector3("textColor", ref color);
 
         foreach (var c in text)
         {
@@ -88,12 +88,12 @@ public class TextRenderer : IDisposable
 
             float[] vertices =
             {
-                xpos,     ypos + h, 0.0f, 0.0f,
-                xpos,     ypos,     0.0f, 1.0f,
-                xpos + w, ypos,     1.0f, 1.0f,
-                xpos,     ypos + h, 0.0f, 0.0f,
-                xpos + w, ypos,     1.0f, 1.0f,
-                xpos + w, ypos + h, 1.0f, 0.0f
+                xpos,     ypos,     0.0f, 0.0f,
+                xpos,     ypos + h, 0.0f, 1.0f,
+                xpos + w, ypos,     1.0f, 0.0f,
+                xpos + w, ypos,     1.0f, 0.0f,
+                xpos,     ypos + h, 0.0f, 1.0f,
+                xpos + w, ypos + h, 1.0f, 1.0f
             };
 
             GL.BindTexture(TextureTarget.Texture2D, character.TextureID);
@@ -102,7 +102,6 @@ public class TextRenderer : IDisposable
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
             x += (int)Math.Ceiling(character.Size.X * scaleX);
         }
-
 
         // Restore previous OpenGL states
         if (previousBlendEnabled)
@@ -116,13 +115,13 @@ public class TextRenderer : IDisposable
             GL.Disable(EnableCap.DepthTest);
         GL.BindTexture(TextureTarget.Texture2D, 0);
     }
-    
+
     private void LoadCharacter(char c)
-    {   
+    {
         var size = TextMeasurer.Measure(c.ToString(), textOptions);
         var image = new Image<Rgba32>((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height));
         image.Mutate(ctx => ctx.DrawText(c.ToString(), font, Color.White, PointF.Empty));
-        image.SaveAsBmp($"dbg_glyph-{(byte)c}.bmp");
+        //image.SaveAsBmp($"dbg_glyph-{(byte)c}.bmp");
         var textureID = CreateTexture(image);
         var character = new Character()
         {

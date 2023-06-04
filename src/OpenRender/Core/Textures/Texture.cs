@@ -1,6 +1,5 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
-using System.Reflection.Metadata;
 using PixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 
 namespace OpenRender.Core.Textures;
@@ -115,7 +114,7 @@ public class Texture
             // so we tell StbImageSharp to flip the image when loading.
             StbImage.stbi_set_flip_vertically_on_load(1);
 
-            using var stream = File.OpenRead(paths[0]);
+            using var stream = File.OpenRead(paths[0]);            
             var image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
             //   Note: param 'border' must always be 0; it's a legacy parameter that Khronos never got rid of.         
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
