@@ -148,12 +148,6 @@ public class TextRenderer : IDisposable
         return textureID;
     }
 
-    private IEnumerable<char> GetAllSupportedCharacters()
-    {
-        var allGlyphs = font?.GetGlyphs();
-        var supportedCharacters = allGlyphs.Select(g => g.Value).Distinct();
-        return supportedCharacters;
-    }
     public void Dispose()
     {
         foreach (var character in characters.Values)
