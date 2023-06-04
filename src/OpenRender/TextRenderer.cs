@@ -3,6 +3,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SixLabors.Fonts;
 using SixLabors.ImageSharp.Advanced;
+using SixLabors.ImageSharp.Drawing;
 using SixLabors.ImageSharp.Drawing.Processing;
 using System.Runtime.InteropServices;
 
@@ -116,12 +117,24 @@ public class TextRenderer : IDisposable
         GL.BindTexture(TextureTarget.Texture2D, 0);
     }
 
+    public Color4 BackgroundColor { get; set; } = new Color4(0, 0, 0, 0.8f);
+
     private void LoadCharacter(char c)
     {
         var size = TextMeasurer.Measure(c.ToString(), textOptions!);
         var image = new Image<Rgba32>((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height));
-        image.Mutate(ctx => ctx.DrawText(c.ToString(), font, Color.White, PointF.Empty));
-        //image.SaveAsBmp($"dbg_glyph-{(byte)c}.bmp");
+        image.Mutate(ctx =>
+        {
+            var r = (byte)(BackgroundColor.R * 255f);
+            var g = (byte)(BackgroundColor.G * 255f);
+            var b = (byte)(BackgroundColor.B * 255f);
+            var a = (byte)(BackgroundColor.A * 255f);
+            var backgroundColor = Color.FromRgba(r, g, b, a);
+            ctx.Fill(backgroundColor, new RectangularPolygon(0, 0, image.Width, image.Height));
+            ctx.DrawText(c.ToString(), font, Color.White, PointF.Empty);
+        });
+
+        //image.SaveAsPng($"dbg_glyph-{(byte)c}.png");
         var textureID = CreateTexture(image);
         var character = new Character()
         {
