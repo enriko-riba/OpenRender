@@ -11,8 +11,6 @@ public class Scene
 {
     public const int MaxLights = 4;
 
-    private readonly List<SceneNode> nodes = new();
-    private readonly List<SceneNode> renderList = new();
     private readonly List<LightUniform> lights = new();
     private readonly List<Material> materialList = new();
 
@@ -27,6 +25,8 @@ public class Scene
     private bool hasNodeListChanged;
     private bool hasCameraChanged;
 
+    protected readonly List<SceneNode> nodes = new();
+    protected readonly List<SceneNode> renderList = new();
     protected readonly Shader defaultShader;
     protected ICamera? camera;
 
@@ -79,8 +79,6 @@ public class Scene
         node.Scene = null; // Remove the Scene reference from the removed node
     }
 
-    public readonly TextRenderer tr = new();
-
     public virtual void Load()
     {
         GL.FrontFace(FrontFaceDirection.Ccw);
@@ -97,7 +95,6 @@ public class Scene
 
         vboCamera.BindToShaderProgram(defaultShader);
         vboLight.BindToShaderProgram(defaultShader);
-        tr.LoadFont("consola.ttf", 14);
     }
 
     /// <summary>
@@ -237,5 +234,4 @@ public class Scene
             .Select(n => n.Material)
             .DistinctBy(m => m.Id));
     }
-
 }

@@ -8,7 +8,7 @@ var nativeWindowSettings = new NativeWindowSettings()
 {
     Size = new Vector2i(1024, 800),
     Title = "OpenRender",    
-    Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on macos
+    Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,
     APIVersion = new Version(4, 6),

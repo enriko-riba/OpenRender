@@ -1,4 +1,5 @@
-﻿using OpenRender.Core;
+﻿using OpenRender;
+using OpenRender.Core;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -12,6 +13,8 @@ namespace playground;
 
 internal class TestScene : Scene
 {    
+    private readonly TextRenderer tr = new();
+    private readonly Vector3 textColor = new(0.8f, 0.8f, 0.75f);
     private bool isMouseMoving;
 
     public TestScene() : base("TestScene") { }
@@ -46,7 +49,20 @@ internal class TestScene : Scene
         AddLight(dirLight);
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
+
+        tr.LoadFont("Resources/calibri.ttf", 16);
         //CursorState = CursorState.Hidden;
+    }
+
+    public override void RenderFrame(double elapsedSeconds)
+    {
+        base.RenderFrame(elapsedSeconds);
+
+        var nodesText = $"nodes: {renderList?.Count ?? 0}/{nodes.Count}";
+        tr.RenderText(nodesText, 5, 10, textColor, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+
+        var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
+        tr.RenderText(fpsText, 5, 28, textColor, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
     public override void UpdateFrame(double elapsedSeconds)
@@ -60,6 +76,7 @@ internal class TestScene : Scene
         
         HandleRotation(elapsedSeconds);
         HandleMovement(elapsedSeconds);
+
         if (SceneManager.KeyboardState.IsKeyDown(Keys.Escape))
         {
             SceneManager.Close();

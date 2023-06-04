@@ -29,18 +29,18 @@ public static class Log
             switch (level)
             {
                 case LevelDebug:
-                    WriteWithTimeStamp(ConsoleColor.DarkGray, "[DEBUG] ");
+                    WriteWithTimeStamp(ConsoleColor.DarkGray, "[DBG] ");
                     break;
                 case LevelInfo:
-                    WriteWithTimeStamp(ConsoleColor.Green, "[INFO] ");
+                    WriteWithTimeStamp(ConsoleColor.Green, "[INF] ");
                     textColor = ConsoleColor.Gray;
                     break;
                 case LevelWarn:
-                    WriteWithTimeStamp(ConsoleColor.Yellow, "[WARN] ");
+                    WriteWithTimeStamp(ConsoleColor.Yellow, "[WAR] ");
                     textColor = ConsoleColor.DarkYellow;
                     break;
                 default:
-                    WriteWithTimeStamp(ConsoleColor.Red, "[ERROR] ");
+                    WriteWithTimeStamp(ConsoleColor.Red, "[ERR] ");
                     textColor = ConsoleColor.Yellow;
                     break;
             }
@@ -51,7 +51,8 @@ public static class Log
 
     private static void WriteWithTimeStamp(ConsoleColor color, string message)
     {
-        Console.Write($"{DateTime.Now.ToLocalTime()} ");
+        WriteColored(ConsoleColor.DarkCyan, $"{DateTime.Now.ToLocalTime()} ");
+        //Console.Write($"{DateTime.Now.ToLocalTime()} ");
         WriteColored(color, message);
     }
 

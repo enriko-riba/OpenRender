@@ -37,13 +37,7 @@
     </Content>
     <Content Include="Shaders\standard.vert">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content> 
-	<Content Include="consola.ttf">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
-	<Content Include="calibri.ttf">
-	  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-	</Content>
   </ItemGroup>
 
   <ItemGroup>    

@@ -23,7 +23,7 @@ public static class Utility
         // In order to access the string pointed to by pMessage, you can use Marshal
         // class to copy its contents to a C# string without unsafe code. You can
         // also use the new function Marshal.PtrToStringUTF8 since .NET Core 1.1.
-        var message = Marshal.PtrToStringAnsi(pMessage, length);
+        var message = Marshal.PtrToStringUTF8(pMessage, length);
 
         Console.WriteLine("[{0} source={1} type={2} id={3}] {4}", severity, source, type, id, message);
 
