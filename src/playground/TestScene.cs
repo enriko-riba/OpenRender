@@ -14,7 +14,8 @@ namespace playground;
 internal class TestScene : Scene
 {    
     private readonly TextRenderer tr = new();
-    private readonly Vector3 textColor = new(0.8f, 0.8f, 0.75f);
+    private readonly Vector3 textColor1 = new(1, 1, 1);
+    private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
     private bool isMouseMoving;
 
     public TestScene() : base("TestScene") { }
@@ -50,19 +51,25 @@ internal class TestScene : Scene
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
 
-        tr.LoadFont("Resources/calibri.ttf", 16);
+        tr.LoadFont("Resources/consola.ttf", 15);
         //CursorState = CursorState.Hidden;
     }
 
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
+        const int Pad = 53;
+        var nodesText = $" nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Pad); ;
+        tr.RenderText(nodesText, 5, 10, textColor1, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        var fpsText = $" avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Pad); ;
+        tr.RenderText(fpsText, 5, 28, textColor1, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
 
-        var nodesText = $"nodes: {renderList?.Count ?? 0}/{nodes.Count}";
-        tr.RenderText(nodesText, 5, 10, textColor, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-
-        var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
-        tr.RenderText(fpsText, 5, 28, textColor, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        var helpText = $" WASD: move, L shift: down, space: up".PadRight(Pad);
+        tr.RenderText(helpText, 5, 46, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        helpText = $" mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Pad);
+        tr.RenderText(helpText, 5, 64, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        helpText = $" F1: bounding sphere (wire), F11: toggle full screen".PadRight(Pad);
+        tr.RenderText(helpText, 5, 82, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
     public override void UpdateFrame(double elapsedSeconds)
