@@ -13,10 +13,11 @@ namespace playground;
 
 internal class TestScene : Scene
 {    
-    private readonly TextRenderer tr = new();
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
+    
     private bool isMouseMoving;
+    private TextRenderer tr = default!;
 
     public TestScene() : base("TestScene") { }
 
@@ -50,9 +51,15 @@ internal class TestScene : Scene
         AddLight(dirLight);
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
-
-        tr.LoadFont("Resources/consola.ttf", 15);
+        tr = new TextRenderer("Resources/consola.ttf", 15, TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y));
+       
         //CursorState = CursorState.Hidden;
+    }
+
+    public override void OnResize(ResizeEventArgs e)
+    {
+        base.OnResize(e);
+        tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
     public override void RenderFrame(double elapsedSeconds)
@@ -60,16 +67,16 @@ internal class TestScene : Scene
         base.RenderFrame(elapsedSeconds);
         const int Pad = 53;
         var nodesText = $" nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Pad); ;
-        tr.RenderText(nodesText, 5, 10, textColor1, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Render(nodesText, 5, 10, textColor1);
         var fpsText = $" avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Pad); ;
-        tr.RenderText(fpsText, 5, 28, textColor1, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Render(fpsText, 5, 28, textColor1);
 
         var helpText = $" WASD: move, L shift: down, space: up".PadRight(Pad);
-        tr.RenderText(helpText, 5, 46, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Render(helpText, 5, 46, textColor2);
         helpText = $" mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Pad);
-        tr.RenderText(helpText, 5, 64, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Render(helpText, 5, 64, textColor2);
         helpText = $" F1: bounding sphere (wire), F11: toggle full screen".PadRight(Pad);
-        tr.RenderText(helpText, 5, 82, textColor2, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Render(helpText, 5, 82, textColor2);
     }
 
     public override void UpdateFrame(double elapsedSeconds)

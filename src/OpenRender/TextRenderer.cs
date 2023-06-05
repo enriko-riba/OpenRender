@@ -18,6 +18,7 @@ public class TextRenderer : IDisposable
 
     private Font? font;
     private TextOptions? textOptions;
+    private Matrix4 projectionMatrix;
 
     private struct Character
     {
@@ -26,7 +27,7 @@ public class TextRenderer : IDisposable
         public Vector2 Bearing;
     }
 
-    public TextRenderer()
+    public TextRenderer(string fontFilePath, int fontSize, Matrix4 projection)
     {
         shader = new Shader("Shaders/text.vert", "Shaders/text.frag");
         vao = GL.GenVertexArray();
@@ -41,7 +42,13 @@ public class TextRenderer : IDisposable
         GL.EnableVertexAttribArray(0);
         GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
         GL.EnableVertexAttribArray(1);
+        projectionMatrix = projection;
+        LoadFont(fontFilePath, fontSize);
     }
+
+    public static Matrix4 CreateTextRenderingProjection(float screenWidth, float screenHeight) => Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
+
+    public Matrix4 Projection { get => projectionMatrix; set { projectionMatrix = value; } }
 
     public void LoadFont(string fontPath, float fontSize)
     {
@@ -52,10 +59,7 @@ public class TextRenderer : IDisposable
         characters.Clear();
     }
 
-    public void RenderText(string text, float x, float y, Vector3 color, float screenWidth, float screenHeight)
-        => RenderText(text, x, y, 1f, 1f, color, screenWidth, screenHeight);
-
-    public void RenderText(string text, float x, float y, float scaleX, float scaleY, Vector3 color, float screenWidth, float screenHeight)
+    public void Render(string text, float x, float y, Vector3 color, float scaleX = 1, float scaleY = 1)
     {
         // Save previous OpenGL states
         var previousBlendEnabled = GL.IsEnabled(EnableCap.Blend);
@@ -68,7 +72,7 @@ public class TextRenderer : IDisposable
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.Disable(EnableCap.DepthTest);
 
-        var projectionMatrix = Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
+
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindVertexArray(vao);
         shader.Use();
