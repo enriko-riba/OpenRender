@@ -37,13 +37,13 @@ public class Camera3D : CameraBase
         var yawR = MathHelper.DegreesToRadians(yawDegrees);
         var pitchR = MathHelper.DegreesToRadians(pitchDegrees);
         var rollR = MathHelper.DegreesToRadians(rollDegrees);
-        if (yawR != 0)
-        {
-            orientation *= Quaternion.FromEulerAngles(0, yawR, 0);
-        }
         if (pitchR != 0)
         {
             orientation *= Quaternion.FromEulerAngles(pitchR, 0, 0);
+        }
+        if (yawR != 0)
+        {
+            orientation *= Quaternion.FromEulerAngles(0, yawR, 0);
         }
         if (rollR != 0)
         {

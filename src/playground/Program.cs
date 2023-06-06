@@ -6,7 +6,7 @@ using playground;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
-    Size = new Vector2i(1024, 800),
+    Size = new Vector2i(1280, 1024),
     Title = "OpenRender",    
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
@@ -15,10 +15,8 @@ var nativeWindowSettings = new NativeWindowSettings()
     NumberOfSamples = 8,
 };
 
-using (var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings))
-{
-    var myScene = new TestScene();
-    scm.AddScene(myScene);
-    scm.ActivateScene(myScene.Name);
-    scm.Run();
-}
+using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
+var myScene = new TestScene();
+scm.AddScene(myScene);
+scm.ActivateScene(myScene.Name);
+scm.Run();
