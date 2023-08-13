@@ -6,7 +6,6 @@ using SixLabors.Fonts.Unicode;
 using SixLabors.ImageSharp.Advanced;
 using SixLabors.ImageSharp.Drawing.Processing;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace OpenRender.Text;
 
@@ -85,7 +84,7 @@ public class FontAtlasGenerator
         }
 
         // TODO: for debug, remove
-        image.SaveAsPng("atlas.png");
+        //image.SaveAsPng("atlas.png");
 
         var buffer = MemoryMarshal.AsBytes(image.GetPixelMemoryGroup().Single().Span).ToArray();
         fontAtlas.Texture = Texture.FromByteArray(buffer,
@@ -157,7 +156,7 @@ public class FontAtlasGenerator
     /// <param name="endAsciiCode">excluded ending ASCII character code</param>
     /// <returns></returns>
     private static ReadOnlySpan<char> GenerateCharacters(int startAsciiCode, int endAsciiCode)
-    {        
+    {
         var arr = new char[endAsciiCode - startAsciiCode];
         for (var i = startAsciiCode; i < endAsciiCode; i++)
         {
