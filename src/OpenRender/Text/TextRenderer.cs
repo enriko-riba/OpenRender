@@ -9,10 +9,10 @@ public class TextRenderer
     private readonly int vao;
     private readonly int vbo;
     private readonly Shader shader;
-    private readonly FontAtlas fontAtlas;
+    private readonly IFontAtlas fontAtlas;
     private Matrix4 projectionMatrix;
 
-    public TextRenderer(Matrix4 projection, FontAtlas fontAtlas)
+    public TextRenderer(Matrix4 projection, IFontAtlas fontAtlas)
     {
         projectionMatrix = projection;
         this.fontAtlas = fontAtlas;        
@@ -62,28 +62,25 @@ public class TextRenderer
 
         // Bind the vertex array and draw all the characters in a single draw call
         GL.BindVertexArray(vao);
-        for (var i = 0; i < text.Length; i++)
+
+        foreach(var c in text)
         {
-            var c = text[i];
-            if (c is >= (char)32 and <= (char)126) // ASCII characters from 32 to 126
+            var glyph = fontAtlas.Glyphs[c];
+            var characterVertices = new float[]
             {
-                var glyph = fontAtlas.Glyphs[c];
-                var characterVertices = new float[]
-                {
                     x, y,                                 glyph.UvMinX, glyph.UvMinY,
                     x, y + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
                     x + glyph.Width, y,                   glyph.UvMaxX, glyph.UvMinY,
                     x + glyph.Width, y,                   glyph.UvMaxX, glyph.UvMinY,
                     x, y + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
                     x + glyph.Width, y + glyph.Height,    glyph.UvMaxX, glyph.UvMaxY,
-                };
-                GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-                GL.BufferData(BufferTarget.ArrayBuffer, characterVertices.Length * sizeof(float), characterVertices, BufferUsageHint.StaticDraw);
-                GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
-                Log.CheckGlError();
-                x += glyph.Width;
-            }
-        }
+            };
+            GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
+            GL.BufferData(BufferTarget.ArrayBuffer, characterVertices.Length * sizeof(float), characterVertices, BufferUsageHint.StaticDraw);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
+            Log.CheckGlError();
+            x += glyph.Width;
+        }       
 
         // Restore previous OpenGL states
         if (previousBlendEnabled)

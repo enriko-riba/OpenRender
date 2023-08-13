@@ -52,7 +52,7 @@ internal class TestScene : Scene
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
 
-        var fontAtlas = FontAtlas.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
+        var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
 
         //CursorState = CursorState.Hidden;
