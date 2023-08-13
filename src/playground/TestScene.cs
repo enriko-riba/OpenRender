@@ -13,11 +13,9 @@ namespace playground;
 
 internal class TestScene : Scene
 {
-
-
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
-    
+
     private bool isMouseMoving;
     private TextRenderer tr = default!;
 
@@ -53,7 +51,10 @@ internal class TestScene : Scene
         AddLight(dirLight);
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
-        tr = new TextRenderer("Resources/consola.ttf", 18, TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y));
+
+        var fontAtlas = FontAtlas.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
+        tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
+
         //CursorState = CursorState.Hidden;
     }
 
@@ -90,7 +91,7 @@ internal class TestScene : Scene
         {
             return;
         }
-        
+
         HandleRotation(elapsedSeconds);
         HandleMovement(elapsedSeconds);
 
@@ -99,8 +100,8 @@ internal class TestScene : Scene
             SceneManager.Close();
         }
 
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F1)) 
-        { 
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F1))
+        {
             ShowBoundingSphere = !ShowBoundingSphere;
         }
 

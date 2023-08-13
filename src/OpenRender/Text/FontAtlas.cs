@@ -10,6 +10,9 @@ using System.Text;
 
 namespace OpenRender.Text;
 
+/// <summary>
+/// Encapsulates a font atlas texture prerendered with glyphs from the given character set in given font and size.
+/// </summary>
 public class FontAtlas
 {
     const int Padding = 4;
@@ -28,10 +31,13 @@ public class FontAtlas
 
     public Vector2i CharacterFrameSize { get; private set; }
 
-    public static FontAtlas Create(Font font, Color4 backgroundColor)
+    public static FontAtlas Create(string fontName, int fontSize, Color4 backgroundColor)
     {
-        ArgumentNullException.ThrowIfNull(font);
-        var style = new TextOptions(font)
+        var fontCollection = new FontCollection();
+        var family = fontCollection.Add(fontName);
+        var font = family.CreateFont(fontSize);
+
+        var textOptions = new TextOptions(font)
         {
             VerticalAlignment = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Left,
@@ -40,9 +46,9 @@ public class FontAtlas
         var sb = new StringBuilder();
 
         //  measure widest char and line height to calc image dimensions
-        var charBounds = TextMeasurer.MeasureAdvance("W", style);
+        var charBounds = TextMeasurer.MeasureAdvance("W", textOptions);
         var chars = GenerateCharacters(32, 128);
-        var rect = TextMeasurer.MeasureAdvance(chars, style);
+        var rect = TextMeasurer.MeasureAdvance(chars, textOptions);
 
         var totalChars = 128 - 32;
         var charWidth = (int)Math.Ceiling(charBounds.Width);
@@ -54,7 +60,7 @@ public class FontAtlas
         fontAtlas.Size = new Vector2i(sizeW, sizeH);
         fontAtlas.CharWidth = charWidth;
         fontAtlas.CharacterFrameSize = new Vector2i(charWidth + Padding, charHeight + Padding);
-        
+
         var image = new Image<Rgba32>(sizeW, sizeH);
         image.Mutate(ctx => ctx.BackgroundColor(backgroundColor.ToImageSharpColor()));
 
@@ -72,7 +78,7 @@ public class FontAtlas
                 //  new row?
                 if (currentRow != row)
                 {
-                    AddRow(fontAtlas, font, style, sb, image, ref currentY);
+                    AddRow(fontAtlas, font, textOptions, sb, image, ref currentY);
                     currentRow = row;
                 }
                 sb.Append((char)i);
@@ -81,7 +87,7 @@ public class FontAtlas
 
         if (sb.Length > 0)
         {
-            AddRow(fontAtlas, font, style, sb, image, ref currentY);
+            AddRow(fontAtlas, font, textOptions, sb, image, ref currentY);
         }
 
         // TODO: for debug, remove
@@ -108,7 +114,7 @@ public class FontAtlas
         sb.Clear();
         var textureX = (float)Padding;
 
-        TextMeasurer.TryMeasureCharacterAdvances(text, style, out var glyphBounds);       
+        TextMeasurer.TryMeasureCharacterAdvances(text, style, out var glyphBounds);
         var drawY = textureY + fontAtlas.CharacterFrameSize.Y;
         var rto = new RichTextOptions(font)
         {
@@ -117,7 +123,7 @@ public class FontAtlas
             VerticalAlignment = style.VerticalAlignment,
             Origin = new PointF(textureX, drawY),
         };
-        var brush = new SolidBrush(Color.Blue);
+        var brush = new SolidBrush(Color.White);
 
         for (var j = 0; j < text.Length; j++)
         {
@@ -162,5 +168,5 @@ public class FontAtlas
             sb.Append((char)i);
         }
         return sb.ToString();
-    }   
+    }
 }

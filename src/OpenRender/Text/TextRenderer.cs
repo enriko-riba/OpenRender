@@ -1,7 +1,6 @@
 ﻿using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
-using SixLabors.Fonts;
 
 namespace OpenRender.Text;
 
@@ -13,16 +12,10 @@ public class TextRenderer
     private readonly FontAtlas fontAtlas;
     private Matrix4 projectionMatrix;
 
-    public TextRenderer(string fontName, int size, Matrix4 projection)
+    public TextRenderer(Matrix4 projection, FontAtlas fontAtlas)
     {
         projectionMatrix = projection;
-
-        var fontCollection = new FontCollection();
-        var family = fontCollection.Add(fontName);
-        var font = family.CreateFont(size);
-        //font = SystemFonts.CreateFont("Arial", size, FontStyle.Regular);
-        var backgroundColor = new Color4(0f, 0f, 0f, 0.20f);
-        fontAtlas = FontAtlas.Create(font, backgroundColor);
+        this.fontAtlas = fontAtlas;        
 
         vao = GL.GenVertexArray();
         vbo = GL.GenBuffer();
@@ -46,6 +39,17 @@ public class TextRenderer
 
     public void Render(string text, float x, float y, Vector3 color)
     {
+        // Save previous OpenGL states
+        var previousBlendEnabled = GL.IsEnabled(EnableCap.Blend);
+        var previousBlendSrc = GL.GetInteger(GetPName.BlendSrc);
+        var previousBlendDest = GL.GetInteger(GetPName.BlendDst);
+        var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
+
+        // Enable blending & disable depth test
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        GL.Disable(EnableCap.DepthTest);
+
         // Use the text shader program
         shader.Use();
 
@@ -81,6 +85,18 @@ public class TextRenderer
             }
         }
 
+        // Restore previous OpenGL states
+        if (previousBlendEnabled)
+            GL.Enable(EnableCap.Blend);
+        else
+            GL.Disable(EnableCap.Blend);
+        GL.BlendFunc((BlendingFactor)previousBlendSrc, (BlendingFactor)previousBlendDest);
+        if (previousDepthTestEnabled)
+            GL.Enable(EnableCap.DepthTest);
+        else
+            GL.Disable(EnableCap.DepthTest);
+
+        GL.BindTexture(TextureTarget.Texture2D, 0);
         GL.BindVertexArray(0);
     }
 }

@@ -7,5 +7,7 @@ out vec4 outputColor;
 void main()
 {
     vec4 texel = texture(fontAtlasSampler, texUV);
-    outputColor = vec4(texel.b * textColor, texel.a);
+    vec4 sampled = vec4(1.0, 1.0, 1.0, texel.b);
+    outputColor  = vec4(texel.rgb * textColor, texel.a);
+    //outputColor = vec4(texel.b * textColor, texel.a);
 }
