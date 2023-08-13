@@ -1,4 +1,5 @@
-﻿using OpenTK.Graphics.OpenGL4;
+﻿using OpenTK.Graphics;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -72,5 +73,14 @@ public static class Utility
     {
         CreateLookAtRotation(in eyeDirection, in targetDirection, out var tmp);
         return tmp;
+    }
+
+    public static Color ToImageSharpColor(this Color4 color)
+    {
+        var r = (byte)(color.R * 255f);
+        var g = (byte)(color.G * 255f);
+        var b = (byte)(color.B * 255f);
+        var a = (byte)(color.A * 255f);
+        return Color.FromRgba(r, g, b, a);
     }
 }

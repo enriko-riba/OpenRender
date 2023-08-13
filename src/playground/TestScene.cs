@@ -1,9 +1,9 @@
-﻿using OpenRender;
-using OpenRender.Core;
+﻿using OpenRender.Core;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
+using OpenRender.Text;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -12,7 +12,9 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 namespace playground;
 
 internal class TestScene : Scene
-{    
+{
+
+
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
     
@@ -51,8 +53,7 @@ internal class TestScene : Scene
         AddLight(dirLight);
 
         camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
-        tr = new TextRenderer("Resources/consola.ttf", 15, TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y));
-       
+        tr = new TextRenderer("Resources/consola.ttf", 18, TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y));
         //CursorState = CursorState.Hidden;
     }
 
@@ -66,17 +67,19 @@ internal class TestScene : Scene
     {
         base.RenderFrame(elapsedSeconds);
         const int Pad = 53;
+        const int LineHeight = 18;
+        const int TextStartY = 10;
         var nodesText = $" nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Pad); ;
-        tr.Render(nodesText, 5, 10, textColor1);
+        tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $" avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Pad); ;
-        tr.Render(fpsText, 5, 28, textColor1);
+        tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
 
         var helpText = $" WASD: move, L shift: down, space: up".PadRight(Pad);
-        tr.Render(helpText, 5, 46, textColor2);
+        tr.Render(helpText, 5, TextStartY + LineHeight * 2, textColor2);
         helpText = $" mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Pad);
-        tr.Render(helpText, 5, 64, textColor2);
+        tr.Render(helpText, 5, TextStartY + LineHeight * 3, textColor2);
         helpText = $" F1: bounding sphere (wire), F11: toggle full screen".PadRight(Pad);
-        tr.Render(helpText, 5, 82, textColor2);
+        tr.Render(helpText, 5, TextStartY + LineHeight * 4, textColor2);
     }
 
     public override void UpdateFrame(double elapsedSeconds)

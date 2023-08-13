@@ -19,13 +19,14 @@ public class Shader
     /// <param name="fragPath"></param>
     public Shader(string vertPath, string fragPath)
     {
-        Log.Debug($"creating shader: '{vertPath}'");
+        Log.Info("creating program '{0}', '{1}'", vertPath, fragPath);
+        Log.Debug("creating vertex shader...");
         var shaderSource = File.ReadAllText(vertPath);
         var vertexShader = GL.CreateShader(ShaderType.VertexShader);
         GL.ShaderSource(vertexShader, shaderSource);
         CompileShader(vertexShader, vertPath);
 
-        Log.Debug($"creating shader: '{fragPath}'");
+        Log.Debug("creating fragment shader...");
         shaderSource = File.ReadAllText(fragPath);
         var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
         GL.ShaderSource(fragmentShader, shaderSource);
@@ -38,6 +39,7 @@ public class Shader
         LinkProgram(Handle);
 
         // Detach and then delete individual shaders - they are not needed anymore
+        Log.Debug("deleting shader programs: {0}, {1}", vertexShader, fragmentShader);
         GL.DetachShader(Handle, vertexShader);
         GL.DetachShader(Handle, fragmentShader);
         GL.DeleteShader(fragmentShader);
@@ -137,6 +139,17 @@ public class Shader
     }
 
     /// <summary>
+    /// Set a uniform Vector4.
+    /// </summary>
+    /// <param name="name">The name of the uniform</param>
+    /// <param name="data">The data to set</param>
+    public void SetVector4(string name, ref Vector4 data)
+    {
+        GL.UseProgram(Handle);
+        if (IsUniformValid(name)) GL.Uniform4(uniformLocations[name], data);
+    }
+
+    /// <summary>
     /// Set a uniform Vector3.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
@@ -145,6 +158,17 @@ public class Shader
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.Uniform3(uniformLocations[name], data);
+    }
+
+    /// <summary>
+    /// Set a uniform Vector2.
+    /// </summary>
+    /// <param name="name">The name of the uniform</param>
+    /// <param name="data">The data to set</param>
+    public void SetVector2(string name, ref Vector2 data)
+    {
+        GL.UseProgram(Handle);
+        if (IsUniformValid(name)) GL.Uniform2(uniformLocations[name], data);
     }
 
     public bool UniformExists(string name) => uniformLocations.ContainsKey(name);

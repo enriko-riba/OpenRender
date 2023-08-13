@@ -72,6 +72,55 @@ public class Texture
 
     public override string ToString() => $"[{Handle}] '{Name}' : '{UniformName}' : {TextureTarget}";
 
+    public static Texture FromByteArray(byte[] buffer,
+        int width,
+        int height,
+        string name,
+        TextureUnit unit = TextureUnit.Texture0,
+        TextureType textureType = TextureType.Unknown,
+        TextureMinFilter minFilter = TextureMinFilter.Linear,
+        TextureMagFilter magFilter = TextureMagFilter.Linear,
+        TextureWrapMode textureWrapS = TextureWrapMode.Repeat,
+        TextureWrapMode textureWrapT = TextureWrapMode.Repeat,
+        bool generateMipMap = false,
+        TextureTarget textureTarget = TextureTarget.Texture2D)
+    {
+        var key = CalculateKey(new string[] { name }, textureType, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
+        if (textureCache.TryGetValue(key, out var cachedTexture))
+        {
+            return cachedTexture;
+        }
+
+        var handle = GL.GenTexture();
+        GL.BindTexture(textureTarget, handle);
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, buffer);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)textureWrapS);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)textureWrapT);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)minFilter);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)magFilter);
+        if (generateMipMap)
+        {
+            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+        }
+        GL.BindTexture(TextureTarget.Texture2D, 0);
+
+        var texture = new Texture(handle)
+        {
+            TextureUnit = unit,
+            Name = name,
+            UniformName = $"texture_{textureType.ToString().ToLowerInvariant()}",
+            MinFilter = minFilter,
+            MagFilter = magFilter,
+            TextureWrapS = textureWrapS,
+            TextureWrapT = textureWrapT,
+            TextureTarget = textureTarget,
+            CacheKey = key
+        };
+        textureCache[key] = texture;
+        Log.Debug($"created texture: {texture}");
+        return texture;
+    }
+
     public static Texture FromDescriptor(TextureDescriptor descriptor, TextureUnit unit)
     {
         return FromFile(
@@ -97,8 +146,8 @@ public class Texture
         bool generateMipMap = true,
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
-        var key = CalculateKey(paths, textureType, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget );
-        if(textureCache.TryGetValue(key, out var cachedTexture))
+        var key = CalculateKey(paths, textureType, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
+        if (textureCache.TryGetValue(key, out var cachedTexture))
         {
             return cachedTexture;
         }
@@ -113,7 +162,7 @@ public class Texture
             // so we tell StbImageSharp to flip the image when loading.
             StbImage.stbi_set_flip_vertically_on_load(1);
 
-            using var stream = File.OpenRead(paths[0]);            
+            using var stream = File.OpenRead(paths[0]);
             var image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
             //   Note: param 'border' must always be 0; it's a legacy parameter that Khronos never got rid of.         
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
@@ -247,7 +296,7 @@ public class Texture
         return textures;
     }
 
-    private static string CalculateKey(string[] paths,   
+    private static string CalculateKey(string[] paths,
         TextureType textureType,
         TextureMinFilter minFilter,
         TextureMagFilter magFilter,
@@ -256,7 +305,7 @@ public class Texture
         bool generateMipMap,
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
-        var names = textureTarget == TextureTarget.TextureCubeMap ? string.Join(':',paths) : paths[0];
+        var names = textureTarget == TextureTarget.TextureCubeMap ? string.Join(':', paths) : paths[0];
         return $"{names}|{textureType}:{minFilter}:{magFilter}:{textureWrapS}:{textureWrapT}:{generateMipMap}";
     }
 }

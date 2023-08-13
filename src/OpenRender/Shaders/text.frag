@@ -1,15 +1,11 @@
 #version 330 core
-
-in vec2 fragTexCoord;
-out vec4 fragColor;
-
-uniform sampler2D textSampler;
+uniform sampler2D fontAtlasSampler;
 uniform vec3 textColor;
 
+in vec2 texUV;
+out vec4 outputColor;
 void main()
 {
-    vec4 texel = texture(textSampler, fragTexCoord);
-//    vec4 sampled = vec4(1.0, 1.0, 1.0, texel.r);
-//    fragColor = vec4(textColor * texel.rgb, texel.a) * sampled;
-    fragColor = vec4(texel.rgb * textColor, texel.a);
+    vec4 texel = texture(fontAtlasSampler, texUV);
+    outputColor = vec4(texel.b * textColor, texel.a);
 }
