@@ -8,7 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\OpenRender\OpenRender.csproj" />
+    <ProjectReference Include="..\..\OpenRender\OpenRender.csproj" />
+    <ProjectReference Include="..\..\TextRendering\TextRendering.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -15,7 +15,7 @@ public class TextRenderer
     public TextRenderer(Matrix4 projection, IFontAtlas fontAtlas)
     {
         projectionMatrix = projection;
-        this.fontAtlas = fontAtlas;        
+        this.fontAtlas = fontAtlas;
 
         vao = GL.GenVertexArray();
         vbo = GL.GenBuffer();
@@ -63,7 +63,7 @@ public class TextRenderer
         // Bind the vertex array and draw all the characters in a single draw call
         GL.BindVertexArray(vao);
 
-        foreach(var c in text)
+        foreach (var c in text)
         {
             var glyph = fontAtlas.Glyphs[c];
             var characterVertices = new float[]
@@ -80,7 +80,7 @@ public class TextRenderer
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
             Log.CheckGlError();
             x += glyph.Width;
-        }       
+        }
 
         // Restore previous OpenGL states
         if (previousBlendEnabled)

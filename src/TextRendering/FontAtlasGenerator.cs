@@ -69,7 +69,7 @@ public class FontAtlasGenerator
                 //  new row?
                 if (currentRow != row)
                 {
-                    var slice = characterSet.Slice(start, counter - start);
+                    var slice = characterSet[start..counter];
                     AddRow(fontAtlas, font, textOptions, slice, image, ref currentY);
                     currentRow = row;
                     start = counter;
@@ -79,7 +79,7 @@ public class FontAtlasGenerator
 
         if (start < characterSet.Length)
         {
-            var slice = characterSet.Slice(start, counter - start);
+            var slice = characterSet[start..counter];
             AddRow(fontAtlas, font, textOptions, slice, image, ref currentY);
         }
 

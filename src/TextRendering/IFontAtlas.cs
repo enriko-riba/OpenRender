@@ -6,5 +6,5 @@ public interface IFontAtlas
 {
     Dictionary<char, GlyphInfo> Glyphs { get; }
     Texture Texture { get; }
-    int LineHeight { get; } 
+    int LineHeight { get; }
 }

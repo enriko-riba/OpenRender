@@ -6,7 +6,7 @@ public class GlyphInfo
     public float UvMaxX { get; set; }
     public float UvMinY { get; set; }
     public float UvMaxY { get; set; }
-    
+
     /// <summary>
     /// Glyph width in pixel units.
     /// </summary>
