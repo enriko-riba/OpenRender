@@ -51,6 +51,16 @@ public class Texture
     public TextureTarget TextureTarget { get; set; }
 
     /// <summary>
+    /// The texture width in pixels.
+    /// </summary>
+    public int Width { get; internal set; }
+
+    /// <summary>
+    /// The texture height in pixels.
+    /// </summary>
+    public int Height { get; internal set; }
+
+    /// <summary>
     /// Internal cache key.
     /// </summary>
     public string CacheKey { get; private set; } = default!;
@@ -114,6 +124,8 @@ public class Texture
             TextureWrapS = textureWrapS,
             TextureWrapT = textureWrapT,
             TextureTarget = textureTarget,
+            Width = width,  
+            Height = height,
             CacheKey = key
         };
         textureCache[key] = texture;
@@ -155,7 +167,7 @@ public class Texture
         var handle = GL.GenTexture();
         GL.BindTexture(textureTarget, handle);
         GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
-
+        ImageResult? image = null;
         if (textureTarget == TextureTarget.Texture2D)
         {
             // OpenGL has it's texture origin in the lower left corner instead of the top left corner,
@@ -163,7 +175,7 @@ public class Texture
             StbImage.stbi_set_flip_vertically_on_load(1);
 
             using var stream = File.OpenRead(paths[0]);
-            var image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
+            image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
             //   Note: param 'border' must always be 0; it's a legacy parameter that Khronos never got rid of.         
             GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
             if (generateMipMap)
@@ -177,7 +189,7 @@ public class Texture
             for (var i = 0; i < paths.Length; i++)
             {
                 using var stream = File.OpenRead(paths[i]);
-                var image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
+                image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
                 GL.TexImage2D(TextureTarget.TextureCubeMapPositiveX + i, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
             }
             GL.TexParameter(textureTarget, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
@@ -199,6 +211,8 @@ public class Texture
             TextureWrapS = textureWrapS,
             TextureWrapT = textureWrapT,
             TextureTarget = textureTarget,
+            Width = image!.Width,
+            Height = image.Height,
             CacheKey = key
         };
         textureCache[key] = texture;

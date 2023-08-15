@@ -13,6 +13,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="Resources\awesomeface-sprite.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Update="Resources\awesomeface.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

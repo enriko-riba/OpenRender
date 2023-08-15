@@ -8,6 +8,7 @@ layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec3 aColor;
 layout (location = 3) in vec2 aTexCoord;
 ```
+Make sure that your shader program uses the same attribute locations.
 
 ### Uniforms
 ```
@@ -103,6 +104,6 @@ uniform int hasDiffuseTexture;
 uniform float detailTextureFactor;
 ```
 
-**`hasDiffuseTexture`** is telling the fragment shader if the diffuse1 sampler should be used. When this value is 0 the diffuse1 texture is not contributing to color output.
+**`hasDiffuseTexture`** is telling the fragment shader if the texture_diffuse sampler should be used. When this value is 0 the diffuse texture is not contributing to color output.
 
-**`detailTextureFactor`** is telling the fragment shader if the diffuse2 sampler should be used. When this value is > 0 the diffuse2 texture is blended with the output color.
+**`detailTextureFactor`** is telling the fragment shader if the texture_detail sampler should be used. When this value is > 0 the detail texture is blended with the output color.

@@ -12,6 +12,26 @@ public static class GeometryHelper
     /// <summary>
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
     /// </summary>
+    /// <returns></returns>
+    public static VertexBuffer Create2dQuad(int width, int height)
+    {
+        VertexDeclaration vxDeclaration;
+        float[] vertices;        
+        vertices = Create2dQuadWithoutNormals(width, height);
+        vxDeclaration = VertexDeclarations.VertexPosition2DTexture;       
+
+        uint[] indices =
+        {
+            0, 1, 3,
+            0, 3, 2
+        };
+        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
+        return vertexBuffer;
+    }
+
+    /// <summary>
+    /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
+    /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
     public static VertexBuffer CreateQuad(bool createNormals)
@@ -31,8 +51,8 @@ public static class GeometryHelper
 
         uint[] indices =
         {
-            0, 3, 1,
-            0, 2, 3
+            0, 1, 3,
+            0, 3, 2
         };
         var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
         return vertexBuffer;
@@ -352,6 +372,20 @@ public static class GeometryHelper
             -HALF,  HALF, 0,    0, 0,   // upper left corner
              HALF, -HALF, 0,    1, 1,   // lower right corner
              HALF,  HALF, 0,    1, 0,   // upper right corner
+        };
+        return vertices;
+    }
+
+    private static float[] Create2dQuadWithoutNormals(int width, int height)
+    {
+        //  create the 4 vertices with: 2 floats for position + 2 floats for uv
+        //  note: the coordinates go from 0 to 1 (multiplied by width and height) because we want the sprite to align with screen coordinates.
+        var vertices = new float[]
+        {
+             0, 0,                  0, 1,   // lower left corner
+             0, 1 * height,         0, 0,   // upper left corner
+             1 * width, 0,          1, 1,   // lower right corner
+             1 * width, 1 * height, 1, 0,   // upper right corner
         };
         return vertices;
     }

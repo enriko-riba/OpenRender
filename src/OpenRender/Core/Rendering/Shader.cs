@@ -79,8 +79,7 @@ public class Shader
     /// <returns></returns>
     public int GetUniformBlockIndex(string uniformBlockName)
     {
-        uniformBlockIndices.TryGetValue(uniformBlockName, out var index);
-        return index;
+        return uniformBlockIndices.TryGetValue(uniformBlockName, out var index) ? index : -1;
     }
 
     public int GetUniformLocation(string uniformName)

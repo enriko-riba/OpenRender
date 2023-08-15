@@ -2,9 +2,10 @@
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
+using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 
-namespace OpenRender.SceneManagement;
+namespace OpenRender.Components;
 
 public class SkyBox : SceneNode
 {
@@ -24,6 +25,7 @@ public class SkyBox : SceneNode
         var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
         SetMesh(ref skyBoxMesh);
         SetScale(5);
+        RenderGroup = RenderGroup.SkyBox;
     }
 
     public override void OnDraw(Scene scene, double elapsed)

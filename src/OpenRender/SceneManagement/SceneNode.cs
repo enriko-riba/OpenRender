@@ -3,6 +3,7 @@ using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
 
 namespace OpenRender.SceneManagement;
 
@@ -27,6 +28,7 @@ public class SceneNode
         SetPosition(position);
         SetRotation(Vector3.Zero);
         SetMesh(ref mesh);
+        RenderGroup = RenderGroup.Default;
     }
 
     public BoundingSphere BoundingSphere => boundingSphere;
@@ -65,6 +67,10 @@ public class SceneNode
         get => showBoundingSphere || (Scene?.ShowBoundingSphere ?? false);
         set => showBoundingSphere = value;
     }
+
+    public bool DisableCulling { get; set; }
+
+    public RenderGroup RenderGroup { get; set; }
 
     public Action<SceneNode, double>? Update { get; set; }
 
@@ -184,6 +190,14 @@ public class SceneNode
         this.scale.Z = scale;
         Invalidate();
     }
+
+    /// <summary>
+    /// Handles the resize event. The base class has no implementation so invoking base.OnResize() is not required.
+    /// </summary>
+    /// <param name="scene"></param>
+    /// <param name="e"></param>
+    public virtual void OnResize(Scene scene, ResizeEventArgs e) { }
+
 
     /// <summary>
     /// Calculates the world matrix (SROT).

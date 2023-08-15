@@ -34,4 +34,10 @@ public class UniformBuffer<T> where T : struct, ISize
         GL.BindBuffer(BufferTarget.UniformBuffer, bufferHandle);
         GL.BufferSubData(BufferTarget.UniformBuffer, 0, T.Size, ref settings);
     }
+
+    public bool IsUniformSupported(Shader program)
+    {
+        var uniformBlockIndex = program.GetUniformBlockIndex(uniformName);
+        return uniformBlockIndex != -1;
+    }
 }

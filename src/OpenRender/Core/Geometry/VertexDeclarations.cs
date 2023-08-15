@@ -40,6 +40,22 @@ public static class VertexDeclarations
         return stride;
     };
 
+    public static readonly VertexDeclaration VertexPosition2DTexture = () =>
+    {
+        const int stride = 4 * sizeof(float);
+
+        // vertex positions
+        var vertexLocation = (int)AttributeLocation.Position;
+        GL.EnableVertexAttribArray(vertexLocation);
+        GL.VertexAttribPointer(vertexLocation, 2, VertexAttribPointerType.Float, false, stride, 0);
+
+        // vertex texture coords
+        var texCoordLocation = (int)AttributeLocation.TextureCoord;
+        GL.EnableVertexAttribArray(texCoordLocation);
+        GL.VertexAttribPointer(texCoordLocation, 2, VertexAttribPointerType.Float, false, stride, 2 * sizeof(float));
+        return stride;
+    };
+
     public static readonly VertexDeclaration VertexPositionNormal = () =>
     {
         const int stride = 6 * sizeof(float);

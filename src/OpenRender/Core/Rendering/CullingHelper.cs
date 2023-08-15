@@ -13,7 +13,7 @@ internal class CullingHelper
         renderList.Clear();
         foreach (var node in allNodes)
         {
-            if (IsSphereInFrustum(node.BoundingSphere.Center, node.BoundingSphere.Radius))
+            if (node.DisableCulling || IsSphereInFrustum(node.BoundingSphere.Center, node.BoundingSphere.Radius))
             {
                 renderList.Add(node);
             }

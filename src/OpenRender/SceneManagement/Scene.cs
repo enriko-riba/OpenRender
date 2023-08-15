@@ -32,6 +32,7 @@ public class Scene
 
     internal bool isLoaded;
     internal SceneManager scm = default!;
+
     internal IReadOnlyList<SceneNode> RenderList => renderList;
     internal IReadOnlyList<SceneNode> Nodes => nodes;
 
@@ -45,7 +46,7 @@ public class Scene
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
-        textureBatcher = new TextureBatcher(textureUnitsCount); 
+        textureBatcher = new TextureBatcher(textureUnitsCount);
     }
 
     protected SceneManager SceneManager => scm;
@@ -75,7 +76,7 @@ public class Scene
 
     public void RemoveNode(SceneNode node)
     {
-        hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);       
+        hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);
         node.Scene = null; // Remove the Scene reference from the removed node
     }
 
@@ -86,6 +87,8 @@ public class Scene
         GL.Enable(EnableCap.CullFace);
         GL.Enable(EnableCap.LineSmooth);
         GL.Enable(EnableCap.PolygonSmooth);
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.ClearColor(Color4.CornflowerBlue);
 
         var fnDebugProc = Utility.DebugMessageDelegate;
@@ -143,6 +146,7 @@ public class Scene
         }
 
         CullFrustum();
+        SortRenderList();
         OptimizeTextureUnitUsage();
     }
 
@@ -154,8 +158,12 @@ public class Scene
     {
         GL.Viewport(0, 0, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
         camera!.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
+        foreach (var node in nodes)
+        {
+            node.OnResize(this, e);
+        }
     }
-    
+
     private void RenderNode(SceneNode node, double elapsed)
     {
         var material = node.Material;
@@ -164,9 +172,9 @@ public class Scene
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
-            vboCamera.BindToShaderProgram(shader);
-            vboLight.BindToShaderProgram(shader);
-            vboMaterial.BindToShaderProgram(shader);
+            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
+            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
+            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -196,7 +204,7 @@ public class Scene
                 if (texture != null)
                 {
                     var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
-                    texture.Use(TextureUnit.Texture0 + unit);                    
+                    texture.Use(TextureUnit.Texture0 + unit);
                     shader.SetInt(texture.UniformName, unit);
                 }
             }
@@ -226,12 +234,24 @@ public class Scene
             hasNodeListChanged = false;
         }
     }
-    
+
     private void UpdateSceneMaterials()
     {
         materialList.Clear();
         materialList.AddRange(nodes
             .Select(n => n.Material)
             .DistinctBy(m => m.Id));
+    }
+
+    private void SortRenderList()
+    {
+        renderList.Sort((a, b) => a.RenderGroup.CompareTo(b.RenderGroup));
+        if(RenderList.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
+        {
+            //  implement distance based sorting for RenderGroup.DistanceSorted
+            var firstDistanceSorted = renderList.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+            var lastDistanceSorted = renderList.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+            renderList.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
+        }
     }
 }

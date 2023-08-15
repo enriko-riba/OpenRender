@@ -1,4 +1,5 @@
-﻿using OpenRender.Core;
+﻿using OpenRender.Components;
+using OpenRender.Core;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -29,6 +30,7 @@ internal class TestScene : Scene
         AddRotatingBoxes();
         AddRandomNodes();
         AddMetallicBoxes();
+        AddSprites();
 
         var paths = new string[] {
             "Resources/xpos.png",
@@ -54,8 +56,6 @@ internal class TestScene : Scene
 
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
-
-        //CursorState = CursorState.Hidden;
     }
 
     public override void OnResize(ResizeEventArgs e)
@@ -116,7 +116,6 @@ internal class TestScene : Scene
     {
         camera!.Fov -= e.OffsetY * 5;
     }
-
 
     private void HandleMovement(double elapsedTime)
     {
@@ -300,5 +299,12 @@ internal class TestScene : Scene
             cube.SetPosition(new Vector3(-250 + i * 10, 0, -10));
             AddNode(cube);
         }
+    }
+
+    private void AddSprites()
+    {
+        var sprite = new Sprite("Resources/awesomeface-sprite.png");
+        sprite.SetPosition(new Vector3(100, 120, 0));
+        AddNode(sprite);
     }
 }
