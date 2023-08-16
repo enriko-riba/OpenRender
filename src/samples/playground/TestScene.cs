@@ -16,7 +16,7 @@ internal class TestScene : Scene
 {
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
-
+    private Sprite? smiley;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
 
@@ -64,23 +64,24 @@ internal class TestScene : Scene
         tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
+    const int Padding = 53;
+    readonly string helpText1 = $"WASD: move, L shift: down, space: up".PadRight(Padding);
+    readonly string helpText2 = $"mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Padding);
+    readonly string helpText3 = $"F1: bounding sphere (wire), F11: toggle full screen".PadRight(Padding);
+
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
-        const int Pad = 53;
         const int LineHeight = 18;
         const int TextStartY = 10;
-        var nodesText = $" nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Pad); ;
+        var nodesText = $"nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Padding);
         tr.Render(nodesText, 5, TextStartY, textColor1);
-        var fpsText = $" avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Pad); ;
+        var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
 
-        var helpText = $" WASD: move, L shift: down, space: up".PadRight(Pad);
-        tr.Render(helpText, 5, TextStartY + LineHeight * 2, textColor2);
-        helpText = $" mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Pad);
-        tr.Render(helpText, 5, TextStartY + LineHeight * 3, textColor2);
-        helpText = $" F1: bounding sphere (wire), F11: toggle full screen".PadRight(Pad);
-        tr.Render(helpText, 5, TextStartY + LineHeight * 4, textColor2);
+        tr.Render(helpText1, 5, TextStartY + LineHeight * 2, textColor2);
+        tr.Render(helpText2, 5, TextStartY + LineHeight * 3, textColor2);
+        tr.Render(helpText3, 5, TextStartY + LineHeight * 4, textColor2);
     }
 
     public override void UpdateFrame(double elapsedSeconds)
@@ -152,10 +153,11 @@ internal class TestScene : Scene
 
     private void HandleRotation(double elapsedTime)
     {
-        const float RotationSpeed = 25;
+        const float RotationSpeed = 45;
 
         var mouseState = SceneManager.MouseState;
         var rotationPerSecond = (float)(elapsedTime * RotationSpeed);
+        smiley!.AngleRotation += rotationPerSecond;
         if (SceneManager.KeyboardState.IsKeyDown(Keys.Q))
         {
             camera!.AddRotation(0, 0, rotationPerSecond);
@@ -303,8 +305,14 @@ internal class TestScene : Scene
 
     private void AddSprites()
     {
-        var sprite = new Sprite("Resources/awesomeface-sprite.png");
-        sprite.SetPosition(new Vector3(100, 120, 0));
-        AddNode(sprite);
+        smiley = new Sprite("Resources/awesomeface-sprite.png");
+        smiley.SetPosition(new Vector3(1000, 100, 0));
+        smiley.SetScale(new Vector3(0.5f));
+        AddNode(smiley);
+
+        var child = new Sprite("Resources/awesomeface-sprite.png");
+        child.SetPosition(new Vector3(150, 80, 0));
+        child.SetScale(new Vector3(0.25f));
+        smiley.AddChild(child);
     }
 }

@@ -13,11 +13,11 @@ public static class GeometryHelper
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
     /// </summary>
     /// <returns></returns>
-    public static VertexBuffer Create2dQuad(int width, int height)
+    public static VertexBuffer Create2dQuad()
     {
         VertexDeclaration vxDeclaration;
         float[] vertices;        
-        vertices = Create2dQuadWithoutNormals(width, height);
+        vertices = Create2dQuadWithoutNormals();
         vxDeclaration = VertexDeclarations.VertexPosition2DTexture;       
 
         uint[] indices =
@@ -376,16 +376,16 @@ public static class GeometryHelper
         return vertices;
     }
 
-    private static float[] Create2dQuadWithoutNormals(int width, int height)
+    private static float[] Create2dQuadWithoutNormals()
     {
         //  create the 4 vertices with: 2 floats for position + 2 floats for uv
-        //  note: the coordinates go from 0 to 1 (multiplied by width and height) because we want the sprite to align with screen coordinates.
+        //  note: the coordinates go from 0 to 1 because we want the sprite to align with screen coordinates.
         var vertices = new float[]
         {
-             0, 0,                  0, 1,   // lower left corner
-             0, 1 * height,         0, 0,   // upper left corner
-             1 * width, 0,          1, 1,   // lower right corner
-             1 * width, 1 * height, 1, 0,   // upper right corner
+             0, 0,  0, 1,   // lower left corner
+             0, 1,  0, 0,   // upper left corner
+             1, 0,  1, 1,   // lower right corner
+             1, 1,  1, 0,   // upper right corner
         };
         return vertices;
     }

@@ -88,10 +88,8 @@ public class TextRenderer
         else
             GL.Disable(EnableCap.Blend);
         GL.BlendFunc((BlendingFactor)previousBlendSrc, (BlendingFactor)previousBlendDest);
-        if (previousDepthTestEnabled)
-            GL.Enable(EnableCap.DepthTest);
-        else
-            GL.Disable(EnableCap.DepthTest);
+
+        if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);       
 
         GL.BindTexture(TextureTarget.Texture2D, 0);
         GL.BindVertexArray(0);

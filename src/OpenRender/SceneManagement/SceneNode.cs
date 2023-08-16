@@ -9,17 +9,18 @@ namespace OpenRender.SceneManagement;
 
 public class SceneNode
 {
-    private Vector3 position;
-    private Vector3 scale;
-    private Quaternion rotation = Quaternion.Identity;
-    private Matrix4 scaleMatrix = Matrix4.Identity;
-    private Matrix4 rotationMatrix = Matrix4.Identity;
-    private Matrix4 worldMatrix = Matrix4.Identity;
     private BoundingSphere boundingSphere;
     private Mesh mesh;
     private bool showBoundingSphere;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
+
+    protected Vector3 position;
+    protected Vector3 scale;
+    protected Quaternion rotation = Quaternion.Identity;
+    protected Matrix4 scaleMatrix = Matrix4.Identity;
+    protected Matrix4 rotationMatrix = Matrix4.Identity;
+    protected Matrix4 worldMatrix = Matrix4.Identity;
 
     public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default)
     {
@@ -45,6 +46,10 @@ public class SceneNode
     {
         worldMatrix = this.worldMatrix;
     }
+    public void GetRotationMatrix(out Matrix4 rotationMatrix)
+    {
+        rotationMatrix = this.rotationMatrix;
+    }
 
     public void GetMesh(out Mesh mesh)
     {
@@ -57,7 +62,7 @@ public class SceneNode
         var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
         boundingSphere = bs with
         {
-            Radius = bs.LocalRadius * Math.Max(Math.Max(scale.X, scale.Y), scale.Z),
+            Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
             Center = bs.LocalCenter + position,
         };
     }
@@ -202,7 +207,7 @@ public class SceneNode
     /// <summary>
     /// Calculates the world matrix (SROT).
     /// </summary>
-    private void UpdateMatrix()
+    protected virtual void UpdateMatrix()
     {
         Matrix4.CreateScale(scale, out scaleMatrix);
         Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);

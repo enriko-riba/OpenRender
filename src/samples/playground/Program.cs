@@ -12,7 +12,7 @@ var nativeWindowSettings = new NativeWindowSettings()
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,
     APIVersion = new Version(4, 6),
-    NumberOfSamples = 8,
+    NumberOfSamples = 32,
 };
 
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
