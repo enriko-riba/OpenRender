@@ -71,8 +71,7 @@ public class Texture
     /// <param name="unit"></param>
     public void Use(TextureUnit unit)
     {
-        GL.ActiveTexture(unit);
-        GL.BindTexture(TextureTarget, Handle);
+        GL.BindTextureUnit(unit - TextureUnit.Texture0, Handle);
     }
 
     /// <summary>
@@ -101,19 +100,18 @@ public class Texture
             return cachedTexture;
         }
 
-        var handle = GL.GenTexture();
-        GL.BindTexture(textureTarget, handle);
-        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba, width, height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, buffer);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)textureWrapS);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)textureWrapT);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)minFilter);
-        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)magFilter);
+        GL.CreateTextures(textureTarget, 1, out int handle);
+        GL.TextureParameter(handle, TextureParameterName.TextureWrapS, (int)textureWrapS);
+        GL.TextureParameter(handle, TextureParameterName.TextureWrapT, (int)textureWrapT);
+        GL.TextureParameter(handle, TextureParameterName.TextureMinFilter, (int)minFilter);
+        GL.TextureParameter(handle, TextureParameterName.TextureMagFilter, (int)magFilter);
+        GL.TextureStorage2D(handle, 1, SizedInternalFormat.Rgba8, width, height);
+        GL.TextureSubImage2D(handle, 0, 0, 0, width, height, PixelFormat.Rgba, PixelType.UnsignedByte, buffer);
+
         if (generateMipMap)
         {
-            GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+            GL.GenerateTextureMipmap(handle);
         }
-        GL.BindTexture(TextureTarget.Texture2D, 0);
-
         var texture = new Texture(handle)
         {
             TextureUnit = unit,
@@ -124,7 +122,7 @@ public class Texture
             TextureWrapS = textureWrapS,
             TextureWrapT = textureWrapT,
             TextureTarget = textureTarget,
-            Width = width,  
+            Width = width,
             Height = height,
             CacheKey = key
         };
@@ -164,9 +162,15 @@ public class Texture
             return cachedTexture;
         }
 
-        var handle = GL.GenTexture();
-        GL.BindTexture(textureTarget, handle);
+        GL.CreateTextures(textureTarget, 1, out int handle);
         GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
+
+        GL.TextureParameter(handle, TextureParameterName.TextureWrapS, (int)textureWrapS);
+        GL.TextureParameter(handle, TextureParameterName.TextureWrapT, (int)textureWrapT);
+        GL.TextureParameter(handle, TextureParameterName.TextureMinFilter, (int)minFilter);
+        GL.TextureParameter(handle, TextureParameterName.TextureMagFilter, (int)magFilter);
+
+
         ImageResult? image = null;
         if (textureTarget == TextureTarget.Texture2D)
         {
@@ -176,30 +180,25 @@ public class Texture
 
             using var stream = File.OpenRead(paths[0]);
             image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
-            //   Note: param 'border' must always be 0; it's a legacy parameter that Khronos never got rid of.         
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
+            GL.TextureStorage2D(handle, 2, SizedInternalFormat.Srgb8Alpha8, image.Width, image.Height);
+            GL.TextureSubImage2D(handle, 0, 0, 0, image.Width, image.Height, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
+
             if (generateMipMap)
             {
-                GL.GenerateMipmap(GenerateMipmapTarget.Texture2D);
+                GL.GenerateTextureMipmap(handle);
             }
         }
         else if (textureTarget == TextureTarget.TextureCubeMap && paths.Length == 6)
         {
             StbImage.stbi_set_flip_vertically_on_load(0);
-            for (var i = 0; i < paths.Length; i++)
+            for (var face = 0; face < paths.Length; face++)
             {
-                using var stream = File.OpenRead(paths[i]);
+                using var stream = File.OpenRead(paths[face]);
                 image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
-                GL.TexImage2D(TextureTarget.TextureCubeMapPositiveX + i, 0, PixelInternalFormat.SrgbAlpha, image.Width, image.Height, 0, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
+                if (face == 0) GL.TextureStorage2D(handle, 1, SizedInternalFormat.Srgb8, image.Width, image.Height);
+                GL.TextureSubImage3D(handle, 0, 0, 0, face, image.Width, image.Height, 1, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
             }
-            GL.TexParameter(textureTarget, TextureParameterName.TextureWrapR, (int)TextureWrapMode.ClampToEdge);
         }
-
-        //  S is for the X axis, and T is for the Y axis.
-        GL.TexParameter(textureTarget, TextureParameterName.TextureWrapS, (int)textureWrapS);
-        GL.TexParameter(textureTarget, TextureParameterName.TextureWrapT, (int)textureWrapT);
-        GL.TexParameter(textureTarget, TextureParameterName.TextureMinFilter, (int)minFilter);
-        GL.TexParameter(textureTarget, TextureParameterName.TextureMagFilter, (int)magFilter);
 
         var texture = new Texture(handle)
         {
