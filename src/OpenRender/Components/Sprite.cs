@@ -15,8 +15,6 @@ public class Sprite : SceneNode
     private Matrix4 projection;
     private Vector3 tint;
     private float angleRotation;
-    private int textureWidth;
-    private int textureHeight;
     private Vector2 pivot;
 
     public Sprite(string textureName) : base(default, default)
@@ -30,8 +28,8 @@ public class Sprite : SceneNode
             new TextureDescriptor[] { new TextureDescriptor(textureName, TextureType: TextureType.Diffuse) }
         );
 
-        textureWidth = Material.Textures![0].Width;
-        textureHeight = Material.Textures[0].Height;
+        TextureWidth = Material.Textures![0].Width;
+        TextureHeight = Material.Textures[0].Height;
 
         var vbQuad = GeometryHelper.Create2dQuad();
         var mesh = new Mesh(vbQuad, DrawMode.Indexed);
@@ -41,6 +39,9 @@ public class Sprite : SceneNode
         DisableCulling = true;
         RenderGroup = RenderGroup.UI;
     }
+
+    public int TextureWidth { get; private set; }
+    public int TextureHeight { get; private set; }
 
     /// <summary>
     /// Sprite tint. 
@@ -99,7 +100,7 @@ public class Sprite : SceneNode
     protected override void UpdateMatrix()
     {
         //  calculate scale, account for quad vertices in range [0,1] so we need to multiply with texture size
-        var spriteScale = new Vector3(scale.X * textureWidth, scale.Y * textureHeight, 1);
+        var spriteScale = new Vector3(scale.X * TextureWidth, scale.Y * TextureHeight, 1);
         Matrix4.CreateScale(spriteScale, out scaleMatrix);
 
         // Calculate translation so that rotation is around the sprite's pivot       
@@ -128,6 +129,7 @@ public class Sprite : SceneNode
             Matrix4.Mult(worldMatrix, parentWorldMatrixWithoutScale, out worldMatrix);
         }
     }
+
     public override void OnDraw(Scene scene, double elapsed)
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);

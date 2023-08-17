@@ -14,6 +14,7 @@ public class VertexBuffer
         Vertices = vertices;
         Indices = indices;
 
+
         vao = GL.GenVertexArray();
         GL.BindVertexArray(vao);
 
@@ -30,6 +31,22 @@ public class VertexBuffer
 
         stride = vertexDeclaration.Invoke();
         GL.BindVertexArray(0);
+
+        //  TODO: refactor to use DSA
+        //GL.CreateBuffers(1, out vbo);
+        //GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
+        
+        //GL.CreateVertexArrays(1, out vao);
+        //stride = vertexDeclaration.Invoke(vao);
+        //GL.VertexArrayVertexBuffer(vao, 0, vbo, 0, stride);
+
+        //if (indices != null)
+        //{
+        //    GL.CreateBuffers(1, out ebo);
+        //    GL.NamedBufferStorage(ebo, indices.Length * sizeof(uint), indices, BufferStorageFlags.DynamicStorageBit);
+        //    GL.VertexArrayElementBuffer(vao, ebo);
+        //}
+
     }
 
     public float[] Vertices { get; init; }

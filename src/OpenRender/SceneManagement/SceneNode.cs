@@ -73,10 +73,20 @@ public class SceneNode
         set => showBoundingSphere = value;
     }
 
+    /// <summary>
+    /// If true, the <see cref="SceneNode"/> will not be culled. This is useful for 2D sprites and UI elements.
+    /// </summary>
     public bool DisableCulling { get; set; }
 
+    /// <summary>
+    /// The rendering layer of the <see cref="SceneNode"/>, affects depth sorting order.
+    /// </summary>
     public RenderGroup RenderGroup { get; set; }
 
+    /// <summary>
+    /// Action method invoked from <see cref="OnUpdate(Scene, double)"/>.
+    /// When inheriting <see cref="SceneNode"/> overriding the <see cref="OnUpdate(Scene, double)"/> method is the preferred way of adding custom update logic.
+    /// </summary>
     public Action<SceneNode, double>? Update { get; set; }
 
     public virtual void OnUpdate(Scene scene, double elapsed)
@@ -154,7 +164,7 @@ public class SceneNode
     }
 
     /// <summary>
-    /// Sets the new rotation from Euler angles.
+    /// Sets the new rotation quaternion from Euler angles in radians.
     /// </summary>
     /// <param name="rot"></param>
     public void SetRotation(in Vector3 eulerRot)
@@ -197,7 +207,7 @@ public class SceneNode
     }
 
     /// <summary>
-    /// Handles the resize event. The base class has no implementation so invoking base.OnResize() is not required.
+    /// Handles the resize event. The base class has no implementation so invoking base.OnResize() does nothing.
     /// </summary>
     /// <param name="scene"></param>
     /// <param name="e"></param>

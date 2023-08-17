@@ -86,12 +86,12 @@ internal class TestScene : Scene
 
     public override void UpdateFrame(double elapsedSeconds)
     {
-        base.UpdateFrame(elapsedSeconds);
-
         if (!SceneManager.IsFocused)
         {
             return;
         }
+
+        base.UpdateFrame(elapsedSeconds);
 
         HandleRotation(elapsedSeconds);
         HandleMovement(elapsedSeconds);

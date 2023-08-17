@@ -69,6 +69,7 @@ public class Scene
 
     public void AddNode(SceneNode node)
     {
+        if (node.Scene != null) throw new ArgumentException("Node is already added to a scene!", nameof(node));
         hasNodeListChanged = true;
         nodes.Add(node);
         node.Scene = this; // Set the Scene reference for the added node       
@@ -246,7 +247,7 @@ public class Scene
     private void SortRenderList()
     {
         renderList.Sort((a, b) => a.RenderGroup.CompareTo(b.RenderGroup));
-        if(RenderList.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
+        if (RenderList.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
         {
             //  implement distance based sorting for RenderGroup.DistanceSorted
             var firstDistanceSorted = renderList.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
