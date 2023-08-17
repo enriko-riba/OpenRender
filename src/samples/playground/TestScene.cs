@@ -17,6 +17,7 @@ internal class TestScene : Scene
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
     private Sprite? smiley;
+    private AnimatedSprite? animatedSprite;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
 
@@ -136,10 +137,12 @@ internal class TestScene : Scene
         if (input.IsKeyDown(Keys.A))
         {
             camera!.Position -= camera.Right * movementPerSecond; // Left
+            animatedSprite?.Play("left", 3);
         }
         if (input.IsKeyDown(Keys.D))
         {
             camera!.Position += camera.Right * movementPerSecond; // Right
+            animatedSprite?.Play("right", 3);
         }
         if (input.IsKeyDown(Keys.Space))
         {
@@ -314,5 +317,20 @@ internal class TestScene : Scene
         child.SetPosition(new Vector3(150, 80, 0));
         child.SetScale(new Vector3(0.25f));
         smiley.AddChild(child);
+
+        animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png");
+        animatedSprite.SetPosition(new Vector3(900, 100, 0));        
+        AddNode(animatedSprite);
+        animatedSprite.AddAnimation("left", new AnimatedSprite.Frame[] { 
+            new (0, 50, 50, 50),
+            new (50, 50, 50, 50),
+            new (100, 50, 50, 50)
+        });
+        animatedSprite.AddAnimation("right", new AnimatedSprite.Frame[] {
+            new (0, 0, 50, 50),
+            new (50, 0, 50, 50),
+            new (100, 0, 50, 50)
+        });
+        animatedSprite.Play("left", 3);
     }
 }

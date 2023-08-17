@@ -1,4 +1,5 @@
-﻿using OpenRender.SceneManagement;
+﻿using OpenRender.Core.Rendering;
+using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
 namespace OpenRender.Components;
@@ -25,6 +26,12 @@ public class AnimatedSprite : Sprite
     {
         onUpdateAction = onUpdate;
         onCompleteAction = onComplete;
+
+        shader = new Shader("Shaders/sprite.vert", "Shaders/animated-sprite.frag");
+        Material.Shader = shader;
+        Tint = Color4.White;    //  need to re set the tint in order to setup the shaders uniform
+        var projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
+        shader.SetMatrix4("projection", ref projection); 
     }
 
     public int Fps { get; set; } = 4;
@@ -33,13 +40,13 @@ public class AnimatedSprite : Sprite
 
     public bool IsPlaying => !string.IsNullOrEmpty(currentSequence);
 
-    public override void OnUpdate(Scene scene, double elapsedSeconds)
+    public override void OnUpdate(Scene scene, double elapsed)
     {
-        base.OnUpdate(scene, elapsedSeconds);
+        base.OnUpdate(scene, elapsed);
 
         if (IsPlaying)
         {
-            accumulator += (float)elapsedSeconds;
+            accumulator += (float)elapsed;
             var secForFrame = 1f / Fps;
             if (accumulator >= secForFrame)
             {
@@ -70,20 +77,20 @@ public class AnimatedSprite : Sprite
             if (lastIndex != frameIndex)
             {
                 currentFrame = currentFrames[Math.Max(0, frameIndex)];
-                if (currentFrame.UV is null)
-                {
-                    //  TODO: convert frame to UV and pass to shader
-                }
-                //  TODO: pass UV to shader
+                var uvInfo = currentFrame.UV!.Value;
+                shader.SetVector4("uvInfo", ref uvInfo);
+                TextureWidth = currentFrame.Width;
+                TextureHeight = currentFrame.Height;
+                UpdateMatrix();
             }
-            base.OnDraw(scene, elapsed);
         }
+        base.OnDraw(scene, elapsed);
     }
 
     public void AddAnimation(string animationName, Frame[] frames)
     {
         animationSequences.Add(animationName, frames);
-        // TODO: create vertex buffer with quads and UVs for each frame
+        CalcFrameUVs(frames);
     }
 
     public void Stop()
@@ -91,13 +98,18 @@ public class AnimatedSprite : Sprite
         currentSequence = null;
         accumulator = 0;
         frameIndex = -1;
+        lastIndex = -1;
     }
 
     public void Play(string animationName, int? fps, bool loop = true)
     {
         ArgumentNullException.ThrowIfNull(animationName, nameof(animationName));
+        if(currentSequence == animationName)
+        {
+            return;
+        }
 
-        if (!string.IsNullOrWhiteSpace(currentSequence) || currentSequence != animationName)
+        if (!string.IsNullOrWhiteSpace(currentSequence))
         {
             Stop();
         }
@@ -108,6 +120,8 @@ public class AnimatedSprite : Sprite
             currentFrames = animationSequences[currentSequence];
             Fps = fps ?? Fps;
             IsLooping = loop;
+            frameIndex = 0;
+            lastIndex = -1;
         }
         else
         {
@@ -115,12 +129,31 @@ public class AnimatedSprite : Sprite
         }
     }
 
+    private void CalcFrameUVs(Frame[] frames)
+    {
+        foreach (var frame in frames)
+        {
+            var minX = frame.X / (float)TextureWidth;
+            var minY = frame.Y / (float)TextureHeight;
+            frame.UV = new Vector4(minX, minY, 
+                (frame.X + frame.Width) / (float)TextureWidth - minX, 
+                (frame.Y + frame.Height) / (float)TextureHeight - minY);
+        }
+    }
+
     public class Frame
     {
+        public Frame(int x, int y, int width, int height)
+        {
+            X = x;
+            Y = y;
+            Width = width;
+            Height = height;
+        }
         public int X { get; set; }
         public int Y { get; set; }
         public int Width { get; set; }
         public int Height { get; set; }
-        public Vector2i? UV { get; set; }
+        public Vector4? UV { get; set; }
     }
 }

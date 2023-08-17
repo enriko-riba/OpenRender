@@ -246,10 +246,19 @@ public class Scene
 
     private void SortRenderList()
     {
-        renderList.Sort((a, b) => a.RenderGroup.CompareTo(b.RenderGroup));
+        renderList.Sort((a, b) => {
+            var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
+            if (renderGroupComparison == 0)
+            {
+                // If RenderGroup values are the same, compare by index.
+                return renderList.IndexOf(a).CompareTo(renderList.IndexOf(b));
+            }
+            return renderGroupComparison;
+        });
+
         if (RenderList.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
         {
-            //  implement distance based sorting for RenderGroup.DistanceSorted
+            //  distance based sorting for RenderGroup.DistanceSorted
             var firstDistanceSorted = renderList.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
             var lastDistanceSorted = renderList.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
             renderList.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));

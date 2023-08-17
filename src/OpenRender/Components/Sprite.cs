@@ -11,11 +11,12 @@ namespace OpenRender.Components;
 
 public class Sprite : SceneNode
 {
-    private readonly Shader shader;
     private Matrix4 projection;
     private Vector3 tint;
     private float angleRotation;
     private Vector2 pivot;
+
+    protected Shader shader;
 
     public Sprite(string textureName) : base(default, default)
     {
@@ -25,7 +26,7 @@ public class Sprite : SceneNode
         shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
         shader.SetMatrix4("projection", ref projection);
         Material = Material.Create(shader,
-            new TextureDescriptor[] { new TextureDescriptor(textureName, TextureType: TextureType.Diffuse) }
+            new TextureDescriptor[] { new TextureDescriptor(textureName, TextureType: TextureType.Diffuse, GenerateMipMap: false) }
         );
 
         TextureWidth = Material.Textures![0].Width;
@@ -40,8 +41,8 @@ public class Sprite : SceneNode
         RenderGroup = RenderGroup.UI;
     }
 
-    public int TextureWidth { get; private set; }
-    public int TextureHeight { get; private set; }
+    public int TextureWidth { get; protected set; }
+    public int TextureHeight { get; protected set; }
 
     /// <summary>
     /// Sprite tint. 
