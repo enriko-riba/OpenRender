@@ -42,6 +42,18 @@ public class SceneNode
 
     public Material Material { get; set; } = default!;
 
+    public bool IsVisible 
+    {
+        get => !FrameBits.HasFlag(FrameBitsFlags.NotVisible);
+        set
+        {
+            if (value)
+                FrameBits.ClearFlag(FrameBitsFlags.NotVisible);
+            else
+                FrameBits.SetFlag(FrameBitsFlags.NotVisible);
+        }
+    }
+
     public void GetWorldMatrix(out Matrix4 worldMatrix)
     {
         worldMatrix = this.worldMatrix;
@@ -225,7 +237,9 @@ public class SceneNode
         worldMatrix.Row3.Xyz = position;    //  sets the translation
 
         if (Parent != null)
+        {
             Matrix4.Mult(worldMatrix, Parent.worldMatrix, out worldMatrix);
+        }
     }
 
     internal void Invalidate()
@@ -239,4 +253,6 @@ public class SceneNode
     }
 
     internal Scene? Scene { get; set; } // Reference to the parent Scene
+
+    internal FrameBits FrameBits;
 }

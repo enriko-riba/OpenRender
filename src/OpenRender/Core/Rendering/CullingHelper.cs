@@ -4,18 +4,24 @@ using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 
-internal class CullingHelper
+internal sealed class CullingHelper
 {
     private readonly Vector4[] frustumPlanes = new Vector4[6];
 
-    public void CullNodes(IEnumerable<SceneNode> allNodes, List<SceneNode> renderList)
+    public void CullNodes(IEnumerable<SceneNode> allNodes)
     {
-        renderList.Clear();
         foreach (var node in allNodes)
         {
-            if (node.DisableCulling || IsSphereInFrustum(node.BoundingSphere.Center, node.BoundingSphere.Radius))
+            if (node.IsVisible)
             {
-                renderList.Add(node);
+                if (!node.DisableCulling && !IsSphereInFrustum(node.BoundingSphere.Center, node.BoundingSphere.Radius))
+                {
+                    node.FrameBits.SetFlag(FrameBitsFlags.FrustumCulled);
+                }
+                else
+                {
+                    node.FrameBits.ClearFlag(FrameBitsFlags.FrustumCulled);
+                }
             }
         }
     }

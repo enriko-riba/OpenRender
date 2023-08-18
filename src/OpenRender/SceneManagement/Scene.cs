@@ -4,6 +4,7 @@ using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
+using System.Runtime.CompilerServices;
 
 namespace OpenRender.SceneManagement;
 
@@ -26,14 +27,13 @@ public class Scene
     private bool hasCameraChanged;
 
     protected readonly List<SceneNode> nodes = new();
-    protected readonly List<SceneNode> renderList = new();
+    protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
     protected readonly Shader defaultShader;
     protected ICamera? camera;
 
     internal bool isLoaded;
     internal SceneManager scm = default!;
 
-    internal IReadOnlyList<SceneNode> RenderList => renderList;
     internal IReadOnlyList<SceneNode> Nodes => nodes;
 
     public Scene(string name)
@@ -47,9 +47,17 @@ public class Scene
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
         textureBatcher = new TextureBatcher(textureUnitsCount);
+
+        // Create the default render layers
+        foreach (var renderGroup in Enum.GetValues<RenderGroup>())
+        {
+            renderLayers.Add(renderGroup, new List<SceneNode>());
+        }
     }
 
     protected SceneManager SceneManager => scm;
+
+    public int VisibleNodes => nodes.Where(n => n.FrameBits.Value == 0).Count();
 
     public ICamera? Camera => camera;
 
@@ -72,13 +80,15 @@ public class Scene
         if (node.Scene != null) throw new ArgumentException("Node is already added to a scene!", nameof(node));
         hasNodeListChanged = true;
         nodes.Add(node);
-        node.Scene = this; // Set the Scene reference for the added node       
+        node.Scene = this; // Set the Scene reference for the added node
+        renderLayers[node.RenderGroup].Add(node);
     }
 
     public void RemoveNode(SceneNode node)
     {
         hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);
         node.Scene = null; // Remove the Scene reference from the removed node
+        renderLayers[node.RenderGroup].Remove(node);
     }
 
     public virtual void Load()
@@ -128,9 +138,34 @@ public class Scene
             vboLight.UpdateSettings(ref dirLight);
         }
 
-        foreach (var node in renderList)
+        //  render each layer separately
+        var renderList = renderLayers[RenderGroup.SkyBox];
+        RenderNodeList(renderList, elapsedSeconds);
+
+        renderList = renderLayers[RenderGroup.Default];
+        RenderNodeList(renderList, elapsedSeconds);
+
+        renderList = renderLayers[RenderGroup.DistanceSorted];
+        RenderNodeList(renderList, elapsedSeconds);
+
+        renderList = renderLayers[RenderGroup.UI];
+        RenderNodeList(renderList, elapsedSeconds);
+    }
+
+    /// <summary>
+    /// Renders visible nodes in the list.
+    /// </summary>
+    /// <param name="list"></param>
+    /// <param name="elapsedSeconds"></param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void RenderNodeList(IEnumerable<SceneNode> list, double elapsedSeconds)
+    {
+        foreach (var node in list)
         {
-            RenderNode(node, elapsedSeconds);
+            if (node.FrameBits.Value == 0)
+            {
+                RenderNode(node, elapsedSeconds);
+            }
         }
     }
 
@@ -149,6 +184,7 @@ public class Scene
         CullFrustum();
         SortRenderList();
         OptimizeTextureUnitUsage();
+        hasNodeListChanged = false;
     }
 
     public virtual void OnMouseWheel(MouseWheelEventArgs e) { }
@@ -221,8 +257,8 @@ public class Scene
         if (hasCameraChanged && camera is not null)
         {
             cullingHelper.ExtractFrustumPlanes(camera.ViewProjectionMatrix);
+            cullingHelper.CullNodes(nodes);
         }
-        cullingHelper.CullNodes(nodes, renderList);
     }
 
     private void OptimizeTextureUnitUsage()
@@ -232,7 +268,6 @@ public class Scene
             UpdateSceneMaterials();
             textureBatcher.Reset();
             textureBatcher.SortMaterials(materialList);
-            hasNodeListChanged = false;
         }
     }
 
@@ -246,22 +281,25 @@ public class Scene
 
     private void SortRenderList()
     {
-        renderList.Sort((a, b) => {
-            var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
-            if (renderGroupComparison == 0)
-            {
-                // If RenderGroup values are the same, compare by index.
-                return renderList.IndexOf(a).CompareTo(renderList.IndexOf(b));
-            }
-            return renderGroupComparison;
-        });
+        if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
 
-        if (RenderList.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
+        if (nodes.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
         {
             //  distance based sorting for RenderGroup.DistanceSorted
-            var firstDistanceSorted = renderList.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            var lastDistanceSorted = renderList.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            renderList.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
+            var firstDistanceSorted = nodes.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+            var lastDistanceSorted = nodes.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+            nodes.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
         }
+    }
+
+    private int GroupComparer(SceneNode a, SceneNode b)
+    {
+        var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
+        if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
+        {
+            // If RenderGroup values are the same, compare by index.
+            return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
+        }
+        return renderGroupComparison;
     }
 }

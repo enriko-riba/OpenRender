@@ -18,7 +18,8 @@ public enum RenderGroup
     DistanceSorted,
 
     /// <summary>
-    /// Top most nodes, usually used for UI or 2D nodes. Not sorted.
+    /// Top most nodes, usually used for UI or 2D nodes. Not distance sorted but require index sorting so that 
+    /// they preserve the relative z inside the layer.
     /// </summary>
     UI,
 }

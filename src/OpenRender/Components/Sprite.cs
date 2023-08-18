@@ -26,7 +26,12 @@ public class Sprite : SceneNode
         shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
         shader.SetMatrix4("projection", ref projection);
         Material = Material.Create(shader,
-            new TextureDescriptor[] { new TextureDescriptor(textureName, TextureType: TextureType.Diffuse, GenerateMipMap: false) }
+            new TextureDescriptor[] {
+                new TextureDescriptor(textureName, 
+                    TextureType: TextureType.Diffuse, 
+                    MinFilter: TextureMinFilter.LinearMipmapLinear,
+                    GenerateMipMap: true) 
+            }
         );
 
         TextureWidth = Material.Textures![0].Width;

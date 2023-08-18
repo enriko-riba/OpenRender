@@ -65,7 +65,7 @@ internal class TestScene : Scene
         tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
-    const int Padding = 53;
+    const int Padding = 51;
     readonly string helpText1 = $"WASD: move, L shift: down, space: up".PadRight(Padding);
     readonly string helpText2 = $"mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Padding);
     readonly string helpText3 = $"F1: bounding sphere (wire), F11: toggle full screen".PadRight(Padding);
@@ -75,7 +75,8 @@ internal class TestScene : Scene
         base.RenderFrame(elapsedSeconds);
         const int LineHeight = 18;
         const int TextStartY = 10;
-        var nodesText = $"nodes: {renderList?.Count ?? 0}/{nodes.Count}".PadRight(Padding);
+
+        var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}".PadRight(Padding);
         tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
@@ -309,19 +310,19 @@ internal class TestScene : Scene
     private void AddSprites()
     {
         smiley = new Sprite("Resources/awesomeface-sprite.png");
-        smiley.SetPosition(new Vector3(1000, 100, 0));
-        smiley.SetScale(new Vector3(0.5f));
+        smiley.SetPosition(new Vector3(950, 200, 0));
+        smiley.SetScale(new Vector3(0.25f));
         AddNode(smiley);
 
         var child = new Sprite("Resources/awesomeface-sprite.png");
-        child.SetPosition(new Vector3(150, 80, 0));
-        child.SetScale(new Vector3(0.25f));
+        child.SetPosition(new Vector3(100, 80, 0));
+        child.SetScale(new Vector3(0.5f));
         smiley.AddChild(child);
 
         animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png");
-        animatedSprite.SetPosition(new Vector3(900, 100, 0));        
+        animatedSprite.SetPosition(new Vector3(770, 210, 0));
         AddNode(animatedSprite);
-        animatedSprite.AddAnimation("left", new AnimatedSprite.Frame[] { 
+        animatedSprite.AddAnimation("left", new AnimatedSprite.Frame[] {
             new (0, 50, 50, 50),
             new (50, 50, 50, 50),
             new (100, 50, 50, 50)

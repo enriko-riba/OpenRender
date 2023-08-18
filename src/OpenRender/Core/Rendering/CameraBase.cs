@@ -13,7 +13,7 @@ public abstract class CameraBase : ICamera
     protected Vector3 front = -Vector3.UnitZ;
     protected Vector3 right = Vector3.UnitX;
     protected Vector3 up = Vector3.UnitY;
-    protected float fov = MathHelper.PiOver6;
+    protected float fov = MathHelper.PiOver4;
 
     private Vector3 position;
     private float aspectRatio;
