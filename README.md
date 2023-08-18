@@ -1,3 +1,25 @@
+# OpenRender
+The OpenRender framework is a very simple OpenTK/OpenGL based game engine I am using for my Indie projects and demos. it does not aim to compete with Unity or Unreal Engine.
+Since it was never meant to be a full featured game engine competing with Unity or Unreal Engine but rather a renderer with basic scene management and some generic building blocks,
+OpenRenderer has no UI or editor.
+
+## Main structure
+- SceneManager, has one or many Scenes
+- Scene, contains SceneNodes
+- SceneNode, contains a Mesh a Material and set of controlling properties (position, rotation, scale etc.)
+- Mesh, represents the geometry and is basically a collection of VertexBuffer objects (atm only a single VBO is supported)
+- Material, contains the shader program and textures with lightning descriptions
+
+The SceneNode is the main building block of the scene. Since the SceneNode gets the geometry and material from outside you can build most of the stuff without implementing custom SceneNodes.
+In cases where custom render states, programs or buffer layouts are needed, you can implement your own nodes by inheriting from SceneNode.
+
+### Components
+The components folder contains custom SceneNode implementations like:
+- Sprite, for rendering 2D objects
+- AnimatedSprite, for rendering 2D objects with sprite sheet animations
+- SkyBox etc.
+
+
 ## Shader binding
 OpenRender passes a predefined set of parameters to shader programs.
 
@@ -8,7 +30,7 @@ layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec3 aColor;
 layout (location = 3) in vec2 aTexCoord;
 ```
-Make sure that your shader program uses the same attribute locations.
+If using custom shaders with built-in geometry and buffers, make sure that your program uses the same attribute locations.
 
 ### Uniforms
 ```
@@ -66,17 +88,17 @@ uniform sampler2D texture_additional4;
 
 In addition the following uniforms are automatically setup:
 ```
-uniform int uHasDiffuseTexture;          //  should the diffuse color be sampled from texture_diffuse1
+uniform int uHasDiffuseTexture;          //  should the diffuse color be sampled from texture_diffuse
 uniform float uDetailTextureFactor;      //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
 ```
 
 ***Note:*** the standard shader programs use only the `texture_diffuse` and `texture_detail`. Other samplers are set from the material but you need to use your own shader program that makes use of them.
 
 ### Texture types
-* diffuse (up to 2)
-* specular (1)
-* detail (up to 2)
-* additional (up to 2, app specific - not used by OpenRender)
+* diffuse 
+* detail
+* specular (atm not used by the standard shader)
+* additional (up to 4, app specific - not used by OpenRender)
 
 #### TextureType enum
 The `Texture` class contains a `TextureType` member of type:
@@ -93,7 +115,7 @@ public enum TextureType
     Additional4
 }
 ``` 
-Unknown textures are treated as diffuse.
+Unknown textures are treated as diffuse. This means if you create a material with `Unknown` texture type but no `Diffuse` texture, the `Unknown` texture will be used as the `Diffuse` texture.
 
 
 
