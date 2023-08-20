@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
@@ -65,9 +66,12 @@ public class Scene
 
     public Shader DefaultShader => defaultShader;
 
+    public UniformBuffer<CameraUniform> VboCamera => vboCamera;
+
     public string Name { get; protected set; }
 
     public bool ShowBoundingSphere { get; set; }
+
 
     public void AddLight(LightUniform light)
     {
@@ -251,13 +255,15 @@ public class Scene
         node.OnDraw(this, elapsed);
     }
 
+    public Frustum Frustum = new();
+
     private void CullFrustum()
     {
         hasCameraChanged = (camera?.Update() ?? false);
         if (hasCameraChanged && camera is not null)
-        {
-            cullingHelper.ExtractFrustumPlanes(camera.ViewProjectionMatrix);
-            cullingHelper.CullNodes(nodes);
+        {           
+            Frustum.Update(camera);
+            CullingHelper.CullNodes(Frustum, nodes);
         }
     }
 

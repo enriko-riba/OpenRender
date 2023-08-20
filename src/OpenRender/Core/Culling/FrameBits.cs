@@ -1,13 +1,13 @@
 ﻿using System.Runtime.CompilerServices;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Culling;
 
 /// <summary>
 /// Data holder for per frame state, used as performance optimization. 
 /// Note: Any of the flags set will prevent the node from being rendered. This simplifies the rendering condition checks.
 /// </summary>
 internal struct FrameBits
-{    
+{
     private uint bitField;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -15,7 +15,7 @@ internal struct FrameBits
     {
         bitField |= (uint)flag;
     }
-    
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClearFlag(FrameBitsFlags flag)
     {

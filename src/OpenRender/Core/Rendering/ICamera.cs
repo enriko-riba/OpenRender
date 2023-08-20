@@ -10,8 +10,11 @@ public interface ICamera
     Vector3 Up { get; }
     Vector3 Right { get; }
     Vector3 Position { get; set; }
+    Quaternion Orientation { get; }
     float Fov { get; set; }
     float AspectRatio { get; set; }
+    float NearPlaneDistance { get;}
+    float FarPlaneDistance { get; }
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
     /// <summary>
     /// If dirty, updates camera matrices.

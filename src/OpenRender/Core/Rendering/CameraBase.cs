@@ -131,7 +131,10 @@ public abstract class CameraBase : ICamera
             aspectRatio = value;
             isDirty = true;
         }
-    }    
+    }
+
+    public float NearPlaneDistance => nearPlane;
+    public float FarPlaneDistance => farPlane;
 
     /// <summary>
     /// Adds rotation to the camera by the specified yaw, pitch, and roll angle increments in degrees.

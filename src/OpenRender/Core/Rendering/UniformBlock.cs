@@ -7,6 +7,7 @@ public class UniformBuffer<T> where T : struct, ISize
     private readonly int bindingPoint; 
     private readonly int bufferHandle;
     private readonly string uniformName;
+    private T? data;
 
     public UniformBuffer(string uniformName, int bindingPoint)
     {
@@ -33,7 +34,10 @@ public class UniformBuffer<T> where T : struct, ISize
     {
         GL.BindBuffer(BufferTarget.UniformBuffer, bufferHandle);
         GL.BufferSubData(BufferTarget.UniformBuffer, 0, T.Size, ref settings);
+        data = settings;
     }
+
+    public T? Data => data;
 
     public bool IsUniformSupported(Shader program)
     {

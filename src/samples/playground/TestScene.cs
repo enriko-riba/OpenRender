@@ -53,7 +53,7 @@ internal class TestScene : Scene
         };
         AddLight(dirLight);
 
-        camera = new Camera3D(Vector3.UnitZ * 2, SceneManager.Size.X / (float)SceneManager.Size.Y);
+        camera = new Camera3D(Vector3.Zero, SceneManager.Size.X / (float)SceneManager.Size.Y, farPlane:2000);
 
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
@@ -75,8 +75,8 @@ internal class TestScene : Scene
         base.RenderFrame(elapsedSeconds);
         const int LineHeight = 18;
         const int TextStartY = 10;
-
-        var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}".PadRight(Padding);
+        
+        var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}, pos: {camera!.Position.ToString("n2")}".PadRight(Padding);
         tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
@@ -122,7 +122,7 @@ internal class TestScene : Scene
 
     private void HandleMovement(double elapsedTime)
     {
-        const float MovementSpeed = 3;
+        const float MovementSpeed = 50;
         var movementPerSecond = (float)elapsedTime * MovementSpeed;
 
         var input = SceneManager.KeyboardState;

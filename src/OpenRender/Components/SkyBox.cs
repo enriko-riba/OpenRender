@@ -4,11 +4,15 @@ using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
+using OpenTK.Windowing.Common;
 
 namespace OpenRender.Components;
 
-public class SkyBox : SceneNode
+public sealed class SkyBox : SceneNode
 {
+    private Matrix4? projectionMatrix = null;
+
     public SkyBox(string[] texturePaths) : base(default, default)
     {
         ArgumentNullException.ThrowIfNull(texturePaths);
@@ -24,8 +28,13 @@ public class SkyBox : SceneNode
         Material = Material.Create(shader, desc);
         var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
         SetMesh(ref skyBoxMesh);
-        SetScale(5);
         RenderGroup = RenderGroup.SkyBox;
+        DisableCulling = true;
+    }
+
+    public override void OnResize(Scene scene, ResizeEventArgs e)
+    {
+        projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera!.AspectRatio, 0.0001f, 5000);
     }
 
     public override void OnDraw(Scene scene, double elapsed)
@@ -41,7 +50,16 @@ public class SkyBox : SceneNode
         {
             GL.DepthFunc(DepthFunction.Lequal);
         }
+
+        var cameraUniform = Scene!.VboCamera.Data!.Value;
+        var oldProjection = cameraUniform.projection;
+        cameraUniform.projection = projectionMatrix!.Value;
+        Scene!.VboCamera.UpdateSettings(ref cameraUniform);
+
         base.OnDraw(scene, elapsed);
+
+        cameraUniform.projection = oldProjection;
+        Scene!.VboCamera.UpdateSettings(ref cameraUniform);
 
         //  restore previous values
         if (depthFunc != (int)DepthFunction.Lequal)

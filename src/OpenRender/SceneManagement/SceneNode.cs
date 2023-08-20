@@ -1,6 +1,6 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -20,7 +20,7 @@ public class SceneNode
     protected Quaternion rotation = Quaternion.Identity;
     protected Matrix4 scaleMatrix = Matrix4.Identity;
     protected Matrix4 rotationMatrix = Matrix4.Identity;
-    protected Matrix4 worldMatrix = Matrix4.Identity;
+    protected Matrix4 worldMatrix = Matrix4.Identity;   
 
     public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default)
     {
@@ -58,10 +58,11 @@ public class SceneNode
     {
         worldMatrix = this.worldMatrix;
     }
+
     public void GetRotationMatrix(out Matrix4 rotationMatrix)
     {
         rotationMatrix = this.rotationMatrix;
-    }
+    }   
 
     public void GetMesh(out Mesh mesh)
     {

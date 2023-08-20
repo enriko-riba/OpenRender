@@ -1,20 +1,20 @@
 ﻿using OpenRender.Core.Geometry;
+using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Culling;
 
 internal sealed class CullingHelper
 {
-    private readonly Vector4[] frustumPlanes = new Vector4[6];
-
-    public void CullNodes(IEnumerable<SceneNode> allNodes)
+    public static void CullNodes(Frustum frustum, IEnumerable<SceneNode> allNodes)
     {
+        var planes = frustum.Planes;
         foreach (var node in allNodes)
         {
-            if (node.IsVisible)
+            if (node.IsVisible && !node.DisableCulling)
             {
-                if (!node.DisableCulling && !IsSphereInFrustum(node.BoundingSphere.Center, node.BoundingSphere.Radius))
+                if (!IsSphereInFrustum(planes, node.BoundingSphere.Center, node.BoundingSphere.Radius))
                 {
                     node.FrameBits.SetFlag(FrameBitsFlags.FrustumCulled);
                 }
@@ -26,74 +26,17 @@ internal sealed class CullingHelper
         }
     }
 
-    public bool IsSphereInFrustum(in Vector3 sphereCenter, float sphereRadius)
+    public static bool IsSphereInFrustum(in Vector4[] planes, in Vector3 sphereCenter, float sphereRadius)
     {
         for (var i = 0; i < 6; ++i)
-            if (frustumPlanes[i].X * sphereCenter.X +
-                frustumPlanes[i].Y * sphereCenter.Y +
-                frustumPlanes[i].Z * sphereCenter.Z +
-                frustumPlanes[i].W <= -sphereRadius)
+            if (planes[i].X * sphereCenter.X +
+                planes[i].Y * sphereCenter.Y +
+                planes[i].Z * sphereCenter.Z +
+                planes[i].W <= -sphereRadius)
                 return false;
 
         // If the sphere passed all frustum plane tests, it is inside the frustum
         return true;
-    }
-
-    public void ExtractFrustumPlanes(in Matrix4 viewProjection)
-    {
-        // Left plane
-        frustumPlanes[0] = new Vector4(
-            viewProjection.M14 - viewProjection.M11,
-            viewProjection.M24 - viewProjection.M21,
-            viewProjection.M34 - viewProjection.M31,
-            viewProjection.M44 - viewProjection.M41
-        );
-
-        // Right plane
-        frustumPlanes[1] = new Vector4(
-            viewProjection.M14 + viewProjection.M11,
-            viewProjection.M24 + viewProjection.M21,
-            viewProjection.M34 + viewProjection.M31,
-            viewProjection.M44 + viewProjection.M41
-        );
-
-        // Bottom plane
-        frustumPlanes[2] = new Vector4(
-            viewProjection.M14 + viewProjection.M12,
-            viewProjection.M24 + viewProjection.M22,
-            viewProjection.M34 + viewProjection.M32,
-            viewProjection.M44 + viewProjection.M42
-        );
-
-        // Top plane
-        frustumPlanes[3] = new Vector4(
-            viewProjection.M14 - viewProjection.M12,
-            viewProjection.M24 - viewProjection.M22,
-            viewProjection.M34 - viewProjection.M32,
-            viewProjection.M44 - viewProjection.M42
-        );
-
-        // Near plane
-        frustumPlanes[4] = new Vector4(
-            viewProjection.M14 - viewProjection.M13,
-            viewProjection.M24 - viewProjection.M23,
-            viewProjection.M34 - viewProjection.M33,
-            viewProjection.M44 - viewProjection.M43
-        );
-
-        // Far plane
-        frustumPlanes[5] = new Vector4(
-            viewProjection.M14 + viewProjection.M13,
-            viewProjection.M24 + viewProjection.M23,
-            viewProjection.M34 + viewProjection.M33,
-            viewProjection.M44 + viewProjection.M43
-        );
-
-        // Normalize the plane normals
-        for (var i = 0; i < 6; i++)
-        {
-            frustumPlanes[i].Normalize();
-        }
     }
 
     public static BoundingSphere CalculateBoundingSphere(VertexBuffer vb)
