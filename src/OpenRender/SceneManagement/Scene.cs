@@ -72,7 +72,6 @@ public class Scene
 
     public bool ShowBoundingSphere { get; set; }
 
-
     public void AddLight(LightUniform light)
     {
         if (lights.Count >= MaxLights) throw new ArgumentOutOfRangeException(nameof(light), $"Max lights supported is {MaxLights}");
@@ -198,7 +197,7 @@ public class Scene
     public virtual void OnResize(ResizeEventArgs e)
     {
         GL.Viewport(0, 0, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-        camera!.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
+        if(camera is not null) camera.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
         foreach (var node in nodes)
         {
             node.OnResize(this, e);
@@ -289,7 +288,7 @@ public class Scene
     {
         if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
 
-        if (nodes.Any(n => n.RenderGroup == RenderGroup.DistanceSorted))
+        if (nodes.Any(n => n.RenderGroup == RenderGroup.DistanceSorted && n.FrameBits.Value == 0))
         {
             //  distance based sorting for RenderGroup.DistanceSorted
             var firstDistanceSorted = nodes.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
@@ -303,7 +302,7 @@ public class Scene
         var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
         if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
         {
-            // If RenderGroup values are the same, compare by index.
+            // If UI RenderGroup values are the same, compare by index.
             return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
         }
         return renderGroupComparison;

@@ -127,6 +127,7 @@ public class Texture
             CacheKey = key
         };
         textureCache[key] = texture;
+        GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, name);
         Log.Debug($"created texture: {texture}");
         return texture;
     }
@@ -215,6 +216,7 @@ public class Texture
             CacheKey = key
         };
         textureCache[key] = texture;
+        GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, texture.Name);
         Log.Debug($"created texture: {texture}");
         return texture;
     }

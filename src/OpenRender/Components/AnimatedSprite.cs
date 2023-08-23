@@ -79,8 +79,8 @@ public class AnimatedSprite : Sprite
                 currentFrame = currentFrames[Math.Max(0, frameIndex)];
                 var uvInfo = currentFrame.UV!.Value;
                 shader.SetVector4("uvInfo", ref uvInfo);
-                TextureWidth = currentFrame.Width;
-                TextureHeight = currentFrame.Height;
+                size.Width = currentFrame.Width;
+                size.Height = currentFrame.Height;
                 UpdateMatrix();
             }
         }
@@ -133,11 +133,11 @@ public class AnimatedSprite : Sprite
     {
         foreach (var frame in frames)
         {
-            var minX = frame.X / (float)TextureWidth;
-            var minY = frame.Y / (float)TextureHeight;
+            var minX = frame.X / (float)size.Width;
+            var minY = frame.Y / (float)size.Height;
             frame.UV = new Vector4(minX, minY, 
-                (frame.X + frame.Width) / (float)TextureWidth - minX, 
-                (frame.Y + frame.Height) / (float)TextureHeight - minY);
+                (frame.X + frame.Width) / (float)size.Width - minX, 
+                (frame.Y + frame.Height) / (float)size.Height - minY);
         }
     }
 

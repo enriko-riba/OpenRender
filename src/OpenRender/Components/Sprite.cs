@@ -17,6 +17,7 @@ public class Sprite : SceneNode
     private Vector2 pivot;
 
     protected Shader shader;
+    protected Rectangle size;
 
     public Sprite(string textureName) : base(default, default)
     {
@@ -34,8 +35,8 @@ public class Sprite : SceneNode
             }
         );
 
-        TextureWidth = Material.Textures![0].Width;
-        TextureHeight = Material.Textures[0].Height;
+        size.Width = Material.Textures![0].Width;
+        size.Height = Material.Textures[0].Height;
 
         var vbQuad = GeometryHelper.Create2dQuad();
         var mesh = new Mesh(vbQuad, DrawMode.Indexed);
@@ -46,8 +47,7 @@ public class Sprite : SceneNode
         RenderGroup = RenderGroup.UI;
     }
 
-    public int TextureWidth { get; protected set; }
-    public int TextureHeight { get; protected set; }
+    public Rectangle Size => size;
 
     /// <summary>
     /// Sprite tint. 
@@ -106,7 +106,7 @@ public class Sprite : SceneNode
     protected override void UpdateMatrix()
     {
         //  calculate scale, account for quad vertices in range [0,1] so we need to multiply with texture size
-        var spriteScale = new Vector3(scale.X * TextureWidth, scale.Y * TextureHeight, 1);
+        var spriteScale = new Vector3(scale.X * size.Width, scale.Y * size.Height, 1);
         Matrix4.CreateScale(spriteScale, out scaleMatrix);
 
         // Calculate translation so that rotation is around the sprite's pivot       
@@ -139,10 +139,8 @@ public class Sprite : SceneNode
     public override void OnDraw(Scene scene, double elapsed)
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
-        GL.Disable(EnableCap.DepthTest);
-
+        if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
         base.OnDraw(scene, elapsed);
-
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }
 }
