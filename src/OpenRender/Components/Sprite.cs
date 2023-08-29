@@ -11,19 +11,23 @@ namespace OpenRender.Components;
 
 public class Sprite : SceneNode
 {
-    private Matrix4 projection;
     private Vector3 tint;
     private float angleRotation;
     private Vector2 pivot;
 
     protected Shader shader;
+    protected Matrix4 projection;
+
+    /// <summary>
+    /// The texture dimensions.
+    /// </summary>
     protected Rectangle size;
 
     public Sprite(string textureName) : base(default, default)
     {
         ArgumentNullException.ThrowIfNull(textureName);
 
-        projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
+        projection = Matrix4.CreateOrthographicOffCenter(0, 0, 0, 0, -1, 1);
         shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
         shader.SetMatrix4("projection", ref projection);
         Material = Material.Create(shader,
@@ -31,6 +35,8 @@ public class Sprite : SceneNode
                 new TextureDescriptor(textureName, 
                     TextureType: TextureType.Diffuse, 
                     MinFilter: TextureMinFilter.LinearMipmapLinear,
+                    TextureWrapS: TextureWrapMode.ClampToBorder,
+                    TextureWrapT: TextureWrapMode.ClampToBorder,
                     GenerateMipMap: true) 
             }
         );
@@ -46,7 +52,10 @@ public class Sprite : SceneNode
         DisableCulling = true;
         RenderGroup = RenderGroup.UI;
     }
-
+    
+    /// <summary>
+    /// The texture dimensions.
+    /// </summary>
     public Rectangle Size => size;
 
     /// <summary>
