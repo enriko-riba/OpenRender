@@ -76,7 +76,7 @@ internal class TestScene : Scene
         const int LineHeight = 18;
         const int TextStartY = 10;
         
-        var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}, pos: {camera!.Position.ToString("n2")}".PadRight(Padding);
+        var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}, pos: {camera!.Position:N2}".PadRight(Padding);
         tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);

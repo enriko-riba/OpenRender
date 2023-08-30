@@ -29,10 +29,10 @@ public class NineSlicePlane : Sprite
     private readonly int targetHeight;
 
     /// <summary>
-    /// Creates a new nine slice plane sprite
+    /// Creates a new nine slice plane sprite.
     /// </summary>
     /// <param name="textureName">the texture resource</param>
-    /// <param name="ltrbSize">uniform size applied to all corners</param>
+    /// <param name="ltrbSize">uniform size applied to all texture edges (left, top, right, bottom)</param>
     /// <param name="width"></param>
     /// <param name="height"></param>
     public NineSlicePlane(string textureName, int ltrbSize, int width, int height) : this(textureName, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height) { }

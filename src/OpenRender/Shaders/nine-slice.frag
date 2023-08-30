@@ -1,10 +1,6 @@
 #version 330 core
 uniform sampler2D texture_diffuse;
 uniform vec3 tint;
-
-in vec2 texUV;
-out vec4 outputColor;
-
 uniform int leftWidth;
 uniform int topHeight;
 uniform int rightWidth;
@@ -14,6 +10,9 @@ uniform int height; // Total height of the texture (in pixels)
 
 uniform int targetWidth;    // Total sprite width (in pixels)
 uniform int targetHeight;   // Total sprite height (in pixels)
+
+in vec2 texUV;
+out vec4 outputColor;
 
 void main()
 {  

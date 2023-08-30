@@ -20,7 +20,6 @@ public class Scene
     private readonly UniformBuffer<MaterialUniform> vboMaterial;
     private readonly UniformBuffer<LightUniform> vboLight;
     private readonly TextureBatcher textureBatcher;
-    private readonly CullingHelper cullingHelper = new();
 
     private uint lastMaterial;
     private int lastProgramHandle;
@@ -37,13 +36,15 @@ public class Scene
 
     internal IReadOnlyList<SceneNode> Nodes => nodes;
 
-    public Scene(string name)
+    public Scene() : this(null) { }
+
+    public Scene(string? name)
     {
         defaultShader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
         vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
         vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         vboLight = new UniformBuffer<LightUniform>("light", 1);
-        Name = name;
+        Name = name ?? GetType().Name;
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
@@ -56,7 +57,7 @@ public class Scene
         }
     }
 
-    protected SceneManager SceneManager => scm;
+    public SceneManager SceneManager => scm;
 
     public int VisibleNodes => nodes.Where(n => n.FrameBits.Value == 0).Count();
 
@@ -113,6 +114,12 @@ public class Scene
         vboCamera.BindToShaderProgram(defaultShader);
         vboLight.BindToShaderProgram(defaultShader);
     }
+
+    /// <summary>
+    /// Fired when the scene gets activated.
+    /// Note: the base implementation does nothing.
+    /// </summary>
+    public virtual void OnActivate() { }
 
     /// <summary>
     /// Clears the scene, assigns camera and light uniform buffer objects and renders each node.
