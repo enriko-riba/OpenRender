@@ -25,8 +25,6 @@ public class NineSlicePlane : Sprite
     private readonly int topHeight;
     private readonly int rightWidth;
     private readonly int bottomHeight;
-    private readonly int targetWidth;
-    private readonly int targetHeight;
 
     /// <summary>
     /// Creates a new nine slice plane sprite.
@@ -43,13 +41,11 @@ public class NineSlicePlane : Sprite
         this.topHeight = topHeight;
         this.rightWidth = rightWidth;
         this.bottomHeight = bottomHeight;
-        targetWidth = width;
-        targetHeight = height;
         shader = new Shader("Shaders/sprite.vert", "Shaders/nine-slice.frag");
         shader.SetMatrix4("projection", ref projection);
         Material.Shader = shader;
         Tint = Color4.White;    //  need to re apply the tint in order to setup the shaders uniform
-        SetScale(new Vector3((float)targetWidth / size.X, (float)targetHeight / size.Y, 1));
+        Size = new Vector2i(width, height);
     }
 
     public override void OnDraw(Scene scene, double elapsed)
@@ -60,8 +56,8 @@ public class NineSlicePlane : Sprite
         shader.SetInt("bottomHeight", bottomHeight);
         shader.SetInt("width", size.X);
         shader.SetInt("height", size.Y);
-        shader.SetInt("targetWidth", targetWidth);
-        shader.SetInt("targetHeight", targetHeight);
+        shader.SetInt("targetWidth", size.X);
+        shader.SetInt("targetHeight", size.Y);
         base.OnDraw(scene, elapsed);
     }
 }

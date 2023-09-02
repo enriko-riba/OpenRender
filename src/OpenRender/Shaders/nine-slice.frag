@@ -11,24 +11,26 @@ uniform int height; // Total height of the texture (in pixels)
 uniform int targetWidth;    // Total sprite width (in pixels)
 uniform int targetHeight;   // Total sprite height (in pixels)
 
+uniform vec4 sourceFrame;   //  in NDC x,y = start, z,w = width,height
+
 in vec2 texUV;
 out vec4 outputColor;
 
 void main()
-{  
+{
     // Calculate texture coordinates based on the nine-slice parameters
     vec2 texCoord = texUV;
 
     // Calculate the UV positions of the inner corner points
     float leftX = float(leftWidth) / float(targetWidth);
     float bottomY = float(topHeight) / float(targetHeight);
-    float rightX = 1.0 - float(rightWidth) / float(targetWidth);    
-    float topY = 1.0 - float(bottomHeight) / float(targetHeight);    
+    float rightX = 1.0 - float(rightWidth) / float(targetWidth);
+    float topY = 1.0 - float(bottomHeight) / float(targetHeight);
 
     // Calculate the scaling factors for x and y directions
     float scaleX = float(targetWidth) / float(width);
     float scaleY = float(targetHeight) / float(height);
-       
+
     if(texCoord.x <= leftX)
     {
         texCoord.x *= scaleX;
@@ -53,7 +55,7 @@ void main()
     else if(texCoord.y >= topY)
     {
         texCoord.y = 1.0 - (1.0 - texCoord.y) * scaleY;
-    }  
+    }
     else
     {
         // Normalize texCoord.y within the source range
@@ -61,8 +63,13 @@ void main()
         float targetMin = float(bottomHeight) / float(height);
         float targetMax = 1.0 - float(topHeight) / float(height);
         texCoord.y = mix(targetMin, targetMax, normalizedY);
-    }    
-   
+    }
+
+    if(sourceFrame.length() > 0.0)
+    {
+        texCoord = sourceFrame.xy + mix(vec2(0), sourceFrame.zw, texCoord);
+    }
+
     outputColor = texture(texture_diffuse, texCoord);
     outputColor.rgb *= tint;
 }

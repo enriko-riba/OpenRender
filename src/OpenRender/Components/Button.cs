@@ -7,13 +7,15 @@ namespace OpenRender.Components;
 /// 2D sprite emulating a UI button. The buttons texture is treated as a 'nine slice'.
 /// The UI interaction is very basic and just checks if the mouse is over the button disregarding any depth or overlays.
 /// </summary>
-public class Button: NineSlicePlane
+public class Button : NineSlicePlane
 {
     private bool isHovering;
     private bool isPressed;
-    
+
     /// <inheritdoc/>
-    public Button(string textureName, int ltrbSize, int width, int height) : base(textureName, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height) { }
+    public Button(string textureName, int ltrbSize, int width, int height) : base(textureName, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height) 
+    { 
+    }
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
@@ -21,7 +23,11 @@ public class Button: NineSlicePlane
         HandleMouseState(scene.SceneManager.MouseState);
     }
 
-    public Action? OnClick { get; set; }    
+    public Action? OnClick { get; set; }
+
+    public bool IsHovering => isHovering;
+
+    public bool IsPressed => isPressed;
 
     private void HandleMouseState(MouseState mouseState)
     {

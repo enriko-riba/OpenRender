@@ -16,7 +16,19 @@ internal class GameScene : Scene
         base.Load();
         camera = new Camera2D(new Vector3(0, 0, 0), SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
 
-        var btn = new Button("Resources/btn.png", 16, 200, 120);
+        //var btn = new Button("Resources/btn.png", 16, 200, 120);
+        var btn = new Button("Resources/btnAtlas.png", 60, 200, 120)
+        {
+            SourceRectangle = new Rectangle(0, 0, 400, 120),
+            Update = (node, elapsed) =>
+            {
+                var btn = (node as Button)!;
+                var rect = btn.SourceRectangle;
+                rect.Y = btn.IsPressed ? 240 :
+                         btn.IsHovering ? 120 : 0;
+                btn.SourceRectangle = rect;
+            }
+        };
         btn.SetPosition(new Vector3(100, 100, 0));
         btn.Tint = Color4.BurlyWood;
         btn.OnClick = () => SceneManager.ActivateScene(nameof(MenuScene));
