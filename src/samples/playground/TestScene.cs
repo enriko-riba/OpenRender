@@ -320,18 +320,21 @@ internal class TestScene : Scene
         child.AngleRotation = -45;
         smiley.AddChild(child);
 
-        animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png");
-        animatedSprite.SetPosition(new Vector2(770, 210));
+        animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png")
+        {
+            Size = new Vector2i(60, 65)
+        };
         AddNode(animatedSprite);
-        animatedSprite.AddAnimation("left", new AnimatedSprite.Frame[] {
-            new (0, 50, 50, 50),
-            new (50, 50, 50, 50),
-            new (100, 50, 50, 50)
-        });
-        animatedSprite.AddAnimation("right", new AnimatedSprite.Frame[] {
+        animatedSprite.SetPosition(new Vector2(770, 210));
+        animatedSprite.AddAnimation("left", new Rectangle[] {
             new (0, 0, 50, 50),
             new (50, 0, 50, 50),
             new (100, 0, 50, 50)
+        });
+        animatedSprite.AddAnimation("right", new Rectangle[] {
+            new (0, 50, 50, 50),
+            new (50, 50, 50, 50),
+            new (100, 50, 50, 50)
         });
         animatedSprite.Play("left", 3);
     }

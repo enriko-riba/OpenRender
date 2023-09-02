@@ -79,6 +79,11 @@ public class Scene
         lights.Add(light);
     }
 
+    /// <summary>
+    /// Adds the given node to the scene.
+    /// </summary>
+    /// <param name="node"></param>
+    /// <exception cref="ArgumentException"></exception>
     public void AddNode(SceneNode node)
     {
         if (node.Scene != null) throw new ArgumentException("Node is already added to a scene!", nameof(node));
@@ -88,6 +93,10 @@ public class Scene
         renderLayers[node.RenderGroup].Add(node);
     }
 
+    /// <summary>
+    /// Removes the given node from the scene.
+    /// </summary>
+    /// <param name="node"></param>
     public void RemoveNode(SceneNode node)
     {
         hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);
