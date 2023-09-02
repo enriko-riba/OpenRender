@@ -82,12 +82,16 @@ public class Shader
         return uniformBlockIndices.TryGetValue(uniformBlockName, out var index) ? index : -1;
     }
 
+    /// <summary>
+    /// Returns the index or location of the named uniform.
+    /// </summary>
+    /// <param name="uniformName"></param>
+    /// <returns></returns>
     public int GetUniformLocation(string uniformName)
     {
         uniformLocations.TryGetValue(uniformName, out var index);
         return index;
     }
-
 
     /// <summary>
     /// Queries the program for attribute location.
@@ -100,7 +104,7 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform int.
+    /// Sets a uniform int.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
@@ -111,7 +115,7 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform float.
+    /// Sets a uniform float.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
@@ -122,7 +126,7 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform Matrix4.
+    /// Sets a uniform Matrix4.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
@@ -138,7 +142,7 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform Vector4.
+    /// Sets a uniform Vector4.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
@@ -149,7 +153,18 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform Vector3.
+    /// Sets a uniform4 values.
+    /// </summary>
+    /// <param name="name">The name of the uniform</param>
+    /// <param name="data">The data to set</param>
+    public void SetUniform4(string name, float v1, float v2, float v3, float v4)
+    {
+        GL.UseProgram(Handle);
+        if (IsUniformValid(name)) GL.Uniform4(uniformLocations[name], v1, v2, v3, v4);
+    }
+
+    /// <summary>
+    /// Sets a uniform Vector3.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
@@ -160,11 +175,22 @@ public class Shader
     }
 
     /// <summary>
-    /// Set a uniform Vector2.
+    /// Sets a uniform Vector2.
     /// </summary>
     /// <param name="name">The name of the uniform</param>
     /// <param name="data">The data to set</param>
     public void SetVector2(string name, ref Vector2 data)
+    {
+        GL.UseProgram(Handle);
+        if (IsUniformValid(name)) GL.Uniform2(uniformLocations[name], data);
+    }
+
+    /// <summary>
+    /// Sets a uniform Vector2i.
+    /// </summary>
+    /// <param name="name">The name of the uniform</param>
+    /// <param name="data">The data to set</param>
+    public void SetVector2(string name, ref Vector2i data)
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.Uniform2(uniformLocations[name], data);

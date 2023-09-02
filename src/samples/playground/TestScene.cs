@@ -310,17 +310,18 @@ internal class TestScene : Scene
     private void AddSprites()
     {
         smiley = new Sprite("Resources/awesomeface-sprite.png");
-        smiley.SetPosition(new Vector3(950, 200, 0));
-        smiley.SetScale(new Vector3(0.25f));
+        smiley.SetPosition(new Vector2(950, 200));
+        smiley.Size = new Vector2i(70, 70); //  scale and size are interchangeable
         AddNode(smiley);
 
         var child = new Sprite("Resources/awesomeface-sprite.png");
-        child.SetPosition(new Vector3(100, 80, 0));
-        child.SetScale(new Vector3(0.5f));
+        child.SetPosition(new Vector2(100, 80));
+        child.SetScale(new Vector3(0.5f));  //  scale and size are interchangeable
+        child.AngleRotation = -45;
         smiley.AddChild(child);
 
         animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png");
-        animatedSprite.SetPosition(new Vector3(770, 210, 0));
+        animatedSprite.SetPosition(new Vector2(770, 210));
         AddNode(animatedSprite);
         animatedSprite.AddAnimation("left", new AnimatedSprite.Frame[] {
             new (0, 50, 50, 50),

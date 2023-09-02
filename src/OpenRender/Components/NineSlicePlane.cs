@@ -49,7 +49,7 @@ public class NineSlicePlane : Sprite
         shader.SetMatrix4("projection", ref projection);
         Material.Shader = shader;
         Tint = Color4.White;    //  need to re apply the tint in order to setup the shaders uniform
-        SetScale(new Vector3((float)targetWidth / size.Width, (float)targetHeight / size.Height, 1));
+        SetScale(new Vector3((float)targetWidth / size.X, (float)targetHeight / size.Y, 1));
     }
 
     public override void OnDraw(Scene scene, double elapsed)
@@ -58,8 +58,8 @@ public class NineSlicePlane : Sprite
         shader.SetInt("topHeight", topHeight);
         shader.SetInt("rightWidth", rightWidth);
         shader.SetInt("bottomHeight", bottomHeight);
-        shader.SetInt("width", size.Width);
-        shader.SetInt("height", size.Height);
+        shader.SetInt("width", size.X);
+        shader.SetInt("height", size.Y);
         shader.SetInt("targetWidth", targetWidth);
         shader.SetInt("targetHeight", targetHeight);
         base.OnDraw(scene, elapsed);

@@ -9,6 +9,9 @@ using OpenTK.Windowing.Common;
 
 namespace OpenRender.Components;
 
+/// <summary>
+/// 2D sprite component, renders a textured rectangle ignoring depth.
+/// </summary>
 public class Sprite : SceneNode
 {
     private Vector3 tint;
@@ -21,8 +24,17 @@ public class Sprite : SceneNode
     /// <summary>
     /// The texture dimensions.
     /// </summary>
-    protected Rectangle size;
+    protected Vector2i size;
 
+    /// <summary>
+    /// A frame inside the sprite texture that will be rendered, the default is the whole texture
+    /// </summary>
+    private Rectangle sourceRectangle;
+
+    /// <summary>
+    /// Creates a new 2D sprite object
+    /// </summary>
+    /// <param name="textureName"></param>
     public Sprite(string textureName) : base(default, default)
     {
         ArgumentNullException.ThrowIfNull(textureName);
@@ -32,17 +44,20 @@ public class Sprite : SceneNode
         shader.SetMatrix4("projection", ref projection);
         Material = Material.Create(shader,
             new TextureDescriptor[] {
-                new TextureDescriptor(textureName, 
-                    TextureType: TextureType.Diffuse, 
+                new TextureDescriptor(textureName,
+                    TextureType: TextureType.Diffuse,
+                    MagFilter: TextureMagFilter.Nearest,
                     MinFilter: TextureMinFilter.LinearMipmapLinear,
                     TextureWrapS: TextureWrapMode.ClampToBorder,
                     TextureWrapT: TextureWrapMode.ClampToBorder,
-                    GenerateMipMap: true) 
+                    GenerateMipMap: true)
             }
         );
 
-        size.Width = Material.Textures![0].Width;
-        size.Height = Material.Textures[0].Height;
+        size.X = Material.Textures![0].Width;
+        size.Y = Material.Textures[0].Height;
+        sourceRectangle.Width = size.X;
+        sourceRectangle.Height = size.Y;
 
         var vbQuad = GeometryHelper.Create2dQuad();
         var mesh = new Mesh(vbQuad, DrawMode.Indexed);
@@ -52,11 +67,33 @@ public class Sprite : SceneNode
         DisableCulling = true;
         RenderGroup = RenderGroup.UI;
     }
-    
+
     /// <summary>
-    /// The texture dimensions.
+    /// The sprite dimensions. Default is the texture dimensions.
+    /// Note: updating the size will also update the scale.
     /// </summary>
-    public Rectangle Size => size;
+    public Vector2i Size
+    {
+        get => size;
+        set
+        {
+            if ((Material?.Textures?.Length ?? 0) > 0)
+            {
+                var texture = Material!.Textures![0];
+                SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
+            }
+            size = value;
+        }
+    }
+
+    /// <summary>
+    /// Gets or sets the frame inside the sprite texture that will be rendered, the default is the whole texture.
+    /// </summary>
+    public Rectangle SourceRectangle
+    {
+        get => sourceRectangle;
+        set => sourceRectangle = value;
+    }
 
     /// <summary>
     /// Sprite tint. 
@@ -71,6 +108,40 @@ public class Sprite : SceneNode
             tint = new(value.R, value.G, value.B);
             shader.SetVector3("tint", ref tint);
         }
+    }
+
+    /// <summary>
+    /// Sets the sprites position.
+    /// </summary>
+    /// <param name="position"></param>
+    public void SetPosition(in Vector2 position)
+    {
+        SetPosition(new Vector3(position.X, position.Y, 0));
+    }
+
+    /// <summary>
+    /// Gets the sprites position.
+    /// </summary>
+    /// <param name="position"></param>
+    public void GetPosition(out Vector2 position)
+    {
+        position = new Vector2(this.position.X, this.position.Y);
+    }
+
+    /// <summary>
+    /// <inheritdoc/>
+    /// Updating the scale will also update the sprite size.
+    /// Note: sprites are 2D objects so the Z component is ignored.
+    /// </summary>
+    public override void SetScale(in Vector3 scale)
+    {
+        if ((Material?.Textures?.Length ?? 0) > 0)
+        {
+            var texture = Material!.Textures![0];
+            size.X = (int)MathF.Round(scale.X * texture.Width);
+            size.Y = (int)MathF.Round(scale.Y * texture.Height);
+        }
+        base.SetScale(scale);
     }
 
     /// <inheritdoc />
@@ -115,7 +186,8 @@ public class Sprite : SceneNode
     protected override void UpdateMatrix()
     {
         //  calculate scale, account for quad vertices in range [0,1] so we need to multiply with texture size
-        var spriteScale = new Vector3(scale.X * size.Width, scale.Y * size.Height, 1);
+        //var spriteScale = new Vector3(scale.X * size.X, scale.Y * size.Y, 1);
+        var spriteScale = new Vector3(size.X, size.Y, 1);
         Matrix4.CreateScale(spriteScale, out scaleMatrix);
 
         // Calculate translation so that rotation is around the sprite's pivot       
@@ -149,6 +221,12 @@ public class Sprite : SceneNode
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
         if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
+        var texture = Material.Textures![0];
+        shader.SetUniform4("sourceFrame",
+            (float)sourceRectangle.X / texture.Width,
+            1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / texture.Height,
+            (float)sourceRectangle.Width / texture.Width,
+            (float)sourceRectangle.Height / texture.Height);
         base.OnDraw(scene, elapsed);
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }

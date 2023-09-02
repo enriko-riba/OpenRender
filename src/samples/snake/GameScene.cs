@@ -2,6 +2,7 @@
 using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
+using snake.Logic;
 
 namespace snake;
 
@@ -19,7 +20,11 @@ internal class GameScene : Scene
         btn.Tint = Color4.BurlyWood;
         btn.OnClick = () => SceneManager.ActivateScene(nameof(MenuScene));
         AddNode(btn);
+
+        var ground = new Ground(10, 10, 70, 70, Color4.DarkGoldenrod);
+        AddNode(ground);
     }
+
     public override void OnActivate()
     {
         SceneManager.Title = "Snake";

@@ -29,7 +29,7 @@ public class AnimatedSprite : Sprite
 
         shader = new Shader("Shaders/sprite.vert", "Shaders/animated-sprite.frag");
         Material.Shader = shader;
-        Tint = Color4.White;    //  need to re set the tint in order to setup the shaders uniform
+        Tint = Color4.White;    //  need to reset the tint in order to setup the shaders uniform
         var projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
         shader.SetMatrix4("projection", ref projection); 
     }
@@ -79,8 +79,8 @@ public class AnimatedSprite : Sprite
                 currentFrame = currentFrames[Math.Max(0, frameIndex)];
                 var uvInfo = currentFrame.UV!.Value;
                 shader.SetVector4("uvInfo", ref uvInfo);
-                size.Width = currentFrame.Width;
-                size.Height = currentFrame.Height;
+                size.X = currentFrame.Width;
+                size.Y = currentFrame.Height;
                 UpdateMatrix();
             }
         }
@@ -133,11 +133,11 @@ public class AnimatedSprite : Sprite
     {
         foreach (var frame in frames)
         {
-            var minX = frame.X / (float)size.Width;
-            var minY = frame.Y / (float)size.Height;
+            var minX = frame.X / (float)size.X;
+            var minY = frame.Y / (float)size.Y;
             frame.UV = new Vector4(minX, minY, 
-                (frame.X + frame.Width) / (float)size.Width - minX, 
-                (frame.Y + frame.Height) / (float)size.Height - minY);
+                (frame.X + frame.Width) / (float)size.X - minX, 
+                (frame.Y + frame.Height) / (float)size.Y - minY);
         }
     }
 

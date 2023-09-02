@@ -8,6 +8,14 @@ public struct Rectangle : IEquatable<Rectangle>
     public int Width;
     public int Height;
 
+    public Rectangle() { }
+    public Rectangle(int x, int y, int width, int height)
+    {
+        X = x;
+        Y = y;
+        Width = width;
+        Height = height;
+    }
 
     public override readonly bool Equals([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] object? obj) => obj is not null && obj is Rectangle rectangle && Equals(rectangle);
 

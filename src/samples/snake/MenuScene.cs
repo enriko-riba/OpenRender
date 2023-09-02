@@ -14,7 +14,7 @@ internal class MenuScene : Scene
         base.Load();
         camera = new Camera2D(new Vector3(0, 0, 0), SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
 
-        var btn = new Button("Resources/btn.png", 16, 180, 60);
+        var btn = new Button("Resources/btn.png", 16, 200, 80);
         btn.SetPosition(new Vector3(10, 10, 0));
         btn.OnClick = () => SceneManager.ActivateScene(nameof(GameScene));
         AddNode(btn);

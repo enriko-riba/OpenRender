@@ -26,10 +26,8 @@ public class Button: NineSlicePlane
     private void HandleMouseState(MouseState mouseState)
     {
         //  check if mouse is over the button
-        var w = scale.X * size.Width;
-        var h = scale.Y * size.Height;
-        isHovering = mouseState.X >= position.X && mouseState.X <= position.X + w &&
-                     mouseState.Y >= position.Y && mouseState.Y <= position.Y + h;
+        isHovering = mouseState.X >= position.X && mouseState.X <= position.X + size.X &&
+                     mouseState.Y >= position.Y && mouseState.Y <= position.Y + size.Y;
 
         if (!isHovering)
         {

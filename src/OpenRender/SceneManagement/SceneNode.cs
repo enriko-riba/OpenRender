@@ -201,7 +201,7 @@ public class SceneNode
     /// Sets the node Scale.
     /// </summary>
     /// <param name="scale"></param>
-    public void SetScale(in Vector3 scale)
+    public virtual void SetScale(in Vector3 scale)
     {
         this.scale = scale;
         Invalidate();
@@ -220,7 +220,7 @@ public class SceneNode
     }
 
     /// <summary>
-    /// Handles the resize event. The base class has no implementation so invoking base.OnResize() does nothing.
+    /// Handles the viewport resize event. The base class has no implementation so invoking base.OnResize() does nothing.
     /// </summary>
     /// <param name="scene"></param>
     /// <param name="e"></param>
