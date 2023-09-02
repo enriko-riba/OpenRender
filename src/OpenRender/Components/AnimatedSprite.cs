@@ -1,6 +1,5 @@
-﻿using OpenRender.Core.Rendering;
+﻿using OpenRender.Core;
 using OpenRender.SceneManagement;
-using OpenTK.Mathematics;
 
 namespace OpenRender.Components;
 
@@ -13,12 +12,12 @@ public class AnimatedSprite : Sprite
     private float accumulator;
     private int frameIndex = -1;
     private int lastIndex = -1;
-    private string? currentSequence;
+    private string? currentSequenceName;
     private readonly Action? onUpdateAction;
     private readonly Action? onCompleteAction;
-    private readonly Dictionary<string, Frame[]> animationSequences = new();
-    private Frame[]? currentFrames;
-    private Frame? currentFrame;
+    private readonly Dictionary<string, Rectangle[]> animationSequences = new();
+    private Rectangle[]? currentSequence;
+    private Rectangle currentFrame;
 
     public AnimatedSprite(string textureName) : this(textureName, null, null) { }
     public AnimatedSprite(string textureName, Action? onComplete) : this(textureName, onComplete, null) { }
@@ -26,19 +25,13 @@ public class AnimatedSprite : Sprite
     {
         onUpdateAction = onUpdate;
         onCompleteAction = onComplete;
-
-        shader = new Shader("Shaders/sprite.vert", "Shaders/animated-sprite.frag");
-        Material.Shader = shader;
-        Tint = Color4.White;    //  need to reset the tint in order to setup the shaders uniform
-        var projection = Matrix4.CreateOrthographicOffCenter(0, 800, 600, 0, -1, 1);
-        shader.SetMatrix4("projection", ref projection); 
     }
 
     public int Fps { get; set; } = 4;
 
     public bool IsLooping { get; set; }
 
-    public bool IsPlaying => !string.IsNullOrEmpty(currentSequence);
+    public bool IsPlaying => !string.IsNullOrEmpty(currentSequenceName);
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
@@ -54,14 +47,14 @@ public class AnimatedSprite : Sprite
                 lastIndex = frameIndex;
                 frameIndex++;
                 onUpdateAction?.Invoke();
-                if (frameIndex == currentFrames?.Length)
+                if (frameIndex == currentSequence?.Length)
                 {
                     frameIndex = 0;
 
                     //  end the animation if not looping
                     if (!IsLooping)
                     {
-                        currentSequence = null;
+                        currentSequenceName = null;
                         lastIndex = -1;
                         onCompleteAction?.Invoke();
                     }
@@ -72,30 +65,26 @@ public class AnimatedSprite : Sprite
 
     public override void OnDraw(Scene scene, double elapsed)
     {
-        if (!string.IsNullOrWhiteSpace(currentSequence) && currentFrames is not null)
+        if (!string.IsNullOrWhiteSpace(currentSequenceName) && currentSequence is not null)
         {
             if (lastIndex != frameIndex)
             {
-                currentFrame = currentFrames[Math.Max(0, frameIndex)];
-                var uvInfo = currentFrame.UV!.Value;
-                shader.SetVector4("uvInfo", ref uvInfo);
-                size.X = currentFrame.Width;
-                size.Y = currentFrame.Height;
+                currentFrame = currentSequence[Math.Max(0, frameIndex)];
+                SourceRectangle = new Rectangle(currentFrame.X, currentFrame.Y, currentFrame.Width, currentFrame.Height);
                 UpdateMatrix();
             }
         }
         base.OnDraw(scene, elapsed);
     }
 
-    public void AddAnimation(string animationName, Frame[] frames)
+    public void AddAnimation(string animationName, Rectangle[] frames)
     {
         animationSequences.Add(animationName, frames);
-        CalcFrameUVs(frames);
     }
 
     public void Stop()
     {
-        currentSequence = null;
+        currentSequenceName = null;
         accumulator = 0;
         frameIndex = -1;
         lastIndex = -1;
@@ -104,20 +93,20 @@ public class AnimatedSprite : Sprite
     public void Play(string animationName, int? fps, bool loop = true)
     {
         ArgumentNullException.ThrowIfNull(animationName, nameof(animationName));
-        if(currentSequence == animationName)
+        if (currentSequenceName == animationName)
         {
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(currentSequence))
+        if (!string.IsNullOrWhiteSpace(currentSequenceName))
         {
             Stop();
         }
 
         if (animationSequences.ContainsKey(animationName))
         {
-            currentSequence = animationName;
-            currentFrames = animationSequences[currentSequence];
+            currentSequenceName = animationName;
+            currentSequence = animationSequences[currentSequenceName];
             Fps = fps ?? Fps;
             IsLooping = loop;
             frameIndex = 0;
@@ -127,33 +116,5 @@ public class AnimatedSprite : Sprite
         {
             Log.Warn("animation sequence: '{0}' not found", animationName);
         }
-    }
-
-    private void CalcFrameUVs(Frame[] frames)
-    {
-        foreach (var frame in frames)
-        {
-            var minX = frame.X / (float)size.X;
-            var minY = frame.Y / (float)size.Y;
-            frame.UV = new Vector4(minX, minY, 
-                (frame.X + frame.Width) / (float)size.X - minX, 
-                (frame.Y + frame.Height) / (float)size.Y - minY);
-        }
-    }
-
-    public class Frame
-    {
-        public Frame(int x, int y, int width, int height)
-        {
-            X = x;
-            Y = y;
-            Width = width;
-            Height = height;
-        }
-        public int X { get; set; }
-        public int Y { get; set; }
-        public int Width { get; set; }
-        public int Height { get; set; }
-        public Vector4? UV { get; set; }
     }
 }
