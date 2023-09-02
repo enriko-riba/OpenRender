@@ -1,6 +1,6 @@
 # OpenRender
-The OpenRender framework is a very simple OpenTK/OpenGL based game engine I am using for my Indie projects and demos. it does not aim to compete with Unity or Unreal Engine.
-Since it was never meant to be a full featured game engine but rather a renderer with basic scene management and some generic building blocks, OpenRenderer has no UI or editor.
+The OpenRender framework is a very simple OpenTK/OpenGL based game engine I am using for my Indie projects and demos. Since OpenRender does not aim to be a full featured game engine nor compete with Unity, Unreal Engine or alike
+but rather be a renderer with basic scene management and some generic building blocks, OpenRenderer has no UI or editor.
 
 ## Main structure
 - SceneManager, has one or many Scenes
