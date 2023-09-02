@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 
-namespace snake.Logic;
+namespace Samples.Snake.Logic;
 
 public class GameModel
 {

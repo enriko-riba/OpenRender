@@ -2,7 +2,7 @@
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
-namespace playground;
+namespace Samples.Playground;
 
 internal class RandomNode : SceneNode
 {

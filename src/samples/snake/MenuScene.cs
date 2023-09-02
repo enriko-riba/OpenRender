@@ -3,7 +3,7 @@ using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
-namespace snake;
+namespace Samples.Snake;
 
 internal class MenuScene : Scene
 {

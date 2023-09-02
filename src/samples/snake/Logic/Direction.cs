@@ -1,4 +1,4 @@
-﻿namespace snake.Logic;
+﻿namespace Samples.Snake.Logic;
 
 /// <summary>
 /// The four world directions: N,E,S,W and None

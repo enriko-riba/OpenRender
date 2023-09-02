@@ -2,7 +2,7 @@
 using OpenRender.Core;
 using OpenTK.Mathematics;
 
-namespace snake.Logic;
+namespace Samples.Snake.Logic;
 
 internal class Ground : Sprite
 {

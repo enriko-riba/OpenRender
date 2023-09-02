@@ -10,7 +10,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 
-namespace playground;
+namespace Samples.Playground;
 
 internal class TestScene : Scene
 {

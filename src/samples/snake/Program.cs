@@ -2,7 +2,7 @@
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
-using snake;
+using Samples.Snake;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {

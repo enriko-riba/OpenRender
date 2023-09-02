@@ -3,9 +3,9 @@ using OpenRender.Core;
 using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
-using snake.Logic;
+using Samples.Snake.Logic;
 
-namespace snake;
+namespace Samples.Snake;
 
 internal class GameScene : Scene
 {

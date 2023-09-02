@@ -1,13 +1,13 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender.SceneManagement;
+using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
-using OpenRender.SceneManagement;
-using playground;
+using Samples.Playground;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
     Size = new Vector2i(1280, 1024),
-    Title = "OpenRender Playground",    
+    Title = "OpenRender Playground",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,

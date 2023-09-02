@@ -1,4 +1,4 @@
-﻿namespace snake.Logic;
+﻿namespace Samples.Snake.Logic;
 
 public enum FrameType
 {
