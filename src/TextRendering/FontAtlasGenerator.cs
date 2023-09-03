@@ -34,7 +34,7 @@ public class FontAtlasGenerator
             VerticalAlignment = VerticalAlignment.Bottom,
             HorizontalAlignment = HorizontalAlignment.Left,
         };
-        var fontAtlas = new FontAtlas();
+        var fontAtlas = new FontAtlas(textOptions);
 
         //  measure widest char and line height to calc image dimensions
         var charBounds = TextMeasurer.MeasureAdvance("W", textOptions);
@@ -84,7 +84,7 @@ public class FontAtlasGenerator
         }
 
         // TODO: for debug, remove
-        //image.SaveAsPng("atlas.png");
+        image.SaveAsPng("font-atlas.png");
 
         var buffer = MemoryMarshal.AsBytes(image.GetPixelMemoryGroup().Single().Span).ToArray();
         fontAtlas.Texture = Texture.FromByteArray(buffer,

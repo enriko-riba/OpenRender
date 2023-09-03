@@ -1,10 +1,12 @@
 ﻿using OpenRender.Core.Rendering;
+using OpenRender.Core.Rendering.Text;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using SixLabors.Fonts;
 
 namespace OpenRender.Text;
 
-public class TextRenderer
+public class TextRenderer : ITextRenderer
 {
     private readonly int vao;
     private readonly int vbo;
@@ -33,9 +35,17 @@ public class TextRenderer
         GL.Uniform1(shader.GetUniformLocation("fontAtlasSampler"), (int)fontAtlas.Texture.TextureUnit - (int)TextureUnit.Texture0);
     }
 
+    public IFontAtlas FontAtlas => fontAtlas;
+
     public Matrix4 Projection { get => projectionMatrix; set { projectionMatrix = value; } }
 
     public static Matrix4 CreateTextRenderingProjection(float screenWidth, float screenHeight) => Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
+
+    public Core.Rectangle Measure(string text)
+    {
+        var rect = TextMeasurer.MeasureAdvance(text, fontAtlas.TextOptions);
+        return new Core.Rectangle(0, 0, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height));
+    }
 
     public void Render(string text, float x, float y, Vector3 color)
     {
@@ -89,9 +99,9 @@ public class TextRenderer
             GL.Disable(EnableCap.Blend);
         GL.BlendFunc((BlendingFactor)previousBlendSrc, (BlendingFactor)previousBlendDest);
 
-        if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);       
+        if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
 
-        GL.BindTexture(TextureTarget.Texture2D, 0);
+        //GL.BindTexture(TextureTarget.Texture2D, 0);
         GL.BindVertexArray(0);
     }
 }

@@ -270,6 +270,11 @@ public class Scene
         node.OnDraw(this, elapsed);
     }
 
+    public int GetBatchedTextureUnit(Texture texture)
+    {
+        return textureBatcher.GetTextureUnitWithTexture(texture.Handle);
+    }
+
     public Frustum Frustum = new();
 
     private void CullFrustum()

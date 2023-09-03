@@ -11,6 +11,7 @@ public class Shader
     private readonly Dictionary<string, int> uniformLocations = new();
     private readonly Dictionary<string, int> uniformBlockIndices = new();
     public readonly int Handle;
+    private readonly string DebugName;
 
     /// <summary>
     /// Creates a new Program from vertex and fragment shaders.
@@ -65,7 +66,10 @@ public class Shader
         Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
 
         Log.Info("created program {0}", Handle);
+        DebugName = $"{Handle}: '{vertPath}','{fragPath}'";
     }
+
+    public override string ToString() => DebugName;
 
     /// <summary>
     /// Uses this program (just invokes GL.UseProgram).

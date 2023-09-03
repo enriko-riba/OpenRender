@@ -1,10 +1,15 @@
 ﻿using OpenRender.Core.Textures;
 using OpenTK.Mathematics;
+using SixLabors.Fonts;
 
 namespace OpenRender.Text;
 
 internal class FontAtlas : IFontAtlas
 {
+    public FontAtlas(TextOptions textOptions)
+    {
+        TextOptions = textOptions;
+    }
     public Texture Texture { get; internal set; } = default!;
 
     public Dictionary<char, GlyphInfo> Glyphs { get; } = new Dictionary<char, GlyphInfo>();
@@ -19,4 +24,6 @@ internal class FontAtlas : IFontAtlas
     public Vector2i CharacterFrameSize { get; internal set; }
 
     public int LineHeight { get; internal set; }
+
+    public TextOptions TextOptions { get; }
 }

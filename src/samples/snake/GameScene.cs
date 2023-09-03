@@ -1,6 +1,7 @@
 ﻿using OpenRender.Components;
 using OpenRender.Core;
 using OpenRender.Core.Rendering;
+using OpenRender.Core.Rendering.Text;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using Samples.Snake.Logic;
@@ -9,32 +10,26 @@ namespace Samples.Snake;
 
 internal class GameScene : Scene
 {
-    public GameScene() : base() { }
+    private readonly ITextRenderer textRenderer;
+
+    public GameScene(ITextRenderer textRenderer) : base()
+    {
+        this.textRenderer = textRenderer;
+    }
 
     public override void Load()
     {
         base.Load();
         camera = new Camera2D(new Vector3(0, 0, 0), SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
 
-        //var btn = new Button("Resources/btn.png", 16, 200, 120);
-        var btn = new Button("Resources/btnAtlas.png", 60, 200, 120)
+        var btn = new Button("Back")
         {
-            SourceRectangle = new Rectangle(0, 0, 400, 120),
-            Update = (node, elapsed) =>
-            {
-                var btn = (node as Button)!;
-                var rect = btn.SourceRectangle;
-                rect.Y = btn.IsPressed ? 240 :
-                         btn.IsHovering ? 120 : 0;
-                btn.SourceRectangle = rect;
-            }
+            TextRenderer = textRenderer,            
+            OnClick = () => SceneManager.ActivateScene(nameof(MenuScene))
         };
-        btn.SetPosition(new Vector3(100, 100, 0));
-        btn.Tint = Color4.BurlyWood;
-        btn.OnClick = () => SceneManager.ActivateScene(nameof(MenuScene));
         AddNode(btn);
 
-        var ground = new Ground(100, 310, 170, 70, Color4.DarkGoldenrod);
+        var ground = new Ground(100, 310, 70, 70, Color4.DarkGoldenrod);
         AddNode(ground);
 
         var animatedSprite = new AnimatedSprite("Resources/atlas.png");
@@ -54,6 +49,6 @@ internal class GameScene : Scene
 
     public override void OnActivate()
     {
-        SceneManager.Title = "Snake";
+        SceneManager.Title = "Snake - game";
     }
 }

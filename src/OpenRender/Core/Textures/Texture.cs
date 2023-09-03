@@ -79,7 +79,7 @@ public class Texture
     /// </summary>
     public void Use() => Use(TextureUnit);
 
-    public override string ToString() => $"[{Handle}] '{Name}' : '{UniformName}' : {TextureTarget}";
+    public override string ToString() => $"{Handle} '{Name}' : '{UniformName}' : {TextureTarget}";
 
     public static Texture FromByteArray(byte[] buffer,
         int width,
@@ -128,7 +128,7 @@ public class Texture
         };
         textureCache[key] = texture;
         GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, name);
-        Log.Debug($"created texture: {texture}");
+        Log.Info($"created texture: {texture}");
         return texture;
     }
 
@@ -217,7 +217,7 @@ public class Texture
         };
         textureCache[key] = texture;
         GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, texture.Name);
-        Log.Debug($"created texture: {texture}");
+        Log.Info($"created texture: {texture}");
         return texture;
     }
 

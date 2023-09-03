@@ -144,7 +144,11 @@ public class Sprite : SceneNode
         base.SetScale(scale);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Calculates the new projection matrix when the window is resized.
+    /// </summary>
+    /// <param name="scene"></param>
+    /// <param name="e"></param>
     public override void OnResize(Scene scene, ResizeEventArgs e)
     {
         projection = Matrix4.CreateOrthographicOffCenter(0, e.Width, e.Height, 0, -1, 1);

@@ -1,4 +1,5 @@
 ﻿using OpenRender.SceneManagement;
+using OpenRender.Text;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
@@ -15,8 +16,15 @@ var nativeWindowSettings = new NativeWindowSettings()
     NumberOfSamples = 32,
 };
 
-using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
-var menuScene = new MenuScene();
+//  the one and only SceneManager
+using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings); 
+
+//  create a font atlas and a text renderer
+var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new (0f, 0f, 0f, 0f));
+var tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas);
+
+// start app with menu scene
+var menuScene = new MenuScene(tr);
 scm.AddScene(menuScene);
 scm.ActivateScene(menuScene.Name);
 scm.Run();
