@@ -12,7 +12,7 @@ namespace OpenRender.Text;
 /// <summary>
 /// Encapsulates a font atlas texture prerendered with glyphs from the given character set in given font and size.
 /// </summary>
-public class FontAtlasGenerator
+public sealed class FontAtlasGenerator
 {
     const int Padding = 4;
     const int ImageSize = 256;

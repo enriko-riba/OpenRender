@@ -6,7 +6,7 @@ using SixLabors.Fonts;
 
 namespace OpenRender.Text;
 
-public class TextRenderer : ITextRenderer
+public sealed class TextRenderer : ITextRenderer
 {
     private readonly int vao;
     private readonly int vbo;
@@ -25,9 +25,9 @@ public class TextRenderer : ITextRenderer
         GL.BindVertexArray(vao);
         GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
         GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
-        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
+        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
         GL.EnableVertexAttribArray(0);
-        GL.EnableVertexAttribArray(1);
+        GL.EnableVertexAttribArray(3);
         shader = new Shader("Shaders/text.vert", "Shaders/text.frag");
 
         // Set the font atlas texture as a uniform in the shader
@@ -75,6 +75,7 @@ public class TextRenderer : ITextRenderer
 
         foreach (var c in text)
         {
+            if (!fontAtlas.Glyphs.ContainsKey(c)) continue;
             var glyph = fontAtlas.Glyphs[c];
             var characterVertices = new float[]
             {
@@ -101,7 +102,7 @@ public class TextRenderer : ITextRenderer
 
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
 
-        //GL.BindTexture(TextureTarget.Texture2D, 0);
+        GL.BindTexture(TextureTarget.Texture2D, 0);
         GL.BindVertexArray(0);
     }
 }
