@@ -73,4 +73,11 @@ public static class Utility
         CreateLookAtRotation(in eyeDirection, in targetDirection, out var tmp);
         return tmp;
     }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="color"></param>
+    /// <returns></returns>
+    public static Vector3 ToVector3(this in Color4 color) => new(color.R, color.G, color.B);
 }

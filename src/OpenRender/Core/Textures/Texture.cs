@@ -150,7 +150,7 @@ public class Texture
     public static Texture FromFile(string[] paths,
         TextureUnit unit = TextureUnit.Texture0,
         TextureType textureType = TextureType.Unknown,
-        TextureMinFilter minFilter = TextureMinFilter.Linear,
+        TextureMinFilter minFilter = TextureMinFilter.LinearMipmapLinear,
         TextureMagFilter magFilter = TextureMagFilter.Linear,
         TextureWrapMode textureWrapS = TextureWrapMode.Repeat,
         TextureWrapMode textureWrapT = TextureWrapMode.Repeat,

@@ -105,8 +105,36 @@ public class Sprite : SceneNode
         get => new(tint.X, tint.Y, tint.Z, 1);
         set
         {
-            tint = new(value.R, value.G, value.B);
-            shader.SetVector3("tint", ref tint);
+            tint = new(value.R, value.G, value.B);            
+        }
+    }
+
+    /// <summary>
+    /// Sprite rotation in degrees.
+    /// </summary>
+    public new float AngleRotation
+    {
+        get => angleRotation;
+        set
+        {
+            angleRotation = value;
+            SetRotation(new Vector3(0, 0, MathHelper.DegreesToRadians(angleRotation)));
+        }
+    }
+
+    /// <summary>
+    /// The pivot point (center of rotation) of the sprite.
+    /// </summary>
+    public Vector2 Pivot
+    {
+        get => pivot;
+        set
+        {
+            if (value.X < 0 || value.X > 1 || value.Y < 0 || value.Y > 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(Pivot), "Pivot must be between 0 and 1");
+            }
+            pivot = value;
         }
     }
 
@@ -156,35 +184,6 @@ public class Sprite : SceneNode
     }
 
     /// <summary>
-    /// Sprite rotation in degrees.
-    /// </summary>
-    public new float AngleRotation
-    {
-        get => angleRotation;
-        set
-        {
-            angleRotation = value;
-            SetRotation(new Vector3(0, 0, MathHelper.DegreesToRadians(angleRotation)));
-        }
-    }
-
-    /// <summary>
-    /// The pivot point (center of rotation) of the sprite.
-    /// </summary>
-    public Vector2 Pivot
-    {
-        get => pivot;
-        set
-        {
-            if (value.X < 0 || value.X > 1 || value.Y < 0 || value.Y > 1)
-            {
-                throw new ArgumentOutOfRangeException(nameof(Pivot), "Pivot must be between 0 and 1");
-            }
-            pivot = value;
-        }
-    }
-
-    /// <summary>
     /// Calculates the world matrix (SROT).
     /// </summary>
     protected override void UpdateMatrix()
@@ -231,6 +230,7 @@ public class Sprite : SceneNode
             1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / texture.Height,
             (float)sourceRectangle.Width / texture.Width,
             (float)sourceRectangle.Height / texture.Height);
+        shader.SetVector3("tint", ref tint);
         base.OnDraw(scene, elapsed);
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }

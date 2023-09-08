@@ -69,6 +69,8 @@ public class Scene
 
     public UniformBuffer<CameraUniform> VboCamera => vboCamera;
 
+    public Color4 BackgroundColor { get; set; } = Color4.Black;
+
     public string Name { get; protected set; }
 
     public bool ShowBoundingSphere { get; set; }
@@ -90,6 +92,7 @@ public class Scene
         hasNodeListChanged = true;
         nodes.Add(node);
         node.Scene = this; // Set the Scene reference for the added node
+        node.OnResize(this, new(scm.ClientSize.X, scm.ClientSize.Y));   //  trigger resize event
         renderLayers[node.RenderGroup].Add(node);
     }
 
@@ -99,9 +102,24 @@ public class Scene
     /// <param name="node"></param>
     public void RemoveNode(SceneNode node)
     {
-        hasNodeListChanged = hasNodeListChanged || nodes.Remove(node);
+        var isRemoved = nodes.Remove(node);
+        hasNodeListChanged = hasNodeListChanged || isRemoved;
         node.Scene = null; // Remove the Scene reference from the removed node
         renderLayers[node.RenderGroup].Remove(node);
+    }
+
+    /// <summary>
+    /// Removes all nodes from the scene.
+    /// </summary>
+    public void RemoveAllNodes()
+    {
+        nodes.ForEach(n =>
+        {
+            n.Scene = null;
+            renderLayers[n.RenderGroup].Remove(n);
+        });
+        nodes.Clear();
+        hasNodeListChanged = true;
     }
 
     public virtual void Load()
@@ -113,7 +131,7 @@ public class Scene
         GL.Enable(EnableCap.PolygonSmooth);
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-        GL.ClearColor(Color4.CornflowerBlue);
+        GL.ClearColor(BackgroundColor);
 
         var fnDebugProc = Utility.DebugMessageDelegate;
         GL.DebugMessageCallback(fnDebugProc, IntPtr.Zero);
@@ -126,9 +144,11 @@ public class Scene
 
     /// <summary>
     /// Fired when the scene gets activated.
-    /// Note: the base implementation does nothing.
     /// </summary>
-    public virtual void OnActivate() { }
+    public virtual void OnActivate()
+    {
+        GL.ClearColor(BackgroundColor);
+    }
 
     /// <summary>
     /// Clears the scene, assigns camera and light uniform buffer objects and renders each node.
@@ -213,7 +233,7 @@ public class Scene
     public virtual void OnResize(ResizeEventArgs e)
     {
         GL.Viewport(0, 0, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-        if(camera is not null) camera.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
+        if (camera is not null) camera.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
         foreach (var node in nodes)
         {
             node.OnResize(this, e);
@@ -272,7 +292,8 @@ public class Scene
 
     public int GetBatchedTextureUnit(Texture texture)
     {
-        return textureBatcher.GetTextureUnitWithTexture(texture.Handle);
+        var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
+        return unit < 0 ? 0 : unit;
     }
 
     public Frustum Frustum = new();
@@ -281,7 +302,7 @@ public class Scene
     {
         hasCameraChanged = (camera?.Update() ?? false);
         if (hasCameraChanged && camera is not null)
-        {           
+        {
             Frustum.Update(camera);
             CullingHelper.CullNodes(Frustum, nodes);
         }

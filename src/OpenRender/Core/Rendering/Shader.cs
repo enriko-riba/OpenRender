@@ -1,5 +1,7 @@
-﻿using OpenTK.Graphics.OpenGL4;
+﻿using OpenRender.Core.Textures;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace OpenRender.Core.Rendering;
 
@@ -8,6 +10,8 @@ namespace OpenRender.Core.Rendering;
 /// </summary>
 public class Shader
 {
+    private static readonly Dictionary<string, Shader> shaderCache = new();
+
     private readonly Dictionary<string, int> uniformLocations = new();
     private readonly Dictionary<string, int> uniformBlockIndices = new();
     public readonly int Handle;
@@ -20,6 +24,16 @@ public class Shader
     /// <param name="fragPath"></param>
     public Shader(string vertPath, string fragPath)
     {
+        var cacheKey = $"{vertPath}|{fragPath}";
+        if (shaderCache.TryGetValue(cacheKey, out var cachedShader))
+        {
+            Handle = cachedShader.Handle;
+            uniformLocations = cachedShader.uniformLocations;
+            uniformBlockIndices = cachedShader.uniformBlockIndices;
+            DebugName = cachedShader.DebugName;
+            return;
+        }
+
         Log.Info("creating program '{0}', '{1}'", vertPath, fragPath);
         Log.Debug("creating vertex shader...");
         var shaderSource = File.ReadAllText(vertPath);
@@ -67,6 +81,7 @@ public class Shader
 
         Log.Info("created program {0}", Handle);
         DebugName = $"{Handle}: '{vertPath}','{fragPath}'";
+        shaderCache.Add(cacheKey, this);
     }
 
     public override string ToString() => DebugName;
