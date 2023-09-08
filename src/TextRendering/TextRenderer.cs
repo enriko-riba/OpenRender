@@ -72,25 +72,35 @@ public sealed class TextRenderer : ITextRenderer
 
         // Bind the vertex array and draw all the characters in a single draw call
         GL.BindVertexArray(vao);
-
+        var dx = x;
+        var dy = y;
         foreach (var c in text)
         {
-            if (!fontAtlas.Glyphs.ContainsKey(c)) continue;
+            if (c == '\n')
+            {
+                dy += fontAtlas.LineHeight;
+                dx = x;
+                continue;
+            }
+            else if (!fontAtlas.Glyphs.ContainsKey(c))
+            {
+                continue;
+            }
             var glyph = fontAtlas.Glyphs[c];
             var characterVertices = new float[]
             {
-                    x, y,                                 glyph.UvMinX, glyph.UvMinY,
-                    x, y + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
-                    x + glyph.Width, y,                   glyph.UvMaxX, glyph.UvMinY,
-                    x + glyph.Width, y,                   glyph.UvMaxX, glyph.UvMinY,
-                    x, y + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
-                    x + glyph.Width, y + glyph.Height,    glyph.UvMaxX, glyph.UvMaxY,
+                    dx, dy,                                 glyph.UvMinX, glyph.UvMinY,
+                    dx, dy + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
+                    dx + glyph.Width, dy,                   glyph.UvMaxX, glyph.UvMinY,
+                    dx + glyph.Width, dy,                   glyph.UvMaxX, glyph.UvMinY,
+                    dx, dy + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
+                    dx + glyph.Width, dy + glyph.Height,    glyph.UvMaxX, glyph.UvMaxY,
             };
             GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
             GL.BufferData(BufferTarget.ArrayBuffer, characterVertices.Length * sizeof(float), characterVertices, BufferUsageHint.StaticDraw);
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
             Log.CheckGlError();
-            x += glyph.Width;
+            dx += glyph.Width;
         }
 
         // Restore previous OpenGL states
