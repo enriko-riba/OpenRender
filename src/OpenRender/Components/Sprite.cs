@@ -39,9 +39,7 @@ public class Sprite : SceneNode
     {
         ArgumentNullException.ThrowIfNull(textureName);
 
-        projection = Matrix4.CreateOrthographicOffCenter(0, 0, 0, 0, -1, 1);
         shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
-        shader.SetMatrix4("projection", ref projection);
         Material = Material.Create(shader,
             new TextureDescriptor[] {
                 new TextureDescriptor(textureName,

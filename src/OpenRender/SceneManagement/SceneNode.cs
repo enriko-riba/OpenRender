@@ -113,20 +113,18 @@ public class SceneNode
 
     public virtual void OnDraw(Scene scene, double elapsed)
     {
+        GL.BindVertexArray(mesh.VertexBuffer.Vao);
+        if (mesh.DrawMode == DrawMode.Indexed)
+            GL.DrawElements(PrimitiveType.Triangles, mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
+        else
+            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Vertices.Length);
+
         if (ShowBoundingSphere)
         {
             sphereMeshRenderer.Shader.SetMatrix4("model", ref worldMatrix);
             sphereMeshRenderer.Render();
         }
-        else
-        {
-            GL.BindVertexArray(mesh.VertexBuffer.Vao);
-            if (mesh.DrawMode == DrawMode.Indexed)
-                GL.DrawElements(PrimitiveType.Triangles, mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
-            else
-                GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Vertices.Length);
-            GL.BindVertexArray(0);
-        }
+        GL.BindVertexArray(0);
     }
 
     public void AddChild(SceneNode child)
