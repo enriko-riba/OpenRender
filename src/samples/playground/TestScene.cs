@@ -53,7 +53,7 @@ internal class TestScene : Scene
         };
         AddLight(dirLight);
 
-        camera = new Camera3D(Vector3.Zero, SceneManager.Size.X / (float)SceneManager.Size.Y, farPlane:2000);
+        camera = new Camera3D(Vector3.Zero, SceneManager.Size.X / (float)SceneManager.Size.Y, farPlane: 2000);
 
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
@@ -75,7 +75,7 @@ internal class TestScene : Scene
         base.RenderFrame(elapsedSeconds);
         const int LineHeight = 18;
         const int TextStartY = 10;
-        
+
         var nodesText = $"nodes: {VisibleNodes}/{nodes.Count}, pos: {camera!.Position:N2}".PadRight(Padding);
         tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
@@ -297,12 +297,12 @@ internal class TestScene : Scene
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),
             1.97f);
-        mat.EmissiveColor = new Vector3(0.05f, 0.01f, 0.012f);
+        mat.EmissiveColor = new(0.05f, 0.01f, 0.012f);
 
         for (var i = 0; i < 50; i++)
         {
             var cube = new SceneNode(new Mesh(vbBox), mat);
-            cube.SetPosition(new Vector3(-250 + i * 10, 0, -10));
+            cube.SetPosition(new(-250 + i * 10, 0, -10));
             AddNode(cube);
         }
     }
@@ -310,12 +310,12 @@ internal class TestScene : Scene
     private void AddSprites()
     {
         smiley = new Sprite("Resources/awesomeface-sprite.png");
-        smiley.SetPosition(new Vector2(950, 200));
-        smiley.Size = new Vector2i(70, 70); //  scale and size are interchangeable
+        smiley.SetPosition(new(950, 200));
+        smiley.Size = new(70, 70); //  scale and size are interchangeable
         AddNode(smiley);
 
         var child = new Sprite("Resources/awesomeface-sprite.png");
-        child.SetPosition(new Vector2(100, 80));
+        child.SetPosition(new(100, 80));
         child.SetScale(new Vector3(0.5f));  //  scale and size are interchangeable
         child.AngleRotation = -45;
         smiley.AddChild(child);
@@ -325,7 +325,7 @@ internal class TestScene : Scene
             Size = new Vector2i(60, 65)
         };
         AddNode(animatedSprite);
-        animatedSprite.SetPosition(new Vector2(770, 210));
+        animatedSprite.SetPosition(new(770, 210));
         animatedSprite.AddAnimation("left", new Rectangle[] {
             new (0, 0, 50, 50),
             new (50, 0, 50, 50),

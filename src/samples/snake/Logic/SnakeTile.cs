@@ -1,4 +1,5 @@
 ﻿namespace Samples.Snake.Logic;
+
 public class SnakeTile
 {
     public SnakeTile(int x, int y, Direction direction, FrameType frameType)

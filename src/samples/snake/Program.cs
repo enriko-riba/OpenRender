@@ -7,13 +7,14 @@ using Samples.Snake;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
-    Size = new Vector2i(1280, 1024),
+    Size = new Vector2i(1600, 1280),
     Title = "OpenRender Playground",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,
     APIVersion = new Version(4, 6),
     NumberOfSamples = 32,
+    WindowState = WindowState.Fullscreen,
 };
 
 //  the one and only SceneManager
@@ -24,7 +25,7 @@ var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new (0f, 
 var tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas);
 
 // start app with menu scene
-var menuScene = new MenuScene(tr);
-scm.AddScene(menuScene);
-scm.ActivateScene(menuScene.Name);
+var scene = new GameScene(tr);
+scm.AddScene(scene);
+scm.ActivateScene(scene.Name);
 scm.Run();

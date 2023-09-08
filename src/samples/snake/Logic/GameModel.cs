@@ -11,7 +11,7 @@ public class GameModel
     private const float VelocityLevelIncreaseSecond = 0.3f;
 
     private readonly LinkedList<SnakeTile> snakeTiles = new();
-
+    
     public GameModel()
     {
         InitGrid();
@@ -89,7 +89,7 @@ public class GameModel
             snakeTiles.AddLast(new SnakeTile(x + i, y, Direction.West, FrameType.Body));
 
         }
-        snakeTiles.AddLast(new SnakeTile(x + bodyTiles, y, Direction.West, FrameType.Tail));
+        snakeTiles.AddLast(new SnakeTile(x + bodyTiles, y, Direction.West, FrameType.Tail));        
     }
 
     private void InitObjects()
@@ -133,19 +133,28 @@ public class GameModel
         SnakeDirection = direction;
 
         //  create the head node on new position and check for food collision
-        var previousCopy = CreateHeadTile(head.Value, direction);
-        var shouldGrow = HandleFoodCollision(previousCopy);
+        var currentSnakeTile = CreateHeadTile(head.Value, direction);
+        
+        //  check for collisions       
+        var isCollided = HasHeadCollided(currentSnakeTile);
+        if (isCollided)
+        {
+            State = GameState.Died;
+            return false;
+        }
+
+        var shouldGrow = HandleFoodCollision(currentSnakeTile);
 
         //  movement algorithm:
-        //  1. save current nodes position & direction into 'previousCopy'
-        //  2. set current nodes position & direction with previous values
+        //  1. save current nodes position & direction into 'currentSnakeTile'
+        //  2. swap current nodes position & direction with previous values
         //  3. update frame type if direction has changed
         //  in addition handle inserting new tile on growth and exit on next iteration
         //  repeat steps for all nodes
         var node = head;
         do
         {
-            SwapTileValues(node.Value, previousCopy);
+            SwapTileValues(node.Value, currentSnakeTile);
 
             var tile = node.Value;
             tile.FrameType = node.Previous is null ? FrameType.Head :
@@ -164,7 +173,7 @@ public class GameModel
                 //  stop processing further nodes since the newly inserted node (after head) is processed
                 if (node.Previous == head) break;
 
-                SnakeTile newTile = new(previousCopy.X, previousCopy.Y, previousCopy.Direction, FrameType.Body);
+                SnakeTile newTile = new(currentSnakeTile.X, currentSnakeTile.Y, currentSnakeTile.Direction, FrameType.Body);
                 snakeTiles.AddAfter(node, newTile);
             }
 
@@ -175,20 +184,16 @@ public class GameModel
         //  make sure tail has the direction of previous tile
         snakeTiles.Last!.Value.Direction = snakeTiles.Last.Previous!.Value.Direction;
 
-
-        //  check for collisions       
-        var isCollided = HasHeadCollided();
-        if (isCollided) State = GameState.Died;
-        return !isCollided;
+        return true;
     }
 
     /// <summary>
     /// Checks if the head has collided with a blocker tile or the snakes body.
     /// </summary>
+    /// <param name="headTile"></param>
     /// <returns>true if snake has collided</returns>
-    private bool HasHeadCollided()
+    private bool HasHeadCollided(SnakeTile headTile)
     {
-        var headTile = snakeTiles.First!.Value;
         var isCollision = Grid[headTile.X, headTile.Y] is TileType.Block or TileType.Bomb;
         if (!isCollision)
         {
@@ -238,6 +243,10 @@ public class GameModel
         b.X = x;
         b.Y = y;
         b.Direction = d;
+
+        //(a.X, b.X) = (b.X, a.X);
+        //(a.Y, b.Y) = (b.Y, a.Y);
+        //(a.Direction, b.Direction) = (b.Direction, a.Direction);
     }
 
     private static Direction CalcCornerDirection(Direction prevDir, Direction bodyDir)
