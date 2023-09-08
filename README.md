@@ -72,7 +72,7 @@ layout(std140) uniform light {
 
 ## Texture binding
 In order to bind textures to samplers during draw calls, the Material needs to contain the texture descriptions and it needs to be initialized.
-The textures defined in the material are automatically sent to shader programs and bound to following sampler names.
+The textures defined in the material are automatically bound to following sampler names.
 
 ### Sampler names
 ```
@@ -88,7 +88,7 @@ uniform sampler2D texture_additional4;
 In addition the following uniforms are automatically setup:
 ```
 uniform int uHasDiffuseTexture;          //  should the diffuse color be sampled from texture_diffuse
-uniform float uDetailTextureFactor;      //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
+uniform float uDetailTextureFactor;      //  scale of detail texture that is blended with diffuse, 0 if detail sampling is not used
 ```
 
 ***Note:*** the standard shader programs use only the `texture_diffuse` and `texture_detail`. Other samplers are set from the material but you need to use your own shader program that makes use of them.
@@ -96,7 +96,7 @@ uniform float uDetailTextureFactor;      //  scale of detail texture that is ble
 ### Texture types
 * diffuse 
 * detail
-* specular (atm not used by the standard shader)
+* specular (atm not used by the OpenRender standard shaders)
 * additional (up to 4, app specific - not used by OpenRender)
 
 #### TextureType enum
@@ -115,16 +115,3 @@ public enum TextureType
 }
 ``` 
 Unknown textures are treated as diffuse. This means if you create a material with `Unknown` texture type but no `Diffuse` texture, the `Unknown` texture will be used as the `Diffuse` texture.
-
-
-
-### Texture related parameters
-The following uniforms are used:
-```
-uniform int hasDiffuseTexture;
-uniform float detailTextureFactor;
-```
-
-**`hasDiffuseTexture`** is telling the fragment shader if the texture_diffuse sampler should be used. When this value is 0 the diffuse texture is not contributing to color output.
-
-**`detailTextureFactor`** is telling the fragment shader if the texture_detail sampler should be used. When this value is > 0 the detail texture is blended with the output color.
