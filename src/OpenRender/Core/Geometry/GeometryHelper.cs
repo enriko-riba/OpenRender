@@ -16,9 +16,9 @@ public static class GeometryHelper
     public static VertexBuffer Create2dQuad()
     {
         VertexDeclaration vxDeclaration;
-        float[] vertices;        
+        float[] vertices;
         vertices = Create2dQuadWithoutNormals();
-        vxDeclaration = VertexDeclarations.VertexPosition2DTexture;       
+        vxDeclaration = VertexDeclarations.VertexPosition2DTexture;
 
         uint[] indices =
         {
@@ -165,7 +165,7 @@ public static class GeometryHelper
     }
 
     public static VertexBuffer CreateSphere(int stacks, int slices)
-    {       
+    {
         var vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
         var vertices = new List<float>();
         var indices = new List<uint>();

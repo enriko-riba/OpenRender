@@ -15,48 +15,27 @@ public class VertexBuffer
         this.vertices = vertices;
         Indices = indices;
 
-        vao = GL.GenVertexArray();
-        GL.BindVertexArray(vao);
-
+        GL.CreateVertexArrays(1, out vao);
         if (indices != null)
         {
-            ebo = GL.GenBuffer();
-            GL.BindBuffer(BufferTarget.ElementArrayBuffer, ebo);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, indices!.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
+            GL.CreateBuffers(1, out ebo);
+            GL.NamedBufferStorage(ebo, indices.Length * sizeof(uint), indices, BufferStorageFlags.DynamicStorageBit);
+            GL.VertexArrayElementBuffer(vao, ebo);
         }
 
-        vbo = GL.GenBuffer();
-        GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-        GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
-
-        stride = vertexDeclaration.Invoke();
-        GL.BindVertexArray(0);
-
-        //  TODO: refactor to use DSA
-        //GL.CreateBuffers(1, out vbo);
-        //GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
-        
-        //GL.CreateVertexArrays(1, out vao);
-        //stride = vertexDeclaration.Invoke(vao);
-        //GL.VertexArrayVertexBuffer(vao, 0, vbo, 0, stride);
-
-        //if (indices != null)
-        //{
-        //    GL.CreateBuffers(1, out ebo);
-        //    GL.NamedBufferStorage(ebo, indices.Length * sizeof(uint), indices, BufferStorageFlags.DynamicStorageBit);
-        //    GL.VertexArrayElementBuffer(vao, ebo);
-        //}
-
+        GL.CreateBuffers(1, out vbo);
+        stride = vertexDeclaration.Invoke(vao);
+        GL.VertexArrayVertexBuffer(vao, 0, vbo, 0, stride);
+        GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
     }
 
-    public float[] Vertices 
-    { 
+    public float[] Vertices
+    {
         get => vertices;
         set
         {
-           vertices = value;
-           GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-           GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
+            vertices = value;
+            GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
         }
     }
 

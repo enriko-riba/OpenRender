@@ -166,10 +166,10 @@ public class Texture
         GL.CreateTextures(textureTarget, 1, out int handle);
         GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
 
-        GL.TextureParameter(handle, TextureParameterName.TextureWrapS, (int)textureWrapS);
-        GL.TextureParameter(handle, TextureParameterName.TextureWrapT, (int)textureWrapT);
-        GL.TextureParameter(handle, TextureParameterName.TextureMinFilter, (int)minFilter);
-        GL.TextureParameter(handle, TextureParameterName.TextureMagFilter, (int)magFilter);
+        GL.TextureParameterI(handle, TextureParameterName.TextureWrapS, new[] { (int)textureWrapS });
+        GL.TextureParameterI(handle, TextureParameterName.TextureWrapT, new[] { (int)textureWrapT });
+        GL.TextureParameterI(handle, TextureParameterName.TextureMinFilter, new[] { (int)minFilter });
+        GL.TextureParameterI(handle, TextureParameterName.TextureMagFilter, new[] { (int)magFilter });
 
 
         ImageResult? image = null;

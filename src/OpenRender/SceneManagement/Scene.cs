@@ -59,7 +59,7 @@ public class Scene
 
     public SceneManager SceneManager => scm;
 
-    public int VisibleNodes => nodes.Where(n => n.FrameBits.Value == 0).Count();
+    public int VisibleNodes => nodes.Count(n => n.FrameBits.Value == 0);
 
     public ICamera? Camera => camera;
 
