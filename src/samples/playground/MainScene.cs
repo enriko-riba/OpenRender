@@ -12,7 +12,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Samples.Playground;
 
-internal class TestScene : Scene
+internal class MainScene : Scene
 {
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
@@ -20,8 +20,7 @@ internal class TestScene : Scene
     private AnimatedSprite? animatedSprite;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
-
-    public TestScene() : base("TestScene") { }
+      
 
     public override void Load()
     {

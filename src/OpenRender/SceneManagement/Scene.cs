@@ -69,7 +69,7 @@ public class Scene
 
     public UniformBuffer<CameraUniform> VboCamera => vboCamera;
 
-    public Color4 BackgroundColor { get; set; } = Color4.Black;
+    public Color4 BackgroundColor { get; set; } = Color4.CornflowerBlue;
 
     public string Name { get; protected set; }
 

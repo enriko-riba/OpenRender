@@ -12,7 +12,7 @@ using static Samples.Snake.Constants;
 
 namespace Samples.Snake;
 
-internal class GameScene : Scene
+internal class MainScene : Scene
 {
 
     private readonly ITextRenderer textRenderer;
@@ -22,7 +22,7 @@ internal class GameScene : Scene
     private readonly SnakeSprite snakeSprite;
     private Direction requestedDirection = Direction.None;
 
-    public GameScene(ITextRenderer textRenderer) : base()
+    public MainScene(ITextRenderer textRenderer) : base()
     {
         BackgroundColor = Color4.Purple;
         this.textRenderer = textRenderer;

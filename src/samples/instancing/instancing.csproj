@@ -5,7 +5,7 @@
     <TargetFramework>net7.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>Samples.Snake</RootNamespace>
+    <RootNamespace>Samples.Instancing</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,15 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Resources\atlas.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="Resources\btn.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="Resources\btnAtlas.png">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <Folder Include="Resources\" />
   </ItemGroup>
 
 </Project>

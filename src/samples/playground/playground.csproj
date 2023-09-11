@@ -9,6 +9,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="..\shared_resources\consola.ttf" Link="Resources\consola.ttf">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\OpenRender\OpenRender.csproj" />
     <ProjectReference Include="..\..\TextRendering\TextRendering.csproj" />
   </ItemGroup>
@@ -50,9 +56,6 @@
     <None Update="Resources\zpos.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-	<None Include="Resources\consola.ttf">
-		<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-	</None>
   </ItemGroup>
 
 </Project>
