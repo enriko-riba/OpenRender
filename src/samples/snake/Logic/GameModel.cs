@@ -24,10 +24,7 @@ public class GameModel
 
     public TileType[,] Grid { get; private set; }
 
-    public void TogglePause()
-    {
-        State = State == GameState.Started ? GameState.Paused : GameState.Started;
-    }
+    public void TogglePause() => State = State == GameState.Started ? GameState.Paused : GameState.Started;
 
     public void NextLevel()
     {
@@ -232,21 +229,9 @@ public class GameModel
 
     private static void SwapTileValues(SnakeTile a, SnakeTile b)
     {
-        var x = a.X;
-        var y = a.Y;
-        var d = a.Direction;
-
-        a.X = b.X;
-        a.Y = b.Y;
-        a.Direction = b.Direction;
-
-        b.X = x;
-        b.Y = y;
-        b.Direction = d;
-
-        //(a.X, b.X) = (b.X, a.X);
-        //(a.Y, b.Y) = (b.Y, a.Y);
-        //(a.Direction, b.Direction) = (b.Direction, a.Direction);
+        (a.X, b.X) = (b.X, a.X);
+        (a.Y, b.Y) = (b.Y, a.Y);
+        (a.Direction, b.Direction) = (b.Direction, a.Direction);
     }
 
     private static Direction CalcCornerDirection(Direction prevDir, Direction bodyDir)

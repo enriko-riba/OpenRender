@@ -2,15 +2,15 @@
 using OpenRender.Core;
 using OpenTK.Mathematics;
 
-namespace Samples.Snake.Logic;
+namespace Samples.Snake;
 
 internal class Ground : Sprite
 {
-    public Ground(int x, int y, int width, int height, Color4 color): base("Resources/atlas.png")
+    public Ground(int x, int y, int width, int height, Color4 color) : base("Resources/atlas.png")
     {
         SetPosition(new(x, y));
         SourceRectangle = new Rectangle(64, 64, 64, 64);   //  position of white quad
         Size = new Vector2i(width, height);
         Tint = color;
-    }        
+    }
 }

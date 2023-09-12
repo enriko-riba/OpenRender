@@ -14,7 +14,6 @@ namespace Samples.Snake;
 
 internal class MainScene : Scene
 {
-
     private readonly ITextRenderer textRenderer;
     private readonly GameModel gameModel = new();
     private readonly Rectangle[] spriteFrames = new Rectangle[4];
@@ -40,7 +39,7 @@ internal class MainScene : Scene
 
         base.Load();
         camera = new Camera2D(new Vector3(0, 0, 0), SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-        AddNode(new Ground(0, Margin, SceneManager.ClientSize.X, SceneManager.ClientSize.Y, Color4.DarkGreen));
+        AddNode(new Ground(0, Margin, SceneManager.ClientSize.X, SceneManager.ClientSize.Y, Color4.DarkOliveGreen));
         AddNode(snakeSprite);
         gameModel.NextLevel();
         CreateObjects();
@@ -104,13 +103,12 @@ internal class MainScene : Scene
 
     private void CreateObjects()
     {
-        //RemoveAllNodes();
-        foreach(var kvp in gridSprites)
+        foreach (var kvp in gridSprites)
         {
             RemoveNode(kvp.Value);
         }
         gridSprites.Clear();
-       
+
         for (var j = 0; j < GameModel.GridTilesY; j++)
         {
             for (var i = 0; i < GameModel.GridTilesX; i++)
@@ -151,12 +149,16 @@ internal class MainScene : Scene
                         break;
 
                     case TileType.FoodFrog:
-                        var sprFrog = new Sprite("Resources/atlas.png")
+                        var sprFrog = new AnimatedSprite("Resources/atlas.png")
                         {
-                            SourceRectangle = new Rectangle(0, 128, TileSourceSize, TileSourceSize),
-                            Size = new(TileSize, TileSize),
+                            Size = new Vector2i(TileSize, TileSize),
                         };
                         sprFrog.SetPosition(new(x, y));
+                        sprFrog.AddAnimation("idle", new Rectangle[] {
+                            new (192, 64, TileSourceSize, TileSourceSize),
+                            new (0, 128, TileSourceSize, TileSourceSize),
+                        });
+                        sprFrog.Play("idle", 1);
                         AddNode(sprFrog);
                         gridSprites[new(i, j)] = sprFrog;
                         break;
@@ -174,12 +176,12 @@ internal class MainScene : Scene
                 };
             }
         }
-        
+
     }
 
     private void HandleSnakeDestroyed()
     {
-        requestedDirection = Direction.None;        
+        requestedDirection = Direction.None;
     }
 
     private DateTime nextMove = DateTime.Now;

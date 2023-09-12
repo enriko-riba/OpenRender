@@ -25,6 +25,7 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "playground", "src\samples\p
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared_resources", "shared_resources", "{3BAF8E0B-32B0-4DCA-BCC4-E8B3D14DD1BF}"
 	ProjectSection(SolutionItems) = preProject
+		src\samples\shared_resources\btnAtlas.png = src\samples\shared_resources\btnAtlas.png
 		src\samples\shared_resources\consola.ttf = src\samples\shared_resources\consola.ttf
 	EndProjectSection
 EndProject
