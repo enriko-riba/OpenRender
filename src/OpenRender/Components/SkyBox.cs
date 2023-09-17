@@ -27,7 +27,7 @@ public sealed class SkyBox : SceneNode
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
         Material = Material.Create(shader, desc);
         var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
-        SetMesh(ref skyBoxMesh);
+        SetMesh(skyBoxMesh);
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
     }

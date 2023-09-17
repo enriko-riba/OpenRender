@@ -51,19 +51,19 @@ internal class MainScene : Scene
         switch (gameModel.State)
         {
             case GameState.Paused:
-                DrawMenuTextCentered(0, 20, "press SPACE to start.", 30, Color4.Gold);
+                DrawMenuTextCentered(0, 20, "press SPACE to start.", 24, Color4.Gold);
                 break;
             case GameState.Died:
-                DrawMenuTextCentered(0, 20, "Congratz, you just killed your snake! Press SPACE to restart.", 30, Color4.Gold);
+                DrawMenuTextCentered(0, 20, "Congratz, you just killed your snake! Press SPACE to restart.", 26, Color4.Gold);
                 break;
             case GameState.LevelCompleted:
-                DrawMenuTextCentered(0, SceneManager.ClientSize.X / 2 - Margin, $"LEVEL {gameModel.Level} COMPLETED!\nPress SPACE to continue.", 50, Color4.Gold);
+                DrawMenuTextCentered(0,0, $"LEVEL {gameModel.Level} COMPLETED!\nPress SPACE to continue.", 26, Color4.Gold);
                 break;
         }
         DrawText(5, 4, $"fps: {SceneManager.Fps:N0}", 20, Color4.Lime);
         DrawText(140, 4, $"{gameModel.Velocity:N2} T/Sec", 20, Color4.Lime);
         DrawText(300, 4, $"{gameModel.MoveDurationSeconds:N2} Sec/T", 20, Color4.Lime);
-        DrawMenuText(5, 25, $"Level: {gameModel.Level}  Food: {gameModel.FoodEaten}/{gameModel.FoodCount}", 30, Color4.Lime);
+        DrawMenuText(5, 25, $"Level: {gameModel.Level}  Food: {gameModel.FoodEaten}/{gameModel.FoodCount}", 22, Color4.Lime);
     }
 
     public override void UpdateFrame(double elapsedSeconds)
@@ -244,18 +244,20 @@ internal class MainScene : Scene
     private void DrawMenuTextCentered(int xOffset, int yOffset, string text, int fontSize, Color4 color)
     {
         var w = SceneManager.ClientSize.X;
-        var size = textRenderer.Measure(text);
-        textRenderer.Render(text, xOffset + (w - size.Width) / 2, yOffset + (TileSize - size.Height) / 2, color.ToVector3());
+        var h = SceneManager.ClientSize.Y;
+        var size = textRenderer.Measure(text, fontSize);
+        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{w}, h:{h}");
+        textRenderer.Render(text, fontSize, xOffset + (w - size.Width) / 2, yOffset + (h - size.Height) / 2, color.ToVector3());
     }
 
     private void DrawMenuText(int xOffset, int yOffset, string text, int fontSize, Color4 color)
     {
         var size = textRenderer.Measure(text);
-        textRenderer.Render(text, xOffset, yOffset + (TileSize - size.Height) / 2, color.ToVector3());
+        textRenderer.Render(text, fontSize, xOffset, yOffset + (TileSize - size.Height) / 2, color.ToVector3());
     }
 
     private void DrawText(int xOffset, int yOffset, string text, int fontSize, Color4 color)
     {
-        textRenderer.Render(text, xOffset, yOffset, color.ToVector3());
+        textRenderer.Render(text, fontSize, xOffset, yOffset, color.ToVector3());
     }
 }

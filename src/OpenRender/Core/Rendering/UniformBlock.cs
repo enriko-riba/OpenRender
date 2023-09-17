@@ -12,14 +12,17 @@ public class UniformBuffer<T> where T : struct, ISize
     public UniformBuffer(string uniformName, int bindingPoint)
     {
         GL.GenBuffers(1, out bufferHandle);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, bufferHandle, -1, $"UB {uniformName}");
 
         // Bind buffer object to uniform buffer target
         GL.BindBuffer(BufferTarget.UniformBuffer, bufferHandle);
         GL.BufferData(BufferTarget.UniformBuffer, T.Size, IntPtr.Zero, BufferUsageHint.DynamicDraw);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, bufferHandle, -1, $"UB {uniformName}");
 
         // Bind buffer object to binding point
         GL.BindBufferBase(BufferRangeTarget.UniformBuffer, this.bindingPoint, bufferHandle);
+        
+        Log.CheckGlError();
+
         this.uniformName = uniformName;
         this.bindingPoint = bindingPoint;
     }

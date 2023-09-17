@@ -10,8 +10,8 @@ namespace OpenRender.SceneManagement;
 public class SceneNode
 {
     private BoundingSphere boundingSphere;
-    private Mesh mesh;
     private bool showBoundingSphere;
+    private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
 
@@ -28,7 +28,7 @@ public class SceneNode
         SetScale(Vector3.One);
         SetPosition(position);
         SetRotation(Vector3.Zero);
-        SetMesh(ref mesh);
+        SetMesh(mesh);
         RenderGroup = RenderGroup.Default;
     }
 
@@ -54,22 +54,13 @@ public class SceneNode
         }
     }
 
-    public void GetWorldMatrix(out Matrix4 worldMatrix)
-    {
-        worldMatrix = this.worldMatrix;
-    }
+    public void GetWorldMatrix(out Matrix4 worldMatrix) => worldMatrix = this.worldMatrix;
 
-    public void GetRotationMatrix(out Matrix4 rotationMatrix)
-    {
-        rotationMatrix = this.rotationMatrix;
-    }   
+    public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = this.rotationMatrix;
 
-    public void GetMesh(out Mesh mesh)
-    {
-        mesh = this.mesh;
-    }
+    public ref Mesh Mesh => ref mesh;
 
-    public void SetMesh(ref Mesh mesh)
+    public void SetMesh(in Mesh mesh)
     {
         this.mesh = mesh;
         var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
@@ -150,10 +141,7 @@ public class SceneNode
     /// Gets the node position.
     /// </summary>
     /// <param name="position"></param>
-    public void GetPosition(out Vector3 position)
-    {
-        position = this.position;
-    }
+    public void GetPosition(out Vector3 position) => position = this.position;
 
     /// <summary>
     /// Sets the new position.
@@ -169,10 +157,7 @@ public class SceneNode
     /// Gets the nodes rotation quaternion.
     /// </summary>
     /// <param name="rotation"></param>
-    public void GetRotation(out Quaternion rotation)
-    {
-        rotation = this.rotation;
-    }
+    public void GetRotation(out Quaternion rotation) => rotation = this.rotation;
 
     /// <summary>
     /// Sets the new rotation quaternion from Euler angles in radians.
@@ -190,10 +175,7 @@ public class SceneNode
     /// Gets the node scale.
     /// </summary>
     /// <param name="scale"></param>
-    public void GetScale(out Vector3 scale)
-    {
-        scale = this.scale;
-    }
+    public void GetScale(out Vector3 scale) => scale = this.scale;
 
     /// <summary>
     /// Sets the node Scale.
@@ -251,7 +233,10 @@ public class SceneNode
         }
     }
 
-    internal Scene? Scene { get; set; } // Reference to the parent Scene
+    /// <summary>
+    /// Reference to the parent Scene
+    /// </summary>
+    internal Scene? Scene { get; set; }
 
     internal FrameBits FrameBits;
 }

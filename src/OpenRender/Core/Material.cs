@@ -4,6 +4,9 @@ using OpenTK.Mathematics;
 
 namespace OpenRender.Core;
 
+/// <summary>
+/// Defines lightning properties and the shader used to render the object.
+/// </summary>
 public class Material
 {
     public const int MaxTextures = 8;

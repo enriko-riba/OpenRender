@@ -145,10 +145,7 @@ public class Scene
     /// <summary>
     /// Fired when the scene gets activated.
     /// </summary>
-    public virtual void OnActivate()
-    {
-        GL.ClearColor(BackgroundColor);
-    }
+    public virtual void OnActivate() => GL.ClearColor(BackgroundColor);
 
     /// <summary>
     /// Clears the scene, assigns camera and light uniform buffer objects and renders each node.

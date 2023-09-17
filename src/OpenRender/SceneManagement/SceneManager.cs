@@ -21,7 +21,6 @@ public class SceneManager : GameWindow
         Resize += (e) => activeScene?.OnResize(e);
         MouseMove += (e) => activeScene?.OnMouseMove(e);
         MouseWheel += (e) => activeScene?.OnMouseWheel(e);
-
         Load += () =>
         {
             GL.Enable(EnableCap.Multisample);

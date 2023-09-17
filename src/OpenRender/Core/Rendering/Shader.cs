@@ -40,18 +40,21 @@ public class Shader
         var vertexShader = GL.CreateShader(ShaderType.VertexShader);
         GL.ShaderSource(vertexShader, shaderSource);
         CompileShader(vertexShader, vertPath);
+        Log.CheckGlError();
 
         Log.Debug("creating fragment shader...");
         shaderSource = File.ReadAllText(fragPath);
         var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
         GL.ShaderSource(fragmentShader, shaderSource);
         CompileShader(fragmentShader, fragPath);
+        Log.CheckGlError();
 
         // create the program
         Handle = GL.CreateProgram();
         GL.AttachShader(Handle, vertexShader);
         GL.AttachShader(Handle, fragmentShader);
         LinkProgram(Handle);
+        Log.CheckGlError();
 
         // Detach and then delete individual shaders - they are not needed anymore
         Log.Debug("deleting shader programs: {0}, {1}", vertexShader, fragmentShader);
@@ -59,6 +62,7 @@ public class Shader
         GL.DetachShader(Handle, fragmentShader);
         GL.DeleteShader(fragmentShader);
         GL.DeleteShader(vertexShader);
+        Log.CheckGlError();
 
         // cache all uniform locations, querying them is slow
         GL.GetProgram(Handle, GetProgramParameterName.ActiveUniforms, out var numberOfUniforms);                        
@@ -80,6 +84,8 @@ public class Shader
         Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
 
         Log.Info("created program {0}", Handle);
+        Log.CheckGlError();
+
         DebugName = $"{Handle}: '{vertPath}','{fragPath}'";
         shaderCache.Add(cacheKey, this);
     }

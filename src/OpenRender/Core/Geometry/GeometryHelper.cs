@@ -166,7 +166,7 @@ public static class GeometryHelper
 
     public static VertexBuffer CreateSphere(int stacks, int slices)
     {
-        var vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
+        //var vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
         var vertices = new List<float>();
         var indices = new List<uint>();
 
@@ -219,7 +219,7 @@ public static class GeometryHelper
                 }
             }
         }
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices.ToArray(), indices.ToArray());
+        var vertexBuffer = new VertexBuffer(VertexDeclarations.VertexPositionNormalTexture, vertices.ToArray(), indices.ToArray());
         return vertexBuffer;
     }
 
