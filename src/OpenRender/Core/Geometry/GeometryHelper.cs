@@ -7,7 +7,7 @@ namespace OpenRender.Core.Geometry;
 /// </summary>
 public static class GeometryHelper
 {
-    const float HALF = 0.5f;
+    private const float HALF = 0.5f;
 
     /// <summary>
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
@@ -166,7 +166,6 @@ public static class GeometryHelper
 
     public static VertexBuffer CreateSphere(int stacks, int slices)
     {
-        //var vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
         var vertices = new List<float>();
         var indices = new List<uint>();
 

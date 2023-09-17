@@ -1,7 +1,6 @@
 ﻿using OpenRender.Core;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
-using static OpenTK.Graphics.OpenGL.GL;
 
 namespace OpenRender.SceneManagement;
 
