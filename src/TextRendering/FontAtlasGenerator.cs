@@ -14,8 +14,8 @@ namespace OpenRender.Text;
 /// </summary>
 public sealed class FontAtlasGenerator
 {
-    const int Padding = 4;
-    const int ImageSize = 256;
+    private const int Padding = 4;
+    private const int ImageSize = 256;
 
     public static IFontAtlas Create(string fontName, int fontSize, Color4 backgroundColor)
     {
@@ -84,7 +84,7 @@ public sealed class FontAtlasGenerator
         }
 
         // TODO: for debug, remove
-        image.SaveAsPng("font-atlas.png");
+        //image.SaveAsPng("font-atlas.png");
 
         var buffer = MemoryMarshal.AsBytes(image.GetPixelMemoryGroup().Single().Span).ToArray();
         fontAtlas.Texture = Texture.FromByteArray(buffer,
@@ -97,7 +97,7 @@ public sealed class FontAtlasGenerator
     }
 
     /// <summary>
-    /// Add a row of characters to the texture.
+    /// Adds a row of characters to the texture.
     /// </summary>
     /// <param name="fontAtlas"></param>
     /// <param name="font"></param>

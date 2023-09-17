@@ -12,6 +12,7 @@ public sealed class TextRenderer : ITextRenderer
     private readonly int vbo;
     private readonly Shader shader;
     private readonly IFontAtlas fontAtlas;
+    private readonly int BaseFontSize;
     private Matrix4 projectionMatrix;
 
     public TextRenderer(Matrix4 projection, IFontAtlas fontAtlas)
@@ -33,11 +34,12 @@ public sealed class TextRenderer : ITextRenderer
         // Set the font atlas texture as a uniform in the shader
         shader.Use();
         GL.Uniform1(shader.GetUniformLocation("fontAtlasSampler"), (int)fontAtlas.Texture.TextureUnit - (int)TextureUnit.Texture0);
+        BaseFontSize = (int)MathF.Round(fontAtlas.TextOptions.Font.Size);
     }
 
     public IFontAtlas FontAtlas => fontAtlas;
 
-    public Matrix4 Projection { get => projectionMatrix; set { projectionMatrix = value; } }
+    public Matrix4 Projection { get => projectionMatrix; set => projectionMatrix = value; }
 
     public static Matrix4 CreateTextRenderingProjection(float screenWidth, float screenHeight) => Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
 
@@ -46,9 +48,37 @@ public sealed class TextRenderer : ITextRenderer
         var rect = TextMeasurer.MeasureAdvance(text, fontAtlas.TextOptions);
         return new Core.Rectangle(0, 0, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height));
     }
-
-    public void Render(string text, float x, float y, Vector3 color)
+    
+    public Core.Rectangle Measure(string text, int fontSize)
     {
+        var customOptions = new TextOptions(fontAtlas.TextOptions);
+        var font = new Font(customOptions.Font, fontSize);
+        customOptions.Font = font;
+        var rect = TextMeasurer.MeasureAdvance(text, customOptions);
+        return new Core.Rectangle(0, 0, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height));
+    }
+
+    public void Render(string text, float x, float y, Vector3 color) => Render(text, BaseFontSize, x, y, color);
+
+    public void Render(string text, int fontSize, float x, float y, Vector3 color)
+    {
+        var matrix = projectionMatrix;
+
+        if (fontSize!= BaseFontSize)
+        {
+            //  TODO: this is a hack to get the font sizes via scaling
+            //  apply scaling
+            var customOptions = new TextOptions(fontAtlas.TextOptions);
+            var font = new Font(customOptions.Font, fontSize);
+            customOptions.Font = font;
+            var rectCustom = TextMeasurer.MeasureAdvance(text, customOptions);
+            var rectBase = TextMeasurer.MeasureAdvance(text, fontAtlas.TextOptions);
+            var scaleW = rectCustom.Width / rectBase.Width;
+            var scaleH = rectCustom.Height / rectBase.Height;
+            var scaleMatrix = Matrix4.CreateScale(scaleW, scaleH, 1);
+            Matrix4.Mult(scaleMatrix, projectionMatrix, out matrix);
+        }
+
         // Save previous OpenGL states
         var previousBlendEnabled = GL.IsEnabled(EnableCap.Blend);
         var previousBlendSrc = GL.GetInteger(GetPName.BlendSrc);
@@ -65,7 +95,7 @@ public sealed class TextRenderer : ITextRenderer
 
         // Set the text color and projection uniforms
         shader.SetVector3("textColor", ref color);
-        shader.SetMatrix4("projection", ref projectionMatrix);
+        shader.SetMatrix4("projection", ref matrix);
 
         // Bind the font atlas texture
         fontAtlas.Texture.Use();
