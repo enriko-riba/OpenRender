@@ -66,7 +66,8 @@ public class Material
 
     public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
     {
-        if ((textureDescriptors?.Length ?? 0) > MaxTextures) throw new ArgumentOutOfRangeException(nameof(textureDescriptors));
+        var textureCount = textureDescriptors?.Length ?? 0;
+        if (textureCount > MaxTextures) throw new ArgumentOutOfRangeException(nameof(textureDescriptors));
         var id = Interlocked.Increment(ref counter);
         var mat = new Material()
         {
@@ -80,6 +81,7 @@ public class Material
             Id = id
         };
         mat.Initialize();
+        if (diffuseColor.Length == 0 && textureCount > 0) Log.Warn("Material created with no diffuse color, that's probably not what you want!");
         return mat;
     }
 

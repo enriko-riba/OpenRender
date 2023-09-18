@@ -11,10 +11,7 @@ internal struct FrameBits
     private uint bitField;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void SetFlag(FrameBitsFlags flag)
-    {
-        bitField |= (uint)flag;
-    }
+    public void SetFlag(FrameBitsFlags flag) => bitField |= (uint)flag;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClearFlag(FrameBitsFlags flag)
@@ -24,10 +21,7 @@ internal struct FrameBits
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public readonly bool HasFlag(FrameBitsFlags flag)
-    {
-        return (bitField & (uint)flag) != 0;
-    }
+    public readonly bool HasFlag(FrameBitsFlags flag) => (bitField & (uint)flag) != 0;
 
     public readonly uint Value => bitField;
 }
