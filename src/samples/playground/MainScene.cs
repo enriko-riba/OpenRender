@@ -64,10 +64,10 @@ internal class MainScene : Scene
         tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
     }
 
-    const int Padding = 51;
-    readonly string helpText1 = $"WASD: move, L shift: down, space: up".PadRight(Padding);
-    readonly string helpText2 = $"mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Padding);
-    readonly string helpText3 = $"F1: bounding sphere (wire), F11: toggle full screen".PadRight(Padding);
+    private const int Padding = 51;
+    private readonly string helpText1 = $"WASD: move, L shift: down, space: up".PadRight(Padding);
+    private readonly string helpText2 = $"mouse: rotate, scroll: zoom, Q: roll L, E: roll R".PadRight(Padding);
+    private readonly string helpText3 = $"F1: bounding sphere (wire), F11: toggle full screen".PadRight(Padding);
 
     public override void RenderFrame(double elapsedSeconds)
     {

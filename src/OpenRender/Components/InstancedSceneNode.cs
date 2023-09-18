@@ -1,42 +1,70 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using System.Runtime.InteropServices;
 
 namespace OpenRender.SceneManagement;
 
-public class InstancedSceneNode : SceneNode
+public class InstancedSceneNode<TInstanceData> : SceneNode where TInstanceData : struct
 {
-    private readonly List<Matrix4> worldMatrices = new();
+    private readonly int vbInstanceData;
+    private readonly List<TInstanceData> instanceDataList = new();
+    private TInstanceData[] instanceData = Array.Empty<TInstanceData>();
 
     public InstancedSceneNode(Mesh mesh, Material? material = default) : base(mesh, material)
     {
         RenderGroup = RenderGroup.Default;
-        //  prepare buffer for world matrices
-        var attributeIndex = 4;
-        GL.CreateBuffers(1, out int mbo);
-        GL.VertexArrayVertexBuffer(mesh.VertexBuffer.Vao, 0, mbo, 0, sizeof(float) * 16);
+
+        mesh.VertexBuffer.SetName("InstancedSceneNode_Buffer1");
+
+        var attributeIndexStart = 4;
+        var bufferSlot = 1;    //  buffer slot for instance data
+        GL.CreateBuffers(1, out vbInstanceData);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbInstanceData, -1, "InstancedSceneNode_Buffer2");
+        GL.VertexArrayVertexBuffer(mesh.VertexBuffer.Vao, bufferSlot, vbInstanceData, 0, Marshal.SizeOf<Matrix4>());
+        GL.VertexArrayBindingDivisor(mesh.VertexBuffer.Vao, bufferSlot, 1);
         for (var i = 0; i < 4; i++)
         {
-            GL.VertexArrayAttribFormat(mesh.VertexBuffer.Vao, attributeIndex + i, 4, VertexAttribType.Float, false, sizeof(float) * i * 4);
-            GL.VertexArrayAttribBinding(mesh.VertexBuffer.Vao, attributeIndex + i, 0);
-            GL.VertexArrayBindingDivisor(mesh.VertexBuffer.Vao, attributeIndex + i, 1);
-            GL.EnableVertexArrayAttrib(mesh.VertexBuffer.Vao, attributeIndex + i);
+            GL.VertexArrayAttribFormat(mesh.VertexBuffer.Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
+            GL.VertexArrayAttribBinding(mesh.VertexBuffer.Vao, attributeIndexStart + i, bufferSlot);
+            GL.VertexArrayBindingDivisor(mesh.VertexBuffer.Vao, attributeIndexStart + i, 1);
+            GL.EnableVertexArrayAttrib(mesh.VertexBuffer.Vao, attributeIndexStart + i);
         }
         Log.CheckGlError();
+
+        var shader = new Shader("Shaders/instanced.vert", "Shaders/standard.frag");
+        material!.Shader = shader;
+        DisableCulling = true;
     }
 
-    public List<Matrix4> WorldMatrices => worldMatrices;
+    public List<TInstanceData> InstanceDataList => instanceDataList;
 
-    public void AddInstance(Vector3 position, Vector3 rotation, Vector3 scale) => worldMatrices.Add(Matrix4.CreateScale(scale) *
-        Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(rotation)) *
-        Matrix4.CreateTranslation(position));
+    public void AddInstanceData(TInstanceData data) => instanceDataList.Add(data);
+
+    public void UpdateInstanceData()
+    {
+        if (instanceData.Length > 0)    //  need to ensure that the buffer is created, which happens inside OnDraw if instanceData.length == 0
+        {
+            instanceData = instanceDataList.ToArray();
+            GL.NamedBufferSubData(vbInstanceData, 0, instanceDataList.Count * Marshal.SizeOf<TInstanceData>(), instanceData);
+            Log.CheckGlError();
+        }
+    }
 
     public override void OnDraw(Scene scene, double elapsed)
     {
         GL.BindVertexArray(Mesh.VertexBuffer.Vao);
+        if (instanceData.Length == 0)
+        {
+            instanceData = instanceDataList.ToArray();
+            GL.NamedBufferData(vbInstanceData, instanceDataList.Count * Marshal.SizeOf<TInstanceData>(), instanceData, BufferUsageHint.DynamicDraw);
+            Log.CheckGlError();
+        }
         if (Mesh.DrawMode == DrawMode.Indexed)
-            GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, IntPtr.Zero, worldMatrices.Count);
+            GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else
-            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length, worldMatrices.Count);
+            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length, instanceDataList.Count);
+        Log.CheckGlError();
     }
 }
