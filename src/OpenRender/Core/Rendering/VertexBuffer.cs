@@ -7,11 +7,12 @@ public class VertexBuffer
     private readonly int vao;
     private readonly int vbo;
     private readonly int ibo;
-    private readonly int stride;
+    private readonly VertexDeclaration vertexDeclaration;
     private float[] vertices;
 
     public VertexBuffer(VertexDeclaration vertexDeclaration, float[] vertices, uint[]? indices)
     {
+        this.vertexDeclaration = vertexDeclaration;
         this.vertices = vertices;
         Indices = indices;
 
@@ -19,14 +20,26 @@ public class VertexBuffer
         if (indices != null)
         {
             GL.CreateBuffers(1, out ibo);
-            GL.NamedBufferStorage(ibo, indices.Length * sizeof(uint), indices, BufferStorageFlags.DynamicStorageBit);
             GL.VertexArrayElementBuffer(vao, ibo);
+            GL.NamedBufferData(ibo, indices.Length * sizeof(uint), indices, BufferUsageHint.DynamicDraw);
         }
 
         GL.CreateBuffers(1, out vbo);
         vertexDeclaration.Apply(this);
         GL.VertexArrayVertexBuffer(vao, 0, vbo, 0, vertexDeclaration.Stride);
-        GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferData(vbo, vertices.Length * sizeof(float), vertices, BufferUsageHint.DynamicDraw);
+    }
+
+    /// <summary>
+    /// Adds GL labels for debugging.
+    /// </summary>
+    /// <param name="name"></param>
+    public void SetName(string name)
+    {
+        GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vao, -1, $"VAO {name}");
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbo, -1, $"VB {name}");
+        if (Indices != null)
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, ibo, -1, $"IB {name}");
     }
 
     public float[] Vertices
@@ -35,11 +48,12 @@ public class VertexBuffer
         set
         {
             vertices = value;
-            GL.NamedBufferStorage(vbo, vertices.Length * sizeof(float), vertices, BufferStorageFlags.DynamicStorageBit);
+            GL.NamedBufferSubData(vbo, 0, vertices.Length * sizeof(float), vertices);   //  TODO: test if updating works
         }
     }
 
     public uint[]? Indices { get; init; }
     public int Vao => vao;
-    public int Stride => stride;
+    public int Stride => vertexDeclaration.Stride;
+    public VertexDeclaration VertexDeclaration => vertexDeclaration;
 }

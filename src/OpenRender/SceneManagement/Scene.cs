@@ -122,6 +122,12 @@ public class Scene
         hasNodeListChanged = true;
     }
 
+    /// <summary>
+    /// Resets the tracked last material used for rendering, this will force the material to be updated on the next frame.
+    /// Note: this is needed if material related properties like textures or lights are updated directly via OpenGL functions instead of the material class.
+    /// </summary>
+    public void ResetMaterial() => lastMaterial = 0;
+
     public virtual void Load()
     {
         GL.FrontFace(FrontFaceDirection.Ccw);
@@ -283,8 +289,8 @@ public class Scene
             }
         }
 
-        shader.Use();
         node.OnDraw(this, elapsed);
+        GL.UseProgram(0);
     }
 
     public int GetBatchedTextureUnit(Texture texture)
