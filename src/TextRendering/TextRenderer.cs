@@ -20,19 +20,25 @@ public sealed class TextRenderer : ITextRenderer
         projectionMatrix = projection;
         this.fontAtlas = fontAtlas;
 
-        vao = GL.GenVertexArray();
-        vbo = GL.GenBuffer();
+        GL.CreateVertexArrays(1, out vao);
+        GL.CreateBuffers(1, out vbo);
+        GL.VertexArrayVertexBuffer(vao, 0, vbo, 0, 4 * sizeof(float));
+
+        GL.EnableVertexArrayAttrib(vao, 0);
+        GL.VertexArrayAttribFormat(vao, 0, 2, VertexAttribType.Float, false, 0);
+        GL.VertexArrayAttribBinding(vao, 0, 0);
+
+        GL.EnableVertexArrayAttrib(vao, 3);
+        GL.VertexArrayAttribFormat(vao, 3, 2, VertexAttribType.Float, false, 2 * sizeof(float));
+        GL.VertexArrayAttribBinding(vao, 3, 0);
+        GL.NamedBufferData(vbo, 24 * sizeof(float), 0, BufferUsageHint.DynamicDraw);    //  this is to initialize the storage
+        Log.CheckGlError();
 
         GL.BindVertexArray(vao);
-        GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-        GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
-        GL.VertexAttribPointer(3, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
-        GL.EnableVertexAttribArray(0);
-        GL.EnableVertexAttribArray(3);
         shader = new Shader("Shaders/text.vert", "Shaders/text.frag");
+        shader.Use();
 
         // Set the font atlas texture as a uniform in the shader
-        shader.Use();
         GL.Uniform1(shader.GetUniformLocation("fontAtlasSampler"), (int)fontAtlas.Texture.TextureUnit - (int)TextureUnit.Texture0);
         BaseFontSize = (int)MathF.Round(fontAtlas.TextOptions.Font.Size);
     }
@@ -48,7 +54,7 @@ public sealed class TextRenderer : ITextRenderer
         var rect = TextMeasurer.MeasureAdvance(text, fontAtlas.TextOptions);
         return new Core.Rectangle(0, 0, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height));
     }
-    
+
     public Core.Rectangle Measure(string text, int fontSize)
     {
         var customOptions = new TextOptions(fontAtlas.TextOptions);
@@ -64,7 +70,7 @@ public sealed class TextRenderer : ITextRenderer
     {
         var matrix = projectionMatrix;
 
-        if (fontSize!= BaseFontSize)
+        if (fontSize != BaseFontSize)
         {
             //  TODO: this is a hack to get the font sizes via scaling
             //  apply scaling
@@ -90,6 +96,9 @@ public sealed class TextRenderer : ITextRenderer
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.Disable(EnableCap.DepthTest);
 
+        // Bind the vertex array and draw all the characters in a single draw call
+        GL.BindVertexArray(vao);
+
         // Use the text shader program
         shader.Use();
 
@@ -100,8 +109,6 @@ public sealed class TextRenderer : ITextRenderer
         // Bind the font atlas texture
         fontAtlas.Texture.Use();
 
-        // Bind the vertex array and draw all the characters in a single draw call
-        GL.BindVertexArray(vao);
         var dx = x;
         var dy = y;
         foreach (var c in text)
@@ -126,8 +133,7 @@ public sealed class TextRenderer : ITextRenderer
                     dx, dy + glyph.Height,                  glyph.UvMinX, glyph.UvMaxY,
                     dx + glyph.Width, dy + glyph.Height,    glyph.UvMaxX, glyph.UvMaxY,
             };
-            GL.BindBuffer(BufferTarget.ArrayBuffer, vbo);
-            GL.BufferData(BufferTarget.ArrayBuffer, characterVertices.Length * sizeof(float), characterVertices, BufferUsageHint.StaticDraw);
+            GL.NamedBufferSubData(vbo, 0, characterVertices.Length * sizeof(float), characterVertices);
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
             Log.CheckGlError();
             dx += glyph.Width;
@@ -143,6 +149,5 @@ public sealed class TextRenderer : ITextRenderer
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
 
         GL.BindTexture(TextureTarget.Texture2D, 0);
-        GL.BindVertexArray(0);
     }
 }
