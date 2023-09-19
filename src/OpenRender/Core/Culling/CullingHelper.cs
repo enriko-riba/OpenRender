@@ -57,7 +57,7 @@ internal sealed class CullingHelper
         }
         else
         {
-            var positionOffset = (int)AttributeLocation.Position;
+            var positionOffset = (int)VertexAttribLocation.Position;
             for (var i = 0; i < vb.Vertices.Length; i += strideInFloats)
             {
                 var x = vb.Vertices[i + positionOffset];
