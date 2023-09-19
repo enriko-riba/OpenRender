@@ -14,12 +14,16 @@ namespace Samples.Snake;
 
 internal class MainScene : Scene
 {
+    private const int BtnWidth = 350;
+    private const int BtnHeight = 75;
+
     private readonly ITextRenderer textRenderer;
     private readonly GameModel gameModel = new();
     private readonly Rectangle[] spriteFrames = new Rectangle[4];
     private readonly Dictionary<Vector2, Sprite> gridSprites = new();
     private readonly SnakeSprite snakeSprite;
     private Button btnResume = default!;
+    private Button btnExit = default!;
     private Direction requestedDirection = Direction.None;
 
     public MainScene(ITextRenderer textRenderer) : base()
@@ -45,33 +49,34 @@ internal class MainScene : Scene
         gameModel.NextLevel();
         CreateObjects();
 
-        btnResume = new Button("Start - or press space", "resources/btnAtlas.png", 30, 350, 75)
-        {
-            SourceRectangle = new Rectangle(0, 0, 200, 60),
-            Update = (node, elapsed) =>
-            {
-                var btn = (node as Button)!;
-                var rect = btn.SourceRectangle;
-                rect.Y = btn.IsPressed ? 120 :
-                            btn.IsHovering ? 60 : 0;
-                btn.SourceRectangle = rect;
-                btn.CaptionColor = btn.IsPressed ? Color4.YellowGreen : Color4.White;
-            },
+
+        btnResume = new BigButton("Start - or press space")
+        {          
             TextRenderer = textRenderer,
-            OnClick = HandleStartClick            
+            OnClick = HandleStartClick,
+            Tint = new Color4(0.75f, 0.5f, 0.75f, 1),
         };
-        btnResume.SetPosition(new((SceneManager.ClientSize.X - 350)/2, SceneManager.ClientSize.Y/2));
-        btnResume.Tint = new Color4(0.75f, 0.5f, 0.4f, 0.75f);
+        btnResume.SetPosition(new((SceneManager.ClientSize.X - BtnWidth) / 2, SceneManager.ClientSize.Y / 2));
         AddNode(btnResume);
+
+        btnExit = new BigButton("Exit")
+        {
+            TextRenderer = textRenderer,
+            OnClick = SceneManager.Close,
+            Tint = new Color4(1, 0.4f, 0.4f, 1),
+        };
+        btnExit.SetPosition(new((SceneManager.ClientSize.X - BtnWidth) / 2, SceneManager.ClientSize.Y / 2 + BtnHeight));
+        AddNode(btnExit);        
     }
 
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
-        SceneManager.CursorState = gameModel.State == GameState.Started ? 
-            OpenTK.Windowing.Common.CursorState.Hidden: 
+        SceneManager.CursorState = gameModel.State == GameState.Started ?
+            OpenTK.Windowing.Common.CursorState.Hidden :
             OpenTK.Windowing.Common.CursorState.Normal;
         btnResume.IsVisible = gameModel.State != GameState.Started;
+        btnExit.IsVisible = btnResume.IsVisible;    
         switch (gameModel.State)
         {
             case GameState.Died:
@@ -84,7 +89,7 @@ internal class MainScene : Scene
         DrawText(5, 4, $"fps: {SceneManager.Fps:N0}", 20, Color4.Lime);
         DrawText(140, 4, $"{gameModel.Velocity:N2} T/Sec", 20, Color4.Lime);
         DrawText(300, 4, $"{gameModel.MoveDurationSeconds:N2} Sec/T", 20, Color4.Lime);
-        DrawMenuText(5, 25, $"Level: {gameModel.Level}  Food: {gameModel.FoodEaten}/{gameModel.FoodCount}", 22, Color4.Lime);
+        DrawMenuText(5, 25, $"Level: {gameModel.Level}  Food: {gameModel.FoodEaten}/{gameModel.FoodCount}", 20, Color4.Lime);
     }
 
     public override void UpdateFrame(double elapsedSeconds)
@@ -285,5 +290,22 @@ internal class MainScene : Scene
     private void DrawText(int xOffset, int yOffset, string text, int fontSize, Color4 color)
     {
         textRenderer.Render(text, fontSize, xOffset, yOffset, color.ToVector3());
+    }
+
+    private class BigButton : Button
+    {
+        public BigButton(string caption): base(caption, "Resources/btnAtlas.png", 30, BtnWidth, BtnHeight)
+        {
+            SourceRectangle = new Rectangle(0, 0, 200, 60);
+            Update = (node, elapsed) =>
+            {
+                var btn = (node as Button)!;
+                var rect = btn.SourceRectangle;
+                rect.Y = btn.IsPressed ? 120 :
+                            btn.IsHovering ? 60 : 0;
+                btn.SourceRectangle = rect;
+                btn.CaptionColor = btn.IsPressed ? Color4.YellowGreen : Color4.White;
+            };            
+        }
     }
 }
