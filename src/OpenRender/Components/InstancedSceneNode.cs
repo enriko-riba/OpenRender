@@ -6,10 +6,11 @@ using System.Runtime.InteropServices;
 
 namespace OpenRender.SceneManagement;
 
-public class InstancedSceneNode<TInstanceData> : SceneNode where TInstanceData : struct
+public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TInstanceData : struct
 {
     private readonly int vbInstanceData;
     private readonly List<TInstanceData> instanceDataList = new();
+    private readonly List<TStateData> stateDataList = new();
     private TInstanceData[] instanceData = Array.Empty<TInstanceData>();
 
     public InstancedSceneNode(Mesh mesh, Material? material = default) : base(mesh, material)
@@ -39,7 +40,13 @@ public class InstancedSceneNode<TInstanceData> : SceneNode where TInstanceData :
 
     public List<TInstanceData> InstanceDataList => instanceDataList;
 
-    public void AddInstanceData(TInstanceData data) => instanceDataList.Add(data);
+    public List<TStateData> StateDataList => stateDataList;
+
+    public void AddInstanceData(in TInstanceData data, TStateData stateData)
+    {
+        instanceDataList.Add(data);
+        stateDataList.Add(stateData);
+    }
 
     public void UpdateInstanceData()
     {

@@ -12,17 +12,19 @@ namespace Samples.Instancing;
 
 internal class MainScene : Scene
 {
-    private const int NUM_INSTANCES = 15000;
+    private const int NUM_INSTANCES = 10000;
     private const int AREA_HALF_WIDTH = 250;
 
     private TextRenderer tr = default!;
-    private InstancedSceneNode<Matrix4> instanced = default!;
+    private InstancedSceneNode<Matrix4, InstanceState> instanced = default!;
     private bool isMouseMoving;
 
     public override void Load()
     {
+        base.Load();
+
         //  setup background, light and camera
-        BackgroundColor = Color4.DarkSlateGray;
+        BackgroundColor = Color4.Teal;
         var dirLight = new LightUniform()
         {
             Direction = new Vector3(-0.05f, 0.695f, -0.75f),
@@ -37,50 +39,23 @@ internal class MainScene : Scene
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
 
-        base.Load();
-
-        //  add instanced cubes
-        var vbBox = GeometryHelper.CreateCube(true);
-        var mat = Material.Create(new TextureDescriptor[] {
-            new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse)},
-            Vector3.One,
-            Vector3.One);
-        instanced = new InstancedSceneNode<Matrix4>(new Mesh(vbBox), mat);
-        AddNode(instanced);
-
-        for (var i = 0; i < NUM_INSTANCES; i++)
-        {
-            var position = new Vector3(Random.Shared.Next(-AREA_HALF_WIDTH, AREA_HALF_WIDTH + 1),
-                Random.Shared.Next(-AREA_HALF_WIDTH, AREA_HALF_WIDTH + 1),
-                Random.Shared.Next(-AREA_HALF_WIDTH, 0));
-            var scale = new Vector3(Random.Shared.Next(2, 5));
-            var rotation = new Vector3(Random.Shared.Next() * MathF.PI * 2);
-            var m = Matrix4.CreateScale(scale) *
-                    Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(rotation)) *
-                    Matrix4.CreateTranslation(position);
-            instanced.AddInstanceData(m);
-        }
-
-        //  one non-instanced node for anchoring when moving around
+        //  add one non-instanced node for anchoring when moving around
         var mat1 = Material.Create(
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Detail),
                 new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse)
             },
+            diffuseColor: Vector3.One,
+            specularColor: Vector3.One,
             detailTextureFactor: 2f,
             shininess: 0.15f
         );
-        var visualAnchor = new SceneNode(new Mesh(vbBox), mat1, new Vector3(0, 2, -5));
+        var mesh = new Mesh(GeometryHelper.CreateCube(true));
+        var visualAnchor = new SceneNode(mesh, mat1, new Vector3(0, 2, -5));
         AddNode(visualAnchor);
-    }
 
-    public override void OnResize(ResizeEventArgs e)
-    {
-        base.OnResize(e);
-        tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        AddInstancedNodes();
     }
-
-    public override void OnMouseWheel(MouseWheelEventArgs e) => camera!.Fov -= e.OffsetY * 5;
 
     private const int Padding = 51;
     private readonly string helpText1 = $"WASD: move, L shift: down, space: up".PadRight(Padding);
@@ -138,6 +113,14 @@ internal class MainScene : Scene
 
         HandleInstanceUpdates(elapsedSeconds);
     }
+
+    public override void OnResize(ResizeEventArgs e)
+    {
+        base.OnResize(e);
+        tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+    }
+
+    public override void OnMouseWheel(MouseWheelEventArgs e) => camera!.Fov -= e.OffsetY * 5;
 
     private void HandleMovement(double elapsedTime)
     {
@@ -204,45 +187,84 @@ internal class MainScene : Scene
         }
     }
 
-    private int lastInstanceIndex = 0;
+    /// <summary>
+    /// Updates every instances state and instance data.
+    /// Note: this is not performant as 10000 matrix calculations and state updates
+    /// per frame heavily outweigh the render time, but it's just a sample.
+    /// </summary>
+    /// <param name="elapsedSeconds"></param>
     private void HandleInstanceUpdates(double elapsedSeconds)
     {
-        //if (instanced == null) return;
-
-        const int BatchCount = 2500;
-        var idx = 0;
-        var counter = 0;
-        while (counter++ < BatchCount)
+        for (var i = 0; i < NUM_INSTANCES; i++)
         {
-            idx = (lastInstanceIndex + counter) % NUM_INSTANCES;
-            var matrix = instanced.InstanceDataList[idx];
-            var position = matrix.Row3.Xyz;
-            var scale = new Vector3(
-                matrix.Column0.Xyz.Length,
-                matrix.Column1.Xyz.Length,
-                matrix.Column2.Xyz.Length
-            );
-            matrix = Matrix4.CreateScale(scale) *
-            //Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(rotation)) *
-            Matrix4.CreateTranslation(position);
-            instanced.InstanceDataList[idx] = matrix;
+            instanced.StateDataList[i].Update(elapsedSeconds);
+            instanced.StateDataList[i].GetMatrix(out var matrix);
+            instanced.InstanceDataList[i] = matrix;
         }
-        lastInstanceIndex = idx;
-
-        //for (var i = 0; i < NUM_INSTANCES; i++)
-        //{
-        //    var matrix = instanced.InstanceDataList[i];
-        //    var position = matrix.Row3.Xyz;
-        //    var scale = new Vector3(
-        //        matrix.Column0.Xyz.Length,
-        //        matrix.Column1.Xyz.Length,
-        //        matrix.Column2.Xyz.Length
-        //    );
-        //    matrix = Matrix4.CreateScale(scale) *
-        //    //Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(rotation)) *
-        //    Matrix4.CreateTranslation(position);
-        //    instanced.InstanceDataList[i] = matrix;
-        //}
         instanced.UpdateInstanceData();
     }
+
+    /// <summary>
+    /// Adds a bunch of instanced nodes to the scene.
+    /// </summary>
+    private void AddInstancedNodes()
+    {
+        //  add instanced cubes
+        var vbBox = GeometryHelper.CreateCube(true);
+        var mat = Material.Create(new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
+            diffuseColor: Vector3.One,
+            specularColor: Vector3.One,
+            shininess: 0.75f);
+        instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vbBox), mat);
+        AddNode(instanced);
+
+        for (var i = 0; i < NUM_INSTANCES; i++)
+        {
+            var position = new Vector3(Random.Shared.Next(-AREA_HALF_WIDTH, AREA_HALF_WIDTH + 1),
+                Random.Shared.Next(-AREA_HALF_WIDTH, AREA_HALF_WIDTH + 1),
+                Random.Shared.Next(-AREA_HALF_WIDTH, AREA_HALF_WIDTH));
+            var axis = Random.Shared.Next(0, 3);
+            var state = new InstanceState()
+            {
+                Position = position,
+                Scale = new Vector3(Random.Shared.Next(1, 6)),
+                Axis = new Vector3(
+                    axis == 0 ? 1 : 0,
+                    axis == 1 ? 1 : 0,
+                    axis == 2 ? 1 : 0),
+            };
+            state.GetMatrix(out var m);
+            instanced.AddInstanceData(m, state);
+        }
+    }
+
+    /// <summary>
+    /// Class holding the state of a single instance.
+    /// </summary>
+    private sealed class InstanceState
+    {
+        public Vector3 Position { get; set; }
+
+        public Vector3 Scale { get; set; } = Vector3.One;
+
+        /// <summary>
+        /// Axis rotation value in radians.
+        /// </summary>
+        public Vector3 Rotation { get; set; } = Vector3.Zero;
+
+        /// <summary>
+        /// Vector with one component set to 1 marking the axis of rotation.
+        /// </summary>
+        public Vector3 Axis { get; set; }
+
+        public void Update(double elapsedSeconds)
+        {
+            Rotation += Axis * (float)elapsedSeconds;
+        }
+
+        public void GetMatrix(out Matrix4 matrix) => matrix = Matrix4.CreateScale(Scale) *
+                    Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(Rotation)) *
+                    Matrix4.CreateTranslation(Position);
+    }
 }
+
