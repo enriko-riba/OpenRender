@@ -28,7 +28,6 @@ public class InstancedSceneNode<TInstanceData> : SceneNode where TInstanceData :
         {
             GL.VertexArrayAttribFormat(mesh.VertexBuffer.Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
             GL.VertexArrayAttribBinding(mesh.VertexBuffer.Vao, attributeIndexStart + i, bufferSlot);
-            GL.VertexArrayBindingDivisor(mesh.VertexBuffer.Vao, attributeIndexStart + i, 1);
             GL.EnableVertexArrayAttrib(mesh.VertexBuffer.Vao, attributeIndexStart + i);
         }
         Log.CheckGlError();
