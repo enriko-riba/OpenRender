@@ -36,22 +36,12 @@ public class Button : NineSlicePlane
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
-        base.OnUpdate(scene, elapsed);
+        base.OnUpdate(scene, elapsed);        
         HandleMouseState(scene.SceneManager.MouseState);
     }
 
     public override void OnDraw(Scene scene, double elapsed)
     {
-        //  if the text renderer is used it binds its own texture without the scene rendering pipeline
-        //  knowing about any material changes -  so we need to bind the texture manually here
-        if (Caption != null && TextRenderer != null && (Material?.Textures?.Length??0) > 0)
-        {
-            var texture = Material!.Textures![0];
-            var unit = scene.GetBatchedTextureUnit(texture);
-            texture.Use(OpenTK.Graphics.OpenGL4.TextureUnit.Texture0 + unit);
-            shader.SetInt(texture.UniformName, unit);
-        }
-
         base.OnDraw(scene, elapsed);
         if (Caption != null && TextRenderer != null)
         {
@@ -59,6 +49,7 @@ public class Button : NineSlicePlane
             var x = (size.X-rect.Width) / 2;
             var y = (size.Y-rect.Height) / 2;
             TextRenderer.Render(Caption, position.X + x, position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
+            scene.ResetMaterial();
         }
     }
 
@@ -96,8 +87,8 @@ public class Button : NineSlicePlane
             if (!mouseState.IsButtonDown(MouseButton.Left))
             {
                 isPressed = false;
-                if (OnClick != null)
-                    OnClick.Invoke();
+                if (OnClick != null) 
+                    Scene?.AddAction(OnClick);
                 else
                     Log.Warn("OnClick handler is null, did you forget to assign a click handler?");
             }
