@@ -26,6 +26,7 @@ public class Scene
     private bool hasNodeListChanged;
     private bool hasCameraChanged;
 
+    private readonly List<Action> actionQueue = new();
     protected readonly List<SceneNode> nodes = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
     protected readonly Shader defaultShader;
@@ -74,6 +75,13 @@ public class Scene
     public string Name { get; protected set; }
 
     public bool ShowBoundingSphere { get; set; }
+
+    /// <summary>
+    /// Enqueues an action to be executed as last step of frame update.
+    /// Note: this is needed to correctly handle mutating scene state like node removals or additions, from code that gets executed inside <see cref="UpdateFrame"/>.
+    /// </summary>
+    /// <param name="action"></param>
+    public void AddAction(Action action) => actionQueue.Add(action);
 
     public void AddLight(LightUniform light)
     {
@@ -222,6 +230,12 @@ public class Scene
         {
             node.OnUpdate(this, elapsedSeconds);
         }
+
+        foreach (var action in actionQueue)
+        {
+            action.Invoke();
+        }
+        actionQueue.Clear();
 
         CullFrustum();
         SortRenderList();
