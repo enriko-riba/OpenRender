@@ -19,6 +19,7 @@ internal class MainScene : Scene
     private readonly Rectangle[] spriteFrames = new Rectangle[4];
     private readonly Dictionary<Vector2, Sprite> gridSprites = new();
     private readonly SnakeSprite snakeSprite;
+    private Button btnResume = default!;
     private Direction requestedDirection = Direction.None;
 
     public MainScene(ITextRenderer textRenderer) : base()
@@ -43,21 +44,41 @@ internal class MainScene : Scene
         AddNode(snakeSprite);
         gameModel.NextLevel();
         CreateObjects();
+
+        btnResume = new Button("Start - or press space", "resources/btnAtlas.png", 30, 350, 75)
+        {
+            SourceRectangle = new Rectangle(0, 0, 200, 60),
+            Update = (node, elapsed) =>
+            {
+                var btn = (node as Button)!;
+                var rect = btn.SourceRectangle;
+                rect.Y = btn.IsPressed ? 120 :
+                            btn.IsHovering ? 60 : 0;
+                btn.SourceRectangle = rect;
+                btn.CaptionColor = btn.IsPressed ? Color4.YellowGreen : Color4.White;
+            },
+            TextRenderer = textRenderer,
+            OnClick = HandleStartClick            
+        };
+        btnResume.SetPosition(new((SceneManager.ClientSize.X - 350)/2, SceneManager.ClientSize.Y/2));
+        btnResume.Tint = new Color4(0.75f, 0.5f, 0.4f, 0.75f);
+        AddNode(btnResume);
     }
 
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
+        SceneManager.CursorState = gameModel.State == GameState.Started ? 
+            OpenTK.Windowing.Common.CursorState.Hidden: 
+            OpenTK.Windowing.Common.CursorState.Normal;
+        btnResume.IsVisible = gameModel.State != GameState.Started;
         switch (gameModel.State)
         {
-            case GameState.Paused:
-                DrawMenuTextCentered(0, 20, "press SPACE to start.", 24, Color4.Gold);
-                break;
             case GameState.Died:
-                DrawMenuTextCentered(0, 20, "Congratz, you just killed your snake! Press SPACE to restart.", 26, Color4.Gold);
+                DrawMenuTextCentered(0, -50, "Congratz, you just killed your snake!", 20, Color4.CornflowerBlue);
                 break;
             case GameState.LevelCompleted:
-                DrawMenuTextCentered(0,0, $"LEVEL {gameModel.Level} COMPLETED!\nPress SPACE to continue.", 26, Color4.Gold);
+                DrawMenuTextCentered(0, -50, $"LEVEL {gameModel.Level} COMPLETED!", 20, Color4.Gold);
                 break;
         }
         DrawText(5, 4, $"fps: {SceneManager.Fps:N0}", 20, Color4.Lime);
@@ -72,12 +93,12 @@ internal class MainScene : Scene
         if (gameModel.State == GameState.Started)
         {
             HandleStartedInput();
+            RemoveDeadSprites();
         }
         else
         {
             HandleNotStartedInput();
         }
-        RemoveDeadSprites();
     }
 
     public override void OnActivate()
@@ -205,19 +226,24 @@ internal class MainScene : Scene
         var kbd = SceneManager.KeyboardState;
         if (kbd.IsKeyDown(Keys.Space))
         {
-            if (gameModel.State == GameState.Died)
-            {
-                requestedDirection = Direction.None;
-                gameModel.RestartLevel();
-            }
-            else if (gameModel.State == GameState.LevelCompleted)
-            {
-                requestedDirection = Direction.None;
-                gameModel.NextLevel();
-            }
-            gameModel.TogglePause();
-            CreateObjects();
+            HandleStartClick();
         }
+    }
+
+    private void HandleStartClick()
+    {
+        if (gameModel.State == GameState.Died)
+        {
+            requestedDirection = Direction.None;
+            gameModel.RestartLevel();
+        }
+        else if (gameModel.State == GameState.LevelCompleted)
+        {
+            requestedDirection = Direction.None;
+            gameModel.NextLevel();
+        }
+        gameModel.TogglePause();
+        CreateObjects();
     }
 
     private Direction ReadGameInput()
@@ -246,7 +272,7 @@ internal class MainScene : Scene
         var w = SceneManager.ClientSize.X;
         var h = SceneManager.ClientSize.Y;
         var size = textRenderer.Measure(text, fontSize);
-        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{w}, h:{h}");
+        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{w}, h:{h}, x:{xOffset + (w - size.Width) / 2}");
         textRenderer.Render(text, fontSize, xOffset + (w - size.Width) / 2, yOffset + (h - size.Height) / 2, color.ToVector3());
     }
 
