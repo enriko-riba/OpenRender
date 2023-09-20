@@ -77,6 +77,16 @@ public class Scene
     public bool ShowBoundingSphere { get; set; }
 
     /// <summary>
+    /// Returns the width of the scene viewport.
+    /// </summary>
+    public int Width => SceneManager.ClientSize.X;
+
+    /// <summary>
+    /// Returns the height of the scene viewport.
+    /// </summary>
+    public int Height => SceneManager.ClientSize.Y;
+
+    /// <summary>
     /// Enqueues an action to be executed as last step of frame update.
     /// Note: this is needed to correctly handle mutating scene state like node removals or additions, from code that gets executed inside <see cref="UpdateFrame"/>.
     /// </summary>
@@ -100,7 +110,7 @@ public class Scene
         hasNodeListChanged = true;
         nodes.Add(node);
         node.Scene = this; // Set the Scene reference for the added node
-        node.OnResize(this, new(scm.ClientSize.X, scm.ClientSize.Y));   //  trigger resize event
+        node.OnResize(this, new(Width, Height));   //  trigger resize event
         renderLayers[node.RenderGroup].Add(node);
     }
 
@@ -249,8 +259,8 @@ public class Scene
 
     public virtual void OnResize(ResizeEventArgs e)
     {
-        GL.Viewport(0, 0, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-        if (camera is not null) camera.AspectRatio = SceneManager.ClientSize.X / (float)SceneManager.ClientSize.Y;
+        GL.Viewport(0, 0, Width, Height);
+        if (camera is not null) camera.AspectRatio = Width / (float)Height;
         foreach (var node in nodes)
         {
             node.OnResize(this, e);

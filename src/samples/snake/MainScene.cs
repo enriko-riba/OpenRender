@@ -43,20 +43,21 @@ internal class MainScene : Scene
         SceneManager.CursorState = OpenTK.Windowing.Common.CursorState.Hidden;
 
         base.Load();
-        camera = new Camera2D(new Vector3(0, 0, 0), SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
-        AddNode(new Ground(0, Margin, SceneManager.ClientSize.X, SceneManager.ClientSize.Y, Color4.DarkOliveGreen));
+        camera = new Camera2D(new Vector3(0, 0, 0), Width, Height);
+        AddNode(new Ground(0, Margin, Width, Height, Color4.DarkOliveGreen));
         AddNode(snakeSprite);
         gameModel.NextLevel();
         CreateObjects();
 
-
+        var btnX = (Width - BtnWidth) / 2;
+        var btnY = Height / 2;
         btnResume = new BigButton("Start - or press space")
         {          
             TextRenderer = textRenderer,
             OnClick = HandleStartClick,
             Tint = new Color4(0.75f, 0.5f, 0.75f, 1),
         };
-        btnResume.SetPosition(new((SceneManager.ClientSize.X - BtnWidth) / 2, SceneManager.ClientSize.Y / 2));
+        btnResume.SetPosition(new(btnX, btnY));
         AddNode(btnResume);
 
         btnExit = new BigButton("Exit")
@@ -65,7 +66,7 @@ internal class MainScene : Scene
             OnClick = SceneManager.Close,
             Tint = new Color4(1, 0.4f, 0.4f, 1),
         };
-        btnExit.SetPosition(new((SceneManager.ClientSize.X - BtnWidth) / 2, SceneManager.ClientSize.Y / 2 + BtnHeight));
+        btnExit.SetPosition(new(btnX, btnY + BtnHeight * 1.25f));
         AddNode(btnExit);        
     }
 
@@ -273,12 +274,10 @@ internal class MainScene : Scene
     }
 
     private void DrawMenuTextCentered(int xOffset, int yOffset, string text, int fontSize, Color4 color)
-    {
-        var w = SceneManager.ClientSize.X;
-        var h = SceneManager.ClientSize.Y;
+    {        
         var size = textRenderer.Measure(text, fontSize);
-        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{w}, h:{h}, x:{xOffset + (w - size.Width) / 2}");
-        textRenderer.Render(text, fontSize, xOffset + (w - size.Width) / 2, yOffset + (h - size.Height) / 2, color.ToVector3());
+        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{Width}, h:{Height}, x:{xOffset + (Width - size.Width) / 2}");
+        textRenderer.Render(text, fontSize, xOffset + (Width - size.Width) / 2, yOffset + (Height - size.Height) / 2, color.ToVector3());
     }
 
     private void DrawMenuText(int xOffset, int yOffset, string text, int fontSize, Color4 color)

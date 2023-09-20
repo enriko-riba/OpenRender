@@ -55,13 +55,13 @@ internal class MainScene : Scene
         camera = new Camera3D(Vector3.Zero, SceneManager.Size.X / (float)SceneManager.Size.Y, farPlane: 2000);
 
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
-        tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fontAtlas);
+        tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(Width, Height), fontAtlas);
     }
 
     public override void OnResize(ResizeEventArgs e)
     {
         base.OnResize(e);
-        tr.Projection = TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        tr.Projection = TextRenderer.CreateTextRenderingProjection(Width, Height);
     }
 
     private const int Padding = 51;

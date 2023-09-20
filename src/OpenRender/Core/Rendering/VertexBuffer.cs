@@ -10,6 +10,8 @@ public class VertexBuffer
     private readonly VertexDeclaration vertexDeclaration;
     private float[] vertices;
 
+    public VertexBuffer(VertexDeclaration vertexDeclaration, float[] vertices) : this(vertexDeclaration, vertices, null) { }
+
     public VertexBuffer(VertexDeclaration vertexDeclaration, float[] vertices, uint[]? indices)
     {
         this.vertexDeclaration = vertexDeclaration;
