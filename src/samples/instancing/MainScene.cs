@@ -12,7 +12,7 @@ namespace Samples.Instancing;
 
 internal class MainScene : Scene
 {
-    private const int NUM_INSTANCES = 10000;
+    private const int NUM_INSTANCES = 25000;
     private const int AREA_HALF_WIDTH = 250;
 
     private TextRenderer tr = default!;
@@ -39,16 +39,16 @@ internal class MainScene : Scene
         var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 18, new Color4(0f, 0f, 0f, 0.5f));
         tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(Width, Height), fontAtlas);
 
-        //  add one non-instanced node for anchoring when moving around
+        //  add one non-instanced node for visual anchoring when moving around
         var mat1 = Material.Create(
             new TextureDescriptor[] {
-                new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Detail),
-                new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse)
+                new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
             },
             diffuseColor: Vector3.One,
-            specularColor: Vector3.One,
-            detailTextureFactor: 2f,
-            shininess: 0.15f
+            emissiveColor: new Vector3(0.05f, 0.04f, 0.03f),
+            specularColor: Vector3.Zero,
+            shininess: 0,
+            detailTextureFactor: 0
         );
         var mesh = new Mesh(GeometryHelper.CreateCube(true));
         var visualAnchor = new SceneNode(mesh, mat1, new Vector3(0, 2, -5));
@@ -78,8 +78,8 @@ internal class MainScene : Scene
         tr.Render(helpText2, 5, TextStartY + LineHeight * 3, textColor2);
         tr.Render(helpText3, 5, TextStartY + LineHeight * 4, textColor2);
 
-        // currently the text renderer changes GL state directly so the rendering 
-        // pipeline must to be notified that material state needs to be re-binding
+        // currently the text renderer changes GL state directly so the rendering pipeline must 
+        // be notified that material state needs to be re-bound before rendering the next node
         ResetMaterial();
     }
 
@@ -189,7 +189,7 @@ internal class MainScene : Scene
 
     /// <summary>
     /// Updates every instances state and instance data.
-    /// Note: this is not performant as 10000 matrix calculations and state updates
+    /// Note: this is not performant as 25000 matrix calculations and state updates
     /// per frame heavily outweigh the render time, but it's just a sample.
     /// </summary>
     /// <param name="elapsedSeconds"></param>
@@ -214,7 +214,7 @@ internal class MainScene : Scene
         var mat = Material.Create(new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
-            shininess: 0.75f);
+            shininess: 0.45f);
         instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vbBox), mat);
         AddNode(instanced);
 
@@ -228,7 +228,7 @@ internal class MainScene : Scene
             {
                 Position = position,
                 Scale = new Vector3(Random.Shared.Next(1, 6)),
-                Axis = new Vector3(
+                AxisOfRotation = new Vector3(
                     axis == 0 ? 1 : 0,
                     axis == 1 ? 1 : 0,
                     axis == 2 ? 1 : 0),
@@ -243,9 +243,26 @@ internal class MainScene : Scene
     /// </summary>
     private sealed class InstanceState
     {
+        private Matrix4 scaleMatrix;
+        private Vector3 scale = Vector3.One;
+
+        /// <summary>
+        /// Gets or sets the position.
+        /// </summary>
         public Vector3 Position { get; set; }
 
-        public Vector3 Scale { get; set; } = Vector3.One;
+        /// <summary>
+        /// Gets or sets the scale.
+        /// </summary>
+        public Vector3 Scale
+        {
+            get => scale;
+            set
+            {
+                scale = value;
+                scaleMatrix = Matrix4.CreateScale(Scale);
+            }
+        }
 
         /// <summary>
         /// Axis rotation value in radians.
@@ -255,16 +272,23 @@ internal class MainScene : Scene
         /// <summary>
         /// Vector with one component set to 1 marking the axis of rotation.
         /// </summary>
-        public Vector3 Axis { get; set; }
+        public Vector3 AxisOfRotation { get; set; }
 
-        public void Update(double elapsedSeconds)
+        /// <summary>
+        /// Updates the rotation.
+        /// </summary>
+        /// <param name="elapsedSeconds"></param>
+        public void Update(double elapsedSeconds) => Rotation += AxisOfRotation * (float)elapsedSeconds;
+
+        /// <summary>
+        /// Calculates the world matrix for this instance.
+        /// </summary>
+        /// <param name="matrix"></param>
+        public void GetMatrix(out Matrix4 matrix)
         {
-            Rotation += Axis * (float)elapsedSeconds;
+            Matrix4.CreateFromQuaternion(new Quaternion(Rotation), out var rotationMatrix);
+            Matrix4.Mult(scaleMatrix, rotationMatrix, out matrix);
+            matrix.Row3.Xyz = Position;    //  sets the translation
         }
-
-        public void GetMatrix(out Matrix4 matrix) => matrix = Matrix4.CreateScale(Scale) *
-                    Matrix4.CreateFromQuaternion(Quaternion.FromEulerAngles(Rotation)) *
-                    Matrix4.CreateTranslation(Position);
     }
 }
-

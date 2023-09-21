@@ -157,11 +157,12 @@ public class Scene
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.ClearColor(BackgroundColor);
 
+#if DEBUG
         var fnDebugProc = Utility.DebugMessageDelegate;
         GL.DebugMessageCallback(fnDebugProc, IntPtr.Zero);
         GL.Enable(EnableCap.DebugOutput);
         GL.Enable(EnableCap.DebugOutputSynchronous);
-
+#endif
         vboCamera.BindToShaderProgram(defaultShader);
         vboLight.BindToShaderProgram(defaultShader);
     }

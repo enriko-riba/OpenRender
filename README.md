@@ -78,6 +78,7 @@ The textures defined in the material are automatically bound to following sample
 ```
 uniform sampler2D texture_diffuse;
 uniform sampler2D texture_detail;
+uniform sampler2D texture_normal;
 uniform sampler2D texture_specular;
 uniform sampler2D texture_additional1;
 uniform sampler2D texture_additional2;
@@ -96,8 +97,10 @@ uniform float uDetailTextureFactor;      //  scale of detail texture that is ble
 ### Texture types
 * diffuse 
 * detail
-* specular (atm not used by the OpenRender standard shaders)
-* additional (up to 4, app specific - not used by OpenRender)
+* normal
+* specular (app specific - not used by the OpenRender standard shaders)
+* additional (up to 4, app specific - not used by OpenRender standard shaders)
+* cube map (app specific - not used by OpenRender standard shaders except by SkyBox scene node)
 
 #### TextureType enum
 The `Texture` class contains a `TextureType` member of type:
@@ -106,12 +109,14 @@ public enum TextureType
 {
     Unknown,
     Diffuse,
-    DetailMap,
+    Detail,
+    Normal,
     Specular,
-    Additional,
+    Additional1,
     Additional2,
     Additional3,
-    Additional4
+    Additional4,
+    CubeMap
 }
 ``` 
 Unknown textures are treated as diffuse. This means if you create a material with `Unknown` texture type but no `Diffuse` texture, the `Unknown` texture will be used as the `Diffuse` texture.
