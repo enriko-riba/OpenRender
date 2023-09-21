@@ -39,7 +39,7 @@ public sealed class TextRenderer : ITextRenderer
         shader.Use();
 
         // Set the font atlas texture as a uniform in the shader
-        GL.Uniform1(shader.GetUniformLocation("fontAtlasSampler"), (int)fontAtlas.Texture.TextureUnit - (int)TextureUnit.Texture0);
+        GL.Uniform1(shader.GetUniformLocation("fontAtlasSampler"), 31);
         BaseFontSize = (int)MathF.Round(fontAtlas.TextOptions.Font.Size);
     }
 
@@ -107,7 +107,7 @@ public sealed class TextRenderer : ITextRenderer
         shader.SetMatrix4("projection", ref matrix);
 
         // Bind the font atlas texture
-        fontAtlas.Texture.Use();
+        fontAtlas.Texture.Use(TextureUnit.Texture31);
 
         var dx = x;
         var dy = y;

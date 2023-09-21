@@ -85,31 +85,23 @@ public class Material
         return mat;
     }
 
-    public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
-    {
-        return Create(null, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
-    }
+    public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) =>
+        Create(null, textureDescriptors, diffuseColor, emissiveColor, specularColor, shininess, detailTextureFactor);
 
-    public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f)
-    {
-        return Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
-    }
+    public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) => 
+        Create(null, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
 
-    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f)
-    {
-        return Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
-    }
-    public static Material Create(TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f)
-    {
-        return Create(null, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
-    }
+    public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) => 
+        Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
 
-    public static Material Create(TextureDescriptor[] textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f)
-    {
-        return Create(null, textureDescriptors, shininess, detailTextureFactor);
-    }
-    public static Material Create(float shininess, float detailTextureFactor = 0f)
-    {
-        return Create(null, Array.Empty<TextureDescriptor>(), shininess, detailTextureFactor);
-    }
+    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
+        Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
+    public static Material Create(TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
+        Create(null, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
+
+    public static Material Create(TextureDescriptor[] textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) =>
+        Create(null, textureDescriptors, shininess, detailTextureFactor);
+
+    public static Material Create(float shininess, float detailTextureFactor = 0f) =>
+        Create(null, Array.Empty<TextureDescriptor>(), shininess, detailTextureFactor);
 }

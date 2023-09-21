@@ -91,7 +91,6 @@ public sealed class FontAtlasGenerator
             sizeW,
             sizeH,
             "fontAtlasSampler",
-            unit: TextureUnit.Texture16,
             minFilter: TextureMinFilter.Nearest, magFilter: TextureMagFilter.Nearest);
         return fontAtlas;
     }

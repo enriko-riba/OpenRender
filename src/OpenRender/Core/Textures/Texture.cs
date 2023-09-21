@@ -69,15 +69,7 @@ public class Texture
     /// Activates and binds the texture to the given unit.
     /// </summary>
     /// <param name="unit"></param>
-    public void Use(TextureUnit unit)
-    {
-        GL.BindTextureUnit(unit - TextureUnit.Texture0, Handle);
-    }
-
-    /// <summary>
-    /// Activates and binds the texture to the <see cref="TextureUnit"/> unit.
-    /// </summary>
-    public void Use() => Use(TextureUnit);
+    public void Use(TextureUnit unit) => GL.BindTextureUnit(unit - TextureUnit.Texture0, Handle);
 
     public override string ToString() => $"{Handle} '{Name}' : '{UniformName}' : {TextureTarget}";
 
@@ -85,7 +77,6 @@ public class Texture
         int width,
         int height,
         string name,
-        TextureUnit unit = TextureUnit.Texture0,
         TextureType textureType = TextureType.Unknown,
         TextureMinFilter minFilter = TextureMinFilter.Linear,
         TextureMagFilter magFilter = TextureMagFilter.Linear,
@@ -114,7 +105,6 @@ public class Texture
         }
         var texture = new Texture(handle)
         {
-            TextureUnit = unit,
             Name = name,
             UniformName = $"texture_{textureType.ToString().ToLowerInvariant()}",
             MinFilter = minFilter,
@@ -134,11 +124,10 @@ public class Texture
         return texture;
     }
 
-    public static Texture FromDescriptor(TextureDescriptor descriptor, TextureUnit unit)
+    public static Texture FromDescriptor(TextureDescriptor descriptor/*, TextureUnit unit*/)
     {
         return FromFile(
             descriptor.Paths,
-            unit,
             descriptor.TextureType,
             descriptor.MinFilter,
             descriptor.MagFilter,
@@ -150,7 +139,6 @@ public class Texture
     }
 
     public static Texture FromFile(string[] paths,
-        TextureUnit unit = TextureUnit.Texture0,
         TextureType textureType = TextureType.Unknown,
         TextureMinFilter minFilter = TextureMinFilter.LinearMipmapLinear,
         TextureMagFilter magFilter = TextureMagFilter.Linear,
@@ -205,7 +193,6 @@ public class Texture
 
         var texture = new Texture(handle)
         {
-            TextureUnit = unit,
             Name = paths[0],
             UniformName = $"texture_{textureType.ToString().ToLowerInvariant()}",
             MinFilter = minFilter,
@@ -237,13 +224,13 @@ public class Texture
         {
             var diffuseCount = 0;
             var detailCount = 0;
+            var normalCount = 0;
             var specularCount = 0;
             var additionalCount = 0;
             var cubeMapCount = 0;
             var counter = 0;
             foreach (var textureDescriptor in material.TextureDescriptors!)
             {
-                var unit = TextureUnit.Texture0;
                 switch (textureDescriptor.TextureType)
                 {
                     case TextureType.Diffuse:
@@ -252,19 +239,22 @@ public class Texture
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Multiple diffuse textures supplied!");
                         }
-                        unit = TextureUnit.Texture0;
                         break;
 
                     case TextureType.Detail:
-                        unit = TextureUnit.Texture1;
                         if (detailCount++ > 0)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Multiple detail textures supplied!");
                         }
                         break;
+                    case TextureType.Normal:
+                        if (normalCount++ > 0)
+                        {
+                            throw new ArgumentOutOfRangeException(nameof(material), "Multiple normal textures supplied!");
+                        }
+                        break;
 
                     case TextureType.Specular:
-                        unit = TextureUnit.Texture2;
                         if (specularCount++ > 0)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Multiple specular textures supplied!");
@@ -272,42 +262,37 @@ public class Texture
                         break;
 
                     case TextureType.Additional1:
-                        unit = TextureUnit.Texture3;
                         if (additionalCount++ > 3)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
                         }
                         break;
                     case TextureType.Additional2:
-                        unit = TextureUnit.Texture4;
                         if (additionalCount++ > 3)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
                         }
                         break;
                     case TextureType.Additional3:
-                        unit = TextureUnit.Texture5;
                         if (additionalCount++ > 3)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
                         }
                         break;
                     case TextureType.Additional4:
-                        unit = TextureUnit.Texture6;
                         if (additionalCount++ > 3)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
                         }
                         break;
                     case TextureType.CubeMap:
-                        unit = TextureUnit.Texture7;
                         if (cubeMapCount++ > 0)
                         {
                             throw new ArgumentOutOfRangeException(nameof(material), "Multiple cube map textures supplied!");
                         }
                         break;
                 }
-                var t = FromDescriptor(textureDescriptor, unit);
+                var t = FromDescriptor(textureDescriptor);
                 textures[counter++] = t;
             }
         }

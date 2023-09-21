@@ -18,6 +18,11 @@ public enum TextureType
     Detail,
 
     /// <summary>
+    /// Normal map added to the object surface to simulate more detail when calculating lightning.
+    /// </summary>
+    Normal,
+
+    /// <summary>
     /// Color reflection map.
     /// </summary>
     Specular,
