@@ -7,7 +7,8 @@ namespace Samples.Triangle;
 
 internal class MainScene :Scene
 {
-    private VertexBuffer vb = default!;
+    //private VertexBuffer vb = default!;
+    private VertexArrayObject vao = default!;
     
     public override void Load()
     {
@@ -25,9 +26,13 @@ internal class MainScene :Scene
             0.0f,  0.5f, -5.0f ,    // top middle
         };
 
+        vao = new VertexArrayObject();
+        GL.BindVertexArray(vao);
+        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(0, 3, VertexAttribType.Float)), vertices, "Triangle");
+
         //  create a vertex buffer from the vertices an tell OpenGL to use it       
-        vb = new VertexBuffer(VertexDeclarations.VertexPosition, vertices);        
-        GL.BindVertexArray(vb.Vao);        
+        //vb = new VertexBuffer(VertexDeclarations.VertexPosition, vertices);        
+        //GL.BindVertexArray(vb.Vao);        
 
         var modelMatrix = Matrix4.Identity;
         var shader = defaultShader;
@@ -37,7 +42,8 @@ internal class MainScene :Scene
 
     public override void RenderFrame(double elapsedSeconds)
     {
-        base.RenderFrame(elapsedSeconds);        
-        GL.DrawArrays(PrimitiveType.Triangles, 0, vb.Data.Length);
+        base.RenderFrame(elapsedSeconds);
+        //GL.DrawArrays(PrimitiveType.Triangles, 0, vb.Data.Length);
+        GL.DrawArrays(PrimitiveType.Triangles, 0, vao.DataLength);
     } 
 }

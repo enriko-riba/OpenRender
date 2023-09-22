@@ -55,7 +55,7 @@ public class VertexDeclaration
     }
 
     /// <summary>
-    /// Gets the stride of the vertex buffer.
+    /// Gets the stride of the vertex buffer in bytes.
     /// </summary>
     public int Stride { get; private set; }
 
