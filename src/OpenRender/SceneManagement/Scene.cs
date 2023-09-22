@@ -300,6 +300,7 @@ public class Scene
             vboMaterial.UpdateSettings(ref settings);
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
+            if(shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
 
             _ = textureBatcher.GetOptimalTextureUnits(material);
             for (var i = 0; i < material.Textures?.Length; i++)

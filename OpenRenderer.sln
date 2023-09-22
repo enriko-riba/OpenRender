@@ -27,6 +27,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared_resources", "shared_
 	ProjectSection(SolutionItems) = preProject
 		src\samples\shared_resources\btnAtlas.png = src\samples\shared_resources\btnAtlas.png
 		src\samples\shared_resources\consola.ttf = src\samples\shared_resources\consola.ttf
+		src\samples\shared_resources\container-normal.png = src\samples\shared_resources\container-normal.png
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "triangle", "src\samples\triangle\triangle.csproj", "{ED793485-20AB-45AD-B220-A5DCBED9A82E}"

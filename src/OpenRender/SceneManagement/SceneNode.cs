@@ -108,7 +108,7 @@ public class SceneNode
         if (mesh.DrawMode == DrawMode.Indexed)
             GL.DrawElements(PrimitiveType.Triangles, mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
         else
-            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Vertices.Length);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Length);
 
         if (ShowBoundingSphere)
         {

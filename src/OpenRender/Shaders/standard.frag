@@ -5,6 +5,7 @@
 //  predefined sampler names
 uniform sampler2D texture_diffuse;
 uniform sampler2D texture_detail;
+uniform sampler2D texture_normal;
 uniform sampler2D texture_specular;
 uniform sampler2D texture_additional1;
 uniform sampler2D texture_additional2;
@@ -49,6 +50,7 @@ layout(std140) uniform light {
 
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
 uniform float uDetailTextureFactor;     //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
+uniform int uHasNormalTexture;          //  should the normal map txture be sampled from texture_normal
 
 in vec3 vertexColor;                    //  interpolated vertex color
 in vec3 vertexNormal;                   //  interpolated normal
@@ -81,6 +83,12 @@ void main()
     }
     vec3 texColor = texDetail * texDiffuse;
     
+    if(uHasNormalTexture > 0)
+    {    
+        vec3 normalMap = texture(texture_normal, texCoord).rgb;
+        norm = normalize(normalMap * 2.0 - 1.0);
+    }
+
     vec3 Ac = texColor * dirLight.ambient * (vertexColor + mat.diffuse);
     vec3 Dc = texColor * LambertianComponent(lightDir, norm, dirLight.diffuse) * (vertexColor + mat.diffuse);
     vec3 Sc = texColor * SpecularComponent(lightDir, norm, fragPos, dirLight.specular, mat.specular, mat.shininess) * (vertexColor + mat.diffuse);    

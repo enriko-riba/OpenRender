@@ -43,6 +43,7 @@ internal class MainScene : Scene
         var mat1 = Material.Create(
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
+                new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal),
             },
             diffuseColor: Vector3.One,
             emissiveColor: new Vector3(0.05f, 0.04f, 0.03f),

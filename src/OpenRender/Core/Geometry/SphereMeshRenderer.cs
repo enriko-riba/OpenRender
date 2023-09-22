@@ -7,7 +7,7 @@ namespace OpenRender.Core.Geometry;
 public class SphereMeshRenderer
 {
     public static readonly SphereMeshRenderer DefaultSphereMeshRenderer = new();
-    private readonly VertexBuffer vb;
+    private readonly IVertexBuffer vb;
     private readonly Shader shader;
 
     public SphereMeshRenderer()
@@ -16,6 +16,7 @@ public class SphereMeshRenderer
         vb = GeometryHelper.CreateSphere(12, 18);
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }
+
     /// <summary>
     /// Scale increase factor. The sphere mesh needs to be a bit larger then the scene node.
     /// The default factor value is 1.15f.

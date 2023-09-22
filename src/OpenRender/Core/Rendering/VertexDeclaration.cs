@@ -49,17 +49,7 @@ public class VertexDeclaration
                 attrib.Offset = size;
             }
             attributes[i] = attrib;
-            size += attrib.Size * attrib.Type switch
-            {
-                VertexAttribType.Float => sizeof(float),
-                VertexAttribType.Int => sizeof(int),
-                VertexAttribType.UnsignedInt => sizeof(uint),
-                VertexAttribType.Short => sizeof(short),
-                VertexAttribType.UnsignedShort => sizeof(ushort),
-                VertexAttribType.Byte => sizeof(byte),
-                VertexAttribType.UnsignedByte => sizeof(byte),
-                _ => throw new ArgumentException($"Unsupported vertex attribute type {attrib.Type}!", nameof(attributeLayout))
-            };
+            size += attrib.Size * GetAttributeTypeSize(attrib.Type);
         }
         Stride = size;
     }
@@ -73,21 +63,46 @@ public class VertexDeclaration
     /// Sets the vertex attribute pointers for the given <see cref="VertexBuffer"/>.
     /// </summary>
     /// <param name="vb"></param>
-    public void Apply(VertexBuffer vb) => Apply(vb.Vao);
+    //public void Apply(VertexBuffer vb) => Apply(vb.Vao);
 
     /// <summary>
     /// Sets the vertex attribute pointers for the named vertex array object.
     /// </summary>
     /// <param name="vao"></param>
-    public void Apply(int vao)
+    public void Apply(int vao, int? bindingIndex = 0)
     {
         for (var i = 0; i < attributes.Count; i++)
         {
             var attribute = attributes[i];
             GL.EnableVertexArrayAttrib(vao, attribute.Location);
             GL.VertexArrayAttribFormat(vao, attribute.Location, attribute.Size, attribute.Type, attribute.Normalized, attribute.Offset);
-            GL.VertexArrayAttribBinding(vao, attribute.Location, 0);
+            GL.VertexArrayAttribBinding(vao, attribute.Location, bindingIndex??0);
             GL.VertexArrayBindingDivisor(vao, attribute.Location, attribute.Divisor);
         }
     }
+
+    /// <summary>
+    /// Gets the vertex attribute layout for the given location.
+    /// </summary>
+    /// <param name="location"></param>
+    /// <returns></returns>
+    public VertexAttribLayout GetAttribute(VertexAttribLocation location) => attributes.First(a => a.Location == (int)location);
+
+    /// <summary>
+    /// Returns the size in bytes of the given vertex attribute type.
+    /// </summary>
+    /// <param name="type"></param>
+    /// <returns></returns>
+    /// <exception cref="ArgumentException"></exception>
+    public static int GetAttributeTypeSize(VertexAttribType type) => type switch
+    {
+        VertexAttribType.Float => sizeof(float),
+        VertexAttribType.Int => sizeof(int),
+        VertexAttribType.UnsignedInt => sizeof(uint),
+        VertexAttribType.Short => sizeof(short),
+        VertexAttribType.UnsignedShort => sizeof(ushort),
+        VertexAttribType.Byte => sizeof(byte),
+        VertexAttribType.UnsignedByte => sizeof(byte),
+        _ => throw new ArgumentException($"Unsupported vertex attribute type {type}!", nameof(type))
+    };
 }

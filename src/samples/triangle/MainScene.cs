@@ -8,7 +8,7 @@ namespace Samples.Triangle;
 internal class MainScene :Scene
 {
     private VertexBuffer vb = default!;
-
+    
     public override void Load()
     {
         //  base class sets up important state
@@ -25,7 +25,7 @@ internal class MainScene :Scene
             0.0f,  0.5f, -5.0f ,    // top middle
         };
 
-        //  create a vertex buffer from the vertices an tell OpenGL to use it
+        //  create a vertex buffer from the vertices an tell OpenGL to use it       
         vb = new VertexBuffer(VertexDeclarations.VertexPosition, vertices);        
         GL.BindVertexArray(vb.Vao);        
 
@@ -38,6 +38,6 @@ internal class MainScene :Scene
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);        
-        GL.DrawArrays(PrimitiveType.Triangles, 0, vb.Vertices.Length);
+        GL.DrawArrays(PrimitiveType.Triangles, 0, vb.Data.Length);
     } 
 }

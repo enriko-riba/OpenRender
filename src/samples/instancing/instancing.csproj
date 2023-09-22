@@ -15,6 +15,9 @@
     <Content Include="..\shared_resources\consola.ttf" Link="Resources\consola.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="..\shared_resources\container-normal.png" Link="Resources\container-normal.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="..\shared_resources\container.png" Link="Resources\container.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

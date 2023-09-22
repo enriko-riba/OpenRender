@@ -10,6 +10,8 @@ public enum VertexAttribLocation
     Normal,
     Color,
     TextureCoord,
+    Tangent,
+    Bitangent
 }
 
 /// <summary>
@@ -42,13 +44,34 @@ public struct VertexAttribLayout
         Divisor = divisor;
     }
 
-    public string DebugName;
-    public int Location;
-    public int Size;
-    public VertexAttribType Type;
-    public int Offset;
-    public int Divisor;
-    public bool Normalized;
+    /// <summary>
+    /// Attribute name for debug purposes.
+    /// </summary>
+    public string DebugName { get; set; }
+
+    /// <summary>
+    /// Attribute location.
+    /// </summary>
+    public int Location { get; set; }
+    
+    /// <summary>
+    /// Size in <see cref="Type"/> units.
+    /// </summary>
+    public int Size { get; set; }
+
+    public VertexAttribType Type { get; set; }
+    
+    /// <summary>
+    /// Offset in bytes.
+    /// </summary>
+    public int Offset { get; set; }
+    
+    /// <summary>
+    /// Divisor for instanced rendering.
+    /// </summary>
+    public int Divisor { get; set; }
+
+    public bool Normalized { get; set; }
 
     public override readonly string ToString() => $"{DebugName} location:{Location}, size:{Size}, type:{Type}, offset:{Offset}, divisor:{Divisor}";
 }

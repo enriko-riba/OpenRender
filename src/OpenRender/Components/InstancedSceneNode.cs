@@ -17,7 +17,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
     {
         RenderGroup = RenderGroup.Default;
 
-        mesh.VertexBuffer.SetName("InstancedSceneNode_Buffer1");
+        mesh.VertexBuffer.SetLabel("InstancedSceneNode_Buffer1");
 
         var attributeIndexStart = 4;
         var bufferSlot = 1;    //  buffer slot for instance data
@@ -70,7 +70,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
         if (Mesh.DrawMode == DrawMode.Indexed)
             GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else
-            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Vertices.Length, instanceDataList.Count);
+            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Length, instanceDataList.Count);
         Log.CheckGlError();
     }
 }
