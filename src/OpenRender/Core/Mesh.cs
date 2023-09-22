@@ -7,10 +7,15 @@ namespace OpenRender.Core;
 /// </summary>
 public readonly struct Mesh
 {
-    public Mesh(VertexBuffer vertexBuffer)
+    public Mesh(VertexArrayObject vao)
+    {
+        Vao = vao;
+    }
+
+    public Mesh(IVertexBuffer vertexBuffer)
         : this(vertexBuffer, vertexBuffer.Indices == null ? DrawMode.Primitive : DrawMode.Indexed) { }
 
-    public Mesh(VertexBuffer vertexBuffer, DrawMode drawMode)
+    public Mesh(IVertexBuffer vertexBuffer, DrawMode drawMode)
     {
         VertexBuffer = vertexBuffer;
         DrawMode = drawMode;
@@ -18,7 +23,8 @@ public readonly struct Mesh
 
     public readonly DrawMode DrawMode;
 
-    public readonly VertexBuffer VertexBuffer;
+    public readonly IVertexBuffer VertexBuffer;
 
+    public readonly VertexArrayObject Vao;
     //  TODO: this struct makes only sense if multiple sub-meshes will be supported.
 }
