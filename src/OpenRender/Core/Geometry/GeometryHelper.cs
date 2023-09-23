@@ -192,7 +192,7 @@ public static class GeometryHelper
                 var s = 1 - (float)slice / slices;
                 var t = 1 - (float)stack / stacks;
 
-                vertices.AddRange(new float[] { x, y, z, nx, ny, nz, s, t });
+                vertices.AddRange(new float[] { x, y, z, s, t, nx, ny, nz});
             }
         }
 
@@ -226,42 +226,42 @@ public static class GeometryHelper
     {
         float[] vertices =
         {
-            // Position           Normal        Texture
-            //  FRONT SIDE (z = +)
-            -HALF, -HALF,  HALF,   0,  0,  1,   0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,   0,  0,  1,   0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   0,  0,  1,   1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   0,  0,  1,   1, 0,   // upper right - 3
-                                           
-            //  BACK SIDE (z = -)
-            -HALF, -HALF, -HALF,   0,  0, -1,   0, 1,   // lower left - 4
-            -HALF,  HALF, -HALF,   0,  0, -1,   0, 0,   // upper left - 5
-             HALF, -HALF, -HALF,   0,  0, -1,   1, 1,   // lower right - 6
-             HALF,  HALF, -HALF,   0,  0, -1,   1, 0,   // upper right - 7
-
-            //  LEFT SIDE (X = -)
-            -HALF, -HALF, -HALF,  -1,  0,  0,   0, 1,   // lower left  - 8
-            -HALF,  HALF, -HALF,  -1,  0,  0,   0, 0,   // upper left - 9
-            -HALF, -HALF,  HALF,  -1,  0,  0,   1, 1,   // lower right - 10
-            -HALF,  HALF,  HALF,  -1,  0,  0,   1, 0,   // upper right - 11
-
-            //  RIGHT SIDE (X = +)
-             HALF, -HALF,  HALF,   1,  0,  0,   0, 1,   // lower left  - 12
-             HALF,  HALF,  HALF,   1,  0,  0,   0, 0,   // upper left - 13
-             HALF, -HALF, -HALF,   1,  0,  0,   1, 1,   // lower right - 14
-             HALF,  HALF, -HALF,   1,  0,  0,   1, 0,   // upper right - 15            
-            
-            //  UPPER SIDE (Y = +)
-            -HALF,  HALF,  HALF,   0,  1,  0,   0, 1,   // lower left - 16
-            -HALF,  HALF, -HALF,   0,  1,  0,   0, 0,   // upper left - 17
-             HALF,  HALF,  HALF,   0,  1,  0,   1, 1,   // lower right - 18
-             HALF,  HALF, -HALF,   0,  1,  0,   1, 0,   // upper right - 19
-
-            //  lower SIDE (Y = -)
-            -HALF, -HALF, -HALF,   0, -1,  0,   0, 1,   // lower left - 20
-            -HALF, -HALF,  HALF,   0, -1,  0,   0, 0,   // upper left - 21
-             HALF, -HALF, -HALF,   0, -1,  0,   1, 1,   // lower right - 22
-             HALF, -HALF,  HALF,   0, -1,  0,   1, 0,   // upper right - 23             
+            // Position             Texture   Normal     
+            //  FRONT SIDE (z = +)           
+            -HALF, -HALF,  HALF,    0, 1,     0,  0,  1,  // lower left - 0
+            -HALF,  HALF,  HALF,    0, 0,     0,  0,  1,  // upper left - 1
+             HALF, -HALF,  HALF,    1, 1,     0,  0,  1,  // lower right - 2
+             HALF,  HALF,  HALF,    1, 0,     0,  0,  1,  // upper right - 3
+                                                      
+            //  BACK SIDE (z = -)            
+            -HALF, -HALF, -HALF,    0, 1,     0,  0, -1,  // lower left - 4
+            -HALF,  HALF, -HALF,    0, 0,     0,  0, -1,  // upper left - 5
+             HALF, -HALF, -HALF,    1, 1,     0,  0, -1,  // lower right - 6
+             HALF,  HALF, -HALF,    1, 0,     0,  0, -1,  // upper right - 7
+                                             
+            //  LEFT SIDE (X = -)            
+            -HALF, -HALF, -HALF,    0, 1,    -1,  0,  0,  // lower left  - 8
+            -HALF,  HALF, -HALF,    0, 0,    -1,  0,  0,  // upper left - 9
+            -HALF, -HALF,  HALF,    1, 1,    -1,  0,  0,  // lower right - 10
+            -HALF,  HALF,  HALF,    1, 0,    -1,  0,  0,  // upper right - 11
+                                             
+            //  RIGHT SIDE (X = +)           
+             HALF, -HALF,  HALF,    0, 1,     1,  0,  0,  // lower left  - 12
+             HALF,  HALF,  HALF,    0, 0,     1,  0,  0,  // upper left - 13
+             HALF, -HALF, -HALF,    1, 1,     1,  0,  0,  // lower right - 14
+             HALF,  HALF, -HALF,    1, 0,     1,  0,  0,  // upper right - 15            
+                                             
+            //  UPPER SIDE (Y = +)           
+            -HALF,  HALF,  HALF,    0, 1,     0,  1,  0,  // lower left - 16
+            -HALF,  HALF, -HALF,    0, 0,     0,  1,  0,  // upper left - 17
+             HALF,  HALF,  HALF,    1, 1,     0,  1,  0,  // lower right - 18
+             HALF,  HALF, -HALF,    1, 0,     0,  1,  0,  // upper right - 19
+                                             
+            //  lower SIDE (Y = -)           
+            -HALF, -HALF, -HALF,    0, 1,     0, -1,  0,  // lower left - 20
+            -HALF, -HALF,  HALF,    0, 0,     0, -1,  0,  // upper left - 21
+             HALF, -HALF, -HALF,    1, 1,     0, -1,  0,  // lower right - 22
+             HALF, -HALF,  HALF,    1, 0,     0, -1,  0,  // upper right - 23             
         };
         return vertices;
     }
@@ -314,24 +314,24 @@ public static class GeometryHelper
     {
         float[] vertices =
         {
-            // Position           Normal        Texture
+            // Position              Texture  Normal        
 
             //  FRONT SIDE VERTICES
-            -HALF, -HALF,  HALF,  -1, -1, 1,    0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,  -1,  1, 1,    0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   1, -1, 1,    1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   1,  1, 1,    1, 0,   // upper right - 3
-            
-            //  BACK SIDE VERTICES
-            -HALF, -HALF, -HALF,  -1, -1, -1,   1, 1,   // lower left
-            -HALF,  HALF, -HALF,  -1,  1, -1,   1, 0,   // upper left
-             HALF, -HALF, -HALF,   1, -1, -1,   0, 1,   // lower right
-             HALF,  HALF, -HALF,   1,  1, -1,   0, 0,   // upper right
-
-            -HALF,  HALF, -HALF,  -1,  1, -1,   0, 1,   // upper left 2nd
-             HALF,  HALF, -HALF,   1,  1, -1,   1, 1,   // upper right 2nd
-            -HALF, -HALF, -HALF,  -1, -1, -1,   0, 0,   // lower left 2nd
-             HALF, -HALF, -HALF,   1, -1, -1,   1, 0,   // lower right 2nd            
+            -HALF, -HALF,  HALF,      0, 1,   -1, -1, 1,    // lower left - 0
+            -HALF,  HALF,  HALF,      0, 0,   -1,  1, 1,    // upper left - 1
+             HALF, -HALF,  HALF,      1, 1,    1, -1, 1,    // lower right - 2
+             HALF,  HALF,  HALF,      1, 0,    1,  1, 1,    // upper right - 3
+                                              
+            //  BACK SIDE VERTICES            
+            -HALF, -HALF, -HALF,      1, 1,   -1, -1, -1,   // lower left
+            -HALF,  HALF, -HALF,      1, 0,   -1,  1, -1,   // upper left
+             HALF, -HALF, -HALF,      0, 1,    1, -1, -1,   // lower right
+             HALF,  HALF, -HALF,      0, 0,    1,  1, -1,   // upper right
+                                              
+            -HALF,  HALF, -HALF,      0, 1,   -1,  1, -1,   // upper left 2nd
+             HALF,  HALF, -HALF,      1, 1,    1,  1, -1,   // upper right 2nd
+            -HALF, -HALF, -HALF,      0, 0,   -1, -1, -1,   // lower left 2nd
+             HALF, -HALF, -HALF,      1, 0,    1, -1, -1,   // lower right 2nd            
         };
         return vertices;
     }
@@ -391,13 +391,13 @@ public static class GeometryHelper
 
     private static float[] CreateQuadWithNormals()
     {
-        //  create the 4 vertices with: 3 floats for position + 3 floats for normal + 2 floats for uv 
+        //  create the 4 vertices with: 3 floats for position + 2 floats for uv + 3 floats for normal  
         var vertices = new float[]
-        {
-            -HALF, -HALF, 0,    -HALF, -HALF, 1,     0, 1,   // lower left corner
-            -HALF,  HALF, 0,    -HALF, -HALF, 1,     0, 0,   // upper left corner
-             HALF, -HALF, 0,     HALF, -HALF, 1,     1, 1,   // lower right corner
-             HALF,  HALF, 0,     HALF,  HALF, 1,     1, 0,   // upper right corner
+        {   //  position         texture  normal  
+            -HALF, -HALF, 0,     0, 1,     0, 0, 1,   // lower left corner
+            -HALF,  HALF, 0,     0, 0,     0, 0, 1,   // upper left corner
+             HALF, -HALF, 0,     1, 1,     0, 0, 1,   // lower right corner
+             HALF,  HALF, 0,     1, 0,     0, 0, 1,   // upper right corner
         };
         return vertices;
     }

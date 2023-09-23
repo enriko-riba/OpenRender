@@ -1,4 +1,4 @@
-#version 430
+#version 450 core
 
 #define MAX_LIGHTS 4
 
@@ -38,7 +38,7 @@ layout(std140) uniform material {
 };
 
 struct Light {    
-    vec3 position;    
+    vec3 position;
     vec3 ambient;
     vec3 diffuse;
     vec3 specular;
@@ -76,7 +76,6 @@ void main()
     {
         texDiffuse = vec3(texture(texture_diffuse, texCoord));
     }
-
     if(uDetailTextureFactor > 0)
     {		
 		texDetail = vec3(texture(texture_detail, texCoord * uDetailTextureFactor));
@@ -97,9 +96,7 @@ void main()
 
 
 //-----------------------------------------------------------------------------------------------
-//
 //	Description:	basic lambertian light equation.
-//				
 //-----------------------------------------------------------------------------------------------
 vec3 LambertianComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 lightColor)
 {
@@ -109,9 +106,7 @@ vec3 LambertianComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 
 }
 
 //-----------------------------------------------------------------------------------------------
-//
 //	Description:	basic specular light equation.
-//				
 //-----------------------------------------------------------------------------------------------
 vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
 {
@@ -134,9 +129,7 @@ vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 wo
 /*
 
 //-----------------------------------------------------------------------------------------------
-//
 //	Description:	specular light equation based on the simplified Blinn Phong equation.
-//				
 //-----------------------------------------------------------------------------------------------
 vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
 {    
@@ -159,9 +152,7 @@ vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 worldNormal, in vec3 
 }
 
 //-----------------------------------------------------------------------------------------------
-//
 //	Description:	inverted range attenuation equation.
-//				
 //-----------------------------------------------------------------------------------------------
 float Attenuation(float lDistance, float lRange, float falloff)
 {
