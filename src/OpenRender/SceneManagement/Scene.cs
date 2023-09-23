@@ -43,8 +43,8 @@ public class Scene
     {
         defaultShader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
         vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
-        vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         vboLight = new UniformBuffer<LightUniform>("light", 1);
+        vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         Name = name ?? GetType().Name;
 
         // 16 is minimum per OpenGL standard

@@ -1,17 +1,32 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 
 namespace OpenRender.Core.Rendering;
+
 /// <summary>
-/// Well known attribute locations.
+/// Well known attribute locations, defined as layouts in all OpenRenderer shaders.
 /// </summary>
 public enum VertexAttribLocation
 {
-    Position,
-    Normal,
-    Color,
+    /// <summary>
+    /// Attribute streaming vertices.
+    /// </summary>
+    Position = 0,
+
+    /// <summary>
+    /// Attribute streaming texture coordinates.
+    /// </summary>
     TextureCoord,
-    Tangent,
-    Bitangent
+
+    /// <summary>
+    /// Attribute streaming normals.
+    /// </summary>
+    Normal,
+
+    /// <summary>
+    /// Attribute streaming colors.
+    /// </summary>
+    Color,
+
 }
 
 /// <summary>
@@ -19,24 +34,21 @@ public enum VertexAttribLocation
 /// </summary>
 public struct VertexAttribLayout
 {
-    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type) :
-        this(location.ToString(), (int)location, size, type, -1, 0)
-    { }
-    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, int divisor) :
-        this(location.ToString(), (int)location, size, type, -1, divisor)
-    { }
+    public VertexAttribLayout(int location, int size, VertexAttribType type, int divisor, string? debugName = null) :
+        this(location, size, type, -1, divisor, debugName) { }
+    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, string? debugName = null) :
+        this((int)location, size, type, -1, 0, debugName) { }
+    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, int divisor, string? debugName = null) :
+        this((int)location, size, type, -1, divisor, debugName) { }
+    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, int offset, int divisor, string? debugName = null) :
+        this((int)location, size, type, offset, divisor, debugName) { }
 
-    public VertexAttribLayout(string debugName, VertexAttribLocation location, int size, VertexAttribType type, int offset, int divisor) :
-        this(debugName, (int)location, size, type, offset, divisor)
-    { }
 
-    public VertexAttribLayout(string debugName, int location, int size, VertexAttribType type, int divisor) :
-        this(debugName, location, size, type, -1, divisor)
-    { }
-
-    public VertexAttribLayout(string debugName, int location, int size, VertexAttribType type, int offset, int divisor)
+    public VertexAttribLayout(int location, int size, VertexAttribType type, int offset, int divisor, string? debugName = null)
     {
-        DebugName = debugName;
+        DebugName = debugName?? (Enum.IsDefined((VertexAttribLocation)location) ? 
+                                        ((VertexAttribLocation)location).ToString() : 
+                                        location.ToString());
         Location = location;
         Size = size;
         Type = type;
@@ -53,19 +65,19 @@ public struct VertexAttribLayout
     /// Attribute location.
     /// </summary>
     public int Location { get; set; }
-    
+
     /// <summary>
     /// Size in <see cref="Type"/> units.
     /// </summary>
     public int Size { get; set; }
 
     public VertexAttribType Type { get; set; }
-    
+
     /// <summary>
     /// Offset in bytes.
     /// </summary>
     public int Offset { get; set; }
-    
+
     /// <summary>
     /// Divisor for instanced rendering.
     /// </summary>

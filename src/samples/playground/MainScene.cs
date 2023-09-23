@@ -25,7 +25,7 @@ internal class MainScene : Scene
     public override void Load()
     {
         base.Load();
-        GL.ClearColor(Color4.DarkSlateBlue);
+        BackgroundColor = Color4.DarkSlateBlue;
 
         AddRotatingBoxes();
         AddRandomNodes();
@@ -83,6 +83,7 @@ internal class MainScene : Scene
         tr.Render(helpText1, 5, TextStartY + LineHeight * 2, textColor2);
         tr.Render(helpText2, 5, TextStartY + LineHeight * 3, textColor2);
         tr.Render(helpText3, 5, TextStartY + LineHeight * 4, textColor2);
+        ResetMaterial();
     }
 
     public override void UpdateFrame(double elapsedSeconds)

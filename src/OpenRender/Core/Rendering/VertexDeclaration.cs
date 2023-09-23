@@ -9,46 +9,50 @@ public class VertexDeclaration
 {
     public VertexDeclaration(VertexAttribLayout attributeLayout)
     {
-        AddAttribute(attributeLayout);
+        if (attributeLayout.Location < 0)
+            throw new ArgumentException($"Layout location must be greater than or equal to 0!", nameof(attributeLayout));
+        if (Attributes.Any(l => l.Location == attributeLayout.Location))
+            throw new ArgumentException($"Layout with location {attributeLayout.Location} already exists in this vertex description!", nameof(attributeLayout));
+
+        Attributes.Add(attributeLayout);
+        CalculateOffsets();
     }
-    public VertexDeclaration(IEnumerable<VertexAttribLayout> attributeLayout)
+
+    public VertexDeclaration(VertexAttribLayout[] attributeLayout)
     {
-        foreach (var attribute in attributeLayout)
-            AddAttribute(attribute);
+        if(attributeLayout.Any(a => a.Location < 0))
+            throw new ArgumentException($"Layout location must be greater than or equal to 0!", nameof(attributeLayout));
+        if(attributeLayout.Any(a => Attributes.Any(l => l.Location == a.Location)))
+            throw new ArgumentException($"Layout with location {attributeLayout} already exists in this vertex description!", nameof(attributeLayout));
+        Attributes.AddRange(attributeLayout);
+        CalculateOffsets();
     }
 
     private readonly List<VertexAttribLayout> attributes = new();
 
+    
     /// <summary>
-    /// Adds a vertex attribute layout to the vertex declaration.
+    /// Recalculates the offsets based on the location.
     /// </summary>
-    /// <param name="attributeLayout"></param>
     /// <exception cref="ArgumentException"></exception>
-    public void AddAttribute(VertexAttribLayout attributeLayout)
-    {
-        if (attributeLayout.Location < 0)
-            throw new ArgumentException($"Layout location must be greater than or equal to 0!", nameof(attributeLayout));
-
-        if (attributes.Any(l => l.Location == attributeLayout.Location))
-            throw new ArgumentException($"Layout with location {attributeLayout.Location} already exists in this vertex description!", nameof(attributeLayout));
-
-        attributes.Add(attributeLayout);
-        attributes.Sort((a, b) => a.Location.CompareTo(b.Location));
+    private void CalculateOffsets()
+    {        
+        Attributes.Sort((a, b) => a.Location.CompareTo(b.Location));
 
         var size = 0;
-        for (var i = 0; i < attributes.Count; i++)
+        for (var i = 0; i < Attributes.Count; i++)
         {
-            var attrib = attributes[i];
+            var attrib = Attributes[i];
             if (attrib.Offset > 0)  //  offset is already set in layout, check if it's valid
             {
                 if (attrib.Offset < size)
-                    throw new ArgumentException($"Layout offset {attrib.Offset} is less than the current stride {size}!", nameof(attributeLayout));
+                    throw new ArgumentException($"Layout offset for attribute {attrib} is less than the current stride {size}!");
             }
             else
             {
                 attrib.Offset = size;
             }
-            attributes[i] = attrib;
+            Attributes[i] = attrib;
             size += attrib.Size * GetAttributeTypeSize(attrib.Type);
         }
         Stride = size;
@@ -59,11 +63,7 @@ public class VertexDeclaration
     /// </summary>
     public int Stride { get; private set; }
 
-    /// <summary>
-    /// Sets the vertex attribute pointers for the given <see cref="VertexBuffer"/>.
-    /// </summary>
-    /// <param name="vb"></param>
-    //public void Apply(VertexBuffer vb) => Apply(vb.Vao);
+    public List<VertexAttribLayout> Attributes => attributes;
 
     /// <summary>
     /// Sets the vertex attribute pointers for the named vertex array object.
@@ -71,9 +71,9 @@ public class VertexDeclaration
     /// <param name="vao"></param>
     public void Apply(int vao, int? bindingIndex = 0)
     {
-        for (var i = 0; i < attributes.Count; i++)
+        for (var i = 0; i < Attributes.Count; i++)
         {
-            var attribute = attributes[i];
+            var attribute = Attributes[i];
             GL.EnableVertexArrayAttrib(vao, attribute.Location);
             GL.VertexArrayAttribFormat(vao, attribute.Location, attribute.Size, attribute.Type, attribute.Normalized, attribute.Offset);
             GL.VertexArrayAttribBinding(vao, attribute.Location, bindingIndex??0);
@@ -86,7 +86,7 @@ public class VertexDeclaration
     /// </summary>
     /// <param name="location"></param>
     /// <returns></returns>
-    public VertexAttribLayout GetAttribute(VertexAttribLocation location) => attributes.First(a => a.Location == (int)location);
+    public VertexAttribLayout GetAttribute(VertexAttribLocation location) => Attributes.First(a => a.Location == (int)location);
 
     /// <summary>
     /// Returns the size in bytes of the given vertex attribute type.
