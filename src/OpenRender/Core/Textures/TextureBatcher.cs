@@ -118,7 +118,7 @@ public class TextureBatcher
     }
 
     /// <summary>
-    /// Finds what texture from the given array has the maximum frequency value based on the frequency dictionary.
+    /// Finds what texture from the given array that has the maximum frequency.
     /// </summary>
     /// <param name="material"></param>
     /// <param name="frequency"></param>
@@ -144,4 +144,6 @@ public struct TextureUnitUsage
     public int? TextureHandle { get; set; }
     public int Unit { get; set; }
     public int ChangeCount { get; set; }
+
+    public override string ToString() => $"handle:{TextureHandle}->{Unit}, changes:{ChangeCount}";
 }

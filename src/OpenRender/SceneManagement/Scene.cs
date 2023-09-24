@@ -289,22 +289,15 @@ public class Scene
 
         if (lastMaterial != material.Id)
         {
-            lastMaterial = material.Id;
-            var settings = new MaterialUniform()
-            {
-                Diffuse = material.DiffuseColor,
-                Emissive = material.EmissiveColor,
-                Specular = material.SpecularColor,
-                Shininess = material.Shininess,
-            };
-            vboMaterial.UpdateSettings(ref settings);
+            lastMaterial = material.Id;            
+            vboMaterial.UpdateSettings(ref material.MaterialUniform);
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
-            if(shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
+            if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
 
-            _ = textureBatcher.GetOptimalTextureUnits(material);
             for (var i = 0; i < material.Textures?.Length; i++)
             {
+                _ = textureBatcher.GetOptimalTextureUnits(material);
                 var texture = material.Textures[i];
                 if (texture != null)
                 {
@@ -316,7 +309,7 @@ public class Scene
         }
 
         node.OnDraw(this, elapsed);
-        GL.UseProgram(0);
+        //GL.UseProgram(0);
     }
 
     public int GetBatchedTextureUnit(Texture texture)
@@ -357,14 +350,32 @@ public class Scene
 
     private void SortRenderList()
     {
-        if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
-
-        if (nodes.Any(n => n.RenderGroup == RenderGroup.DistanceSorted && n.FrameBits.Value == 0))
+        if (hasNodeListChanged)
         {
-            //  distance based sorting for RenderGroup.DistanceSorted
-            var firstDistanceSorted = nodes.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            var lastDistanceSorted = nodes.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            nodes.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
+            var defaultList = renderLayers[RenderGroup.Default];
+            if (defaultList.Any(n => n.FrameBits.Value == 0))
+            {
+                defaultList.Sort(SortingKeyComparer);
+            }
+        }
+
+        if (hasCameraChanged || hasNodeListChanged)
+        {
+            //var renderList = renderLayers[RenderGroup.UI];
+            //if (renderList.Any(n => n.FrameBits.Value == 0))
+            //{
+            //    // UI RenderGroup are sorted by compare by index.
+            //    renderList.Sort(IndexComparer);
+            //}
+
+            var distanceList = renderLayers[RenderGroup.DistanceSorted];
+            if (distanceList.Any(n => n.FrameBits.Value == 0))
+            {
+                //  distance based sorting for RenderGroup.DistanceSorted
+                var firstDistanceSorted = distanceList.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+                var lastDistanceSorted = distanceList.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
+                distanceList.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
+            }
         }
     }
 
@@ -374,8 +385,15 @@ public class Scene
         if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
         {
             // If UI RenderGroup values are the same, compare by index.
-            return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
+            return nodes.IndexOf(a) - nodes.IndexOf(b);
         }
         return renderGroupComparison;
     }
+    private static int SortingKeyComparer(SceneNode a, SceneNode b) => 
+            a.sortingKey > b.sortingKey ? 1 :
+            a.sortingKey == b.sortingKey ? 0 :
+            -1;
+
+    private int VaoComparer(SceneNode a, SceneNode b) => a.Mesh.Vao.Handle - b.Mesh.Vao.Handle;
+    //private int IndexComparer(SceneNode a, SceneNode b) => nodes.IndexOf(a)- nodes.IndexOf(b);
 }

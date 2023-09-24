@@ -6,6 +6,11 @@ namespace OpenRender.Core.Rendering;
 [StructLayout(LayoutKind.Explicit)]
 public struct MaterialUniform : ISize
 {
+    public MaterialUniform()
+    {
+        Diffuse = Vector3.One;
+    }
+
     [FieldOffset(0)]
     public Vector3 Diffuse;
     [FieldOffset(16)]

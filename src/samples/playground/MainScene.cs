@@ -5,7 +5,6 @@ using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenRender.Text;
-using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
@@ -20,12 +19,20 @@ internal class MainScene : Scene
     private AnimatedSprite? animatedSprite;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
-      
+
+    private Mesh boxMesh = default!;
+    private Mesh cubeMesh = default!;
+    private Mesh sphereMesh = default!;
 
     public override void Load()
     {
         base.Load();
         BackgroundColor = Color4.DarkSlateBlue;
+
+        // create shared meshes
+        boxMesh = new Mesh(GeometryHelper.CreateBox(true));
+        cubeMesh = new Mesh(GeometryHelper.CreateCube(true));
+        sphereMesh = new Mesh(GeometryHelper.CreateSphere(32, 48));
 
         AddRotatingBoxes();
         AddRandomNodes();
@@ -190,10 +197,6 @@ internal class MainScene : Scene
 
     private void AddRotatingBoxes()
     {
-        var vbBox = GeometryHelper.CreateBox(true);
-        var vbQuad = GeometryHelper.CreateQuad(true);
-        var vbCube = GeometryHelper.CreateCube(true);
-
         var mat1 = Material.Create(
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
@@ -211,7 +214,7 @@ internal class MainScene : Scene
             shininess: 0.25f
         );
 
-        var n1 = new SceneNode(new Mesh(vbBox), mat1, new Vector3(3, 0, -3))
+        var n1 = new SceneNode(boxMesh, mat1, new Vector3(3, 0, -3))
         {
             Update = (n, e) =>
             {
@@ -223,7 +226,7 @@ internal class MainScene : Scene
         };
         AddNode(n1);
 
-        var n2 = new SceneNode(new Mesh(vbCube), mat2, new Vector3(1.75f, 0.2f, 0))
+        var n2 = new SceneNode(cubeMesh, mat2, new Vector3(1.75f, 0.2f, 0))
         {
             Update = (n, e) =>
             {
@@ -235,6 +238,7 @@ internal class MainScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
+        var vbQuad = GeometryHelper.CreateQuad(true);
         var n3 = new SceneNode(new Mesh(vbQuad), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
@@ -250,8 +254,7 @@ internal class MainScene : Scene
     private void AddRandomNodes()
     {
         const int NodeCount = 5000;
-        var vbBox = GeometryHelper.CreateBox(true);
-        var vbSphere = GeometryHelper.CreateSphere(32, 48);
+
         var matSphere = Material.Create(
             new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse),
             detailTextureFactor: 0f,
@@ -262,7 +265,7 @@ internal class MainScene : Scene
         {
             if (i % 5 == 0)
             {
-                var sphere = new RandomNode(new Mesh(vbSphere), matSphere);
+                var sphere = new RandomNode(sphereMesh, matSphere);
                 AddNode(sphere);
             }
             else
@@ -284,7 +287,7 @@ internal class MainScene : Scene
                     new Vector3((float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble()),
                     Vector3.One,
                     (float)Random.Shared.NextDouble() * 0.7f);
-                var cube = new RandomNode(new Mesh(vbBox), mat1);
+                var cube = new RandomNode(boxMesh, mat1);
                 AddNode(cube);
             }
         }
@@ -292,7 +295,6 @@ internal class MainScene : Scene
 
     private void AddMetallicBoxes()
     {
-        var vbBox = GeometryHelper.CreateBox(true);
         var mat = Material.Create(new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),
@@ -301,7 +303,7 @@ internal class MainScene : Scene
 
         for (var i = 0; i < 50; i++)
         {
-            var cube = new SceneNode(new Mesh(vbBox), mat);
+            var cube = new SceneNode(boxMesh, mat);
             cube.SetPosition(new(-250 + i * 10, 0, -10));
             AddNode(cube);
         }

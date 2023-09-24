@@ -40,7 +40,7 @@ public class Sprite : SceneNode
         ArgumentNullException.ThrowIfNull(textureName);
 
         shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
-        Material = Material.Create(shader,
+        var material = Material.Create(shader,
             new TextureDescriptor[] {
                 new TextureDescriptor(textureName,
                     TextureType: TextureType.Diffuse,
@@ -51,14 +51,14 @@ public class Sprite : SceneNode
                     GenerateMipMap: true)
             }
         );
-
+        SetMaterial(material);
         size.X = Material.Textures![0].Width;
         size.Y = Material.Textures[0].Height;
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
         var vbQuad = GeometryHelper.Create2dQuad();
-        var mesh = new Mesh(vbQuad, DrawMode.Indexed);
+        var mesh = new Mesh(vbQuad);
         SetMesh(mesh);
         Tint = Color4.White;
         Pivot = new Vector2(0.5f, 0.5f);
@@ -222,6 +222,7 @@ public class Sprite : SceneNode
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
         if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
+
         var texture = Material.Textures![0];
         shader.SetUniform4("sourceFrame",
             (float)sourceRectangle.X / texture.Width,

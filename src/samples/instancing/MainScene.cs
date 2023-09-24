@@ -216,6 +216,9 @@ internal class MainScene : Scene
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
             shininess: 0.45f);
+        
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(vbBox.VertexDeclaration, vbBox.Data);
         instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vbBox), mat);
         AddNode(instanced);
 

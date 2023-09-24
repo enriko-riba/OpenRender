@@ -38,21 +38,6 @@ public class Material
     public float DetailTextureFactor { get; set; }
 
     /// <summary>
-    /// Diffuse color multiplied with light color.
-    /// </summary>
-    public Vector3 DiffuseColor { get; set; } = Vector3.One;
-
-    /// <summary>
-    /// Specular color multiplied with light color. This should usually be white.
-    /// </summary>
-    public Vector3 SpecularColor { get; set; } = Vector3.One;
-
-    /// <summary>
-    /// Object shininess, used with specular color.
-    /// </summary>
-    public float Shininess { get; set; } = 0.1f;
-
-    /// <summary>
     /// Color emitted from the object surface. This color is for self luminating objects, scene lights have no effect on emissive color.
     /// </summary>
     public Vector3 EmissiveColor { get; set; } = Vector3.Zero;
@@ -61,7 +46,10 @@ public class Material
     {
         Textures = Texture.CreateFromMaterial(this);
         textureHandles = Textures.Select(t => t.Handle).ToArray();
+        materialUniform = new MaterialUniform();
     }
+    private MaterialUniform materialUniform;
+    public ref MaterialUniform MaterialUniform => ref materialUniform;
 
     public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
 
@@ -69,20 +57,22 @@ public class Material
     {
         var textureCount = textureDescriptors?.Length ?? 0;
         if (textureCount > MaxTextures) throw new ArgumentOutOfRangeException(nameof(textureDescriptors));
+        
+        if (diffuseColor.Length == 0 && textureCount > 0) Log.Warn("Material created with no diffuse color, that's probably not what you want!");
+
         var id = Interlocked.Increment(ref counter);
         var mat = new Material()
         {
             Shader = shader,
             TextureDescriptors = textureDescriptors,
-            Shininess = shininess,
             DetailTextureFactor = detailTextureFactor,
-            DiffuseColor = diffuseColor,
-            SpecularColor = specularColor,
-            EmissiveColor = emissiveColor,
             Id = id
         };
         mat.Initialize();
-        if (diffuseColor.Length == 0 && textureCount > 0) Log.Warn("Material created with no diffuse color, that's probably not what you want!");
+        mat.materialUniform.Shininess = shininess;
+        mat.materialUniform.Diffuse = diffuseColor;
+        mat.materialUniform.Specular = specularColor;
+        mat.materialUniform.Emissive = emissiveColor;
         return mat;
     }
 

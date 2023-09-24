@@ -25,8 +25,8 @@ public static class GeometryHelper
             0, 1, 3,
             0, 3, 2
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vb = new VertexBuffer(vxDeclaration, vertices, indices);
+        return vb;
     }
 
     /// <summary>
@@ -54,8 +54,8 @@ public static class GeometryHelper
             0, 1, 3,
             0, 3, 2
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vb = new VertexBuffer(vxDeclaration, vertices, indices);
+        return vb;
     }
 
     /// <summary>
@@ -109,8 +109,8 @@ public static class GeometryHelper
             11, 0, 10,
             11, 2, 0
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vb = new VertexBuffer(vxDeclaration, vertices, indices);
+        return vb;
     }
 
     /// <summary>
@@ -160,8 +160,8 @@ public static class GeometryHelper
             22, 21, 20,
             22, 23, 21
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vb = new VertexBuffer(vxDeclaration, vertices, indices);
+        return vb;
     }
 
     public static VertexBuffer CreateSphere(int stacks, int slices)
@@ -218,8 +218,8 @@ public static class GeometryHelper
                 }
             }
         }
-        var vertexBuffer = new VertexBuffer(VertexDeclarations.VertexPositionNormalTexture, vertices.ToArray(), indices.ToArray());
-        return vertexBuffer;
+        var vb = new VertexBuffer(VertexDeclarations.VertexPositionNormalTexture, vertices.ToArray(), indices.ToArray());
+        return vb;
     }
 
     private static float[] CreateBoxWithNormals()

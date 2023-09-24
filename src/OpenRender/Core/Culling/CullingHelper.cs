@@ -45,13 +45,12 @@ internal sealed class CullingHelper
     /// <param name="vb">the vertex buffer containing vertex positions</param>
     /// <param name="vertexPositionAttributeOffset">the offset of the vertex positions in floats</param>
     /// <returns></returns>
-    public static BoundingSphere CalculateBoundingSphere(IVertexBuffer vb, int vertexPositionAttributeOffset = 0)
+    public static BoundingSphere CalculateBoundingSphere(VertexBuffer vb, int vertexPositionAttributeOffset = 0)
     {
-        if (vb == null) return new BoundingSphere();
+        if (vb.Vbo <= 0) return new BoundingSphere();
         List<Vector3> positions = new();
-        var strideInFloats = vb.Stride / sizeof(float);
-        var vbFloat = (VertexBuffer)vb;
-        var data = vbFloat.Data;
+        var strideInFloats = vb.VertexDeclaration.Stride / sizeof(float);
+        var data = vb.Data;
         if (vb.Indices != null && vb.Indices.Length > 0)
         {
             for (var i = 0; i < vb.Indices.Length; i++)
@@ -64,7 +63,7 @@ internal sealed class CullingHelper
             }
         }
         else
-        {            
+        {
             for (var i = 0; i < data.Length; i += strideInFloats)
             {
                 var x = data[i + vertexPositionAttributeOffset];

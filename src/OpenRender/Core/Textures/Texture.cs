@@ -85,7 +85,7 @@ public class Texture
         bool generateMipMap = false,
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
-        var key = CalculateKey(new string[] { name }, textureType, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
+        var key = CalculateKey(new string[] { name }, /*textureType, */minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
         if (textureCache.TryGetValue(key, out var cachedTexture))
         {
             return cachedTexture;
@@ -147,7 +147,7 @@ public class Texture
         bool generateMipMap = true,
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
-        var key = CalculateKey(paths, textureType, minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
+        var key = CalculateKey(paths, /*textureType,*/ minFilter, magFilter, textureWrapS, textureWrapT, generateMipMap, textureTarget);
         if (textureCache.TryGetValue(key, out var cachedTexture))
         {
             return cachedTexture;
@@ -300,7 +300,7 @@ public class Texture
     }
 
     private static string CalculateKey(string[] paths,
-        TextureType textureType,
+        //TextureType textureType,
         TextureMinFilter minFilter,
         TextureMagFilter magFilter,
         TextureWrapMode textureWrapS,
@@ -309,6 +309,7 @@ public class Texture
         TextureTarget textureTarget = TextureTarget.Texture2D)
     {
         var names = textureTarget == TextureTarget.TextureCubeMap ? string.Join(':', paths) : paths[0];
-        return $"{names}|{textureType}:{minFilter}:{magFilter}:{textureWrapS}:{textureWrapT}:{generateMipMap}";
+        return $"{names}|{minFilter}:{magFilter}:{textureWrapS}:{textureWrapT}:{generateMipMap}";
+        //return $"{names}|{textureType}:{minFilter}:{magFilter}:{textureWrapS}:{textureWrapT}:{generateMipMap}";
     }
 }

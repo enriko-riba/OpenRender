@@ -25,8 +25,9 @@ public sealed class SkyBox : SceneNode
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge);
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
-        Material = Material.Create(shader, desc);
-        var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
+        var material = Material.Create(shader, desc);
+        SetMaterial(material);
+        var skyBoxMesh = new Mesh(vb);
         SetMesh(skyBoxMesh);
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
@@ -41,7 +42,6 @@ public sealed class SkyBox : SceneNode
     {
         GL.GetInteger(GetPName.DepthFunc, out var depthFunc);
         var isCullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
-
         if (isCullFaceEnabled)
         {
             GL.Disable(EnableCap.CullFace);

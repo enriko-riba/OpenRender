@@ -40,9 +40,9 @@ internal class MainScene :Scene
         //  create OpenGL buffers and bind them to a VertexArrayObject
         vao = new VertexArrayObject();
         GL.BindVertexArray(vao);
-        vao.AddBuffer(VertexDeclarations.VertexPosition, vertices, "Triangle");
-        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Color, 3, VertexAttribType.Float)), colors, "Color");
-        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Normal, 3, VertexAttribType.Float)), normals, "Normal");
+        vao.AddBuffer(VertexDeclarations.VertexPosition, vertices, name: "Triangle");
+        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Color, 3, VertexAttribType.Float)), colors, name: "Color");
+        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Normal, 3, VertexAttribType.Float)), normals, name: "Normal");
 
         var modelMatrix = Matrix4.Identity;
         var shader = defaultShader;

@@ -9,11 +9,11 @@ namespace OpenRender.SceneManagement;
 
 public class SceneNode
 {
-    private BoundingSphere boundingSphere;
-    private bool showBoundingSphere;
-    private Mesh mesh;
-    private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
+    private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
+    private bool showBoundingSphere;
+    private BoundingSphere boundingSphere;
+    private Mesh mesh;
 
     protected Vector3 position;
     protected Vector3 scale;
@@ -40,7 +40,7 @@ public class SceneNode
 
     public Vector3 AngleRotation { get; private set; }
 
-    public Material Material { get; set; } = default!;
+    public Material Material { get; private set; } = default!;
 
     public bool IsVisible 
     {
@@ -58,17 +58,29 @@ public class SceneNode
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = this.rotationMatrix;
 
+    /// <summary>
+    /// Gets the mesh reference. Do not use this method to set the mesh, use <see cref="SetMesh(Mesh)"/> instead.
+    /// </summary>
     public ref Mesh Mesh => ref mesh;
 
     public void SetMesh(in Mesh mesh)
     {
         this.mesh = mesh;
-        var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
+        if (mesh.Vao <= 0) return;
+        var bs = CullingHelper.CalculateBoundingSphere(mesh.Vao.VertexArrayBuffer);
         boundingSphere = bs with
         {
             Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
             Center = bs.LocalCenter + position,
         };
+        UpdateSortingKey();
+    }
+
+
+    public void SetMaterial(in Material material)
+    {
+        Material = material;
+        UpdateSortingKey();
     }
 
     public bool ShowBoundingSphere
@@ -76,6 +88,8 @@ public class SceneNode
         get => showBoundingSphere || (Scene?.ShowBoundingSphere ?? false);
         set => showBoundingSphere = value;
     }
+    internal long sortingKey;
+    private void UpdateSortingKey() => sortingKey = ((long)(Material.Shader?.Handle ?? 0) << 32) + (Material.TextureHandles.First()<<8) + Material.Id;
 
     /// <summary>
     /// If true, the <see cref="SceneNode"/> will not be culled. This is useful for 2D sprites and UI elements.
@@ -104,18 +118,18 @@ public class SceneNode
 
     public virtual void OnDraw(Scene scene, double elapsed)
     {
-        GL.BindVertexArray(mesh.VertexBuffer.Vao);
-        if (mesh.DrawMode == DrawMode.Indexed)
-            GL.DrawElements(PrimitiveType.Triangles, mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
+        GL.BindVertexArray(mesh.Vao);
+        if (mesh.Vao.DrawMode == DrawMode.Indexed)
+            GL.DrawElements(PrimitiveType.Triangles, mesh.Vao.Indices!.Length, DrawElementsType.UnsignedInt, 0);
         else
-            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Length);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.Vao.DataLength);
 
         if (ShowBoundingSphere)
         {
             sphereMeshRenderer.Shader.SetMatrix4("model", ref worldMatrix);
             sphereMeshRenderer.Render();
         }
-        GL.BindVertexArray(0);
+        //GL.BindVertexArray(0);
     }
 
     public void AddChild(SceneNode child)
