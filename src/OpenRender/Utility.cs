@@ -25,7 +25,7 @@ public static class Utility
         // also use the new function Marshal.PtrToStringUTF8 since .NET Core 1.1.
         var message = Marshal.PtrToStringUTF8(pMessage, length);
 
-        if (severity > DebugSeverity.DebugSeverityNotification)
+        //if (severity > DebugSeverity.DebugSeverityNotification)
         {
             Console.WriteLine("[{0} source={1} type={2} id={3}] {4}", severity, source, type, id, message);
         }

@@ -4,7 +4,6 @@ namespace OpenRender.Core.Rendering;
 
 public interface IVertexBuffer
 {
-    //T[] Data { get; set; }
     int Length { get; }
     uint[]? Indices { get; set; }
     int Stride { get; }
