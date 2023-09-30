@@ -25,7 +25,14 @@ public class TextureBatcher
     public void SortMaterials(List<Material> materialsList)
     {
         textureFrequencies = CalculateTextureFrequency(materialsList);
-        materialsList.Sort((a, b) => GetMaxFrequency(b, textureFrequencies).CompareTo(GetMaxFrequency(a, textureFrequencies)));
+        materialsList.Sort((a, b) =>
+        {
+            var aMaxFrequency = GetMaxFrequency(a, textureFrequencies);
+            var bMaxFrequency = GetMaxFrequency(b, textureFrequencies);
+            return aMaxFrequency == bMaxFrequency
+                ? a.TextureHandles.FirstOrDefault() - b.TextureHandles.FirstOrDefault()
+                : bMaxFrequency - aMaxFrequency;
+        });
         this.materialsList = materialsList;
     }
 

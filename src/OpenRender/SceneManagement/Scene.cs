@@ -300,7 +300,7 @@ public class Scene
             vboMaterial.UpdateSettings(ref settings);
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
-            if(shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
+            if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
 
             _ = textureBatcher.GetOptimalTextureUnits(material);
             for (var i = 0; i < material.Textures?.Length; i++)
@@ -358,25 +358,25 @@ public class Scene
 
     private void SortRenderList()
     {
-        if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
-
-        if (nodes.Any(n => n.RenderGroup == RenderGroup.DistanceSorted && n.FrameBits.Value == 0))
+        //if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
+        if (hasCameraChanged || hasNodeListChanged)
         {
-            //  distance based sorting for RenderGroup.DistanceSorted
-            var firstDistanceSorted = nodes.FindIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            var lastDistanceSorted = nodes.FindLastIndex(n => n.RenderGroup == RenderGroup.DistanceSorted);
-            nodes.Sort(firstDistanceSorted, lastDistanceSorted - firstDistanceSorted + 1, new DistanceComparer(camera!.Position));
+            var distanceSortedLayer = renderLayers[RenderGroup.DistanceSorted];
+            if (distanceSortedLayer.Any(n => n.FrameBits.Value == 0))
+            {
+                distanceSortedLayer.Sort(new DistanceComparer(camera!.Position));
+            }
         }
     }
 
-    private int GroupComparer(SceneNode a, SceneNode b)
-    {
-        var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
-        if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
-        {
-            // If UI RenderGroup values are the same, compare by index.
-            return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
-        }
-        return renderGroupComparison;
-    }
+    //private int GroupComparer(SceneNode a, SceneNode b)
+    //{
+    //    var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
+    //    if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
+    //    {
+    //        // If UI RenderGroup values are the same, compare by index.
+    //        return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
+    //    }
+    //    return renderGroupComparison;
+    //}
 }
