@@ -194,6 +194,7 @@ internal class MainScene : Scene
         var vbCube = GeometryHelper.CreateCube(true);
 
         var mat1 = Material.Create(
+            defaultShader,
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail)
@@ -202,6 +203,7 @@ internal class MainScene : Scene
             shininess: 0.15f
         );
         var mat2 = Material.Create(
+            defaultShader,
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail)
@@ -252,6 +254,7 @@ internal class MainScene : Scene
         var vbBox = GeometryHelper.CreateBox(true);
         var vbSphere = GeometryHelper.CreateSphere(32, 48);
         var matSphere = Material.Create(
+            defaultShader,
             new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse),
             detailTextureFactor: 0f,
             shininess: 0.45f
@@ -279,6 +282,7 @@ internal class MainScene : Scene
                     _ => null
                 };
                 var mat1 = Material.Create(
+                    defaultShader,
                     texture,
                     new Vector3((float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble()),
                     Vector3.One,
@@ -292,7 +296,8 @@ internal class MainScene : Scene
     private void AddMetallicBoxes()
     {
         var vbBox = GeometryHelper.CreateBox(true);
-        var mat = Material.Create(new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
+        var mat = Material.Create(defaultShader, 
+            new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),
             1.97f);

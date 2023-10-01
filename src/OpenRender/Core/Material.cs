@@ -28,7 +28,7 @@ public class Material
     /// <summary>
     /// Shader program used to render the object.
     /// </summary>
-    public Shader? Shader { get; set; }
+    public Shader Shader { get; set; } = default!;
 
     /// <summary>
     /// Scaling factor of the detail texture. Has no impact without detail texture. 
@@ -65,7 +65,7 @@ public class Material
 
     public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
 
-    public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
     {
         var textureCount = textureDescriptors?.Length ?? 0;
         if (textureCount > MaxTextures) throw new ArgumentOutOfRangeException(nameof(textureDescriptors));
@@ -86,23 +86,13 @@ public class Material
         return mat;
     }
 
-    public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) =>
-        Create(null, textureDescriptors, diffuseColor, emissiveColor, specularColor, shininess, detailTextureFactor);
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) => 
+        Create(shader, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
 
-    public static Material Create(TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) => 
-        Create(null, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
-
-    public static Material Create(Shader? shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) => 
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) => 
         Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
 
     public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
         Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
-    public static Material Create(TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
-        Create(null, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
-
-    public static Material Create(TextureDescriptor[] textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) =>
-        Create(null, textureDescriptors, shininess, detailTextureFactor);
-
-    public static Material Create(float shininess, float detailTextureFactor = 0f) =>
-        Create(null, Array.Empty<TextureDescriptor>(), shininess, detailTextureFactor);
+   
 }

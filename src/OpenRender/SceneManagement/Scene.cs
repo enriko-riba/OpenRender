@@ -271,7 +271,7 @@ public class Scene
     private void RenderNode(SceneNode node, double elapsed)
     {
         var material = node.Material;
-        var shader = material.Shader ?? defaultShader;
+        var shader = material.Shader;
         shader.Use();
         if (lastProgramHandle != shader.Handle)
         {
@@ -331,9 +331,9 @@ public class Scene
     private void CullFrustum()
     {
         hasCameraChanged = (camera?.Update() ?? false);
-        if (hasCameraChanged && camera is not null)
+        if (hasCameraChanged)
         {
-            Frustum.Update(camera);
+            Frustum.Update(camera!);
             CullingHelper.CullNodes(Frustum, nodes);
         }
     }
@@ -365,6 +365,12 @@ public class Scene
             if (distanceSortedLayer.Any(n => n.FrameBits.Value == 0))
             {
                 distanceSortedLayer.Sort(new DistanceComparer(camera!.Position));
+            }
+
+            var defaultLayer = renderLayers[RenderGroup.Default];
+            if (defaultLayer.Any(n => n.FrameBits.Value == 0))
+            {
+                defaultLayer.Sort((a, b) => a.Material.Shader.Handle - b.Material.Shader.Handle);
             }
         }
     }
