@@ -69,7 +69,7 @@ internal class MainScene : Scene
 
         var uboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         uboMaterial.BindToShaderProgram(shader);
-        var materialUniform = new MaterialUniform() { Diffuse = Vector3.Zero };
+        var materialUniform = new MaterialUniform();
         uboMaterial.UpdateSettings(ref materialUniform);
     }
 

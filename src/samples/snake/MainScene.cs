@@ -276,7 +276,7 @@ internal class MainScene : Scene
     private void DrawMenuTextCentered(int xOffset, int yOffset, string text, int fontSize, Color4 color)
     {        
         var size = textRenderer.Measure(text, fontSize);
-        Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{Width}, h:{Height}, x:{xOffset + (Width - size.Width) / 2}");
+        //Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{Width}, h:{Height}, x:{xOffset + (Width - size.Width) / 2}");
         textRenderer.Render(text, fontSize, xOffset + (Width - size.Width) / 2, yOffset + (Height - size.Height) / 2, color.ToVector3());
     }
 
