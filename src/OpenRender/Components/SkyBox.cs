@@ -18,7 +18,7 @@ public sealed class SkyBox : SceneNode
         ArgumentNullException.ThrowIfNull(texturePaths);
         if (texturePaths.Length != 6) throw new ArgumentException("SkyBox needs 6 images", nameof(texturePaths));
 
-        var vb = GeometryHelper.CreateCube(false);
+        var vao = GeometryHelper.CreateCube(false);
         var desc = new TextureDescriptor(texturePaths,
             TextureType: TextureType.CubeMap,
             TextureTarget: TextureTarget.TextureCubeMap,
@@ -26,7 +26,7 @@ public sealed class SkyBox : SceneNode
             TextureWrapT: TextureWrapMode.ClampToEdge);
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
         Material = Material.Create(shader, desc);
-        var skyBoxMesh = new Mesh(vb, DrawMode.Indexed);
+        var skyBoxMesh = new Mesh(vao);
         SetMesh(skyBoxMesh);
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;

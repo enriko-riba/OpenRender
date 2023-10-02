@@ -9,7 +9,6 @@ namespace OpenRender.SceneManagement;
 
 public class SceneNode
 {
-    private BoundingSphere boundingSphere;
     private bool showBoundingSphere;
     private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
@@ -32,7 +31,7 @@ public class SceneNode
         RenderGroup = RenderGroup.Default;
     }
 
-    public BoundingSphere BoundingSphere => boundingSphere;
+    public BoundingSphere BoundingSphere => mesh.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
 
@@ -63,12 +62,13 @@ public class SceneNode
     public void SetMesh(in Mesh mesh)
     {
         this.mesh = mesh;
-        var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
-        boundingSphere = bs with
-        {
-            Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
-            Center = bs.LocalCenter + position,
-        };
+        this.mesh.BoundingSphere.Update(in scale, in worldMatrix);
+        //var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
+        //boundingSphere = bs with
+        //{
+        //    Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
+        //    Center = bs.LocalCenter + position,
+        //};
     }
 
     public bool ShowBoundingSphere
@@ -104,11 +104,11 @@ public class SceneNode
 
     public virtual void OnDraw(Scene scene, double elapsed)
     {
-        GL.BindVertexArray(mesh.VertexBuffer.Vao);
-        if (mesh.DrawMode == DrawMode.Indexed)
-            GL.DrawElements(PrimitiveType.Triangles, mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0);
+        GL.BindVertexArray(mesh.Vao);
+        if (mesh.Vao.DrawMode == DrawMode.Indexed)
+            GL.DrawElements(PrimitiveType.Triangles, mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0);
         else
-            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.VertexBuffer.Length);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.Vao.DataLength);
 
         if (ShowBoundingSphere)
         {
@@ -226,7 +226,7 @@ public class SceneNode
     internal void Invalidate()
     {
         UpdateMatrix();
-        boundingSphere.Update(in scale, in worldMatrix);
+        mesh.BoundingSphere.Update(in scale, in worldMatrix);
         foreach (var child in children)
         {
             child.Invalidate();

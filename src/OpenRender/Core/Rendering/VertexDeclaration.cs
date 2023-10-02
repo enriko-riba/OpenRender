@@ -35,7 +35,7 @@ public class VertexDeclaration
         attributes.Add(attributeLayout);
         attributes.Sort((a, b) => a.Location.CompareTo(b.Location));
 
-        var size = 0;
+        uint size = 0;
         for (var i = 0; i < attributes.Count; i++)
         {
             var attrib = attributes[i];
@@ -49,37 +49,17 @@ public class VertexDeclaration
                 attrib.Offset = size;
             }
             attributes[i] = attrib;
-            size += attrib.Size * GetAttributeTypeSize(attrib.Type);
+            size += (uint)attrib.Size * GetAttributeTypeSize(attrib.Type);
         }
-        Stride = size;
+        Stride = (int)size;
     }
 
     /// <summary>
-    /// Gets the stride of the vertex buffer.
+    /// Gets the stride of the vertex buffer in bytes.
     /// </summary>
     public int Stride { get; private set; }
 
-    /// <summary>
-    /// Sets the vertex attribute pointers for the given <see cref="VertexBuffer"/>.
-    /// </summary>
-    /// <param name="vb"></param>
-    //public void Apply(VertexBuffer vb) => Apply(vb.Vao);
-
-    /// <summary>
-    /// Sets the vertex attribute pointers for the named vertex array object.
-    /// </summary>
-    /// <param name="vao"></param>
-    public void Apply(int vao, int? bindingIndex = 0)
-    {
-        for (var i = 0; i < attributes.Count; i++)
-        {
-            var attribute = attributes[i];
-            GL.EnableVertexArrayAttrib(vao, attribute.Location);
-            GL.VertexArrayAttribFormat(vao, attribute.Location, attribute.Size, attribute.Type, attribute.Normalized, attribute.Offset);
-            GL.VertexArrayAttribBinding(vao, attribute.Location, bindingIndex??0);
-            GL.VertexArrayBindingDivisor(vao, attribute.Location, attribute.Divisor);
-        }
-    }
+    public IEnumerable<VertexAttribLayout> Attributes => attributes;
 
     /// <summary>
     /// Gets the vertex attribute layout for the given location.
@@ -94,7 +74,7 @@ public class VertexDeclaration
     /// <param name="type"></param>
     /// <returns></returns>
     /// <exception cref="ArgumentException"></exception>
-    public static int GetAttributeTypeSize(VertexAttribType type) => type switch
+    public static uint GetAttributeTypeSize(VertexAttribType type) => type switch
     {
         VertexAttribType.Float => sizeof(float),
         VertexAttribType.Int => sizeof(int),

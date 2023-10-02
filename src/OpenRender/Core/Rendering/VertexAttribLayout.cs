@@ -20,21 +20,21 @@ public enum VertexAttribLocation
 public struct VertexAttribLayout
 {
     public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type) :
-        this(location.ToString(), (int)location, size, type, -1, 0)
+        this(location.ToString(), (uint)location, size, type,0, 0)
     { }
-    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, int divisor) :
-        this(location.ToString(), (int)location, size, type, -1, divisor)
-    { }
-
-    public VertexAttribLayout(string debugName, VertexAttribLocation location, int size, VertexAttribType type, int offset, int divisor) :
-        this(debugName, (int)location, size, type, offset, divisor)
+    public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, uint divisor) :
+        this(location.ToString(), (uint)location, size, type, 0, divisor)
     { }
 
-    public VertexAttribLayout(string debugName, int location, int size, VertexAttribType type, int divisor) :
-        this(debugName, location, size, type, -1, divisor)
+    public VertexAttribLayout(string debugName, VertexAttribLocation location, int size, VertexAttribType type, uint offset, uint divisor) :
+        this(debugName, (uint)location, size, type, offset, divisor)
     { }
 
-    public VertexAttribLayout(string debugName, int location, int size, VertexAttribType type, int offset, int divisor)
+    public VertexAttribLayout(string debugName, uint location, int size, VertexAttribType type, uint divisor) :
+        this(debugName, location, size, type, 0, divisor)
+    { }
+
+    public VertexAttribLayout(string debugName, uint location, int size, VertexAttribType type, uint offset, uint divisor)
     {
         DebugName = debugName;
         Location = location;
@@ -52,7 +52,7 @@ public struct VertexAttribLayout
     /// <summary>
     /// Attribute location.
     /// </summary>
-    public int Location { get; set; }
+    public uint Location { get; set; }
     
     /// <summary>
     /// Size in <see cref="Type"/> units.
@@ -64,12 +64,12 @@ public struct VertexAttribLayout
     /// <summary>
     /// Offset in bytes.
     /// </summary>
-    public int Offset { get; set; }
+    public uint Offset { get; set; }
     
     /// <summary>
     /// Divisor for instanced rendering.
     /// </summary>
-    public int Divisor { get; set; }
+    public uint Divisor { get; set; }
 
     public bool Normalized { get; set; }
 

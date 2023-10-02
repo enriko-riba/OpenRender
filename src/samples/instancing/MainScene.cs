@@ -41,6 +41,7 @@ internal class MainScene : Scene
 
         //  add one non-instanced node for visual anchoring when moving around
         var mat1 = Material.Create(
+            defaultShader,
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal),
@@ -212,7 +213,9 @@ internal class MainScene : Scene
     {
         //  add instanced cubes
         var vbBox = GeometryHelper.CreateCube(true);
-        var mat = Material.Create(new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
+        var mat = Material.Create(
+            defaultShader,
+            new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
             shininess: 0.45f);

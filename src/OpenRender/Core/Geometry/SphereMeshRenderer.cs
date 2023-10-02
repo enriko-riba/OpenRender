@@ -7,13 +7,14 @@ namespace OpenRender.Core.Geometry;
 public class SphereMeshRenderer
 {
     public static readonly SphereMeshRenderer DefaultSphereMeshRenderer = new();
-    private readonly IVertexBuffer vb;
+    //private readonly IVertexBuffer vb;
     private readonly Shader shader;
+    private readonly VertexArrayObject vao;
 
     public SphereMeshRenderer()
     {
         ScaleMatrix = Matrix4.CreateScale(1.15f);
-        vb = GeometryHelper.CreateSphere(12, 18);
+        vao = GeometryHelper.CreateSphere(12, 18);
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }
 
@@ -27,9 +28,9 @@ public class SphereMeshRenderer
     public void Render()
     {
         shader.Use();
-        GL.BindVertexArray(vb.Vao);
+        GL.BindVertexArray(vao);
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
-        GL.DrawElements(PrimitiveType.Triangles, vb.Indices!.Length, DrawElementsType.UnsignedInt, 0);
+        GL.DrawElements(PrimitiveType.Triangles, vao.DataLength, DrawElementsType.UnsignedInt, 0);
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
         GL.BindVertexArray(0);
     }

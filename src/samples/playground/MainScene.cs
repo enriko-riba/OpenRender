@@ -189,9 +189,9 @@ internal class MainScene : Scene
 
     private void AddRotatingBoxes()
     {
-        var vbBox = GeometryHelper.CreateBox(true);
-        var vbQuad = GeometryHelper.CreateQuad(true);
-        var vbCube = GeometryHelper.CreateCube(true);
+        var vaoBox = GeometryHelper.CreateBox(true);
+        var vaoQuad = GeometryHelper.CreateQuad(true);
+        var vaoCube = GeometryHelper.CreateCube(true);
 
         var mat1 = Material.Create(
             defaultShader,
@@ -212,7 +212,7 @@ internal class MainScene : Scene
             shininess: 0.25f
         );
 
-        var n1 = new SceneNode(new Mesh(vbBox), mat1, new Vector3(3, 0, -3))
+        var n1 = new SceneNode(new Mesh(vaoBox), mat1, new Vector3(3, 0, -3))
         {
             Update = (n, e) =>
             {
@@ -224,7 +224,7 @@ internal class MainScene : Scene
         };
         AddNode(n1);
 
-        var n2 = new SceneNode(new Mesh(vbCube), mat2, new Vector3(1.75f, 0.2f, 0))
+        var n2 = new SceneNode(new Mesh(vaoCube), mat2, new Vector3(1.75f, 0.2f, 0))
         {
             Update = (n, e) =>
             {
@@ -236,7 +236,7 @@ internal class MainScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(vbQuad), mat1, new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(vaoQuad), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {

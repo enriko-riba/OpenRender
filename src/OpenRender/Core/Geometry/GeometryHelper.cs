@@ -13,7 +13,7 @@ public static class GeometryHelper
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
     /// </summary>
     /// <returns></returns>
-    public static VertexBuffer Create2dQuad()
+    public static VertexArrayObject Create2dQuad()
     {
         VertexDeclaration vxDeclaration;
         float[] vertices;
@@ -25,8 +25,10 @@ public static class GeometryHelper
             0, 1, 3,
             0, 3, 2
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
+        vao.AddIndexBuffer(new IndexBuffer(indices));
+        return vao;
     }
 
     /// <summary>
@@ -34,7 +36,7 @@ public static class GeometryHelper
     /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexBuffer CreateQuad(bool createNormals)
+    public static VertexArrayObject CreateQuad(bool createNormals)
     {
         VertexDeclaration vxDeclaration;
         float[] vertices;
@@ -54,8 +56,10 @@ public static class GeometryHelper
             0, 1, 3,
             0, 3, 2
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
+        vao.AddIndexBuffer(new IndexBuffer(indices));
+        return vao;
     }
 
     /// <summary>
@@ -68,7 +72,7 @@ public static class GeometryHelper
     /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexBuffer CreateCube(bool createNormals)
+    public static VertexArrayObject CreateCube(bool createNormals)
     {
         VertexDeclaration vxDeclaration;
         float[] vertices;
@@ -109,8 +113,10 @@ public static class GeometryHelper
             11, 0, 10,
             11, 2, 0
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
+        vao.AddIndexBuffer(new IndexBuffer(indices));
+        return vao;
     }
 
     /// <summary>
@@ -119,7 +125,7 @@ public static class GeometryHelper
     /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexBuffer CreateBox(bool createNormals)
+    public static VertexArrayObject CreateBox(bool createNormals)
     {
         VertexDeclaration vxDeclaration;
         float[] vertices;
@@ -160,11 +166,13 @@ public static class GeometryHelper
             22, 21, 20,
             22, 23, 21
         };
-        var vertexBuffer = new VertexBuffer(vxDeclaration, vertices, indices);
-        return vertexBuffer;
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
+        vao.AddIndexBuffer(new IndexBuffer(indices));
+        return vao;
     }
 
-    public static VertexBuffer CreateSphere(int stacks, int slices)
+    public static VertexArrayObject CreateSphere(int stacks, int slices)
     {
         var vertices = new List<float>();
         var indices = new List<uint>();
@@ -218,8 +226,10 @@ public static class GeometryHelper
                 }
             }
         }
-        var vertexBuffer = new VertexBuffer(VertexDeclarations.VertexPositionNormalTexture, vertices.ToArray(), indices.ToArray());
-        return vertexBuffer;
+        var vao = new VertexArrayObject();
+        vao.AddBuffer(new Buffer<float>(vertices.ToArray(), VertexDeclarations.VertexPositionNormalTexture));
+        vao.AddIndexBuffer(new IndexBuffer(indices.ToArray()));
+        return vao;
     }
 
     private static float[] CreateBoxWithNormals()

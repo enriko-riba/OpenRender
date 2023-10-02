@@ -8,7 +8,7 @@ namespace OpenRender.SceneManagement;
 
 public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TInstanceData : struct
 {
-    private readonly int vbInstanceData;
+    private readonly uint vbInstanceData;
     private readonly List<TInstanceData> instanceDataList = new();
     private readonly List<TStateData> stateDataList = new();
     private TInstanceData[] instanceData = Array.Empty<TInstanceData>();
@@ -17,19 +17,19 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
     {
         RenderGroup = RenderGroup.Default;
 
-        mesh.VertexBuffer.SetLabel("InstancedSceneNode_Buffer1");
+        //mesh.VertexBuffer.SetLabel("InstancedSceneNode_Buffer1");
 
-        var attributeIndexStart = 4;
-        var bufferSlot = 1;    //  buffer slot for instance data
+        uint attributeIndexStart = 4;   
+        uint bufferSlot = 1;    //  buffer slot for instance data
         GL.CreateBuffers(1, out vbInstanceData);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbInstanceData, -1, "InstancedSceneNode_Buffer2");
-        GL.VertexArrayVertexBuffer(mesh.VertexBuffer.Vao, bufferSlot, vbInstanceData, 0, Marshal.SizeOf<Matrix4>());
-        GL.VertexArrayBindingDivisor(mesh.VertexBuffer.Vao, bufferSlot, 1);
-        for (var i = 0; i < 4; i++)
+        GL.VertexArrayVertexBuffer(mesh.Vao, bufferSlot, vbInstanceData, 0, Marshal.SizeOf<Matrix4>());
+        GL.VertexArrayBindingDivisor(mesh.Vao, bufferSlot, 1);
+        for (uint i = 0; i < 4; i++)
         {
-            GL.VertexArrayAttribFormat(mesh.VertexBuffer.Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
-            GL.VertexArrayAttribBinding(mesh.VertexBuffer.Vao, attributeIndexStart + i, bufferSlot);
-            GL.EnableVertexArrayAttrib(mesh.VertexBuffer.Vao, attributeIndexStart + i);
+            GL.VertexArrayAttribFormat(mesh.Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
+            GL.VertexArrayAttribBinding(mesh.Vao, attributeIndexStart + i, bufferSlot);
+            GL.EnableVertexArrayAttrib(mesh.Vao, attributeIndexStart + i);
         }
         Log.CheckGlError();
 
@@ -60,17 +60,17 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
     public override void OnDraw(Scene scene, double elapsed)
     {
-        GL.BindVertexArray(Mesh.VertexBuffer.Vao);
+        GL.BindVertexArray(Mesh.Vao);
         if (instanceData.Length == 0)
         {
             instanceData = instanceDataList.ToArray();
             GL.NamedBufferData(vbInstanceData, instanceDataList.Count * Marshal.SizeOf<TInstanceData>(), instanceData, BufferUsageHint.DynamicDraw);
             Log.CheckGlError();
         }
-        if (Mesh.DrawMode == DrawMode.Indexed)
-            GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.VertexBuffer.Indices!.Length, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
+        if (Mesh.Vao.DrawMode == DrawMode.Indexed)
+            GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else
-            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.VertexBuffer.Length, instanceDataList.Count);
+            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.Vao.DataLength, instanceDataList.Count);
         Log.CheckGlError();
     }
 }

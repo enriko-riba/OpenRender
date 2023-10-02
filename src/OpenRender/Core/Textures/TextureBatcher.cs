@@ -40,13 +40,14 @@ public class TextureBatcher
     {
         foreach (var handle in material.TextureHandles)
         {
-            if (Find(r => r.TextureHandle == handle) >= 0)
+            var idx = FindByHandle(handle);
+            if (idx >= 0)
             {
                 // Texture is already bound to an unit, skip
                 continue; 
             }
 
-            var idx = Find(uu => !uu.TextureHandle.HasValue);
+            idx = FindWithoutHandle();
             if (idx >= 0)
             {
                 // empty unit found, bind texture to it, 
@@ -83,7 +84,7 @@ public class TextureBatcher
 
     public int GetTextureUnitWithTexture(int textureHandle)
     {
-        var idx = Find(tu => tu.TextureHandle == textureHandle);
+        var idx = FindByHandle(textureHandle);
         return idx == -1 ? -1 : unitUsages[idx].Unit;
     }
 
@@ -92,6 +93,30 @@ public class TextureBatcher
         for (var i = 0; i < unitUsages.Length; i++)
         {
             if (predicate(unitUsages[i]))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int FindWithoutHandle()
+    {
+        for (var i = 0; i < unitUsages.Length; i++)
+        {
+            if (!unitUsages[i].TextureHandle.HasValue)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int FindByHandle(int textureHandle)
+    {
+        for (var i = 0; i < unitUsages.Length; i++)
+        {
+            if (unitUsages[i].TextureHandle == textureHandle)
             {
                 return i;
             }

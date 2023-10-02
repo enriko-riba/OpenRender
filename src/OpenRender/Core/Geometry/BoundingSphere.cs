@@ -15,4 +15,15 @@ public struct BoundingSphere
         Radius = LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z);
         Center = Vector3.TransformPosition(LocalCenter, worldMatrix);
     }
+
+    /// <summary>
+    /// Returns the default BoundingSphere with radius1 and canter at origin.
+    /// </summary>
+    public static BoundingSphere Default => new()
+    {
+        LocalCenter = Vector3.Zero,
+        LocalRadius = 0.5f,
+        Center = Vector3.Zero,
+        Radius = 0.5f,
+    };
 };

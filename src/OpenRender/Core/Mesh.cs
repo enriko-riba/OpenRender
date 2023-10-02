@@ -1,30 +1,23 @@
-﻿using OpenRender.Core.Rendering;
+﻿using OpenRender.Core.Geometry;
+using OpenRender.Core.Rendering;
 
 namespace OpenRender.Core;
 
 /// <summary>
 /// Mesh is just a container for a vertex buffer and draw mode.
 /// </summary>
-public readonly struct Mesh
+public struct Mesh
 {
-    public Mesh(VertexArrayObject vao)
+    public Mesh(VertexArrayObject vao) : this(vao, BoundingSphere.Default) { }
+    public Mesh(VertexArrayObject vao, BoundingSphere boundingSphere)
     {
         Vao = vao;
+        BoundingSphere = boundingSphere;
     }
-
-    public Mesh(IVertexBuffer vertexBuffer)
-        : this(vertexBuffer, vertexBuffer.Indices == null ? DrawMode.Primitive : DrawMode.Indexed) { }
-
-    public Mesh(IVertexBuffer vertexBuffer, DrawMode drawMode)
-    {
-        VertexBuffer = vertexBuffer;
-        DrawMode = drawMode;
-    }
-
-    public readonly DrawMode DrawMode;
-
-    public readonly IVertexBuffer VertexBuffer;
 
     public readonly VertexArrayObject Vao;
+
+    public BoundingSphere BoundingSphere;
+
     //  TODO: this struct makes only sense if multiple sub-meshes will be supported.
 }

@@ -57,8 +57,8 @@ public class Sprite : SceneNode
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
-        var vbQuad = GeometryHelper.Create2dQuad();
-        var mesh = new Mesh(vbQuad, DrawMode.Indexed);
+        var vaoQuad = GeometryHelper.Create2dQuad();
+        var mesh = new Mesh(vaoQuad);
         SetMesh(mesh);
         Tint = Color4.White;
         Pivot = new Vector2(0.5f, 0.5f);
