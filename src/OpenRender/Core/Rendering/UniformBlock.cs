@@ -19,7 +19,7 @@ public class UniformBuffer<T> where T : struct, ISize
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, bufferHandle, -1, $"UB {uniformName}");
 
         // Bind buffer object to binding point
-        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, this.bindingPoint, bufferHandle);
+        GL.BindBufferBase(BufferRangeTarget.UniformBuffer, bindingPoint, bufferHandle);
         
         Log.CheckGlError();
 
