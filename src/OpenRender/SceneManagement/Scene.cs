@@ -15,10 +15,6 @@ public class Scene
 
     private readonly List<LightUniform> lights = new();
     private readonly List<Material> materialList = new();
-
-    private readonly UniformBuffer<CameraUniform> vboCamera;
-    private readonly UniformBuffer<MaterialUniform> vboMaterial;
-    private readonly UniformBuffer<LightUniform> vboLight;
     private readonly TextureBatcher textureBatcher;
 
     private uint lastMaterial;
@@ -30,6 +26,9 @@ public class Scene
     protected readonly List<SceneNode> nodes = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
     protected readonly Shader defaultShader;
+    protected readonly UniformBuffer<CameraUniform> vboCamera;
+    protected readonly UniformBuffer<MaterialUniform> vboMaterial;
+    protected readonly UniformBuffer<LightUniform> vboLight;
     protected ICamera? camera;
 
     internal bool isLoaded;
@@ -165,6 +164,7 @@ public class Scene
 #endif
         vboCamera.BindToShaderProgram(defaultShader);
         vboLight.BindToShaderProgram(defaultShader);
+        vboMaterial.BindToShaderProgram(defaultShader);
     }
 
     /// <summary>

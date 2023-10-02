@@ -57,8 +57,8 @@ internal class MainScene : Scene
 
         //  since the default shader expects material and light uniform,
         //  we need to create those and bind them to the shader.
-        //  Light is bound to shader by the scene, so we just need to add it
-        //  but material needs to be both created and bound to the shader.
+        //  The scene already creates the uniform buffer objects for camera,
+        //  light and material and copies each SceneNodes material to the buffer.
         var lightUniform = new LightUniform()
         {
             Direction = new Vector3(0, 0, -1),
@@ -66,11 +66,10 @@ internal class MainScene : Scene
             Diffuse = new Vector3(1),
         };
         AddLight(lightUniform);
-
-        var uboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
-        uboMaterial.BindToShaderProgram(shader);
+        
+        //  Since we are not using SceneNodes, we need to create and copy the material manually.
         var materialUniform = new MaterialUniform();
-        uboMaterial.UpdateSettings(ref materialUniform);
+        vboMaterial.UpdateSettings(ref materialUniform);
     }
 
     public override void RenderFrame(double elapsedSeconds)
