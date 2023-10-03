@@ -1,22 +1,12 @@
-#version 330 core
+#version 430 core
 
 uniform mat4 model;
 
-layout (std140) uniform camera {    
+layout (std140, binding = 0) uniform camera {    
     mat4 view;
     mat4 projection;
     vec3 cameraPos;
     vec3 cameraDir;
-};
-
- struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
-    float shininess;
-};
-layout(std140) uniform material {
-    Material mat;
 };
 
 struct Light {    
@@ -26,8 +16,18 @@ struct Light {
     vec3 specular;
     float falloff;
 };
-layout(std140) uniform light {
+layout(std140, binding = 1) uniform light {
     Light dirLight;
+};
+
+ struct Material {   
+    vec3 diffuse;
+    vec3 emissive;
+    vec3 specular;
+    float shininess;
+};
+layout(std140, binding = 2) uniform material {
+    Material mat;
 };
 
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
