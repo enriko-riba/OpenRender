@@ -48,16 +48,6 @@ layout (std140) uniform camera {
     vec3 cameraDir;
 };
 
-struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
-    float shininess;
-};
-layout(std140) uniform material {
-    Material mat;
-};
-
 struct Light {    
     vec3 position;    
     vec3 ambient;
@@ -68,7 +58,24 @@ struct Light {
 layout(std140) uniform light {
     Light dirLight;
 };
+
+struct Material {   
+    vec3 diffuse;
+    vec3 emissive;
+    vec3 specular;
+    float shininess;
+};
+layout(std140) uniform material {
+    Material mat;
+};
 ```
+#### Uniform block binding points:
+- camera 0, 
+- light 1 and 
+- material 2
+
+> **NOTE**: 
+the above are not uniform block indices but binding points. The indices are assigned by OpenGL and can be queried.
 
 ## Texture binding
 In order to bind textures to samplers during draw calls, the Material needs to contain the texture descriptions and it needs to be initialized.

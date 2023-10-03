@@ -38,7 +38,7 @@ public class VertexArrayObject
         lastBindingPoint++;
     }
 
-    public void AddIndexBuffer(IndexBuffer buffer, string? name = null)
+    public void AddIndexBuffer(IndexBuffer buffer, string? name = "IBO")
     {
         GL.VertexArrayElementBuffer(vao, buffer.Vbo);
         ibo = buffer.Vbo;
@@ -46,36 +46,9 @@ public class VertexArrayObject
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
     }
 
-
-    //public void AddBuffer(VertexDeclaration vertexDeclaration, float[] data, string? name = null)
-    //{
-    //    name ??= $"Buffer {lastBindingPoint}";
-    //    var vb = new VertexBuffer(vertexDeclaration, data);
-    //    buffers.Add(vb);
-    //    vertexDeclaration.Apply(vao, lastBindingPoint++);
-    //}
-
-    //public void AddIndices(uint[] indices, string? name = null)
-    //{
-    //    if (indices.Length < 3)
-    //        throw new ArgumentException("Indices array must contain at least 3 elements!", nameof(indices));
-
-    //    if (ibo > 0)
-    //        throw new InvalidOperationException("Indices buffer already set!");
-
-    //    GL.CreateBuffers(1, out ibo);
-    //    GL.VertexArrayElementBuffer(vao, ibo);
-    //    GL.NamedBufferData(ibo, indices.Length * sizeof(uint), indices, BufferUsageHint.StaticDraw);
-    //    if (name != null)
-    //        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, ibo, -1, $"IBO {name}");
-    //}
-
     public DrawMode DrawMode => ibo == 0 ? DrawMode.Primitive : DrawMode.Indexed;
 
     public int DataLength => dataLength;
-    //public uint Handle => vao;
-
-    //public int DataLength => buffers.Count > 0 ? buffers[0].Length : 0;
 
     public static implicit operator uint(VertexArrayObject vao) => vao.vao;  //  allow using the vertex array instead of the handle
 }
