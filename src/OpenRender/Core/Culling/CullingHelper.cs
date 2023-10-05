@@ -42,16 +42,23 @@ internal sealed class CullingHelper
     /// <summary>
     /// Calculates the bounding sphere of a vertex buffer.
     /// </summary>
-    /// <param name="vb">the vertex buffer containing vertex positions</param>
+    /// <param name="data">the vertex buffer data with vertex positions</param>
     /// <param name="vertexPositionAttributeOffset">the offset of the vertex positions in floats</param>
+    /// <param name="strideInFloats">the stride in floats of the vertex buffer</param>
     /// <returns></returns>
-    //public static BoundingSphere CalculateBoundingSphere(float[] positions, int vertexPositionAttributeOffset = 0)
-    //{        
-    //    if (positions == null) return new BoundingSphere();
-        //List<Vector3> positions = new();
-        //var strideInFloats = vb.Stride / sizeof(float);
+    public static unsafe BoundingSphere CalculateBoundingSphere(float[] data, int vertexPositionAttributeOffset, int strideInFloats)
+    {
+        if (data.Length == 0 ) return new BoundingSphere();
+        List<Vector3> positions = new();
+        for (var i = 0; i < data.Length; i += strideInFloats)
+        {
+            var x = data[i + vertexPositionAttributeOffset];
+            var y = data[i + vertexPositionAttributeOffset + 1];
+            var z = data[i + vertexPositionAttributeOffset + 2];
+            positions.Add(new Vector3(x, y, z));
+        }
         //var vbFloat = (VertexBuffer)vb;
-        //var data = vbFloat.Data;
+        //var data = vb.Data;
         //if (vb.Indices != null && vb.Indices.Length > 0)
         //{
         //    for (var i = 0; i < vb.Indices.Length; i++)
@@ -74,13 +81,13 @@ internal sealed class CullingHelper
         //    }
         //}
 
-    //    // Calculate the center of the bounding sphere
-    //    var center = CalculateBoundingSphereCenter(positions);
+        // Calculate the center of the bounding sphere
+        var center = CalculateBoundingSphereCenter(positions);
 
-    //    // Calculate the radius of the bounding sphere
-    //    var radius = CalculateBoundingSphereRadius(center, positions);
-    //    return new BoundingSphere { LocalCenter = center, LocalRadius = radius, Center = center, Radius = radius };
-    //}
+        // Calculate the radius of the bounding sphere
+        var radius = CalculateBoundingSphereRadius(center, positions);
+        return new BoundingSphere { LocalCenter = center, LocalRadius = radius, Center = center, Radius = radius };
+    }
 
     private static Vector3 CalculateBoundingSphereCenter(IEnumerable<Vector3> positions)
     {
