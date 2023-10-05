@@ -20,7 +20,7 @@ internal class MainScene : Scene
     private AnimatedSprite? animatedSprite;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
-      
+
 
     public override void Load()
     {
@@ -116,7 +116,8 @@ internal class MainScene : Scene
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
     {
-        camera!.Fov -= e.OffsetY * 5;
+        const float Sensitivity = 3.5f;
+        camera!.Fov -= e.OffsetY * Sensitivity;
     }
 
     private void HandleMovement(double elapsedTime)
@@ -253,41 +254,27 @@ internal class MainScene : Scene
         const int NodeCount = 5000;
         var vbBox = GeometryHelper.CreateBox(true);
         var vbSphere = GeometryHelper.CreateSphere(32, 48);
-        var matSphere = Material.Create(
-            defaultShader,
-            new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse),
-            detailTextureFactor: 0f,
-            shininess: 0.45f
-        );
-
+        var materials = new Material[]
+        {
+            Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.05f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 0.55f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f, 0),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f, 0)
+        };
         for (var i = 0; i < NodeCount; i++)
         {
             if (i % 5 == 0)
             {
-                var sphere = new RandomNode(new Mesh(vbSphere), matSphere);
+                var sphere = new RandomNode(new Mesh(vbSphere), materials[0]);
                 AddNode(sphere);
             }
             else
             {
-                var texture = (i % 7) switch
-                {
-                    0 => new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
-                    1 => new TextureDescriptor[] { new TextureDescriptor("Resources/container.png", TextureType: TextureType.Diffuse) },
-                    2 => new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
-                    3 => new TextureDescriptor[] { new TextureDescriptor("Resources/ball13.jpg", TextureType: TextureType.Diffuse) },
-                    4 => new TextureDescriptor[] { new TextureDescriptor("Resources/xneg.png", TextureType: TextureType.Diffuse) },
-                    5 => new TextureDescriptor[] { new TextureDescriptor("Resources/xpos.png", TextureType: TextureType.Diffuse) },
-                    6 => new TextureDescriptor[] { new TextureDescriptor("Resources/yneg.png", TextureType: TextureType.Diffuse) },
-                    7 => new TextureDescriptor[] { new TextureDescriptor("Resources/ypos.jpg", TextureType: TextureType.Diffuse) },
-                    _ => null
-                };
-                var mat1 = Material.Create(
-                    defaultShader,
-                    texture,
-                    new Vector3((float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble(), (float)Random.Shared.NextDouble()),
-                    Vector3.One,
-                    (float)Random.Shared.NextDouble() * 0.7f);
-                var cube = new RandomNode(new Mesh(vbBox), mat1);
+                var cube = new RandomNode(new Mesh(vbBox), materials[i % 7]);
                 AddNode(cube);
             }
         }
@@ -296,7 +283,7 @@ internal class MainScene : Scene
     private void AddMetallicBoxes()
     {
         var vbBox = GeometryHelper.CreateBox(true);
-        var mat = Material.Create(defaultShader, 
+        var mat = Material.Create(defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             new Vector3(0.25f, 0.25f, 0.35f),
             new Vector3(0.055f, 0.055f, 0.055f),

@@ -1,6 +1,7 @@
 ﻿using OpenRender.Core;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
+using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -62,13 +63,18 @@ public class SceneNode
     public void SetMesh(in Mesh mesh)
     {
         this.mesh = mesh;
-        this.mesh.BoundingSphere.Update(in scale, in worldMatrix);
-        //var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexBuffer);
-        //boundingSphere = bs with
-        //{
-        //    Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
-        //    Center = bs.LocalCenter + position,
-        //};
+        var vb = mesh.Vao?.VertexBuffer;
+        if (vb != null && vb.VertexDeclaration != null && vb.VertexDeclaration.Attributes.Any(a => a.Location == (uint)VertexAttribLocation.Position))
+        {
+            var attribute = vb.VertexDeclaration.Attributes.First(a => a.Location == (uint)VertexAttribLocation.Position);
+            var strideInFloats = vb.VertexDeclaration.Stride / sizeof(float);
+            var bs = CullingHelper.CalculateBoundingSphere(vb.Data, (int)attribute.Offset, strideInFloats);
+            this.mesh.BoundingSphere = bs with
+            {
+                Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
+                Center = bs.LocalCenter + position,
+            };
+        }
     }
 
     public bool ShowBoundingSphere

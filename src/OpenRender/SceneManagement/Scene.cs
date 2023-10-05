@@ -276,9 +276,9 @@ public class Scene
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
-            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
-            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
-            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
+            //if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
+            //if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
+            //if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -302,17 +302,17 @@ public class Scene
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
             if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
 
-            _ = textureBatcher.GetOptimalTextureUnits(material);
-            for (var i = 0; i < material.Textures?.Length; i++)
-            {
-                var texture = material.Textures[i];
-                if (texture != null)
-                {
-                    var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
-                    texture.Use(TextureUnit.Texture0 + unit);
-                    shader.SetInt(texture.UniformName, unit);
-                }
-            }
+            var uu = textureBatcher.GetOptimalTextureUnits(material);
+            //for (var i = 0; i < material.Textures?.Length; i++)
+            //{
+            //    var texture = material.Textures[i];
+            //    if (texture != null)
+            //    {
+            //        var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
+            //        texture.Use(TextureUnit.Texture0 + unit);
+            //        shader.SetInt(texture.UniformName, unit);
+            //    }
+            //}
         }
 
         node.OnDraw(this, elapsed);
@@ -358,7 +358,6 @@ public class Scene
 
     private void SortRenderList()
     {
-        //if (hasCameraChanged || hasNodeListChanged) nodes.Sort(GroupComparer);
         if (hasCameraChanged || hasNodeListChanged)
         {
             var distanceSortedLayer = renderLayers[RenderGroup.DistanceSorted];
@@ -374,15 +373,4 @@ public class Scene
             }
         }
     }
-
-    //private int GroupComparer(SceneNode a, SceneNode b)
-    //{
-    //    var renderGroupComparison = a.RenderGroup.CompareTo(b.RenderGroup);
-    //    if (renderGroupComparison == 0 && a.RenderGroup == RenderGroup.UI)
-    //    {
-    //        // If UI RenderGroup values are the same, compare by index.
-    //        return nodes.IndexOf(a).CompareTo(nodes.IndexOf(b));
-    //    }
-    //    return renderGroupComparison;
-    //}
 }
