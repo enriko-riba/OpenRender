@@ -23,7 +23,6 @@ public class VertexArrayObject
     public void AddBuffer<T>(Buffer<T> buffer, string? name = null) where T : unmanaged
     {
         ArgumentNullException.ThrowIfNull(buffer.VertexDeclaration, nameof(buffer.VertexDeclaration));
-
         foreach (var attribute in buffer.VertexDeclaration.Attributes)
         {
             GL.EnableVertexArrayAttrib(vao, attribute.Location);
@@ -33,22 +32,27 @@ public class VertexArrayObject
         }
         GL.VertexArrayVertexBuffer(vao, lastBindingPoint, buffer.Vbo, 0, buffer.VertexDeclaration.Stride);
 
-        if (DataLength == 0) dataLength = buffer.DataLength;
+        if (DataLength == 0) dataLength = buffer.Data.Length;
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
         lastBindingPoint++;
+        
+        //  this is a hack to get the vertex buffer with positions for the mesh
+        if (typeof(T) == typeof(float) && VertexBuffer is null) VertexBuffer = buffer as Buffer<float>;
     }
 
     public void AddIndexBuffer(IndexBuffer buffer, string? name = "IBO")
     {
         GL.VertexArrayElementBuffer(vao, buffer.Vbo);
         ibo = buffer.Vbo;
-        dataLength = buffer.DataLength;
+        dataLength = buffer.Data.Length;
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
     }
 
     public DrawMode DrawMode => ibo == 0 ? DrawMode.Primitive : DrawMode.Indexed;
 
     public int DataLength => dataLength;
+
+    public Buffer<float>? VertexBuffer { get; private set; }
 
     public static implicit operator uint(VertexArrayObject vao) => vao.vao;  //  allow using the vertex array instead of the handle
 }

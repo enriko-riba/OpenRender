@@ -6,12 +6,12 @@ public class Buffer<T> : IDisposable where T : unmanaged
 {
     private readonly uint vbo;
     private readonly VertexDeclaration? vertexDeclaration;
-    private readonly int dataLength;
+    private readonly T[] data;
 
-    public unsafe Buffer(Span<T> data, VertexDeclaration? vertexDeclaration = null, BufferUsageHint usageHint = BufferUsageHint.StaticDraw)
+    public unsafe Buffer(T[] data, VertexDeclaration? vertexDeclaration = null, BufferUsageHint usageHint = BufferUsageHint.StaticDraw)
     {
         this.vertexDeclaration = vertexDeclaration;
-        dataLength = data.Length;
+        this.data = data;
         GL.CreateBuffers(1, out vbo);
         fixed (void* d = data)
         {
@@ -23,7 +23,7 @@ public class Buffer<T> : IDisposable where T : unmanaged
 
     public VertexDeclaration? VertexDeclaration => vertexDeclaration;
 
-    public int DataLength => dataLength;
+    public T[] Data => data;
 
     public void SetLabel(string name) => GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbo, -1, $"Buffer {name}");
 
