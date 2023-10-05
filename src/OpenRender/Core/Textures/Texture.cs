@@ -26,13 +26,7 @@ public class Texture
     /// <summary>
     /// The name of the sampler uniform that will be bound to the texture unit when setting up the shader program.
     /// </summary>
-    public string UniformName { get; set; } = default!;
-
-    /// <summary>
-    /// Preferred texture unit this texture is bound to.
-    /// Note: the texture unit is set based on the <see cref="TextureDescriptor.TextureType"/> but cen be changed by the <see cref="TextureBatcher"/> or manually.
-    /// </summary>
-    public TextureUnit TextureUnit { get; set; }
+    public string UniformName { get; set; } = default!;  
 
     public TextureMinFilter MinFilter { get; set; }
 
@@ -124,9 +118,7 @@ public class Texture
         return texture;
     }
 
-    public static Texture FromDescriptor(TextureDescriptor descriptor/*, TextureUnit unit*/)
-    {
-        return FromFile(
+    public static Texture FromDescriptor(TextureDescriptor descriptor) => FromFile(
             descriptor.Paths,
             descriptor.TextureType,
             descriptor.MinFilter,
@@ -135,8 +127,7 @@ public class Texture
             descriptor.TextureWrapT,
             descriptor.GenerateMipMap,
             descriptor.TextureTarget
-            );
-    }
+    );
 
     public static Texture FromFile(string[] paths,
         TextureType textureType = TextureType.Unknown,

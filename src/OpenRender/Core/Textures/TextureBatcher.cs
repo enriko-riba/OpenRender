@@ -1,4 +1,6 @@
-﻿namespace OpenRender.Core.Textures;
+﻿using OpenTK.Graphics.OpenGL;
+
+namespace OpenRender.Core.Textures;
 
 public class TextureBatcher
 {
@@ -38,13 +40,16 @@ public class TextureBatcher
 
     public TextureUnitUsage[] GetOptimalTextureUnits(Material material)
     {
-        foreach (var handle in material.TextureHandles)
+        foreach (var texture in material.Textures ?? Array.Empty<Texture>())
         {
+            var handle = texture.Handle;
             var idx = FindByHandle(handle);
             if (idx >= 0)
             {
+                GL.BindTextureUnit(idx, handle);
+                material.Shader.SetInt(texture.UniformName, idx);
                 // Texture is already bound to an unit, skip
-                continue; 
+                continue;
             }
 
             idx = FindWithoutHandle();
@@ -52,8 +57,10 @@ public class TextureBatcher
             {
                 // empty unit found, bind texture to it, 
                 unitUsages[idx].TextureHandle = handle;
-                unitUsages[idx].ChangeCount = 0; // not counted as a texture swap
-                continue;   
+                unitUsages[idx].ChangeCount = 0; // assignment to empty unit not counted as a texture swap
+                GL.BindTextureUnit(idx, handle);
+                material.Shader.SetInt(texture.UniformName, idx);
+                continue;
             }
 
             //  search for a texture unit bound to a texture that is not used anymore in current and all following materials
@@ -66,7 +73,9 @@ public class TextureBatcher
                 idx = unitWithUnusedTexture.Unit;
                 unitUsages[idx].TextureHandle = handle;
                 unitUsages[idx].ChangeCount++;
-                continue;   
+                GL.BindTextureUnit(idx, handle);
+                material.Shader.SetInt(texture.UniformName, idx);
+                continue;
             }
             else
             {
@@ -77,6 +86,8 @@ public class TextureBatcher
                     .First();
                 unitUsages[idx].TextureHandle = handle;
                 unitUsages[idx].ChangeCount++;
+                GL.BindTextureUnit(idx, handle);
+                material.Shader.SetInt(texture.UniformName, idx);
             }
         }
         return unitUsages;
@@ -176,4 +187,5 @@ public struct TextureUnitUsage
     public int? TextureHandle { get; set; }
     public int Unit { get; set; }
     public int ChangeCount { get; set; }
+    public override string ToString() => $"unit: {Unit}, texture: {TextureHandle}, changes: {ChangeCount}";
 }

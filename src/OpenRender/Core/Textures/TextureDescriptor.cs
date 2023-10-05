@@ -14,18 +14,17 @@ namespace OpenRender.Core.Textures;
 /// <param name="GenerateMipMap"></param>
 public record TextureDescriptor(
     string[] Paths,
-    TextureMinFilter MinFilter = TextureMinFilter.Linear,
+    TextureMinFilter MinFilter = TextureMinFilter.LinearMipmapLinear,
     TextureMagFilter MagFilter = TextureMagFilter.Linear,
-    TextureType TextureType = TextureType.Unknown,
+    TextureType TextureType = TextureType.Diffuse,
     TextureWrapMode TextureWrapS = TextureWrapMode.Repeat,
     TextureWrapMode TextureWrapT = TextureWrapMode.Repeat,
     bool GenerateMipMap = true,
     TextureTarget TextureTarget = TextureTarget.Texture2D)
 {
-    public TextureDescriptor(string path) : this(new string[] { path }) { }
 
     public TextureDescriptor(string path,
-    TextureMinFilter MinFilter = TextureMinFilter.Linear,
+    TextureMinFilter MinFilter = TextureMinFilter.LinearMipmapLinear,
     TextureMagFilter MagFilter = TextureMagFilter.Linear,
     TextureType TextureType = TextureType.Unknown,
     TextureWrapMode TextureWrapS = TextureWrapMode.Repeat,
@@ -40,4 +39,6 @@ public record TextureDescriptor(
         TextureWrapT,
         GenerateMipMap,
         TextureTarget) { }
+
+    public TextureDescriptor(string path) : this(new string[] { path }) { }
 };
