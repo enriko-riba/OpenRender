@@ -38,7 +38,7 @@ public class TextureBatcher
         this.materialsList = materialsList;
     }
 
-    public TextureUnitUsage[] GetOptimalTextureUnits(Material material)
+    public TextureUnitUsage[] BindTextureUnits(Material material)
     {
         foreach (var texture in material.Textures ?? Array.Empty<Texture>())
         {

@@ -19,11 +19,21 @@ public class Material
     public IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
 
     public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
+
     public bool HasNormal => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Normal) ?? false;
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
     public Texture[]? Textures { get; private set; }
+
+    /// <summary>
+    /// An arbitrary value used to group objects for batching.
+    /// If the value is -1 the object is not batched else all objects sharing the same batching key are
+    /// rendered in a single batch.
+    /// Note: batching is only possible if the batched object use the same material and mesh. While 
+    /// OpenRenderer allows to batch objects with different materials and meshes the result is undefined.
+    /// </summary>
+    public int BatchingKey { get; set; } = -1;
 
     /// <summary>
     /// Shader program used to render the object.

@@ -79,7 +79,6 @@ internal class MainScene : Scene
         tr.Render(nodesText, 5, TextStartY, textColor1);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}".PadRight(Padding);
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
-
         tr.Render(helpText1, 5, TextStartY + LineHeight * 2, textColor2);
         tr.Render(helpText2, 5, TextStartY + LineHeight * 3, textColor2);
         tr.Render(helpText3, 5, TextStartY + LineHeight * 4, textColor2);
@@ -256,15 +255,17 @@ internal class MainScene : Scene
         var vbSphere = GeometryHelper.CreateSphere(32, 48);
         var materials = new Material[]
         {
-            Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.05f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 0.55f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f, 0),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f, 0)
+            Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
+        materials[1].BatchingKey = 1;
+
         for (var i = 0; i < NodeCount; i++)
         {
             if (i % 5 == 0)
@@ -285,10 +286,8 @@ internal class MainScene : Scene
         var vbBox = GeometryHelper.CreateBox(true);
         var mat = Material.Create(defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
-            new Vector3(0.25f, 0.25f, 0.35f),
-            new Vector3(0.055f, 0.055f, 0.055f),
-            1.97f);
-        mat.EmissiveColor = new(0.05f, 0.01f, 0.012f);
+            0.70f);
+       mat.EmissiveColor = new(0.05f, 0.07f, 0.005f);
 
         for (var i = 0; i < 50; i++)
         {

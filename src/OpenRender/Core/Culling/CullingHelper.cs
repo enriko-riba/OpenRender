@@ -1,5 +1,4 @@
 ﻿using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
@@ -48,7 +47,7 @@ internal sealed class CullingHelper
     /// <returns></returns>
     public static unsafe BoundingSphere CalculateBoundingSphere(float[] data, int vertexPositionAttributeOffset, int strideInFloats)
     {
-        if (data.Length == 0 ) return new BoundingSphere();
+        if (data.Length == 0) return new BoundingSphere();
         List<Vector3> positions = new();
         for (var i = 0; i < data.Length; i += strideInFloats)
         {

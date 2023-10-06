@@ -32,7 +32,7 @@ public class SceneNode
         RenderGroup = RenderGroup.Default;
     }
 
-    public BoundingSphere BoundingSphere => mesh.BoundingSphere;
+    public ref BoundingSphere BoundingSphere => ref mesh.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
 

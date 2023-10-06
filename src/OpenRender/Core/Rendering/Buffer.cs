@@ -6,7 +6,7 @@ public class Buffer<T> : IDisposable where T : unmanaged
 {
     private readonly uint vbo;
     private readonly VertexDeclaration? vertexDeclaration;
-    private readonly T[] data;
+    private T[] data;
 
     public unsafe Buffer(T[] data, VertexDeclaration? vertexDeclaration = null, BufferUsageHint usageHint = BufferUsageHint.StaticDraw)
     {
@@ -23,7 +23,7 @@ public class Buffer<T> : IDisposable where T : unmanaged
 
     public VertexDeclaration? VertexDeclaration => vertexDeclaration;
 
-    public T[] Data => data;
+    public ref T[] Data => ref data;
 
     public void SetLabel(string name) => GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbo, -1, $"Buffer {name}");
 

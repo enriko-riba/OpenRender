@@ -276,9 +276,9 @@ public class Scene
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
-            //if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
-            //if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
-            //if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
+            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
+            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
+            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -302,17 +302,7 @@ public class Scene
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
             if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
 
-            var uu = textureBatcher.GetOptimalTextureUnits(material);
-            //for (var i = 0; i < material.Textures?.Length; i++)
-            //{
-            //    var texture = material.Textures[i];
-            //    if (texture != null)
-            //    {
-            //        var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
-            //        texture.Use(TextureUnit.Texture0 + unit);
-            //        shader.SetInt(texture.UniformName, unit);
-            //    }
-            //}
+            _ = textureBatcher.BindTextureUnits(material);            
         }
 
         node.OnDraw(this, elapsed);

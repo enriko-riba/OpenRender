@@ -52,7 +52,7 @@ public class VertexArrayObject
 
     public int DataLength => dataLength;
 
-    public Buffer<float>? VertexBuffer { get; private set; }
+    public Buffer<float>? VertexBuffer { get; set; }
 
     public static implicit operator uint(VertexArrayObject vao) => vao.vao;  //  allow using the vertex array instead of the handle
 }
