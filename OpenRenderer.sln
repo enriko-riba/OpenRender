@@ -32,6 +32,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared_resources", "shared_
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "triangle", "src\samples\triangle\triangle.csproj", "{ED793485-20AB-45AD-B220-A5DCBED9A82E}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "batching", "src\samples\batching\batching.csproj", "{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -62,6 +64,10 @@ Global
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -75,6 +81,7 @@ Global
 		{E0FBDC68-83F1-470F-81DC-83E7022D8477} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{3BAF8E0B-32B0-4DCA-BCC4-E8B3D14DD1BF} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E} = {3A37113B-D520-4A02-B89A-8309402078A5}
+		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4} = {3A37113B-D520-4A02-B89A-8309402078A5}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {298EB5BC-94B1-4DF8-B27D-C392B73A8015}
