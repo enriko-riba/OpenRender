@@ -151,7 +151,7 @@ public class Sprite : SceneNode
     /// <param name="position"></param>
     public void GetPosition(out Vector2 position)
     {
-        position = new Vector2(this.position.X, this.position.Y);
+        position = new Vector2(transform.Position.X, transform.Position.Y);
     }
 
     /// <summary>
@@ -189,19 +189,19 @@ public class Sprite : SceneNode
         //  calculate scale, account for quad vertices in range [0,1] so we need to multiply with texture size
         //var spriteScale = new Vector3(scale.X * size.X, scale.Y * size.Y, 1);
         var spriteScale = new Vector3(size.X, size.Y, 1);
-        Matrix4.CreateScale(spriteScale, out scaleMatrix);
+        Matrix4.CreateScale(spriteScale, out transform.scaleMatrix);
 
         // Calculate translation so that rotation is around the sprite's pivot       
         var spriteCenterOffset = new Vector3(spriteScale.X * Pivot.X, spriteScale.Y * Pivot.Y, 0);
         Matrix4.CreateTranslation(-spriteCenterOffset, out var offsetTranslationMatrix);
 
         //  now that the translation moves the sprite to origin, we can rotate it
-        Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);
-        Matrix4.Mult(offsetTranslationMatrix, rotationMatrix, out var originRotationMatrix);
+        Matrix4.CreateFromQuaternion(transform.Rotation, out transform.rotationMatrix);
+        Matrix4.Mult(offsetTranslationMatrix, transform.rotationMatrix, out var originRotationMatrix);
 
-        Matrix4.Mult(scaleMatrix, originRotationMatrix, out worldMatrix);
-        Matrix4.CreateTranslation(position + spriteCenterOffset, out var translationMatrix);
-        Matrix4.Mult(worldMatrix, translationMatrix, out worldMatrix);
+        Matrix4.Mult(transform.scaleMatrix, originRotationMatrix, out transform.worldMatrix);
+        Matrix4.CreateTranslation(transform.Position + spriteCenterOffset, out var translationMatrix);
+        Matrix4.Mult(transform.worldMatrix, translationMatrix, out transform.worldMatrix);
 
         if (Parent is not null and Sprite)
         {
@@ -214,7 +214,7 @@ public class Sprite : SceneNode
              );
             //  TODO: if we want to include parent scale, we need to multiply with a matrix created from parents scale.
             //        Can't use the parents scale matrix directly since it includes the texture dimensions.
-            Matrix4.Mult(worldMatrix, parentWorldMatrixWithoutScale, out worldMatrix);
+            Matrix4.Mult(transform.worldMatrix, parentWorldMatrixWithoutScale, out transform.worldMatrix);
         }
     }
 

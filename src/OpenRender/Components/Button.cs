@@ -48,7 +48,7 @@ public class Button : NineSlicePlane
             var rect = TextRenderer.Measure(Caption);
             var x = (size.X-rect.Width) / 2;
             var y = (size.Y-rect.Height) / 2;
-            TextRenderer.Render(Caption, position.X + x, position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
+            TextRenderer.Render(Caption, transform.Position.X + x, transform.Position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
             scene.ResetMaterial();
         }
     }
@@ -67,8 +67,8 @@ public class Button : NineSlicePlane
     private void HandleMouseState(MouseState mouseState)
     {
         //  check if mouse is over the button
-        isHovering = mouseState.X >= position.X && mouseState.X <= position.X + size.X &&
-                     mouseState.Y >= position.Y && mouseState.Y <= position.Y + size.Y;
+        isHovering = mouseState.X >= transform.Position.X && mouseState.X <= transform.Position.X + size.X &&
+                     mouseState.Y >= transform.Position.Y && mouseState.Y <= transform.Position.Y + size.Y;
 
         if (!isHovering)
         {

@@ -45,7 +45,7 @@ internal class SnakeSprite : Sprite
             SetPosition(position);
             SourceRectangle = src;
             AngleRotation = rotation;
-            shader.SetMatrix4("model", ref worldMatrix);
+            shader.SetMatrix4("model", ref transform.worldMatrix);
             base.OnDraw(scene, elapsed);
         }
         base.OnDraw(scene, elapsed);

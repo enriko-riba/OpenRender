@@ -14,13 +14,8 @@ public class SceneNode
     private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
-
-    protected Vector3 position;
-    protected Vector3 scale;
-    protected Quaternion rotation = Quaternion.Identity;
-    protected Matrix4 scaleMatrix = Matrix4.Identity;
-    protected Matrix4 rotationMatrix = Matrix4.Identity;
-    protected Matrix4 worldMatrix = Matrix4.Identity;   
+        
+    protected Transform transform = new();
 
     public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default)
     {
@@ -54,9 +49,9 @@ public class SceneNode
         }
     }
 
-    public void GetWorldMatrix(out Matrix4 worldMatrix) => worldMatrix = this.worldMatrix;
+    public void GetWorldMatrix(out Matrix4 worldMatrix) => worldMatrix = transform.worldMatrix;
 
-    public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = this.rotationMatrix;
+    public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
     public ref Mesh Mesh => ref mesh;
 
@@ -71,8 +66,8 @@ public class SceneNode
             var bs = CullingHelper.CalculateBoundingSphere(vb.Data, (int)attribute.Offset, strideInFloats);
             this.mesh.BoundingSphere = bs with
             {
-                Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(scale.X, scale.Y), scale.Z),
-                Center = bs.LocalCenter + position,
+                Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(transform.Scale.X, transform.Scale.Y), transform.Scale.Z),
+                Center = bs.LocalCenter + transform.Position,
             };
         }
     }
@@ -117,8 +112,8 @@ public class SceneNode
             GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.Vao.DataLength);
 
         if (ShowBoundingSphere)
-        {
-            sphereMeshRenderer.Shader.SetMatrix4("model", ref worldMatrix);
+        {           
+            sphereMeshRenderer.Shader.SetMatrix4("model", ref transform.worldMatrix);
             sphereMeshRenderer.Render();
         }
         GL.BindVertexArray(0);
@@ -147,7 +142,7 @@ public class SceneNode
     /// Gets the node position.
     /// </summary>
     /// <param name="position"></param>
-    public void GetPosition(out Vector3 position) => position = this.position;
+    public void GetPosition(out Vector3 position) => position = transform.Position;
 
     /// <summary>
     /// Sets the new position.
@@ -155,7 +150,7 @@ public class SceneNode
     /// <param name="position"></param>
     public void SetPosition(in Vector3 position)
     {
-        this.position = position;
+        transform.Position = position;
         Invalidate();
     }
 
@@ -163,7 +158,7 @@ public class SceneNode
     /// Gets the nodes rotation quaternion.
     /// </summary>
     /// <param name="rotation"></param>
-    public void GetRotation(out Quaternion rotation) => rotation = this.rotation;
+    public void GetRotation(out Quaternion rotation) => rotation = transform.Rotation;
 
     /// <summary>
     /// Sets the new rotation quaternion from Euler angles in radians.
@@ -171,8 +166,8 @@ public class SceneNode
     /// <param name="rot"></param>
     public void SetRotation(in Vector3 eulerRot)
     {
-        Quaternion.FromEulerAngles(eulerRot, out rotation);
-        Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);
+        Quaternion.FromEulerAngles(eulerRot, out transform.Rotation);
+        Matrix4.CreateFromQuaternion(transform.Rotation, out transform.rotationMatrix);
         AngleRotation = eulerRot;
         Invalidate();
     }
@@ -181,7 +176,7 @@ public class SceneNode
     /// Gets the node scale.
     /// </summary>
     /// <param name="scale"></param>
-    public void GetScale(out Vector3 scale) => scale = this.scale;
+    public void GetScale(out Vector3 scale) => scale = transform.Scale;
 
     /// <summary>
     /// Sets the node Scale.
@@ -189,7 +184,7 @@ public class SceneNode
     /// <param name="scale"></param>
     public virtual void SetScale(in Vector3 scale)
     {
-        this.scale = scale;
+        transform.Scale = scale;
         Invalidate();
     }
 
@@ -199,9 +194,9 @@ public class SceneNode
     /// <param name="scale"></param>
     public void SetScale(float scale)
     {
-        this.scale.X = scale;
-        this.scale.Y = scale;
-        this.scale.Z = scale;
+        transform.Scale.X = scale;
+        transform.Scale.Y = scale;
+        transform.Scale.Z = scale;
         Invalidate();
     }
 
@@ -218,21 +213,23 @@ public class SceneNode
     /// </summary>
     protected virtual void UpdateMatrix()
     {
-        Matrix4.CreateScale(scale, out scaleMatrix);
-        Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);
-        Matrix4.Mult(scaleMatrix, rotationMatrix, out worldMatrix);
-        worldMatrix.Row3.Xyz = position;    //  sets the translation
+        var parent = Parent?.transform;
+        transform.UpdateMatrix(parent);
+        //Matrix4.CreateScale(scale, out scaleMatrix);
+        //Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);
+        //Matrix4.Mult(scaleMatrix, rotationMatrix, out worldMatrix);
+        //worldMatrix.Row3.Xyz = position;    //  sets the translation
 
-        if (Parent != null)
-        {
-            Matrix4.Mult(worldMatrix, Parent.worldMatrix, out worldMatrix);
-        }
+        //if (Parent != null)
+        //{
+        //    Matrix4.Mult(worldMatrix, Parent.worldMatrix, out worldMatrix);
+        //}
     }
 
     internal void Invalidate()
     {
         UpdateMatrix();
-        mesh.BoundingSphere.Update(in scale, in worldMatrix);
+        mesh.BoundingSphere.Update(in transform.Scale, in transform.worldMatrix);
         foreach (var child in children)
         {
             child.Invalidate();
