@@ -287,7 +287,7 @@ internal class MainScene : Scene
         var mat = Material.Create(defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             0.70f);
-       mat.EmissiveColor = new(0.05f, 0.07f, 0.005f);
+        mat.EmissiveColor = new(0.05f, 0.07f, 0.005f);
 
         for (var i = 0; i < 50; i++)
         {
@@ -312,7 +312,7 @@ internal class MainScene : Scene
 
         animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png")
         {
-            Size = new Vector2i(60, 65)
+            Size = new(60, 65)
         };
         AddNode(animatedSprite);
         animatedSprite.SetPosition(new(770, 210));
