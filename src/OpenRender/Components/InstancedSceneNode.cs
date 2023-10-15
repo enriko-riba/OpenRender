@@ -19,7 +19,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
         //mesh.VertexBuffer.SetLabel("InstancedSceneNode_Buffer1");
 
-        uint attributeIndexStart = 4;   
+        uint attributeIndexStart = (uint)VertexAttribLocation.ModelMatrix1;   
         uint bufferSlot = 1;    //  buffer slot for instance data
         GL.CreateBuffers(1, out vbInstanceData);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbInstanceData, -1, "InstancedSceneNode_Buffer2");

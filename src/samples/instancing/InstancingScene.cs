@@ -10,7 +10,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Samples.Instancing;
 
-internal class MainScene : Scene
+internal class InstancingScene : Scene
 {
     private const int NUM_INSTANCES = 25000;
     private const int AREA_HALF_WIDTH = 250;

@@ -59,7 +59,11 @@ public class VertexDeclaration
     /// </summary>
     public int Stride { get; private set; }
 
+    public int StrideInFloats => Stride / sizeof(float);
+
     public IEnumerable<VertexAttribLayout> Attributes => attributes;
+
+    public bool HasAttribute(VertexAttribLocation attributeLocation) => Attributes.Any(a => a.Location == (uint)attributeLocation) ;
 
     /// <summary>
     /// Gets the vertex attribute layout for the given location.
@@ -84,5 +88,5 @@ public class VertexDeclaration
         VertexAttribType.Byte => sizeof(byte),
         VertexAttribType.UnsignedByte => sizeof(byte),
         _ => throw new ArgumentException($"Unsupported vertex attribute type {type}!", nameof(type))
-    };
+    };    
 }

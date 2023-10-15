@@ -17,7 +17,7 @@ var nativeWindowSettings = new NativeWindowSettings()
 };
 
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
-var mainScene = new MainScene();
+var mainScene = new TriangleScene();
 scm.AddScene(mainScene);
 scm.ActivateScene(mainScene.Name);
 scm.Run();

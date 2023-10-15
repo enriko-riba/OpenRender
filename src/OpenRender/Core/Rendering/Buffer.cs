@@ -8,15 +8,12 @@ public class Buffer<T> : IDisposable where T : unmanaged
     private readonly VertexDeclaration? vertexDeclaration;
     private T[] data;
 
-    public unsafe Buffer(T[] data, VertexDeclaration? vertexDeclaration = null, BufferUsageHint usageHint = BufferUsageHint.StaticDraw)
+    public unsafe Buffer(T[] data, VertexDeclaration? vertexDeclaration = null)
     {
         this.vertexDeclaration = vertexDeclaration;
         this.data = data;
         GL.CreateBuffers(1, out vbo);
-        fixed (void* d = data)
-        {
-            GL.NamedBufferData(vbo, data.Length * sizeof(T), (nint)d, usageHint);
-        }
+        GL.NamedBufferStorage(vbo, data.Length * sizeof(T), data, BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
     }
 
     public uint Vbo => vbo;
@@ -25,7 +22,7 @@ public class Buffer<T> : IDisposable where T : unmanaged
 
     public ref T[] Data => ref data;
 
-    public void SetLabel(string name) => GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbo, -1, $"Buffer {name}");
+    public void SetLabel(string name) => GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbo, -1, name);
 
     public void Dispose()
     {

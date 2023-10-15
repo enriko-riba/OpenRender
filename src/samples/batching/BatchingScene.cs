@@ -12,7 +12,7 @@ using OpenTK.Windowing.GraphicsLibraryFramework;
 
 namespace Samples.Batching;
 
-internal class MainScene : Scene
+internal class BatchingScene : Scene
 {
     private readonly Vector3 textColor1 = new(1, 1, 1);
     private readonly Vector3 textColor2 = new(0.8f, 0.8f, 0.65f);
@@ -27,10 +27,10 @@ internal class MainScene : Scene
         base.Load();
         GL.ClearColor(Color4.DarkSlateBlue);
 
-        AddRotatingBoxes();
+        //AddRotatingBoxes();
         AddRandomNodes();
         AddMetallicBoxes();
-        AddSprites();
+        //AddSprites();
 
         var paths = new string[] {
             "Resources/xpos.png",
@@ -160,7 +160,8 @@ internal class MainScene : Scene
 
         var mouseState = SceneManager.MouseState;
         var rotationPerSecond = (float)(elapsedTime * RotationSpeed);
-        smiley!.AngleRotation += rotationPerSecond;
+        if (smiley != null)
+            smiley.AngleRotation += rotationPerSecond;
         if (SceneManager.KeyboardState.IsKeyDown(Keys.Q))
         {
             camera!.AddRotation(0, 0, rotationPerSecond);
@@ -251,8 +252,8 @@ internal class MainScene : Scene
     private void AddRandomNodes()
     {
         const int NodeCount = 5000;
-        var vbBox = GeometryHelper.CreateBox(true);
-        var vbSphere = GeometryHelper.CreateSphere(32, 48);
+        var vaoBox = GeometryHelper.CreateBox(true);    //  todo: don't use VAO's we just need a declaration, and attribute data
+        var vaoSphere = GeometryHelper.CreateSphere(12, 18);
         var materials = new Material[]
         {
             Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
@@ -264,21 +265,50 @@ internal class MainScene : Scene
             Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
-        materials[1].BatchingKey = 1;
+
+        var batchedNode = new BatchedNode(vaoSphere.VertexBuffer!.VertexDeclaration!, materials[0]);
 
         for (var i = 0; i < NodeCount; i++)
         {
-            if (i % 5 == 0)
+            const int Area = 500;
+            var position = new Vector3(Random.Shared.Next(-Area, Area + 1),
+                                        Random.Shared.Next(-Area, Area + 1),
+                                        Random.Shared.Next(-Area, Area + 1));
+            var scale = new Vector3(Random.Shared.Next(2, 5));
+            var rotation = new Vector3(Random.Shared.Next(0, 360),
+                                        Random.Shared.Next(0, 360),
+                                        Random.Shared.Next(0, 360));           
+
+            var mod = i % 7;
+            switch (mod)
             {
-                var sphere = new RandomNode(new Mesh(vbSphere), materials[0]);
-                AddNode(sphere);
-            }
-            else
-            {
-                var cube = new RandomNode(new Mesh(vbBox), materials[i % 7]);
-                AddNode(cube);
+                case 0:
+                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                case 1:
+                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                case 2:
+                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                case 3:
+                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                case 4:
+                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                case 5:
+                    batchedNode.AddVertices(vaoSphere.VertexBuffer!.Data, vaoSphere.IndexBuffer!.Data, position, scale, rotation);
+                    break;
+                default:
+                    // cube = new RandomNode(new Mesh(vaoBox), materials[i % 7]);
+                    //AddNode(cube);
+                    break;
             }
         }
+
+        batchedNode.BuildMesh();
+        AddNode(batchedNode);
     }
 
     private void AddMetallicBoxes()

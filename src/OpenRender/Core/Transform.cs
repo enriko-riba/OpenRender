@@ -18,7 +18,7 @@ public struct Transform
     public Matrix4 scaleMatrix;
     public Matrix4 rotationMatrix;
     public Matrix4 worldMatrix;
-
+    public void UpdateMatrix() => UpdateMatrix(null);
     public void UpdateMatrix(in Transform? parent)
     {
         Matrix4.CreateScale(Scale, out scaleMatrix);

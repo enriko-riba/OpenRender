@@ -1,4 +1,5 @@
 ﻿using OpenTK.Graphics.OpenGL4;
+using static OpenTK.Graphics.OpenGL.GL;
 
 namespace OpenRender.Core.Rendering;
 
@@ -13,14 +14,14 @@ public class VertexArrayObject
     {
         GL.CreateVertexArrays(1, out vao);
     }
-
+   
     public unsafe void AddBuffer<T>(VertexDeclaration vertexDeclaration, T[] data, string? name = null) where T : unmanaged
     {
         var buffer = new Buffer<T>(data, vertexDeclaration);
-        AddBuffer(buffer, name);
+        AddBuffer(buffer, name: name);
     }
 
-    public void AddBuffer<T>(Buffer<T> buffer, string? name = null) where T : unmanaged
+    public void AddBuffer<T>(Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : unmanaged
     {
         ArgumentNullException.ThrowIfNull(buffer.VertexDeclaration, nameof(buffer.VertexDeclaration));
         foreach (var attribute in buffer.VertexDeclaration.Attributes)
@@ -31,6 +32,8 @@ public class VertexArrayObject
             GL.VertexArrayBindingDivisor(vao, attribute.Location, attribute.Divisor);
         }
         GL.VertexArrayVertexBuffer(vao, lastBindingPoint, buffer.Vbo, 0, buffer.VertexDeclaration.Stride);
+        GL.VertexArrayBindingDivisor(vao, lastBindingPoint, bindingDivisor ?? 0);
+        Log.CheckGlError();
 
         if (DataLength == 0) dataLength = buffer.Data.Length;
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
@@ -44,6 +47,7 @@ public class VertexArrayObject
     {
         GL.VertexArrayElementBuffer(vao, buffer.Vbo);
         ibo = buffer.Vbo;
+        IndexBuffer = buffer;
         dataLength = buffer.Data.Length;
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
     }
@@ -53,6 +57,8 @@ public class VertexArrayObject
     public int DataLength => dataLength;
 
     public Buffer<float>? VertexBuffer { get; set; }
+
+    public Buffer<uint>? IndexBuffer { get; set; }
 
     public static implicit operator uint(VertexArrayObject vao) => vao.vao;  //  allow using the vertex array instead of the handle
 }

@@ -307,7 +307,7 @@ public class Scene
 
         node.OnDraw(this, elapsed);
         Log.CheckGlError("SceneNode.OnDraw");
-        GL.UseProgram(0);
+        //GL.UseProgram(0);
     }
 
     public int GetBatchedTextureUnit(Texture texture)

@@ -17,14 +17,21 @@ public class SceneNode
         
     protected Transform transform = new();
 
-    public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default)
+    public SceneNode()
+    {
+        SetScale(Vector3.One);
+        SetPosition(Vector3.Zero);
+        SetRotation(Vector3.Zero);
+        RenderGroup = RenderGroup.Default;
+    }
+
+    public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default) : this()
     {
         Material = material ?? new();
-        SetScale(Vector3.One);
+        //SetScale(Vector3.One);
         SetPosition(position);
-        SetRotation(Vector3.Zero);
+        //SetRotation(Vector3.Zero);
         SetMesh(mesh);
-        RenderGroup = RenderGroup.Default;
     }
 
     public ref BoundingSphere BoundingSphere => ref mesh.BoundingSphere;
@@ -116,7 +123,7 @@ public class SceneNode
             sphereMeshRenderer.Shader.SetMatrix4("model", ref transform.worldMatrix);
             sphereMeshRenderer.Render();
         }
-        GL.BindVertexArray(0);
+        //GL.BindVertexArray(0);
     }
 
     public void AddChild(SceneNode child)

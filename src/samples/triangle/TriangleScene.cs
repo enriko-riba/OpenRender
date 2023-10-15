@@ -5,9 +5,8 @@ using OpenTK.Mathematics;
 
 namespace Samples.Triangle;
 
-internal class MainScene : Scene
+internal class TriangleScene : Scene
 {
-    private Buffer<float> vb = default!;
     private VertexArrayObject vao = default!;
 
     public override void Load()

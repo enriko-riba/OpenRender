@@ -131,12 +131,12 @@ public static class GeometryHelper
         float[] vertices;
         if (createNormals)
         {
-            vertices = CreateBoxWithNormals();
+            vertices = CreateBoxVerticesWithNormals();
             vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
         }
         else
         {
-            vertices = CreateBoxWithoutNormals();
+            vertices = CreateBoxVerticesWithoutNormals();
             vxDeclaration = VertexDeclarations.VertexPositionTexture;
         }
 
@@ -232,7 +232,7 @@ public static class GeometryHelper
         return vao;
     }
 
-    private static float[] CreateBoxWithNormals()
+    public static float[] CreateBoxVerticesWithNormals()
     {
         float[] vertices =
         {
@@ -276,7 +276,7 @@ public static class GeometryHelper
         return vertices;
     }
 
-    private static float[] CreateBoxWithoutNormals()
+    public static float[] CreateBoxVerticesWithoutNormals()
     {
         float[] vertices =
         {

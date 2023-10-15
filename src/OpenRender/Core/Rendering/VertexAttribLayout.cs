@@ -11,7 +11,11 @@ public enum VertexAttribLocation
     Color,
     TextureCoord,
     Tangent,
-    Bitangent
+    Bitangent,
+    ModelMatrix1,
+    ModelMatrix2,
+    ModelMatrix3,
+    ModelMatrix4,
 }
 
 /// <summary>
@@ -20,7 +24,7 @@ public enum VertexAttribLocation
 public struct VertexAttribLayout
 {
     public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type) :
-        this(location.ToString(), (uint)location, size, type,0, 0)
+        this(location.ToString(), (uint)location, size, type, 0, 0)
     { }
     public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type, uint divisor) :
         this(location.ToString(), (uint)location, size, type, 0, divisor)
@@ -53,19 +57,19 @@ public struct VertexAttribLayout
     /// Attribute location.
     /// </summary>
     public uint Location { get; set; }
-    
+
     /// <summary>
     /// Size in <see cref="Type"/> units.
     /// </summary>
     public int Size { get; set; }
 
     public VertexAttribType Type { get; set; }
-    
+
     /// <summary>
     /// Offset in bytes.
     /// </summary>
     public uint Offset { get; set; }
-    
+
     /// <summary>
     /// Divisor for instanced rendering.
     /// </summary>

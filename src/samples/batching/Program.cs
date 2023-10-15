@@ -16,7 +16,7 @@ var nativeWindowSettings = new NativeWindowSettings()
 };
 
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
-var mainScene = new MainScene();
-scm.AddScene(mainScene);
-scm.ActivateScene(mainScene.Name);
+var scene = new BatchingScene();
+scm.AddScene(scene);
+scm.ActivateScene(scene.Name);
 scm.Run();
