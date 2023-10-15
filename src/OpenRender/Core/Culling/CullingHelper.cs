@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core.Geometry;
+using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
@@ -41,70 +42,32 @@ internal sealed class CullingHelper
     /// <summary>
     /// Calculates the bounding sphere of a vertex buffer.
     /// </summary>
-    /// <param name="data">the vertex buffer data with vertex positions</param>
-    /// <param name="vertexPositionAttributeOffset">the offset of the vertex positions in floats</param>
-    /// <param name="strideInFloats">the stride in floats of the vertex buffer</param>
+    /// <param name="vertices">the vertex buffer data with vertex positions</param>
     /// <returns></returns>
-    public static unsafe BoundingSphere CalculateBoundingSphere(float[] data, int vertexPositionAttributeOffset, int strideInFloats)
+    public static unsafe BoundingSphere CalculateBoundingSphere(Vertex[] vertices)
     {
-        if (data.Length == 0) return new BoundingSphere();
-        List<Vector3> positions = new();
-        for (var i = 0; i < data.Length; i += strideInFloats)
-        {
-            var x = data[i + vertexPositionAttributeOffset];
-            var y = data[i + vertexPositionAttributeOffset + 1];
-            var z = data[i + vertexPositionAttributeOffset + 2];
-            positions.Add(new Vector3(x, y, z));
-        }
-        //var vbFloat = (VertexBuffer)vb;
-        //var data = vb.Data;
-        //if (vb.Indices != null && vb.Indices.Length > 0)
-        //{
-        //    for (var i = 0; i < vb.Indices.Length; i++)
-        //    {
-        //        var idx = vb.Indices[i] * strideInFloats;
-        //        var x = data[idx + vertexPositionAttributeOffset];
-        //        var y = data[idx + vertexPositionAttributeOffset + 1];
-        //        var z = data[idx + vertexPositionAttributeOffset + 2];
-        //        positions.Add(new Vector3(x, y, z));
-        //    }
-        //}
-        //else
-        //{
-        //    for (var i = 0; i < data.Length; i += strideInFloats)
-        //    {
-        //        var x = data[i + vertexPositionAttributeOffset];
-        //        var y = data[i + vertexPositionAttributeOffset + 1];
-        //        var z = data[i + vertexPositionAttributeOffset + 2];
-        //        positions.Add(new Vector3(x, y, z));
-        //    }
-        //}
-
-        // Calculate the center of the bounding sphere
-        var center = CalculateBoundingSphereCenter(positions);
-
-        // Calculate the radius of the bounding sphere
-        var radius = CalculateBoundingSphereRadius(center, positions);
+        var center = CalculateBoundingSphereCenter(vertices);
+        var radius = CalculateBoundingSphereRadius(center, vertices);
         return new BoundingSphere { LocalCenter = center, LocalRadius = radius, Center = center, Radius = radius };
     }
 
-    private static Vector3 CalculateBoundingSphereCenter(IEnumerable<Vector3> positions)
+    private static Vector3 CalculateBoundingSphereCenter(IEnumerable<Vertex> vertices)
     {
         var center = Vector3.Zero;
-        foreach (var position in positions)
+        foreach (var vertex in vertices)
         {
-            center += position;
+            center += vertex.Position;
         }
-        center /= positions.Count();
+        center /= vertices.Count();
         return center;
     }
 
-    private static float CalculateBoundingSphereRadius(in Vector3 center, IEnumerable<Vector3> positions)
+    private static float CalculateBoundingSphereRadius(in Vector3 center, IEnumerable<Vertex> vertices)
     {
         var radius = 0f;
-        foreach (var position in positions)
+        foreach (var vertex in vertices)
         {
-            var distance = Vector3.Distance(center, position);
+            var distance = Vector3.Distance(center, vertex.Position);
             radius = Math.Max(radius, distance);
         }
         return radius;

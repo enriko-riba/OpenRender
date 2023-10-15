@@ -18,7 +18,11 @@ public sealed class SkyBox : SceneNode
         ArgumentNullException.ThrowIfNull(texturePaths);
         if (texturePaths.Length != 6) throw new ArgumentException("SkyBox needs 6 images", nameof(texturePaths));
 
-        var vao = GeometryHelper.CreateCube(false);
+        var cube = GeometryHelper.CreateCube();
+        var vao = new VertexArrayObject();
+        vao.AddVertexBuffer(new VertexBuffer(cube.vertices));
+        vao.AddIndexBuffer(new IndexBuffer(cube.indices));
+
         var desc = new TextureDescriptor(texturePaths,
             TextureType: TextureType.CubeMap,
             TextureTarget: TextureTarget.TextureCubeMap,

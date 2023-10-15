@@ -7,14 +7,16 @@ namespace OpenRender.Core.Geometry;
 public class SphereMeshRenderer
 {
     public static readonly SphereMeshRenderer DefaultSphereMeshRenderer = new();
-    //private readonly IVertexBuffer vb;
     private readonly Shader shader;
     private readonly VertexArrayObject vao;
 
     public SphereMeshRenderer()
     {
         ScaleMatrix = Matrix4.CreateScale(1.15f);
-        vao = GeometryHelper.CreateSphere(12, 18);
+        var data = GeometryHelper.CreateSphereData(12, 18);
+        vao = new VertexArrayObject();
+        vao.AddBuffer(new VertexBuffer(data.vertices));
+        vao.AddIndexBuffer(new IndexBuffer(data.indices));
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }
 

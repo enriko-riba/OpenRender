@@ -20,17 +20,24 @@ internal class BatchingScene : Scene
     private AnimatedSprite? animatedSprite;
     private bool isMouseMoving;
     private TextRenderer tr = default!;
-
+    private (Vertex[] vertices, uint[] indices) boxData;
+    private (Vertex[] vertices, uint[] indices) sphereData;
+    
+    public BatchingScene()
+    {
+        boxData = GeometryHelper.CreateBox();
+        sphereData = GeometryHelper.CreateSphereData(24, 48);
+    }
 
     public override void Load()
     {
         base.Load();
         GL.ClearColor(Color4.DarkSlateBlue);
 
-        //AddRotatingBoxes();
+        AddRotatingBoxes();
         AddRandomNodes();
         AddMetallicBoxes();
-        //AddSprites();
+        AddSprites();
 
         var paths = new string[] {
             "Resources/xpos.png",
@@ -190,9 +197,7 @@ internal class BatchingScene : Scene
 
     private void AddRotatingBoxes()
     {
-        var vaoBox = GeometryHelper.CreateBox(true);
-        var vaoQuad = GeometryHelper.CreateQuad(true);
-        var vaoCube = GeometryHelper.CreateCube(true);
+        var quad = GeometryHelper.CreateQuad();
 
         var mat1 = Material.Create(
             defaultShader,
@@ -213,7 +218,7 @@ internal class BatchingScene : Scene
             shininess: 0.25f
         );
 
-        var n1 = new SceneNode(new Mesh(vaoBox), mat1, new Vector3(3, 0, -3))
+        var n1 = new SceneNode(new Mesh(boxData.vertices, boxData.indices), mat1, new Vector3(3, 0, -3))
         {
             Update = (n, e) =>
             {
@@ -225,7 +230,7 @@ internal class BatchingScene : Scene
         };
         AddNode(n1);
 
-        var n2 = new SceneNode(new Mesh(vaoCube), mat2, new Vector3(1.75f, 0.2f, 0))
+        var n2 = new SceneNode(new Mesh(boxData.vertices, boxData.indices), mat2, new Vector3(1.75f, 0.2f, 0))
         {
             Update = (n, e) =>
             {
@@ -237,7 +242,7 @@ internal class BatchingScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(vaoQuad), mat1, new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(quad.vertices, quad.indices), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {
@@ -252,8 +257,8 @@ internal class BatchingScene : Scene
     private void AddRandomNodes()
     {
         const int NodeCount = 5000;
-        var vaoBox = GeometryHelper.CreateBox(true);    //  todo: don't use VAO's we just need a declaration, and attribute data
-        var vaoSphere = GeometryHelper.CreateSphere(12, 18);
+        var boxData = GeometryHelper.CreateBox();    //  todo: don't use VAO's we just need a declaration, and attribute data
+        var sphereData = GeometryHelper.CreateSphereData(12, 18);
         var materials = new Material[]
         {
             Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
@@ -266,7 +271,7 @@ internal class BatchingScene : Scene
             Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
 
-        var batchedNode = new BatchedNode(vaoSphere.VertexBuffer!.VertexDeclaration!, materials[0]);
+        var batchedNode = new BatchedNode(VertexDeclarations.VertexPositionNormalTexture, materials[0]);
 
         for (var i = 0; i < NodeCount; i++)
         {
@@ -283,22 +288,22 @@ internal class BatchingScene : Scene
             switch (mod)
             {
                 case 0:
-                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
                     break;
                 case 1:
-                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
                     break;
                 case 2:
-                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
                     break;
                 case 3:
-                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
                     break;
                 case 4:
-                    batchedNode.AddVertices(vaoBox.VertexBuffer!.Data, vaoBox.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
                     break;
                 case 5:
-                    batchedNode.AddVertices(vaoSphere.VertexBuffer!.Data, vaoSphere.IndexBuffer!.Data, position, scale, rotation);
+                    batchedNode.AddVertices(sphereData.vertices, sphereData.indices, position, scale, rotation);
                     break;
                 default:
                     // cube = new RandomNode(new Mesh(vaoBox), materials[i % 7]);
@@ -313,7 +318,6 @@ internal class BatchingScene : Scene
 
     private void AddMetallicBoxes()
     {
-        var vbBox = GeometryHelper.CreateBox(true);
         var mat = Material.Create(defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             0.70f);
@@ -321,9 +325,9 @@ internal class BatchingScene : Scene
 
         for (var i = 0; i < 50; i++)
         {
-            var cube = new SceneNode(new Mesh(vbBox), mat);
-            cube.SetPosition(new(-250 + i * 10, 0, -10));
-            AddNode(cube);
+            var box = new SceneNode(new Mesh(boxData.vertices, boxData.indices), mat);
+            box.SetPosition(new(-250 + i * 10, 0, -10));
+            AddNode(box);
         }
     }
 

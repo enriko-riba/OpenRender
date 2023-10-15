@@ -5,6 +5,7 @@ using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
+using System.Runtime.CompilerServices;
 
 namespace OpenRender.SceneManagement;
 
@@ -66,11 +67,9 @@ public class SceneNode
     {
         this.mesh = mesh;
         var vb = mesh.Vao?.VertexBuffer;
-        if (vb != null && vb.VertexDeclaration != null && vb.VertexDeclaration.Attributes.Any(a => a.Location == (uint)VertexAttribLocation.Position))
-        {
-            var attribute = vb.VertexDeclaration.Attributes.First(a => a.Location == (uint)VertexAttribLocation.Position);
-            var strideInFloats = vb.VertexDeclaration.Stride / sizeof(float);
-            var bs = CullingHelper.CalculateBoundingSphere(vb.Data, (int)attribute.Offset, strideInFloats);
+        if (vb != null)
+        {           
+            var bs = CullingHelper.CalculateBoundingSphere(vb.Data);
             this.mesh.BoundingSphere = bs with
             {
                 Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(transform.Scale.X, transform.Scale.Y), transform.Scale.Z),

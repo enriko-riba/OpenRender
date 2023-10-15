@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core.Rendering;
+using System.Runtime.CompilerServices;
 
 namespace OpenRender.Core.Geometry;
 
@@ -34,32 +35,18 @@ public static class GeometryHelper
     /// <summary>
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
     /// </summary>
-    /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexArrayObject CreateQuad(bool createNormals)
+    public static (Vertex[] vertices, uint[] indices) CreateQuad()
     {
-        VertexDeclaration vxDeclaration;
-        float[] vertices;
-        if (createNormals)
-        {
-            vertices = CreateQuadWithNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
-        }
-        else
-        {
-            vertices = CreateQuadWithoutNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionTexture;
-        }
-
+        Vertex[] vertices = CreateQuadWithNormals();
+       
         uint[] indices =
         {
             0, 1, 3,
             0, 3, 2
         };
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
-        vao.AddIndexBuffer(new IndexBuffer(indices));
-        return vao;
+        
+        return (vertices, indices);
     }
 
     /// <summary>
@@ -72,21 +59,9 @@ public static class GeometryHelper
     /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexArrayObject CreateCube(bool createNormals)
+    public static (Vertex[] vertices, uint[] indices) CreateCube()
     {
-        VertexDeclaration vxDeclaration;
-        float[] vertices;
-        if (createNormals)
-        {
-            vertices = CreateCubeWithNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
-        }
-        else
-        {
-            vertices = CreateCubeWithoutNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionTexture;
-        }
-
+        var vertices = CreateCubeWithNormals();
         uint[] indices =
         {
             // front quad
@@ -113,10 +88,8 @@ public static class GeometryHelper
             11, 0, 10,
             11, 2, 0
         };
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
-        vao.AddIndexBuffer(new IndexBuffer(indices));
-        return vao;
+        
+        return (vertices, indices);
     }
 
     /// <summary>
@@ -125,21 +98,9 @@ public static class GeometryHelper
     /// </summary>
     /// <param name="createNormals"></param>
     /// <returns></returns>
-    public static VertexArrayObject CreateBox(bool createNormals)
+    public static (Vertex[] vertices, uint[] indices) CreateBox()
     {
-        VertexDeclaration vxDeclaration;
-        float[] vertices;
-        if (createNormals)
-        {
-            vertices = CreateBoxVerticesWithNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionNormalTexture;
-        }
-        else
-        {
-            vertices = CreateBoxVerticesWithoutNormals();
-            vxDeclaration = VertexDeclarations.VertexPositionTexture;
-        }
-
+        var vertices = CreateBoxVerticesWithNormals();
         uint[] indices =
         {
             // front quad
@@ -166,15 +127,12 @@ public static class GeometryHelper
             22, 21, 20,
             22, 23, 21
         };
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
-        vao.AddIndexBuffer(new IndexBuffer(indices));
-        return vao;
+        return (vertices, indices);
     }
 
-    public static VertexArrayObject CreateSphere(int stacks, int slices)
+    public static (Vertex[] vertices, uint[] indices) CreateSphereData(int stacks, int slices)
     {
-        var vertices = new List<float>();
+        var vertices = new List<Vertex>();
         var indices = new List<uint>();
 
         for (var stack = 0; stack <= stacks; stack++)
@@ -200,7 +158,7 @@ public static class GeometryHelper
                 var s = 1 - (float)slice / slices;
                 var t = 1 - (float)stack / stacks;
 
-                vertices.AddRange(new float[] { x, y, z, nx, ny, nz, s, t });
+                vertices.Add(new Vertex(x, y, z, nx, ny, nz, s, t));
             }
         }
 
@@ -226,151 +184,148 @@ public static class GeometryHelper
                 }
             }
         }
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(new Buffer<float>(vertices.ToArray(), VertexDeclarations.VertexPositionNormalTexture));
-        vao.AddIndexBuffer(new IndexBuffer(indices.ToArray()));
-        return vao;
+        return (vertices.ToArray(), indices.ToArray());
     }
 
-    public static float[] CreateBoxVerticesWithNormals()
+    private static Vertex[] CreateBoxVerticesWithNormals()
     {
-        float[] vertices =
+        Vertex[] vertices =
         {
             // Position           Normal        Texture
             //  FRONT SIDE (z = +)
-            -HALF, -HALF,  HALF,   0,  0,  1,   0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,   0,  0,  1,   0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   0,  0,  1,   1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   0,  0,  1,   1, 0,   // upper right - 3
+            new Vertex(-HALF, -HALF,  HALF,   0,  0,  1,   0, 1),   // lower left - 0
+            new Vertex(-HALF,  HALF,  HALF,   0,  0,  1,   0, 0),   // upper left - 1
+            new Vertex( HALF, -HALF,  HALF,   0,  0,  1,   1, 1),   // lower right - 2
+            new Vertex( HALF,  HALF,  HALF,   0,  0,  1,   1, 0),   // upper right - 3
                                            
             //  BACK SIDE (z = -)
-            -HALF, -HALF, -HALF,   0,  0, -1,   0, 1,   // lower left - 4
-            -HALF,  HALF, -HALF,   0,  0, -1,   0, 0,   // upper left - 5
-             HALF, -HALF, -HALF,   0,  0, -1,   1, 1,   // lower right - 6
-             HALF,  HALF, -HALF,   0,  0, -1,   1, 0,   // upper right - 7
-
+            new Vertex(-HALF, -HALF, -HALF,   0,  0, -1,   0, 1),   // lower left - 4
+            new Vertex(-HALF,  HALF, -HALF,   0,  0, -1,   0, 0),   // upper left - 5
+            new Vertex( HALF, -HALF, -HALF,   0,  0, -1,   1, 1),   // lower right - 6
+            new Vertex( HALF,  HALF, -HALF,   0,  0, -1,   1, 0),   // upper right - 7
+                                                               
             //  LEFT SIDE (X = -)
-            -HALF, -HALF, -HALF,  -1,  0,  0,   0, 1,   // lower left  - 8
-            -HALF,  HALF, -HALF,  -1,  0,  0,   0, 0,   // upper left - 9
-            -HALF, -HALF,  HALF,  -1,  0,  0,   1, 1,   // lower right - 10
-            -HALF,  HALF,  HALF,  -1,  0,  0,   1, 0,   // upper right - 11
+            new Vertex(-HALF, -HALF, -HALF,  -1,  0,  0,   0, 1),   // lower left  - 8
+            new Vertex(-HALF,  HALF, -HALF,  -1,  0,  0,   0, 0),   // upper left - 9
+            new Vertex(-HALF, -HALF,  HALF,  -1,  0,  0,   1, 1),   // lower right - 10
+            new Vertex(-HALF,  HALF,  HALF,  -1,  0,  0,   1, 0),   // upper right - 11
 
             //  RIGHT SIDE (X = +)
-             HALF, -HALF,  HALF,   1,  0,  0,   0, 1,   // lower left  - 12
-             HALF,  HALF,  HALF,   1,  0,  0,   0, 0,   // upper left - 13
-             HALF, -HALF, -HALF,   1,  0,  0,   1, 1,   // lower right - 14
-             HALF,  HALF, -HALF,   1,  0,  0,   1, 0,   // upper right - 15            
+            new Vertex(HALF, -HALF,  HALF,   1,  0,  0,   0, 1),   // lower left  - 12
+            new Vertex(HALF,  HALF,  HALF,   1,  0,  0,   0, 0),   // upper left - 13
+            new Vertex(HALF, -HALF, -HALF,   1,  0,  0,   1, 1),   // lower right - 14
+            new Vertex(HALF,  HALF, -HALF,   1,  0,  0,   1, 0),   // upper right - 15            
             
             //  UPPER SIDE (Y = +)
-            -HALF,  HALF,  HALF,   0,  1,  0,   0, 1,   // lower left - 16
-            -HALF,  HALF, -HALF,   0,  1,  0,   0, 0,   // upper left - 17
-             HALF,  HALF,  HALF,   0,  1,  0,   1, 1,   // lower right - 18
-             HALF,  HALF, -HALF,   0,  1,  0,   1, 0,   // upper right - 19
+            new Vertex(-HALF,  HALF,  HALF,   0,  1,  0,   0, 1),   // lower left - 16
+            new Vertex(-HALF,  HALF, -HALF,   0,  1,  0,   0, 0),   // upper left - 17
+            new Vertex( HALF,  HALF,  HALF,   0,  1,  0,   1, 1),   // lower right - 18
+            new Vertex( HALF,  HALF, -HALF,   0,  1,  0,   1, 0),   // upper right - 19
 
             //  lower SIDE (Y = -)
-            -HALF, -HALF, -HALF,   0, -1,  0,   0, 1,   // lower left - 20
-            -HALF, -HALF,  HALF,   0, -1,  0,   0, 0,   // upper left - 21
-             HALF, -HALF, -HALF,   0, -1,  0,   1, 1,   // lower right - 22
-             HALF, -HALF,  HALF,   0, -1,  0,   1, 0,   // upper right - 23             
+            new Vertex(-HALF, -HALF, -HALF,   0, -1,  0,   0, 1),   // lower left - 20
+            new Vertex(-HALF, -HALF,  HALF,   0, -1,  0,   0, 0),   // upper left - 21
+            new Vertex( HALF, -HALF, -HALF,   0, -1,  0,   1, 1),   // lower right - 22
+            new Vertex( HALF, -HALF,  HALF,   0, -1,  0,   1, 0),   // upper right - 23             
         };
         return vertices;
     }
 
-    public static float[] CreateBoxVerticesWithoutNormals()
-    {
-        float[] vertices =
-        {
-            // Position            Texture
-            //  FRONT SIDE (z = +)
-            -HALF, -HALF,  HALF,   0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   1, 0,   // upper right - 3
+    //public static float[] CreateBoxVerticesWithoutNormals()
+    //{
+    //    float[] vertices =
+    //    {
+    //        // Position            Texture
+    //        //  FRONT SIDE (z = +)
+    //        -HALF, -HALF,  HALF,   0, 1,   // lower left - 0
+    //        -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
+    //         HALF, -HALF,  HALF,   1, 1,   // lower right - 2
+    //         HALF,  HALF,  HALF,   1, 0,   // upper right - 3
                                   
-            //  BACK SIDE (z = -)
-            -HALF, -HALF, -HALF,   1, 1,   // lower left - 4
-            -HALF,  HALF, -HALF,   1, 0,   // upper left - 5
-             HALF, -HALF, -HALF,   0, 1,   // lower right - 6
-             HALF,  HALF, -HALF,   0, 0,   // upper right - 7
+    //        //  BACK SIDE (z = -)
+    //        -HALF, -HALF, -HALF,   1, 1,   // lower left - 4
+    //        -HALF,  HALF, -HALF,   1, 0,   // upper left - 5
+    //         HALF, -HALF, -HALF,   0, 1,   // lower right - 6
+    //         HALF,  HALF, -HALF,   0, 0,   // upper right - 7
 
-            //  LEFT SIDE (X = -)
-            -HALF, -HALF, -HALF,   0, 1,   // lower left  - 8
-            -HALF,  HALF, -HALF,   0, 0,   // upper left - 9
-            -HALF, -HALF,  HALF,   1, 1,   // lower right - 10
-            -HALF,  HALF,  HALF,   1, 0,   // upper right - 11
+    //        //  LEFT SIDE (X = -)
+    //        -HALF, -HALF, -HALF,   0, 1,   // lower left  - 8
+    //        -HALF,  HALF, -HALF,   0, 0,   // upper left - 9
+    //        -HALF, -HALF,  HALF,   1, 1,   // lower right - 10
+    //        -HALF,  HALF,  HALF,   1, 0,   // upper right - 11
 
-            //  RIGHT SIDE (X = +)
-             HALF, -HALF, -HALF,   0, 1,   // lower left  - 12
-             HALF,  HALF, -HALF,   0, 0,   // upper left - 13
-             HALF, -HALF,  HALF,   1, 1,   // lower right - 14
-             HALF,  HALF,  HALF,   1, 0,   // upper right - 15
+    //        //  RIGHT SIDE (X = +)
+    //         HALF, -HALF, -HALF,   0, 1,   // lower left  - 12
+    //         HALF,  HALF, -HALF,   0, 0,   // upper left - 13
+    //         HALF, -HALF,  HALF,   1, 1,   // lower right - 14
+    //         HALF,  HALF,  HALF,   1, 0,   // upper right - 15
 
-            //  UPPER SIDE (Y = +)
-            -HALF,  HALF, -HALF,   0, 1,   // lower left  - 16
-            -HALF,  HALF,  HALF,   0, 0,   // upper left - 17
-             HALF,  HALF, -HALF,   1, 1,   // lower right - 18
-             HALF,  HALF,  HALF,   1, 0,   // upper right - 19
+    //        //  UPPER SIDE (Y = +)
+    //        -HALF,  HALF, -HALF,   0, 1,   // lower left  - 16
+    //        -HALF,  HALF,  HALF,   0, 0,   // upper left - 17
+    //         HALF,  HALF, -HALF,   1, 1,   // lower right - 18
+    //         HALF,  HALF,  HALF,   1, 0,   // upper right - 19
 
-            //  lower SIDE (Y = -)
-             HALF, -HALF,  HALF,   0, 1,   // lower left  - 16
-             HALF, -HALF, -HALF,   0, 0,   // upper left - 17
-            -HALF, -HALF,  HALF,   1, 1,   // lower right - 18
-            -HALF, -HALF, -HALF,   1, 0,   // upper right - 19
-        };
-        return vertices;
-    }
+    //        //  lower SIDE (Y = -)
+    //         HALF, -HALF,  HALF,   0, 1,   // lower left  - 16
+    //         HALF, -HALF, -HALF,   0, 0,   // upper left - 17
+    //        -HALF, -HALF,  HALF,   1, 1,   // lower right - 18
+    //        -HALF, -HALF, -HALF,   1, 0,   // upper right - 19
+    //    };
+    //    return vertices;
+    //}
 
-    private static float[] CreateCubeWithNormals()
+    private static Vertex[] CreateCubeWithNormals()
     {
-        float[] vertices =
+        Vertex[] vertices =
         {
             // Position           Normal        Texture
 
             //  FRONT SIDE VERTICES
-            -HALF, -HALF,  HALF,  -1, -1, 1,    0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,  -1,  1, 1,    0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   1, -1, 1,    1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   1,  1, 1,    1, 0,   // upper right - 3
+            new Vertex(-HALF, -HALF,  HALF,  -1, -1, 1,    0, 1),   // lower left - 0
+            new Vertex(-HALF,  HALF,  HALF,  -1,  1, 1,    0, 0),   // upper left - 1
+            new Vertex( HALF, -HALF,  HALF,   1, -1, 1,    1, 1),   // lower right - 2
+            new Vertex( HALF,  HALF,  HALF,   1,  1, 1,    1, 0),   // upper right - 3
             
             //  BACK SIDE VERTICES
-            -HALF, -HALF, -HALF,  -1, -1, -1,   1, 1,   // lower left
-            -HALF,  HALF, -HALF,  -1,  1, -1,   1, 0,   // upper left
-             HALF, -HALF, -HALF,   1, -1, -1,   0, 1,   // lower right
-             HALF,  HALF, -HALF,   1,  1, -1,   0, 0,   // upper right
-
-            -HALF,  HALF, -HALF,  -1,  1, -1,   0, 1,   // upper left 2nd
-             HALF,  HALF, -HALF,   1,  1, -1,   1, 1,   // upper right 2nd
-            -HALF, -HALF, -HALF,  -1, -1, -1,   0, 0,   // lower left 2nd
-             HALF, -HALF, -HALF,   1, -1, -1,   1, 0,   // lower right 2nd            
+            new Vertex(-HALF, -HALF, -HALF,  -1, -1, -1,   1, 1),   // lower left
+            new Vertex(-HALF,  HALF, -HALF,  -1,  1, -1,   1, 0),   // upper left
+            new Vertex( HALF, -HALF, -HALF,   1, -1, -1,   0, 1),   // lower right
+            new Vertex( HALF,  HALF, -HALF,   1,  1, -1,   0, 0),   // upper right
+                                                             
+            new Vertex(-HALF,  HALF, -HALF,  -1,  1, -1,   0, 1),   // upper left 2nd
+            new Vertex( HALF,  HALF, -HALF,   1,  1, -1,   1, 1),   // upper right 2nd
+            new Vertex(-HALF, -HALF, -HALF,  -1, -1, -1,   0, 0),   // lower left 2nd
+            new Vertex( HALF, -HALF, -HALF,   1, -1, -1,   1, 0),   // lower right 2nd            
         };
         return vertices;
     }
 
-    private static float[] CreateCubeWithoutNormals()
-    {
-        float[] vertices =
-        {
-            // Position           Texture
+    //private static float[] CreateCubeWithoutNormals()
+    //{
+    //    float[] vertices =
+    //    {
+    //        // Position           Texture
 
-            //  FRONT SIDE VERTICES
-            -HALF, -HALF,  HALF,   0, 1,   // lower left - 0
-            -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
-             HALF, -HALF,  HALF,   1, 1,   // lower right - 2
-             HALF,  HALF,  HALF,   1, 0,   // upper right - 3
+    //        //  FRONT SIDE VERTICES
+    //        -HALF, -HALF,  HALF,   0, 1,   // lower left - 0
+    //        -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
+    //         HALF, -HALF,  HALF,   1, 1,   // lower right - 2
+    //         HALF,  HALF,  HALF,   1, 0,   // upper right - 3
             
-            //  BACK SIDE VERTICES
-            -HALF, -HALF, -HALF,   1, 1,   // lower left
-            -HALF,  HALF, -HALF,   1, 0,   // upper left
-             HALF, -HALF, -HALF,   0, 1,   // lower right
-             HALF,  HALF, -HALF,   0, 0,   // upper right
+    //        //  BACK SIDE VERTICES
+    //        -HALF, -HALF, -HALF,   1, 1,   // lower left
+    //        -HALF,  HALF, -HALF,   1, 0,   // upper left
+    //         HALF, -HALF, -HALF,   0, 1,   // lower right
+    //         HALF,  HALF, -HALF,   0, 0,   // upper right
 
-            -HALF,  HALF, -HALF,   0, 1,   // upper left 2nd
-             HALF,  HALF, -HALF,   1, 1,   // upper right 2nd
-            -HALF, -HALF, -HALF,   0, 0,   // lower left 2nd
-             HALF, -HALF, -HALF,   1, 0,   // lower right 2nd  
-        };
-        return vertices;
-    }
+    //        -HALF,  HALF, -HALF,   0, 1,   // upper left 2nd
+    //         HALF,  HALF, -HALF,   1, 1,   // upper right 2nd
+    //        -HALF, -HALF, -HALF,   0, 0,   // lower left 2nd
+    //         HALF, -HALF, -HALF,   1, 0,   // lower right 2nd  
+    //    };
+    //    return vertices;
+    //}
 
     private static float[] CreateQuadWithoutNormals()
     {
@@ -399,15 +354,15 @@ public static class GeometryHelper
         return vertices;
     }
 
-    private static float[] CreateQuadWithNormals()
+    private static Vertex[] CreateQuadWithNormals()
     {
         //  create the 4 vertices with: 3 floats for position + 3 floats for normal + 2 floats for uv 
-        var vertices = new float[]
+        var vertices = new Vertex[]
         {
-            -HALF, -HALF, 0,    -HALF, -HALF, 1,     0, 1,   // lower left corner
-            -HALF,  HALF, 0,    -HALF, -HALF, 1,     0, 0,   // upper left corner
-             HALF, -HALF, 0,     HALF, -HALF, 1,     1, 1,   // lower right corner
-             HALF,  HALF, 0,     HALF,  HALF, 1,     1, 0,   // upper right corner
+            new Vertex(-HALF, -HALF, 0,    -HALF, -HALF, 1,     0, 1),   // lower left corner
+            new Vertex(-HALF,  HALF, 0,    -HALF, -HALF, 1,     0, 0),   // upper left corner
+            new Vertex( HALF, -HALF, 0,     HALF, -HALF, 1,     1, 1),   // lower right corner
+            new Vertex( HALF,  HALF, 0,     HALF,  HALF, 1,     1, 0),   // upper right corner
         };
         return vertices;
     }

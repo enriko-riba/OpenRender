@@ -40,9 +40,13 @@ public class VertexArrayObject
         lastBindingPoint++;
         
         //  this is a hack to get the vertex buffer with positions for the mesh
-        if (typeof(T) == typeof(float) && VertexBuffer is null) VertexBuffer = buffer as Buffer<float>;
+        if (buffer is VertexBuffer && VertexBuffer is null) VertexBuffer = buffer as VertexBuffer;
     }
 
+    public void AddVertexBuffer(VertexBuffer buffer)
+    {
+        AddBuffer(buffer, 0);
+    }
     public void AddIndexBuffer(IndexBuffer buffer, string? name = "IBO")
     {
         GL.VertexArrayElementBuffer(vao, buffer.Vbo);
@@ -56,7 +60,7 @@ public class VertexArrayObject
 
     public int DataLength => dataLength;
 
-    public Buffer<float>? VertexBuffer { get; set; }
+    public VertexBuffer? VertexBuffer { get; set; }
 
     public Buffer<uint>? IndexBuffer { get; set; }
 

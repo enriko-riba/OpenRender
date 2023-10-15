@@ -15,7 +15,7 @@ namespace OpenRender.Components;
 /// </summary>
 public class BatchedNode : SceneNode
 {
-    private readonly List<float> vertices = new();
+    private readonly List<Vertex> vertices = new();
     private readonly List<uint> indices = new();
     private readonly List<Transform> transforms = new();
 
@@ -40,19 +40,19 @@ public class BatchedNode : SceneNode
         GL.GenBuffers(1, out modelMatrixBuffer);
     }
 
-    public void AddVertices(float[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3? scale, in Vector3? eulerRot)
+    public void AddVertices(Vertex[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3? scale, in Vector3? eulerRot)
         => AddVertices(nodeVertices, nodeIndices, position, scale ?? Vector3.One, eulerRot ?? Vector3.Zero);
 
-    public void AddVertices(float[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3 scale, in Vector3 eulerRot)
+    public void AddVertices(Vertex[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3 scale, in Vector3 eulerRot)
     {
         //  calc only vertex elements and ignore other floats
-        var elements = vertices.Count / vertexDeclaration.StrideInFloats;
+        //var elements = vertices.Count / vertexDeclaration.StrideInFloats;
         commands.Add(new DrawElementsIndirectCommand
         {
             Count = nodeIndices.Length,
             InstanceCount = 1,
             FirstIndex = indices.Count,
-            BaseVertex = elements,
+            BaseVertex = vertices.Count,
             BaseInstance = 0
         });
 
@@ -71,7 +71,7 @@ public class BatchedNode : SceneNode
         count++;
     }
 
-    public void AddVertices(float[] nodeVertices)
+    public void AddVertices(Vertex[] nodeVertices)
     {
         vertices.AddRange(nodeVertices);
     }
@@ -79,7 +79,7 @@ public class BatchedNode : SceneNode
     public void BuildMesh()
     {
         var mesh = new Mesh(vao);
-        vao.AddBuffer(new Buffer<float>(vertices.ToArray(), vertexDeclaration), name: "VBO elements");
+        vao.AddVertexBuffer(new VertexBuffer(vertices.ToArray()));
         vao.AddIndexBuffer(new IndexBuffer(indices.ToArray()));
 
         SetMesh(mesh);

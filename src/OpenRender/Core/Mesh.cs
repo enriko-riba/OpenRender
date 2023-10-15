@@ -8,7 +8,15 @@ namespace OpenRender.Core;
 /// </summary>
 public struct Mesh
 {
+    public Mesh(Vertex[] vertices, uint[] indices) 
+    { 
+        Vao = new VertexArrayObject();
+        Vao.AddVertexBuffer(new VertexBuffer(vertices));
+        Vao.AddIndexBuffer(new IndexBuffer(indices));
+    }
+
     public Mesh(VertexArrayObject vao) : this(vao, BoundingSphere.Default) { }
+
     public Mesh(VertexArrayObject vao, BoundingSphere boundingSphere)
     {
         Vao = vao;

@@ -44,7 +44,7 @@ internal class TriangleScene : Scene
 
         //  create a vertex buffer from the vertices an tell OpenGL to use it       
         vao = new VertexArrayObject();
-        vao.AddBuffer(VertexDeclarations.VertexPosition, vertices, name: "VBO Triangle");
+        vao.AddBuffer(VertexDeclarations.VertexPosition, vertices, name: "VBO Position");
         vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Color, 3, VertexAttribType.Float)), colors, name: "VBO Color");
         vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Normal, 3, VertexAttribType.Float)), normals, name: "VBO Normal");
         GL.BindVertexArray(vao);

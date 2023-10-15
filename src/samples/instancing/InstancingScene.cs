@@ -52,7 +52,8 @@ internal class InstancingScene : Scene
             shininess: 0,
             detailTextureFactor: 0
         );
-        var mesh = new Mesh(GeometryHelper.CreateCube(true));
+        var (vertices, indices) = GeometryHelper.CreateCube();
+        var mesh = new Mesh(vertices, indices);
         var visualAnchor = new SceneNode(mesh, mat1, new Vector3(0, 2, -5));
         AddNode(visualAnchor);
 
@@ -212,14 +213,14 @@ internal class InstancingScene : Scene
     private void AddInstancedNodes()
     {
         //  add instanced cubes
-        var vbBox = GeometryHelper.CreateCube(true);
+        var (vertices, indices) = GeometryHelper.CreateBox();
         var mat = Material.Create(
             defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
             shininess: 0.45f);
-        instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vbBox), mat);
+        instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vertices, indices), mat);
         AddNode(instanced);
 
         for (var i = 0; i < NUM_INSTANCES; i++)
