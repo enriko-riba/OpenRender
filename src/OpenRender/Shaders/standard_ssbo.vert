@@ -1,7 +1,5 @@
 #version 460
 
-uniform mat4 model;
-
 layout (std140, binding = 0) uniform camera {    
     mat4 view;
     mat4 projection;
@@ -30,6 +28,12 @@ layout(std140, binding = 2) uniform material {
     Material mat;
 };
 
+layout(std140, binding = 0) readonly buffer ssbo_transform
+{
+    mat4 Data[];
+
+} models;
+
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
 uniform float uDetailTextureFactor;     //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
 
@@ -45,7 +49,8 @@ out vec2 texCoord;
 out vec3 texCoordCube;
 
 void main(void)
-{    
+{
+    mat4 model = models.Data[gl_DrawID];
     vertexColor = aColor;
     vertexNormal = normalize(model * vec4(aNormal, 0)).xyz;
     fragPos = (model * vec4(aPosition, 1.0)).xyz;

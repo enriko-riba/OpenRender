@@ -31,6 +31,8 @@ public class BatchedNode : SceneNode
     public BatchedNode(VertexDeclaration vertexDeclaration, Material material)
     {
         this.vertexDeclaration = vertexDeclaration;
+        var shader = new Shader("Shaders/standard_ssbo.vert", "Shaders/standard.frag");
+        material.Shader = shader;
         Material = material;
         DisableCulling = true;
         vao = new VertexArrayObject();
