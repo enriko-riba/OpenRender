@@ -5,7 +5,6 @@ using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
-using System.Runtime.CompilerServices;
 
 namespace OpenRender.SceneManagement;
 
@@ -15,7 +14,7 @@ public class SceneNode
     private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
-        
+
     protected Transform transform = new();
 
     public SceneNode()
@@ -26,16 +25,14 @@ public class SceneNode
         RenderGroup = RenderGroup.Default;
     }
 
-    public SceneNode(Mesh mesh, Material? material = default, Vector3 position = default) : this()
+    public SceneNode(Mesh mesh, Material? material = default, Vector3? position = default) : this()
     {
         Material = material ?? new();
-        //SetScale(Vector3.One);
-        SetPosition(position);
-        //SetRotation(Vector3.Zero);
         SetMesh(mesh);
+        if (position != null) SetPosition(position.Value);
     }
 
-    public ref BoundingSphere BoundingSphere => ref mesh.BoundingSphere;
+    public BoundingSphere BoundingSphere => mesh.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
 
@@ -45,7 +42,7 @@ public class SceneNode
 
     public Material Material { get; set; } = default!;
 
-    public bool IsVisible 
+    public bool IsVisible
     {
         get => !FrameBits.HasFlag(FrameBitsFlags.NotVisible);
         set
@@ -54,6 +51,17 @@ public class SceneNode
                 FrameBits.ClearFlag(FrameBitsFlags.NotVisible);
             else
                 FrameBits.SetFlag(FrameBitsFlags.NotVisible);
+        }
+    }
+    public bool IsBatchingAllowed
+    {
+        get => FrameBits.HasFlag(FrameBitsFlags.BatchAllowed);
+        set
+        {
+            if (value)
+                FrameBits.ClearFlag(FrameBitsFlags.BatchAllowed);
+            else
+                FrameBits.SetFlag(FrameBitsFlags.BatchAllowed);
         }
     }
 
@@ -68,7 +76,7 @@ public class SceneNode
         this.mesh = mesh;
         var vb = mesh.Vao?.VertexBuffer;
         if (vb != null)
-        {           
+        {
             var bs = CullingHelper.CalculateBoundingSphere(vb.Data);
             this.mesh.BoundingSphere = bs with
             {
@@ -118,7 +126,7 @@ public class SceneNode
             GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.Vao.DataLength);
 
         if (ShowBoundingSphere)
-        {           
+        {
             sphereMeshRenderer.Shader.SetMatrix4("model", ref transform.worldMatrix);
             sphereMeshRenderer.Render();
         }

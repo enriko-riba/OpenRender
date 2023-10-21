@@ -31,7 +31,7 @@ public sealed class TextRenderer : ITextRenderer
         GL.EnableVertexArrayAttrib(vao, 3);
         GL.VertexArrayAttribFormat(vao, 3, 2, VertexAttribType.Float, false, 2 * sizeof(float));
         GL.VertexArrayAttribBinding(vao, 3, 0);
-        GL.NamedBufferData(vbo, 24 * sizeof(float), 0, BufferUsageHint.DynamicDraw);    //  this is to initialize the storage
+        GL.NamedBufferStorage(vbo, 24 * sizeof(float), 0, BufferStorageFlags.DynamicStorageBit);    //  this is to initialize the storage
         Log.CheckGlError();
 
         GL.BindVertexArray(vao);

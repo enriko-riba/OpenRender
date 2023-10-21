@@ -25,9 +25,21 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "playground", "src\samples\p
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared_resources", "shared_resources", "{3BAF8E0B-32B0-4DCA-BCC4-E8B3D14DD1BF}"
 	ProjectSection(SolutionItems) = preProject
+		src\samples\shared_resources\awesomeface-sprite.png = src\samples\shared_resources\awesomeface-sprite.png
+		src\samples\shared_resources\awesomeface.png = src\samples\shared_resources\awesomeface.png
+		src\samples\shared_resources\ball13.jpg = src\samples\shared_resources\ball13.jpg
 		src\samples\shared_resources\btnAtlas.png = src\samples\shared_resources\btnAtlas.png
 		src\samples\shared_resources\consola.ttf = src\samples\shared_resources\consola.ttf
 		src\samples\shared_resources\container-normal.png = src\samples\shared_resources\container-normal.png
+		src\samples\shared_resources\container.png = src\samples\shared_resources\container.png
+		src\samples\shared_resources\metallic.png = src\samples\shared_resources\metallic.png
+		src\samples\shared_resources\test-sprite-sheet.png = src\samples\shared_resources\test-sprite-sheet.png
+		src\samples\shared_resources\xneg.png = src\samples\shared_resources\xneg.png
+		src\samples\shared_resources\xpos.png = src\samples\shared_resources\xpos.png
+		src\samples\shared_resources\yneg.png = src\samples\shared_resources\yneg.png
+		src\samples\shared_resources\ypos.png = src\samples\shared_resources\ypos.png
+		src\samples\shared_resources\zneg.png = src\samples\shared_resources\zneg.png
+		src\samples\shared_resources\zpos.png = src\samples\shared_resources\zpos.png
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "triangle", "src\samples\triangle\triangle.csproj", "{ED793485-20AB-45AD-B220-A5DCBED9A82E}"

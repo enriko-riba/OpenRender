@@ -44,8 +44,8 @@ public class Sprite : SceneNode
             new TextureDescriptor[] {
                 new TextureDescriptor(textureName,
                     TextureType: TextureType.Diffuse,
-                    MagFilter: TextureMagFilter.Nearest,
-                    MinFilter: TextureMinFilter.LinearMipmapLinear,
+                    MagFilter: TextureMagFilter.Linear,
+                    MinFilter: TextureMinFilter.NearestMipmapLinear,
                     TextureWrapS: TextureWrapMode.ClampToBorder,
                     TextureWrapT: TextureWrapMode.ClampToBorder,
                     GenerateMipMap: true)
@@ -57,8 +57,11 @@ public class Sprite : SceneNode
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
-        var vaoQuad = GeometryHelper.Create2dQuad();
-        var mesh = new Mesh(vaoQuad);
+        var (vertices, indices) = GeometryHelper.Create2dQuad();
+        //var vao = new VertexArrayObject();
+        //vao.AddBuffer(new Buffer<Vertex2D>(vertices, VertexDeclarations.VertexPosition2DTexture));
+        //vao.AddIndexBuffer(new IndexBuffer(indices));
+        var mesh = new Mesh(VertexDeclarations.VertexPosition2DTexture, vertices, indices);
         SetMesh(mesh);
         Tint = Color4.White;
         Pivot = new Vector2(0.5f, 0.5f);
@@ -103,7 +106,7 @@ public class Sprite : SceneNode
         get => new(tint.X, tint.Y, tint.Z, 1);
         set
         {
-            tint = new(value.R, value.G, value.B);            
+            tint = new(value.R, value.G, value.B);
         }
     }
 
@@ -140,19 +143,13 @@ public class Sprite : SceneNode
     /// Sets the sprites position.
     /// </summary>
     /// <param name="position"></param>
-    public void SetPosition(in Vector2 position)
-    {
-        SetPosition(new Vector3(position.X, position.Y, 0));
-    }
+    public void SetPosition(in Vector2 position) => SetPosition(new Vector3(position.X, position.Y, 0));
 
     /// <summary>
     /// Gets the sprites position.
     /// </summary>
     /// <param name="position"></param>
-    public void GetPosition(out Vector2 position)
-    {
-        position = new Vector2(transform.Position.X, transform.Position.Y);
-    }
+    public void GetPosition(out Vector2 position) => position = new Vector2(transform.Position.X, transform.Position.Y);
 
     /// <summary>
     /// <inheritdoc/>

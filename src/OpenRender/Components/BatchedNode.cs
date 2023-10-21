@@ -4,7 +4,6 @@ using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace OpenRender.Components;
 
@@ -19,25 +18,24 @@ public class BatchedNode : SceneNode
     private readonly List<uint> indices = new();
     private readonly List<Transform> transforms = new();
 
-    private readonly uint indirectCommandsBuffer;
+    private readonly uint commandsBuffer;
     private readonly uint modelMatrixBuffer;
+    private readonly uint materialsBuffer;
+
     private readonly List<DrawElementsIndirectCommand> commands = new();
-
     private readonly VertexDeclaration vertexDeclaration;
-    private readonly VertexArrayObject vao;
-
-    private int count;
 
     public BatchedNode(VertexDeclaration vertexDeclaration, Material material)
     {
-        this.vertexDeclaration = vertexDeclaration;
         var shader = new Shader("Shaders/standard_ssbo.vert", "Shaders/standard.frag");
         material.Shader = shader;
         Material = material;
         DisableCulling = true;
-        vao = new VertexArrayObject();
-        GL.GenBuffers(1, out indirectCommandsBuffer);
+
+        GL.GenBuffers(1, out commandsBuffer);
         GL.GenBuffers(1, out modelMatrixBuffer);
+        GL.GenBuffers(1, out materialsBuffer);
+        this.vertexDeclaration = vertexDeclaration;
     }
 
     public void AddVertices(Vertex[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3? scale, in Vector3? eulerRot)
@@ -46,7 +44,6 @@ public class BatchedNode : SceneNode
     public void AddVertices(Vertex[] nodeVertices, uint[] nodeIndices, in Vector3 position, in Vector3 scale, in Vector3 eulerRot)
     {
         //  calc only vertex elements and ignore other floats
-        //var elements = vertices.Count / vertexDeclaration.StrideInFloats;
         commands.Add(new DrawElementsIndirectCommand
         {
             Count = nodeIndices.Length,
@@ -68,7 +65,6 @@ public class BatchedNode : SceneNode
 
         vertices.AddRange(nodeVertices);
         indices.AddRange(nodeIndices);
-        count++;
     }
 
     public void AddVertices(Vertex[] nodeVertices)
@@ -78,16 +74,14 @@ public class BatchedNode : SceneNode
 
     public void BuildMesh()
     {
-        var mesh = new Mesh(vao);
-        vao.AddVertexBuffer(new VertexBuffer(vertices.ToArray()));
-        vao.AddIndexBuffer(new IndexBuffer(indices.ToArray()));
+        var mesh = new Mesh(vertexDeclaration, vertices.ToArray(), indices.ToArray());
 
         SetMesh(mesh);
         vertices.Clear();
         indices.Clear();
 
         //  upload draw commands
-        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, indirectCommandsBuffer);
+        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, commandsBuffer);
         GL.BufferStorage(BufferTarget.DrawIndirectBuffer, commands.Count * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands.ToArray(), BufferStorageFlags.MapWriteBit);
 
         //  upload matrices params
@@ -99,29 +93,14 @@ public class BatchedNode : SceneNode
 
     public unsafe override void OnDraw(Scene scene, double elapsed)
     {
-        GL.BindVertexArray(vao);
+        GL.BindVertexArray(Mesh.Vao);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, modelMatrixBuffer);
-        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, indirectCommandsBuffer);
-        GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, count, 0);
+        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, commandsBuffer);
+        GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, commands.Count, 0);
     }
 
     override protected void UpdateMatrix()
     {
         transform.worldMatrix = Matrix4.Identity;
-    }
-
-    [StructLayout(LayoutKind.Explicit, Pack = 1)]
-    public struct DrawElementsIndirectCommand
-    {
-        [FieldOffset(0)]
-        public int Count;
-        [FieldOffset(4)]
-        public int InstanceCount;
-        [FieldOffset(8)]
-        public int FirstIndex;
-        [FieldOffset(12)]
-        public int BaseVertex;
-        [FieldOffset(16)]
-        public int BaseInstance;
     }
 }

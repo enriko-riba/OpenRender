@@ -59,7 +59,7 @@ public class Scene
 
     public SceneManager SceneManager => scm;
 
-    public int VisibleNodes => nodes.Count(n => n.FrameBits.Value == 0);
+    public int VisibleNodes => nodes.Count(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0);
 
     public ICamera? Camera => camera;
 
@@ -223,7 +223,7 @@ public class Scene
     {
         foreach (var node in list)
         {
-            if (node.FrameBits.Value == 0)
+            if ((node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0)
             {
                 RenderNode(node, elapsedSeconds);
             }
@@ -351,13 +351,13 @@ public class Scene
         if (hasCameraChanged || hasNodeListChanged)
         {
             var distanceSortedLayer = renderLayers[RenderGroup.DistanceSorted];
-            if (distanceSortedLayer.Any(n => n.FrameBits.Value == 0))
+            if (distanceSortedLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
             {
                 distanceSortedLayer.Sort(new DistanceComparer(camera!.Position));
             }
 
             var defaultLayer = renderLayers[RenderGroup.Default];
-            if (defaultLayer.Any(n => n.FrameBits.Value == 0))
+            if (defaultLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
             {
                 defaultLayer.Sort((a, b) => a.Material.Shader.Handle - b.Material.Shader.Handle);
             }

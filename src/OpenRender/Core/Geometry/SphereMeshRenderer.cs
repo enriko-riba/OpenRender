@@ -13,10 +13,10 @@ public class SphereMeshRenderer
     public SphereMeshRenderer()
     {
         ScaleMatrix = Matrix4.CreateScale(1.15f);
-        var data = GeometryHelper.CreateSphereData(12, 18);
+        var (vertices, indices) = GeometryHelper.CreateSphere(12, 18);
         vao = new VertexArrayObject();
-        vao.AddBuffer(new VertexBuffer(data.vertices));
-        vao.AddIndexBuffer(new IndexBuffer(data.indices));
+        vao.AddBuffer(VertexDeclarations.VertexPositionNormalTexture, new VertexBuffer(vertices));
+        vao.AddIndexBuffer(new IndexBuffer(indices));
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }
 

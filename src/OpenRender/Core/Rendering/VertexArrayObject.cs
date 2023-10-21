@@ -17,21 +17,20 @@ public class VertexArrayObject
    
     public unsafe void AddBuffer<T>(VertexDeclaration vertexDeclaration, T[] data, string? name = null) where T : unmanaged
     {
-        var buffer = new Buffer<T>(data, vertexDeclaration);
-        AddBuffer(buffer, name: name);
+        var buffer = new Buffer<T>(data);
+        AddBuffer(vertexDeclaration, buffer, name: name);
     }
 
-    public void AddBuffer<T>(Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : unmanaged
+    public void AddBuffer<T>(VertexDeclaration vertexDeclaration, Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : unmanaged
     {
-        ArgumentNullException.ThrowIfNull(buffer.VertexDeclaration, nameof(buffer.VertexDeclaration));
-        foreach (var attribute in buffer.VertexDeclaration.Attributes)
+        foreach (var attribute in vertexDeclaration.Attributes)
         {
             GL.EnableVertexArrayAttrib(vao, attribute.Location);
             GL.VertexArrayAttribFormat(vao, attribute.Location, attribute.Size, attribute.Type, attribute.Normalized, attribute.Offset);
             GL.VertexArrayAttribBinding(vao, attribute.Location, lastBindingPoint);
             GL.VertexArrayBindingDivisor(vao, attribute.Location, attribute.Divisor);
         }
-        GL.VertexArrayVertexBuffer(vao, lastBindingPoint, buffer.Vbo, 0, buffer.VertexDeclaration.Stride);
+        GL.VertexArrayVertexBuffer(vao, lastBindingPoint, buffer.Vbo, 0, vertexDeclaration.Stride);
         GL.VertexArrayBindingDivisor(vao, lastBindingPoint, bindingDivisor ?? 0);
         Log.CheckGlError();
 
@@ -43,10 +42,11 @@ public class VertexArrayObject
         if (buffer is VertexBuffer && VertexBuffer is null) VertexBuffer = buffer as VertexBuffer;
     }
 
-    public void AddVertexBuffer(VertexBuffer buffer)
+    public void AddVertexBuffer(VertexDeclaration vertexDeclaration, VertexBuffer buffer)
     {
-        AddBuffer(buffer, 0);
+        AddBuffer(vertexDeclaration, buffer, 0);
     }
+
     public void AddIndexBuffer(IndexBuffer buffer, string? name = "IBO")
     {
         GL.VertexArrayElementBuffer(vao, buffer.Vbo);

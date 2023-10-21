@@ -1,5 +1,4 @@
 ﻿using OpenRender.Core.Rendering;
-using System.Runtime.CompilerServices;
 
 namespace OpenRender.Core.Geometry;
 
@@ -14,22 +13,18 @@ public static class GeometryHelper
     /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
     /// </summary>
     /// <returns></returns>
-    public static VertexArrayObject Create2dQuad()
+    public static (Vertex2D[] vertices, uint[] indices) Create2dQuad()
     {
-        VertexDeclaration vxDeclaration;
-        float[] vertices;
+        Vertex2D[] vertices;
         vertices = Create2dQuadWithoutNormals();
-        vxDeclaration = VertexDeclarations.VertexPosition2DTexture;
 
         uint[] indices =
         {
             0, 1, 3,
             0, 3, 2
         };
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(new Buffer<float>(vertices, vxDeclaration));
-        vao.AddIndexBuffer(new IndexBuffer(indices));
-        return vao;
+
+        return (vertices, indices);
     }
 
     /// <summary>
@@ -39,13 +34,13 @@ public static class GeometryHelper
     public static (Vertex[] vertices, uint[] indices) CreateQuad()
     {
         Vertex[] vertices = CreateQuadWithNormals();
-       
+
         uint[] indices =
         {
             0, 1, 3,
             0, 3, 2
         };
-        
+
         return (vertices, indices);
     }
 
@@ -57,7 +52,6 @@ public static class GeometryHelper
     /// correct normals (pointing orthogonal from the surface out) at the cost of having no shared vertices
     /// between box sides.
     /// </summary>
-    /// <param name="createNormals"></param>
     /// <returns></returns>
     public static (Vertex[] vertices, uint[] indices) CreateCube()
     {
@@ -88,7 +82,7 @@ public static class GeometryHelper
             11, 0, 10,
             11, 2, 0
         };
-        
+
         return (vertices, indices);
     }
 
@@ -96,7 +90,6 @@ public static class GeometryHelper
     /// Creates a box geometry consisting of six surfaces each having own vertices in order to support different normals per surface.
     /// Note: a box is similar to a "cube" but the "cube" has less vertices as each vertex is shared between three sides of the box.
     /// </summary>
-    /// <param name="createNormals"></param>
     /// <returns></returns>
     public static (Vertex[] vertices, uint[] indices) CreateBox()
     {
@@ -130,7 +123,7 @@ public static class GeometryHelper
         return (vertices, indices);
     }
 
-    public static (Vertex[] vertices, uint[] indices) CreateSphereData(int stacks, int slices)
+    public static (Vertex[] vertices, uint[] indices) CreateSphere(int stacks, int slices)
     {
         var vertices = new List<Vertex>();
         var indices = new List<uint>();
@@ -241,7 +234,7 @@ public static class GeometryHelper
     //        -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
     //         HALF, -HALF,  HALF,   1, 1,   // lower right - 2
     //         HALF,  HALF,  HALF,   1, 0,   // upper right - 3
-                                  
+
     //        //  BACK SIDE (z = -)
     //        -HALF, -HALF, -HALF,   1, 1,   // lower left - 4
     //        -HALF,  HALF, -HALF,   1, 0,   // upper left - 5
@@ -312,7 +305,7 @@ public static class GeometryHelper
     //        -HALF,  HALF,  HALF,   0, 0,   // upper left - 1
     //         HALF, -HALF,  HALF,   1, 1,   // lower right - 2
     //         HALF,  HALF,  HALF,   1, 0,   // upper right - 3
-            
+
     //        //  BACK SIDE VERTICES
     //        -HALF, -HALF, -HALF,   1, 1,   // lower left
     //        -HALF,  HALF, -HALF,   1, 0,   // upper left
@@ -327,29 +320,29 @@ public static class GeometryHelper
     //    return vertices;
     //}
 
-    private static float[] CreateQuadWithoutNormals()
-    {
-        //  create the 4 vertices with: 3 floats for position + 2 floats for uv
-        var vertices = new float[]
-        {
-            -HALF, -HALF, 0,    0, 1,   // lower left corner
-            -HALF,  HALF, 0,    0, 0,   // upper left corner
-             HALF, -HALF, 0,    1, 1,   // lower right corner
-             HALF,  HALF, 0,    1, 0,   // upper right corner
-        };
-        return vertices;
-    }
+    //private static float[] CreateQuadWithoutNormals()
+    //{
+    //    //  create the 4 vertices with: 3 floats for position + 2 floats for uv
+    //    var vertices = new float[]
+    //    {
+    //        -HALF, -HALF, 0,    0, 1,   // lower left corner
+    //        -HALF,  HALF, 0,    0, 0,   // upper left corner
+    //         HALF, -HALF, 0,    1, 1,   // lower right corner
+    //         HALF,  HALF, 0,    1, 0,   // upper right corner
+    //    };
+    //    return vertices;
+    //}
 
-    private static float[] Create2dQuadWithoutNormals()
+    private static Vertex2D[] Create2dQuadWithoutNormals()
     {
         //  create the 4 vertices with: 2 floats for position + 2 floats for uv
         //  note: the coordinates go from 0 to 1 because we want the sprite to align with screen coordinates.
-        var vertices = new float[]
+        var vertices = new Vertex2D[]
         {
-             0, 0,  0, 1,   // lower left corner
-             0, 1,  0, 0,   // upper left corner
-             1, 0,  1, 1,   // lower right corner
-             1, 1,  1, 0,   // upper right corner
+             new Vertex2D(0, 0,  0, 1),   // lower left corner
+             new Vertex2D(0, 1,  0, 0),   // upper left corner
+             new Vertex2D(1, 0,  1, 1),   // lower right corner
+             new Vertex2D(1, 1,  1, 0),   // upper right corner
         };
         return vertices;
     }

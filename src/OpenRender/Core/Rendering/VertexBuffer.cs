@@ -2,7 +2,7 @@
 
 public class VertexBuffer : Buffer<Vertex>
 {
-    public VertexBuffer(Vertex[] data) : base(data, VertexDeclarations.VertexPositionNormalTexture) 
+    public VertexBuffer(Vertex[] data) : base(data) 
     {
         SetLabel("Vertex VBO");
     }

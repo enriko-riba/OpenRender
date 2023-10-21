@@ -52,8 +52,8 @@ internal class InstancingScene : Scene
             shininess: 0,
             detailTextureFactor: 0
         );
-        var (vertices, indices) = GeometryHelper.CreateCube();
-        var mesh = new Mesh(vertices, indices);
+        var (vertices, indices) = GeometryHelper.CreateBox();
+        var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
         var visualAnchor = new SceneNode(mesh, mat1, new Vector3(0, 2, -5));
         AddNode(visualAnchor);
 
@@ -202,7 +202,7 @@ internal class InstancingScene : Scene
         {
             instanced.StateDataList[i].Update(elapsedSeconds);
             instanced.StateDataList[i].GetMatrix(out var matrix);
-            instanced.InstanceDataList[i] = matrix;
+            instanced.InstanceData[i] = matrix;
         }
         instanced.UpdateInstanceData();
     }
@@ -220,7 +220,7 @@ internal class InstancingScene : Scene
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
             shininess: 0.45f);
-        instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(vertices, indices), mat);
+        instanced = new InstancedSceneNode<Matrix4, InstanceState>(new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices), NUM_INSTANCES, mat);
         AddNode(instanced);
 
         for (var i = 0; i < NUM_INSTANCES; i++)
@@ -250,7 +250,7 @@ internal class InstancingScene : Scene
     {
         private Matrix4 scaleMatrix;
         private Vector3 scale = Vector3.One;
-
+        private float factor = 1 + (float)Random.Shared.NextDouble() / 2;
         /// <summary>
         /// Gets or sets the position.
         /// </summary>
@@ -283,7 +283,7 @@ internal class InstancingScene : Scene
         /// Updates the rotation.
         /// </summary>
         /// <param name="elapsedSeconds"></param>
-        public void Update(double elapsedSeconds) => Rotation += AxisOfRotation * (float)elapsedSeconds;
+        public void Update(double elapsedSeconds) => Rotation += AxisOfRotation * (float)elapsedSeconds * factor;
 
         /// <summary>
         /// Calculates the world matrix for this instance.

@@ -29,7 +29,28 @@ internal struct FrameBits
 [Flags]
 public enum FrameBitsFlags : uint
 {
+    /// <summary>
+    /// Node is not inside the camera frustum and should not be rendered.
+    /// </summary>
     FrustumCulled = 1 << 0,
+
+    /// <summary>
+    /// Node is too far away from the camera and should not be rendered.
+    /// </summary>
     DistanceCulled = 1 << 1,
+
+    /// <summary>
+    /// Node is not visible and should not be rendered.
+    /// </summary>
     NotVisible = 1 << 2,
+
+    /// <summary>
+    /// Bitmask used to check if node is allowed to be rendered.
+    /// </summary>
+    RenderMask = FrustumCulled | DistanceCulled | NotVisible,
+
+    /// <summary>
+    /// Node is allowed to be batched.
+    /// </summary>
+    BatchAllowed = 1 << 3,
 }
