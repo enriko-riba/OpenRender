@@ -80,7 +80,7 @@ public class Renderer
             }
             else
             {
-                node.OnDraw(null, elapsedSeconds);
+                node.OnDraw(elapsedSeconds);
             }
         }
         //  TODO: invoke draw call

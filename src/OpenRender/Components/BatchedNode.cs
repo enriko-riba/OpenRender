@@ -90,7 +90,7 @@ public class BatchedNode : SceneNode
         Log.CheckGlError();
     }
 
-    public unsafe override void OnDraw(Scene scene, double elapsed)
+    public unsafe override void OnDraw(double elapsed)
     {
         GL.BindVertexArray(Mesh.Vao!);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, modelMatrixBuffer);

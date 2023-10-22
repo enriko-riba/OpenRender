@@ -40,16 +40,16 @@ public class Button : NineSlicePlane
         HandleMouseState(scene.SceneManager.MouseState);
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
         if (Caption != null && TextRenderer != null)
         {
             var rect = TextRenderer.Measure(Caption);
             var x = (size.X-rect.Width) / 2;
             var y = (size.Y-rect.Height) / 2;
             TextRenderer.Render(Caption, transform.Position.X + x, transform.Position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
-            scene.ResetMaterial();
+            Scene?.ResetMaterial();
         }
     }
 

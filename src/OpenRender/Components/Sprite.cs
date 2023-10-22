@@ -212,7 +212,7 @@ public class Sprite : SceneNode
         }
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
         if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
@@ -223,7 +223,7 @@ public class Sprite : SceneNode
             (float)sourceRectangle.Width / texture.Width,
             (float)sourceRectangle.Height / texture.Height);
         shader.SetVector3("tint", ref tint);
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }
 }

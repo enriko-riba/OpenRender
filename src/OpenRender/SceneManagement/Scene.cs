@@ -305,7 +305,7 @@ public class Scene
             _ = textureBatcher.BindTextureUnits(material);            
         }
 
-        node.OnDraw(this, elapsed);
+        node.OnDraw(elapsed);
         Log.CheckGlError("SceneNode.OnDraw");
         //GL.UseProgram(0);
     }

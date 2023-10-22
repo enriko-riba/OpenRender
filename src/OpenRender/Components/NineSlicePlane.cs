@@ -48,7 +48,7 @@ public class NineSlicePlane : Sprite
         Size = new Vector2i(width, height);
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
         shader.SetInt("leftWidth", leftWidth);
         shader.SetInt("topHeight", topHeight);
@@ -58,6 +58,6 @@ public class NineSlicePlane : Sprite
         shader.SetInt("height", size.Y);
         shader.SetInt("targetWidth", size.X);
         shader.SetInt("targetHeight", size.Y);
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
     }
 }

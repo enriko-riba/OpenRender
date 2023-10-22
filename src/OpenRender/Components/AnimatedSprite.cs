@@ -63,7 +63,7 @@ public class AnimatedSprite : Sprite
         }
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
         if (!string.IsNullOrWhiteSpace(currentSequenceName) && currentSequence is not null)
         {
@@ -74,7 +74,7 @@ public class AnimatedSprite : Sprite
                 UpdateMatrix();
             }
         }
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
     }
 
     public void AddAnimation(string animationName, Rectangle[] frames)

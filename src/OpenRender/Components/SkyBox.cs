@@ -39,7 +39,7 @@ public sealed class SkyBox : SceneNode
         projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
         GL.GetInteger(GetPName.DepthFunc, out var depthFunc);
         var isCullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
@@ -58,7 +58,7 @@ public sealed class SkyBox : SceneNode
         cameraUniform.projection = projectionMatrix!.Value;
         Scene!.VboCamera.UpdateSettings(ref cameraUniform);
 
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
 
         cameraUniform.projection = oldProjection;
         Scene!.VboCamera.UpdateSettings(ref cameraUniform);

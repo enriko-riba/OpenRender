@@ -21,7 +21,7 @@ internal class SnakeSprite : Sprite
         Size = new(TileSize, TileSize);
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
         foreach (var tile in snakeTiles)
         {
@@ -46,8 +46,8 @@ internal class SnakeSprite : Sprite
             SourceRectangle = src;
             AngleRotation = rotation;
             shader.SetMatrix4("model", ref transform.worldMatrix);
-            base.OnDraw(scene, elapsed);
+            base.OnDraw(elapsed);
         }
-        base.OnDraw(scene, elapsed);
+        base.OnDraw(elapsed);
     }
 }

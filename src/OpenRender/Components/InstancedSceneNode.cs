@@ -54,9 +54,9 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
         Log.CheckGlError();
     }
 
-    public override void OnDraw(Scene scene, double elapsed)
+    public override void OnDraw(double elapsed)
     {
-        GL.BindVertexArray(Mesh.Vao);
+        GL.BindVertexArray(Mesh.Vao!);
         if (Mesh.Vao.DrawMode == DrawMode.Indexed)
             GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else

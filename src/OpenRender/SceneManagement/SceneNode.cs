@@ -23,6 +23,7 @@ public class SceneNode
         SetPosition(Vector3.Zero);
         SetRotation(Vector3.Zero);
         RenderGroup = RenderGroup.Default;
+        IsBatchingAllowed = true;
     }
 
     public SceneNode(Mesh mesh, Material? material = default, Vector3? position = default) : this()
@@ -120,7 +121,7 @@ public class SceneNode
         }
     }
 
-    public virtual void OnDraw(Scene scene, double elapsed)
+    public virtual void OnDraw(double elapsed)
     {
         GL.BindVertexArray(mesh.Vao);
         if (mesh.Vao.DrawMode == DrawMode.Indexed)
@@ -231,16 +232,7 @@ public class SceneNode
     protected virtual void UpdateMatrix()
     {
         var parent = Parent?.transform;
-        transform.UpdateMatrix(parent);
-        //Matrix4.CreateScale(scale, out scaleMatrix);
-        //Matrix4.CreateFromQuaternion(rotation, out rotationMatrix);
-        //Matrix4.Mult(scaleMatrix, rotationMatrix, out worldMatrix);
-        //worldMatrix.Row3.Xyz = position;    //  sets the translation
-
-        //if (Parent != null)
-        //{
-        //    Matrix4.Mult(worldMatrix, Parent.worldMatrix, out worldMatrix);
-        //}
+        transform.UpdateMatrix(parent);        
     }
 
     internal void Invalidate()
