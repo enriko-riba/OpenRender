@@ -57,11 +57,8 @@ public class Sprite : SceneNode
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
-        var (vertices, indices) = GeometryHelper.Create2dQuad();
-        //var vao = new VertexArrayObject();
-        //vao.AddBuffer(new Buffer<Vertex2D>(vertices, VertexDeclarations.VertexPosition2DTexture));
-        //vao.AddIndexBuffer(new IndexBuffer(indices));
-        var mesh = new Mesh(VertexDeclarations.VertexPosition2DTexture, vertices, indices);
+        var (vertices, indices) = GeometryHelper.Create2dQuad();        
+        var mesh = new Mesh(Vertex2D.VertexDeclaration, vertices, indices);
         SetMesh(mesh);
         Tint = Color4.White;
         Pivot = new Vector2(0.5f, 0.5f);

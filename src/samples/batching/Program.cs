@@ -7,7 +7,7 @@ using Samples.Batching;
 var nativeWindowSettings = new NativeWindowSettings()
 {
     Size = new Vector2i(1280, 1024),
-    Title = "OpenRender Playground",
+    Title = "OpenRender Batching",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,

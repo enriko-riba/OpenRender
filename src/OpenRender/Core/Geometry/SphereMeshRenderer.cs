@@ -14,8 +14,9 @@ public class SphereMeshRenderer
     {
         ScaleMatrix = Matrix4.CreateScale(1.15f);
         var (vertices, indices) = GeometryHelper.CreateSphere(12, 18);
+        var floats = Mesh.GetVertices(VertexDeclarations.VertexPositionNormalTexture, vertices);
         vao = new VertexArrayObject();
-        vao.AddBuffer(VertexDeclarations.VertexPositionNormalTexture, new VertexBuffer(vertices));
+        vao.AddBuffer(VertexDeclarations.VertexPositionNormalTexture, new Buffer<float>(floats));
         vao.AddIndexBuffer(new IndexBuffer(indices));
         shader = new Shader("Shaders/spheremesh.vert", "Shaders/spheremesh.frag");
     }

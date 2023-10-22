@@ -18,7 +18,7 @@ public sealed class SkyBox : SceneNode
         ArgumentNullException.ThrowIfNull(texturePaths);
         if (texturePaths.Length != 6) throw new ArgumentException("SkyBox needs 6 images", nameof(texturePaths));
 
-       
+
         var desc = new TextureDescriptor(texturePaths,
             TextureType: TextureType.CubeMap,
             TextureTarget: TextureTarget.TextureCubeMap,
@@ -26,10 +26,9 @@ public sealed class SkyBox : SceneNode
             TextureWrapT: TextureWrapMode.ClampToEdge);
         var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
         Material = Material.Create(shader, desc);
-        
+
         var (vertices, indices) = GeometryHelper.CreateCube();
         var skyBoxMesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
-
         SetMesh(skyBoxMesh);
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
@@ -37,7 +36,7 @@ public sealed class SkyBox : SceneNode
 
     public override void OnResize(Scene scene, ResizeEventArgs e)
     {
-        projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio??1f, 0.0001f, 5000);
+        projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
     }
 
     public override void OnDraw(Scene scene, double elapsed)

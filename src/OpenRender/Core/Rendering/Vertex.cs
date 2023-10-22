@@ -1,59 +1,50 @@
 ﻿using OpenTK.Mathematics;
-using System.Runtime.InteropServices;
 
 namespace OpenRender.Core.Rendering;
 
-public interface IVertex
+public interface IVertexData
 {
-    ReadOnlySpan<float> Data { get; }
-    static VertexDeclaration VertexDeclaration { get; } = default!;
+    float[] Data { get; }
 }
 
-[StructLayout(LayoutKind.Sequential)]
-public struct Vertex : IVertex
+public readonly struct Vertex : IVertexData
 {
+    private readonly float[] dataArray = new float[8];
+
     public Vertex(Vector3 position, Vector3 normal, Vector2 uv)
     {
-        Position = position;
-        Normal = normal;
-        TexCoords = uv;
+        dataArray[0] = position.X;
+        dataArray[1] = position.Y;
+        dataArray[2] = position.Z;
+        dataArray[3] = normal.X;
+        dataArray[4] = normal.Y;
+        dataArray[5] = normal.Z;
+        dataArray[6] = uv.X;
+        dataArray[7] = uv.Y;
     }
 
     public Vertex(float x, float y, float z, float nx, float ny, float nz, float u, float v)
-    {
-        Position = new Vector3(x, y, z);
-        Normal = new Vector3(nx, ny, nz);
-        TexCoords = new Vector2(u, v);
-    }
+        : this(new(x, y, z), new(nx, ny, nz), new(u, v)) { }
 
-    public Vector3 Position;
-    public Vector3 Normal;
-    public Vector2 TexCoords;
-
-    public ReadOnlySpan<float> Data => MemoryMarshal.CreateReadOnlySpan(ref Position.X, 8);
-
+    public readonly float[] Data => dataArray;
     public static VertexDeclaration VertexDeclaration => VertexDeclarations.VertexPositionNormalTexture;
 }
 
-[StructLayout(LayoutKind.Sequential)]
-public struct Vertex2D : IVertex
+public readonly struct Vertex2D : IVertexData
 {
+    private readonly float[] dataArray = new float[4];
+
     public Vertex2D(Vector2 position, Vector2 uv)
     {
-        Position = position;
-        TexCoords = uv;
+        dataArray[0] = position.X;
+        dataArray[1] = position.Y;
+        dataArray[2] = uv.X;
+        dataArray[3] = uv.Y;
     }
 
-    public Vertex2D(float x, float y, float u, float v)
-    {
-        Position = new Vector2(x, y);
-        TexCoords = new Vector2(u, v);
-    }
+    public Vertex2D(float x, float y, float u, float v) : this(new(x, y), new(u, v)) { }
 
-    public Vector2 Position;
-    public Vector2 TexCoords;
-
-    public ReadOnlySpan<float> Data => MemoryMarshal.CreateReadOnlySpan(ref Position.X, 4);
+    public readonly float[] Data => dataArray;
 
     public static VertexDeclaration VertexDeclaration => VertexDeclarations.VertexPosition2DTexture;
 }

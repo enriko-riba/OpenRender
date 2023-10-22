@@ -196,7 +196,7 @@ internal class PlaygroundScene : Scene
 
     private void AddRotatingBoxes()
     {
-        var quad = GeometryHelper.CreateQuad();
+        var (vertices, indices) = GeometryHelper.CreateQuad();
 
         var mat1 = Material.Create(
             defaultShader,
@@ -241,7 +241,7 @@ internal class PlaygroundScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, quad.vertices, quad.indices), mat1, new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {

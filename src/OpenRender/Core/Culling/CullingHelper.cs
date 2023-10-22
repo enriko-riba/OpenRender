@@ -42,33 +42,38 @@ internal sealed class CullingHelper
     /// <summary>
     /// Calculates the bounding sphere of a vertex buffer.
     /// </summary>
+    /// <param name="strideInFloats">the stride in floats of the vertex buffer</param>
     /// <param name="vertices">the vertex buffer data with vertex positions</param>
     /// <returns></returns>
-    public static unsafe BoundingSphere CalculateBoundingSphere(Vertex[] vertices)
+    public static unsafe BoundingSphere CalculateBoundingSphere(int strideInFloats, float[] vertices)
     {
-        var center = CalculateBoundingSphereCenter(vertices);
-        var radius = CalculateBoundingSphereRadius(center, vertices);
+        var center = CalculateBoundingSphereCenter(strideInFloats, vertices);
+        var radius = CalculateBoundingSphereRadius(center, strideInFloats, vertices);
         return new BoundingSphere { LocalCenter = center, LocalRadius = radius, Center = center, Radius = radius };
     }
 
-    private static Vector3 CalculateBoundingSphereCenter(IEnumerable<Vertex> vertices)
+    private static Vector3 CalculateBoundingSphereCenter(int strideInFloats, float[] vertices)
     {
         var center = Vector3.Zero;
-        foreach (var vertex in vertices)
+        for(var i = 0; i < vertices.Length;)
         {
-            center += vertex.Position;
+            var vec3 = new Vector3(vertices[i], vertices[i+1], vertices[i+2]);
+            center += vec3;
+            i += strideInFloats;
         }
-        center /= vertices.Count();
+        center /= vertices.Length;
         return center;
     }
 
-    private static float CalculateBoundingSphereRadius(in Vector3 center, IEnumerable<Vertex> vertices)
+    private static float CalculateBoundingSphereRadius(in Vector3 center, int strideInFloats, float[] vertices)
     {
         var radius = 0f;
-        foreach (var vertex in vertices)
+        for (var i = 0; i < vertices.Length;)
         {
-            var distance = Vector3.Distance(center, vertex.Position);
+            var vec3 = new Vector3(vertices[i], vertices[i + 1], vertices[i + 2]);
+            var distance = Vector3.Distance(center, vec3);
             radius = Math.Max(radius, distance);
+            i += strideInFloats;
         }
         return radius;
     }

@@ -7,7 +7,7 @@ namespace OpenRender.Core.Rendering;
 /// VBO wrapper that allows for easy data upload and retrieval.
 /// </summary>
 /// <typeparam name="T"></typeparam>
-public class Buffer<T> : IDisposable where T : unmanaged
+public class Buffer<T> : IDisposable where T : struct
 {
     private readonly uint vbo;
     private T[] data;

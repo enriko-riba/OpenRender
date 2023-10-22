@@ -1,10 +1,8 @@
-﻿using OpenTK.Graphics.OpenGL4;
-
-namespace OpenRender.Core.Rendering;
+﻿namespace OpenRender.Core.Rendering;
 
 public class IndexBuffer : Buffer<uint>
 {
-    public IndexBuffer(uint[] data) : base(data) 
+    public IndexBuffer(uint[] data) : base(data)
     {
         SetLabel("IBO");
     }

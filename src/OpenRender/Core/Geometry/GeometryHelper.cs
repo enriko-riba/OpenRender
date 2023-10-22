@@ -10,7 +10,7 @@ public static class GeometryHelper
     private const float HALF = 0.5f;
 
     /// <summary>
-    /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
+    /// Creates quad geometry with an indexed VertexPositionNormalTexture format.
     /// </summary>
     /// <returns></returns>
     public static (Vertex2D[] vertices, uint[] indices) Create2dQuad()
@@ -28,7 +28,7 @@ public static class GeometryHelper
     }
 
     /// <summary>
-    /// Creates quad geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
+    /// Creates quad geometry with an indexed VertexPositionNormalTexture format.
     /// </summary>
     /// <returns></returns>
     public static (Vertex[] vertices, uint[] indices) CreateQuad()
@@ -45,7 +45,7 @@ public static class GeometryHelper
     }
 
     /// <summary>
-    /// Creates cube geometry with an indexed VertexPositionTexture or VertexPositionNormalTexture VB.
+    /// Creates cube geometry with an indexed VertexPositionNormalTexture format.
     /// Note: a cube is a simplified version of the "box" geometry where all vertices are shared. 
     /// This has a side effect that since normals need to be shared too. Therefore the normals are pointing 
     /// form the cube center towards the vertex as if the cube is a sphere. The "box" geometry has physically 
@@ -87,7 +87,8 @@ public static class GeometryHelper
     }
 
     /// <summary>
-    /// Creates a box geometry consisting of six surfaces each having own vertices in order to support different normals per surface.
+    /// Creates a box geometry with an indexed VertexPositionNormalTexture format. the box consists of six 
+    /// surfaces each having own vertices in order to support different normals per surface.
     /// Note: a box is similar to a "cube" but the "cube" has less vertices as each vertex is shared between three sides of the box.
     /// </summary>
     /// <returns></returns>
@@ -123,6 +124,12 @@ public static class GeometryHelper
         return (vertices, indices);
     }
 
+    /// <summary>
+    /// Creates a sphere geometry with an indexed VertexPositionNormalTexture format.
+    /// </summary>
+    /// <param name="stacks"></param>
+    /// <param name="slices"></param>
+    /// <returns></returns>
     public static (Vertex[] vertices, uint[] indices) CreateSphere(int stacks, int slices)
     {
         var vertices = new List<Vertex>();

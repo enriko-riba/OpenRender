@@ -218,7 +218,7 @@ internal class BatchingScene : Scene
             shininess: 0.25f
         );
 
-        var n1 = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, boxData.vertices, boxData.indices), mat1, new Vector3(3, 0, -3))
+        var n1 = new SceneNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), mat1, new Vector3(3, 0, -3))
         {
             Update = (n, e) =>
             {
@@ -230,7 +230,7 @@ internal class BatchingScene : Scene
         };
         AddNode(n1);
 
-        var n2 = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, boxData.vertices, boxData.indices), mat2, new Vector3(1.75f, 0.2f, 0))
+        var n2 = new SceneNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), mat2, new Vector3(1.75f, 0.2f, 0))
         {
             Update = (n, e) =>
             {
@@ -242,7 +242,7 @@ internal class BatchingScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, quad.vertices, quad.indices), mat1, new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(Vertex.VertexDeclaration, quad.vertices, quad.indices), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {
@@ -269,7 +269,7 @@ internal class BatchingScene : Scene
             Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
 
-        var batchedNode = new BatchedNode(VertexDeclarations.VertexPositionNormalTexture,materials[0]);
+        var batchedNode = new BatchedNode(Vertex.VertexDeclaration, materials[0]);
 
         for (var i = 0; i < NodeCount; i++)
         {
@@ -304,7 +304,7 @@ internal class BatchingScene : Scene
                     batchedNode.AddVertices(sphereData.vertices, sphereData.indices, position, scale, rotation);
                     break;
                 default:
-                    var cube = new RandomNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, boxData.vertices, boxData.indices), materials[i % 7]);
+                    var cube = new RandomNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), materials[i % 7]);
                     AddNode(cube);
                     break;
             }
@@ -323,7 +323,7 @@ internal class BatchingScene : Scene
 
         for (var i = 0; i < 50; i++)
         {
-            var box = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, boxData.vertices, boxData.indices), mat);
+            var box = new SceneNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), mat);
             box.SetPosition(new(-250 + i * 10, 0, -10));
             AddNode(box);
         }

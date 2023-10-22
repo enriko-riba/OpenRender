@@ -1,5 +1,4 @@
 ﻿using OpenTK.Graphics.OpenGL4;
-using static OpenTK.Graphics.OpenGL.GL;
 
 namespace OpenRender.Core.Rendering;
 
@@ -14,14 +13,14 @@ public class VertexArrayObject
     {
         GL.CreateVertexArrays(1, out vao);
     }
-   
-    public unsafe void AddBuffer<T>(VertexDeclaration vertexDeclaration, T[] data, string? name = null) where T : unmanaged
+
+    public unsafe void AddBuffer<T>(VertexDeclaration vertexDeclaration, T[] data, string? name = null) where T : struct
     {
         var buffer = new Buffer<T>(data);
         AddBuffer(vertexDeclaration, buffer, name: name);
     }
 
-    public void AddBuffer<T>(VertexDeclaration vertexDeclaration, Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : unmanaged
+    public void AddBuffer<T>(VertexDeclaration vertexDeclaration, Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : struct
     {
         foreach (var attribute in vertexDeclaration.Attributes)
         {
@@ -37,14 +36,13 @@ public class VertexArrayObject
         if (DataLength == 0) dataLength = buffer.Data.Length;
         if (!string.IsNullOrEmpty(name)) buffer.SetLabel(name);
         lastBindingPoint++;
-        
-        //  this is a hack to get the vertex buffer with positions for the mesh
-        if (buffer is VertexBuffer && VertexBuffer is null) VertexBuffer = buffer as VertexBuffer;
-    }
 
-    public void AddVertexBuffer(VertexDeclaration vertexDeclaration, VertexBuffer buffer)
-    {
-        AddBuffer(vertexDeclaration, buffer, 0);
+        //  this is a hack to get the vertex buffer with positions for the mesh
+        if (buffer is Buffer<float> && VertexBuffer is null)
+        {
+            VertexBuffer = buffer as Buffer<float>;
+            VertexBuffer?.SetLabel("VBO");
+        }
     }
 
     public void AddIndexBuffer(IndexBuffer buffer, string? name = "IBO")
@@ -60,7 +58,7 @@ public class VertexArrayObject
 
     public int DataLength => dataLength;
 
-    public VertexBuffer? VertexBuffer { get; set; }
+    public Buffer<float>? VertexBuffer { get; set; }
 
     public Buffer<uint>? IndexBuffer { get; set; }
 

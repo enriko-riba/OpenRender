@@ -67,15 +67,14 @@ public class BatchedNode : SceneNode
         indices.AddRange(nodeIndices);
     }
 
-    public void AddVertices(Vertex[] nodeVertices)
-    {
-        vertices.AddRange(nodeVertices);
-    }
+    //public void AddVertices(Vertex[] nodeVertices)
+    //{
+    //    vertices.AddRange(nodeVertices);
+    //}
 
     public void BuildMesh()
     {
         var mesh = new Mesh(vertexDeclaration, vertices.ToArray(), indices.ToArray());
-
         SetMesh(mesh);
         vertices.Clear();
         indices.Clear();
@@ -93,7 +92,7 @@ public class BatchedNode : SceneNode
 
     public unsafe override void OnDraw(Scene scene, double elapsed)
     {
-        GL.BindVertexArray(Mesh.Vao);
+        GL.BindVertexArray(Mesh.Vao!);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, modelMatrixBuffer);
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, commandsBuffer);
         GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, commands.Count, 0);

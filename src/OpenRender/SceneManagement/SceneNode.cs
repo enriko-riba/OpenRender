@@ -69,15 +69,18 @@ public class SceneNode
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
-    public ref Mesh Mesh => ref mesh;
+    public Mesh Mesh => mesh;
 
     public void SetMesh(in Mesh mesh)
     {
+        if (mesh == null) return;
+        
         this.mesh = mesh;
+        if (mesh.Vao == null) mesh.Build();
         var vb = mesh.Vao?.VertexBuffer;
         if (vb != null)
         {
-            var bs = CullingHelper.CalculateBoundingSphere(vb.Data);
+            var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexDeclaration.StrideInFloats, vb.Data);
             this.mesh.BoundingSphere = bs with
             {
                 Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(transform.Scale.X, transform.Scale.Y), transform.Scale.Z),
@@ -243,7 +246,8 @@ public class SceneNode
     internal void Invalidate()
     {
         UpdateMatrix();
-        mesh.BoundingSphere.Update(in transform.Scale, in transform.worldMatrix);
+        if(mesh?.BoundingSphere is not null)
+            mesh.BoundingSphere.Update(in transform.Scale, in transform.worldMatrix);
         foreach (var child in children)
         {
             child.Invalidate();
