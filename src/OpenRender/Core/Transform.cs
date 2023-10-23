@@ -1,5 +1,4 @@
-﻿
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace OpenRender.Core;
 
@@ -18,8 +17,8 @@ public struct Transform
     public Matrix4 scaleMatrix;
     public Matrix4 rotationMatrix;
     public Matrix4 worldMatrix;
-    public void UpdateMatrix() => UpdateMatrix(null);
-    public void UpdateMatrix(in Transform? parent)
+
+    public void UpdateMatrix(in Transform? parent = null)
     {
         Matrix4.CreateScale(Scale, out scaleMatrix);
         Matrix4.CreateFromQuaternion(Rotation, out rotationMatrix);

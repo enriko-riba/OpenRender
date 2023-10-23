@@ -20,7 +20,6 @@ public class Mesh
         this.vertices = GetVertices(vertexDeclaration, vertices);
     }
 
-
     public Mesh(VertexDeclaration vertexDeclaration, Vertex2D[] vertices, uint[] indices)
     {       
         VertexDeclaration = vertexDeclaration;
@@ -33,10 +32,6 @@ public class Mesh
         VertexDeclaration = vertexDeclaration;
         this.vertices = vertices;
         this.indices = indices;
-
-        Vao = new VertexArrayObject();
-        Vao.AddBuffer(vertexDeclaration, new Buffer<float>(vertices));
-        Vao.AddIndexBuffer(new IndexBuffer(indices));
     }
        
     public VertexArrayObject? Vao;

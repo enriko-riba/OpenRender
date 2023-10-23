@@ -66,6 +66,8 @@ public class SceneNode
         }
     }
 
+    public void GetTransform(out Transform transform) => transform = this.transform;
+
     public void GetWorldMatrix(out Matrix4 worldMatrix) => worldMatrix = transform.worldMatrix;
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;

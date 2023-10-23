@@ -1,6 +1,7 @@
 ﻿using OpenRender.Core.Culling;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
 
 namespace OpenRender.Core.Rendering;
@@ -12,13 +13,15 @@ public class Renderer
     private struct LayerData
     {
         public uint commandsBuffer;
-        public uint uniformsBuffer;
+        public uint transformsBuffer;
         public uint materialsBuffer;
         public VertexArrayObject vao;
 
         public List<DrawElementsIndirectCommand> Commands;
-        public List<Vertex> Vertices;
+        public List<float> Vertices;
         public List<uint> Indices;
+        public List<Transform> Transforms;
+        public VertexArrayObject Vao;
     }
 
     public Renderer()
@@ -29,12 +32,14 @@ public class Renderer
             var data = new LayerData
             {
                 vao = new VertexArrayObject(),
-                Vertices = new List<Vertex>(),
+                Vertices = new List<float>(),
                 Indices = new List<uint>(),
-                Commands = new List<DrawElementsIndirectCommand>()
+                Commands = new List<DrawElementsIndirectCommand>(),
+                Transforms = new List<Transform>(),
+                Vao = new()
             };
             GL.GenBuffers(1, out data.commandsBuffer);
-            GL.GenBuffers(1, out data.uniformsBuffer);
+            GL.GenBuffers(1, out data.transformsBuffer);
             GL.GenBuffers(1, out data.materialsBuffer);
             layerData.Add(renderGroup, data);
         }
@@ -66,49 +71,57 @@ public class Renderer
         {
             if ((node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0)
             {
-                //  TODO: implement flag for nodes that don't get batched and have their own Draw call
-                //  if(node.FrameBits.HasFlag(FrameBitsFlags.NoBatch))
-                //  {
-                //      node.OnDraw(elapsedSeconds);
-                //      continue;
-                //  }
+                if (!node.FrameBits.HasFlag(FrameBitsFlags.BatchAllowed))
+                {
+                    node.OnDraw(elapsedSeconds);
+                    continue;
+                }
 
-                WriteUniformData(node, data);
+                WriteTransformData(node, data);
                 WriteDrawCommand(node, data);
                 //  TODO: think of SceneNode implementing WriteUniformData and WriteDrawCommand
                 //  so those can be overridden for special implementations e.g. node.WriteUniformData()...
             }
-            else
-            {
-                node.OnDraw(elapsedSeconds);
-            }
         }
-        //  TODO: invoke draw call
+
+        //  TODO: optimize writing to buffer storage if no changes were made
+        //  upload draw commands
+        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, data.commandsBuffer);
+        GL.BufferStorage(BufferTarget.DrawIndirectBuffer, data.Commands.Count * Unsafe.SizeOf<DrawElementsIndirectCommand>(), data.Commands.ToArray(), BufferStorageFlags.MapWriteBit);
+
+        //  upload matrices params
+        GL.BindBuffer(BufferTarget.ParameterBuffer, data.transformsBuffer);
+        GL.BufferStorage(BufferTarget.ParameterBuffer, data.Transforms.Count * Unsafe.SizeOf<Matrix4>(), data.Transforms.Select(t => t.worldMatrix).ToArray(), BufferStorageFlags.MapWriteBit);
+        Log.CheckGlError();
+
+        GL.BindVertexArray(data.Vao);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, data.transformsBuffer);
+        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, data.commandsBuffer);
+        GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, data.Commands.Count, 0);
     }
 
-    private void WriteUniformData(SceneNode node, LayerData data)
+    private static void WriteTransformData(SceneNode node, LayerData data)
     {
-        
+        node.GetTransform(out var transform);
+        data.Transforms.Add(transform);
     }
 
-    private unsafe void WriteDrawCommand(SceneNode node, LayerData data)
+    private static unsafe void WriteDrawCommand(SceneNode node, LayerData data)
     {
-        //  TODO: we need rebuilding geometry only if a new node is added
-        //  to the scene or if we implement culling and the nodes get visible or culled.
-        //node.Mesh.GetGeometry(out var nodeVertices, out var nodeIndices);
+        //  TODO: we need rebuilding geometry only if a new node is added to the
+        //  scene or if we implement culling and the nodes get visible or culled.
         var nodeIndices = node.Mesh.Indices;
-        var nodeVertices = Unsafe.As<Vertex[]>(node.Mesh.Vertices);
-       
+
         data.Commands.Add(new DrawElementsIndirectCommand
         {
             Count = nodeIndices.Length,
             InstanceCount = 1,
             FirstIndex = data.Indices.Count,
-            BaseVertex = data.Vertices.Count,
+            BaseVertex = data.Vertices.Count / node.Mesh.VertexDeclaration.StrideInFloats,
             BaseInstance = 0
         });
 
-        data.Vertices.AddRange(nodeVertices);
+        data.Vertices.AddRange(node.Mesh.Vertices);
         data.Indices.AddRange(nodeIndices);
     }
 }

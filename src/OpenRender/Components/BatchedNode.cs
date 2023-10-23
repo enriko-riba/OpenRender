@@ -67,11 +67,6 @@ public class BatchedNode : SceneNode
         indices.AddRange(nodeIndices);
     }
 
-    //public void AddVertices(Vertex[] nodeVertices)
-    //{
-    //    vertices.AddRange(nodeVertices);
-    //}
-
     public void BuildMesh()
     {
         var mesh = new Mesh(vertexDeclaration, vertices.ToArray(), indices.ToArray());

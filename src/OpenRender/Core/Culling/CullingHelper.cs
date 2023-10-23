@@ -1,5 +1,4 @@
 ﻿using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
@@ -55,9 +54,9 @@ internal sealed class CullingHelper
     private static Vector3 CalculateBoundingSphereCenter(int strideInFloats, float[] vertices)
     {
         var center = Vector3.Zero;
-        for(var i = 0; i < vertices.Length;)
+        for (var i = 0; i < vertices.Length;)
         {
-            var vec3 = new Vector3(vertices[i], vertices[i+1], vertices[i+2]);
+            var vec3 = new Vector3(vertices[i], vertices[i + 1], vertices[i + 2]);
             center += vec3;
             i += strideInFloats;
         }

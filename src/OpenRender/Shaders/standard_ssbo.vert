@@ -31,7 +31,6 @@ layout(std140, binding = 2) uniform material {
 layout(std140, binding = 0) readonly buffer ssbo_transform
 {
     mat4 Data[];
-
 } models;
 
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
