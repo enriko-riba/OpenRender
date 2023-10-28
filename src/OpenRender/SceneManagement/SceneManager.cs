@@ -54,6 +54,7 @@ public class SceneManager : GameWindow
             scene.scm = this;
             scene.Load();
             scene.isLoaded = true;
+            scene.OnLoaded();
         }
         scene.OnResize(new ResizeEventArgs(ClientSize.X, ClientSize.Y));
         scene.OnActivate();

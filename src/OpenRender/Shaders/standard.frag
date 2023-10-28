@@ -1,4 +1,5 @@
 #version 460
+#extension GL_ARB_bindless_texture : require
 
 #define MAX_LIGHTS 4
 
@@ -48,12 +49,10 @@ layout(std140, binding = 2) uniform material {
     Material mat;
 };
 
-layout(std140, binding = 1) readonly buffer ssbo_material
-{
-    Material Data[];
 
-} materials;
-
+layout(std430, binding = 1) readonly buffer ssbo_textures {
+    sampler2D textures[];
+};
 
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
 uniform float uDetailTextureFactor;     //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used

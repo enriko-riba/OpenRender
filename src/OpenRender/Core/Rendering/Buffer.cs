@@ -16,12 +16,19 @@ public class Buffer<T> : IDisposable where T : struct
     /// Creates a new VBO and immediately uploads the data to the GPU.
     /// </summary>
     /// <param name="data"></param>
-    public Buffer(T[] data)
+    /// <param name="flags"></param>
+    public Buffer(T[] data, BufferStorageFlags flags)
     {
         this.data = data;
         GL.CreateBuffers(1, out vbo);
-        GL.NamedBufferStorage(vbo, data.Length * Unsafe.SizeOf<T>(), data, BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+        GL.NamedBufferStorage(vbo, data.Length * Unsafe.SizeOf<T>(), data, flags);
     }
+
+    /// <summary>
+    /// Creates a new VBO and immediately uploads the data to the GPU.
+    /// </summary>
+    /// <param name="data"></param>
+    public Buffer(T[] data) : this(data, BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit) { }
 
     public uint Vbo => vbo;
 

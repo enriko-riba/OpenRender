@@ -22,11 +22,11 @@ internal class BatchingScene : Scene
     private TextRenderer tr = default!;
     private (Vertex[] vertices, uint[] indices) boxData;
     private (Vertex[] vertices, uint[] indices) sphereData;
-    
+
     public BatchingScene()
     {
         boxData = GeometryHelper.CreateBox();
-        sphereData = GeometryHelper.CreateSphere(20, 26);
+        sphereData = GeometryHelper.CreateSphere(16, 32);
     }
 
     public override void Load()
@@ -37,7 +37,7 @@ internal class BatchingScene : Scene
         AddRotatingBoxes();
         AddRandomNodes();
         AddMetallicBoxes();
-        AddSprites();
+        //AddSprites();
 
         var paths = new string[] {
             "Resources/xpos.png",
@@ -197,7 +197,7 @@ internal class BatchingScene : Scene
 
     private void AddRotatingBoxes()
     {
-        var quad = GeometryHelper.CreateQuad();
+        var (vertices, indices) = GeometryHelper.CreateQuad();
 
         var mat1 = Material.Create(
             defaultShader,
@@ -242,7 +242,7 @@ internal class BatchingScene : Scene
         n2.SetScale(new Vector3(0.5f));
         n1.AddChild(n2);
 
-        var n3 = new SceneNode(new Mesh(Vertex.VertexDeclaration, quad.vertices, quad.indices), mat1, new Vector3(0.75f, 0.25f, 0))
+        var n3 = new SceneNode(new Mesh(Vertex.VertexDeclaration, vertices, indices), mat1, new Vector3(0.75f, 0.25f, 0))
         {
             Update = (n, e) =>
             {
@@ -256,64 +256,37 @@ internal class BatchingScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 5000;
+        const int NodeCount = 1000;
+        const int Area = 100;
+        var shader = new Shader("Shaders/standard_ssbo.vert", "Shaders/standard.frag");
         var materials = new Material[]
         {
-            Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
+            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
+            Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
+            Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
+            Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
+            Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
+            Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
+            Material.Create(shader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
-
-        var batchedNode = new BatchedNode(Vertex.VertexDeclaration, materials[0]);
 
         for (var i = 0; i < NodeCount; i++)
         {
-            const int Area = 500;
-            var position = new Vector3(Random.Shared.Next(-Area, Area + 1),
-                                        Random.Shared.Next(-Area, Area + 1),
-                                        Random.Shared.Next(-Area, Area + 1));
-            var scale = new Vector3(Random.Shared.Next(2, 5));
-            var rotation = new Vector3(Random.Shared.Next(0, 360),
-                                        Random.Shared.Next(0, 360),
-                                        Random.Shared.Next(0, 360));           
-
             var mod = i % 7;
-            switch (mod)
+            if (mod == 0)
             {
-                case 0:
-                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);                    
-                    break;
-                case 1:
-                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
-                    break;
-                case 2:
-                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
-                    break;
-                case 3:
-                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
-                    break;
-                case 4:
-                    batchedNode.AddVertices(boxData.vertices, boxData.indices, position, scale, rotation);
-                    break;
-                case 5:
-                    batchedNode.AddVertices(sphereData.vertices, sphereData.indices, position, scale, rotation);
-                    break;
-                default:
-                    var cube = new RandomNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), materials[i % 7]);
-                    AddNode(cube);
-                    break;
+                var sphere = new RandomNode(new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices), materials[mod], Area);
+                AddNode(sphere);
+            }
+            else
+            {
+                var cube = new RandomNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), materials[mod], Area);
+                AddNode(cube);
             }
         }
-
-        batchedNode.BuildMesh();
-        AddNode(batchedNode);
     }
-   
+
     private void AddMetallicBoxes()
     {
         var mat = Material.Create(defaultShader,

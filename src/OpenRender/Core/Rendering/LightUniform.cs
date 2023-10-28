@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace OpenRender.Core.Rendering;
 
 [StructLayout(LayoutKind.Explicit)]
-public struct LightUniform : ISize
+public struct LightUniform
 {
     /// <summary>
     /// Direction for directional lights or position for point and spot lights.
@@ -21,6 +21,4 @@ public struct LightUniform : ISize
     public Vector3 Specular;
     [FieldOffset(60)]
     public float Falloff;
-
-    public static int Size => 64;
 }

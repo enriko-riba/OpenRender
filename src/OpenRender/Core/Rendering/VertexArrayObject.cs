@@ -41,7 +41,7 @@ public class VertexArrayObject
         if (buffer is Buffer<float> && VertexBuffer is null)
         {
             VertexBuffer = buffer as Buffer<float>;
-            VertexBuffer?.SetLabel("VBO");
+            if(string.IsNullOrEmpty(name))VertexBuffer?.SetLabel("VBO");
         }
     }
 

@@ -4,6 +4,7 @@ using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace OpenRender.Components;
 
@@ -25,16 +26,16 @@ public class BatchedNode : SceneNode
     private readonly List<DrawElementsIndirectCommand> commands = new();
     private readonly VertexDeclaration vertexDeclaration;
 
-    public BatchedNode(VertexDeclaration vertexDeclaration, Material material)
+    public BatchedNode(VertexDeclaration vertexDeclaration, Material material) : base(null, material)
     {
         var shader = new Shader("Shaders/standard_ssbo.vert", "Shaders/standard.frag");
         material.Shader = shader;
         Material = material;
         DisableCulling = true;
 
-        GL.GenBuffers(1, out commandsBuffer);
-        GL.GenBuffers(1, out modelMatrixBuffer);
-        GL.GenBuffers(1, out materialsBuffer);
+        GL.CreateBuffers(1, out commandsBuffer);
+        GL.CreateBuffers(1, out modelMatrixBuffer);
+        GL.CreateBuffers(1, out materialsBuffer);
         this.vertexDeclaration = vertexDeclaration;
     }
 
@@ -75,13 +76,11 @@ public class BatchedNode : SceneNode
         indices.Clear();
 
         //  upload draw commands
-        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, commandsBuffer);
-        GL.BufferStorage(BufferTarget.DrawIndirectBuffer, commands.Count * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands.ToArray(), BufferStorageFlags.MapWriteBit);
+        GL.NamedBufferStorage(commandsBuffer, commands.Count * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands.ToArray(), BufferStorageFlags.DynamicStorageBit);
 
         //  upload matrices params
         var matrices = transforms.Select(t => t.worldMatrix).ToArray();
-        GL.BindBuffer(BufferTarget.ParameterBuffer, modelMatrixBuffer);
-        GL.BufferStorage(BufferTarget.ParameterBuffer, matrices.Length * Unsafe.SizeOf<Matrix4>(), matrices, BufferStorageFlags.MapWriteBit);
+        GL.NamedBufferStorage(modelMatrixBuffer, matrices.Length * Unsafe.SizeOf<Matrix4>(), matrices, BufferStorageFlags.DynamicStorageBit);
         Log.CheckGlError();
     }
 

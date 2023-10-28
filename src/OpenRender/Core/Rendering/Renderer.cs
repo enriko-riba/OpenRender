@@ -8,120 +8,234 @@ namespace OpenRender.Core.Rendering;
 
 public class Renderer
 {
-    private readonly Dictionary<RenderGroup, LayerData> layerData = new();
+    private const int MaxCommands = 10000;
 
-    private struct LayerData
+    /// <summary>
+    /// Key: shader.handle + vertex declaration
+    /// </summary>
+    private readonly Dictionary<string, BatchData> batchDataDictionary = new();
+
+    public void PrepareBatching(IEnumerable<SceneNode> renderList)
     {
-        public uint commandsBuffer;
-        public uint transformsBuffer;
-        public uint materialsBuffer;
-        public VertexArrayObject vao;
+        var nodes = renderList.Where(n => n.FrameBits.HasFlag(FrameBitsFlags.BatchAllowed));
+        var shaderFrequencies = CalculateShaderFrequency(nodes);
+        var batchFrequency = new Dictionary<string, int>();
 
-        public List<DrawElementsIndirectCommand> Commands;
-        public List<float> Vertices;
-        public List<uint> Indices;
-        public List<Transform> Transforms;
-        public VertexArrayObject Vao;
-    }
-
-    public Renderer()
-    {
-        // Create the default render layers
-        foreach (var renderGroup in Enum.GetValues<RenderGroup>())
+        foreach (var node in nodes)
         {
-            var data = new LayerData
+            var frequency = shaderFrequencies[node.Material.Shader.Handle];
+            if (frequency > 1)
             {
-                vao = new VertexArrayObject(),
-                Vertices = new List<float>(),
-                Indices = new List<uint>(),
-                Commands = new List<DrawElementsIndirectCommand>(),
-                Transforms = new List<Transform>(),
-                Vao = new()
-            };
-            GL.GenBuffers(1, out data.commandsBuffer);
-            GL.GenBuffers(1, out data.transformsBuffer);
-            GL.GenBuffers(1, out data.materialsBuffer);
-            layerData.Add(renderGroup, data);
-        }
-    }
-
-    public void Render(Dictionary<RenderGroup, List<SceneNode>> renderLayers, double elapsedSeconds)
-    {
-        //  render each layer separately
-        var renderList = renderLayers[RenderGroup.SkyBox];
-        var data = layerData[RenderGroup.SkyBox];
-        RenderLayer(renderList, data, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.Default];
-        data = layerData[RenderGroup.Default];
-        RenderLayer(renderList, data, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.DistanceSorted];
-        data = layerData[RenderGroup.DistanceSorted];
-        RenderLayer(renderList, data, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.UI];
-        data = layerData[RenderGroup.UI];
-        RenderLayer(renderList, data, elapsedSeconds);
-    }
-
-    private void RenderLayer(IEnumerable<SceneNode> list, LayerData data, double elapsedSeconds)
-    {
-        foreach (var node in list)
-        {
-            if ((node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0)
-            {
-                if (!node.FrameBits.HasFlag(FrameBitsFlags.BatchAllowed))
-                {
-                    node.OnDraw(elapsedSeconds);
-                    continue;
-                }
-
-                WriteTransformData(node, data);
-                WriteDrawCommand(node, data);
-                //  TODO: think of SceneNode implementing WriteUniformData and WriteDrawCommand
-                //  so those can be overridden for special implementations e.g. node.WriteUniformData()...
+                var key = GetBatchingKey(node);
+                if (batchFrequency.ContainsKey(key))
+                    batchFrequency[key]++;
+                else
+                    batchFrequency[key] = 1;
             }
         }
 
-        //  TODO: optimize writing to buffer storage if no changes were made
-        //  upload draw commands
-        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, data.commandsBuffer);
-        GL.BufferStorage(BufferTarget.DrawIndirectBuffer, data.Commands.Count * Unsafe.SizeOf<DrawElementsIndirectCommand>(), data.Commands.ToArray(), BufferStorageFlags.MapWriteBit);
+        //  create and update individual batches
+        foreach (var node in nodes)
+        {
+            var key = GetBatchingKey(node);
+            if (batchFrequency.ContainsKey(key) && batchFrequency[key] > 1)
+            {
+                if (!batchDataDictionary.ContainsKey(key))
+                {
+                    AddNewBatch(batchDataDictionary, key, node.Material.Shader, node.Mesh.VertexDeclaration);
+                }
+                var data = batchDataDictionary[key];
+                data.WriteDrawCommand(node);
+                data.WriteTransformData(node);
+            }
+        }
 
-        //  upload matrices params
-        GL.BindBuffer(BufferTarget.ParameterBuffer, data.transformsBuffer);
-        GL.BufferStorage(BufferTarget.ParameterBuffer, data.Transforms.Count * Unsafe.SizeOf<Matrix4>(), data.Transforms.Select(t => t.worldMatrix).ToArray(), BufferStorageFlags.MapWriteBit);
+        //  finish individual batches
+        var batches = batchDataDictionary.Values;
+        foreach (var batch in batches)
+        {
+            var buffer = new Buffer<float>(batch.Vertices.ToArray(), BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+            batch.Vao.AddBuffer(batch.VertexDeclaration, buffer, name: "Batch VBO");
+            batch.Vao.AddIndexBuffer(new IndexBuffer(batch.Indices.ToArray()), "Batch IBO");
+            batch.Vertices.Clear();
+            batch.Indices.Clear();
+
+            var commands = batch.CommandsDict.Values.ToArray();
+            var transforms = batch.TransformsDict.Values.ToArray();
+            GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, commands.Length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands);
+            GL.NamedBufferSubData(batch.TransformsBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
+        }
+    }
+
+    public void RenderLayer(Scene scene, IEnumerable<SceneNode> renderList, double elapsedSeconds)
+    {
+        var lastShaderProgram = 0;        
+        foreach(var batch in batchDataDictionary.Values)
+        {
+            //batch.CommandsDict.Clear();
+            //batch.TransformsDict.Clear();
+        }
+
+        foreach (var node in renderList)
+        {
+            var shouldRender = (node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0;
+            var key = GetBatchingKey(node);
+            var batchExists = batchDataDictionary.TryGetValue(key, out var batch);
+            if (batchExists)
+            {
+                batch.UpdateCommand(node, shouldRender);
+                batch.WriteTransformData(node);
+            }
+
+            if (shouldRender && !batchExists)
+            {
+                scene.RenderNode(node, elapsedSeconds);
+            }
+        }
+
+
+        //  render all batches
+        foreach (var batch in batchDataDictionary.Values)
+        {
+            //if (batch.FrameCommands.Count == 0) continue;
+            if (lastShaderProgram != batch.Shader.Handle)
+            {
+                lastShaderProgram = batch.Shader.Handle;
+                batch.Shader.Use();
+                if (scene.vboCamera.IsUniformSupported(batch.Shader)) scene.vboCamera.BindToShaderProgram(batch.Shader);
+                if (scene.vboLight.IsUniformSupported(batch.Shader)) scene.vboLight.BindToShaderProgram(batch.Shader);
+                if (scene.vboMaterial.IsUniformSupported(batch.Shader)) scene.vboMaterial.BindToShaderProgram(batch.Shader);
+            }
+            var commands = batch.CommandsDict.Values.ToArray();
+            var transforms = batch.TransformsDict.Values.ToArray();
+            GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, commands.Length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands);
+            GL.NamedBufferSubData(batch.TransformsBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
+            //GL.NamedBufferSubData(batch.Vao.VertexBuffer!.Vbo, IntPtr.Zero, batch.Vertices.Count * sizeof(float), batch.Vertices.ToArray());
+            GL.BindVertexArray(batch.Vao);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, batch.TransformsBufferName);
+            GL.BindBuffer(BufferTarget.DrawIndirectBuffer, batch.CommandsBufferName);
+            GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, commands.Length, 0);
+            Log.CheckGlError();
+        }
+    }
+
+    /// <summary>
+    /// Returns a batching key consisting of shader program handle and vertex declaration.
+    /// </summary>
+    /// <param name="node"></param>
+    /// <returns></returns>
+    private static string GetBatchingKey(SceneNode node)
+    {
+        var locations = string.Join('|', node.Mesh.VertexDeclaration.Attributes.Select(x => $"{x.Location}:{x.Size}"));
+        var key = $"{node.Material.Shader.Handle}|{locations}";
+        return key;
+    }
+
+    private static void AddNewBatch(IDictionary<string, BatchData> dict, string key, Shader shader, VertexDeclaration vertexDeclaration)
+    {
+        var data = new BatchData
+        {
+            CommandsDict = new Dictionary<uint, DrawElementsIndirectCommand>(),
+            TransformsDict = new Dictionary<uint, Matrix4>(),
+            Shader = shader,
+            VertexDeclaration = vertexDeclaration,
+            Vertices = new List<float>(),
+            Indices = new List<uint>(),
+            Vao = new()
+        };
+        GL.CreateBuffers(1, out data.CommandsBufferName);
+        GL.CreateBuffers(1, out data.TransformsBufferName);
+        GL.CreateBuffers(1, out data.MaterialsBufferName);
+
+        //  prepare draw commands
+        GL.NamedBufferStorage(data.CommandsBufferName, MaxCommands * Unsafe.SizeOf<DrawElementsIndirectCommand>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+
+        //  prepare matrices
+        GL.NamedBufferStorage(data.TransformsBufferName, MaxCommands * Unsafe.SizeOf<Matrix4>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         Log.CheckGlError();
 
-        GL.BindVertexArray(data.Vao);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, data.transformsBuffer);
-        GL.BindBuffer(BufferTarget.DrawIndirectBuffer, data.commandsBuffer);
-        GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, data.Commands.Count, 0);
+        dict.Add(key, data);
     }
 
-    private static void WriteTransformData(SceneNode node, LayerData data)
+    /// <summary>
+    /// Calculates the cardinality of shader programs in the given scene node collection.
+    /// </summary>
+    /// <param name="nodes"></param>
+    /// <returns></returns>
+    private static Dictionary<int, int> CalculateShaderFrequency(IEnumerable<SceneNode> nodes)
     {
-        node.GetTransform(out var transform);
-        data.Transforms.Add(transform);
-    }
-
-    private static unsafe void WriteDrawCommand(SceneNode node, LayerData data)
-    {
-        //  TODO: we need rebuilding geometry only if a new node is added to the
-        //  scene or if we implement culling and the nodes get visible or culled.
-        var nodeIndices = node.Mesh.Indices;
-
-        data.Commands.Add(new DrawElementsIndirectCommand
+        var frequencies = new Dictionary<int, int>();
+        foreach (var node in nodes)
         {
-            Count = nodeIndices.Length,
-            InstanceCount = 1,
-            FirstIndex = data.Indices.Count,
-            BaseVertex = data.Vertices.Count / node.Mesh.VertexDeclaration.StrideInFloats,
-            BaseInstance = 0
-        });
+            var handle = node.Material?.Shader.Handle ?? 0;
+            if (handle > 0)
+            {
+                if (frequencies.ContainsKey(handle))
+                {
+                    frequencies[handle]++;
+                }
+                else
+                {
+                    frequencies[handle] = 1;
+                }
+            }
+        }
+        return frequencies;
+    }
 
-        data.Vertices.AddRange(node.Mesh.Vertices);
-        data.Indices.AddRange(nodeIndices);
+    /// <summary>
+    /// Holds batch related data like commands, SSBO buffers, batch geometry.
+    /// </summary>
+    private struct BatchData
+    {
+        public uint CommandsBufferName;
+        public uint TransformsBufferName;
+        public uint MaterialsBufferName;
+
+        /// <summary>
+        /// Holds draw commands of all batched nodes. Key is node ID.
+        /// </summary>
+        public Dictionary<uint, DrawElementsIndirectCommand> CommandsDict;
+        
+        /// <summary>
+        /// Holds node transforms of all batched nodes. Key is node ID.
+        /// </summary>
+        public Dictionary<uint, Matrix4> TransformsDict;
+
+        public List<float> Vertices;
+        public List<uint> Indices;
+        //public List<Transform> Transforms;
+        public VertexArrayObject Vao;
+        public VertexDeclaration VertexDeclaration;
+        public Shader Shader;
+
+        public readonly void WriteTransformData(SceneNode node)
+        {
+            node.GetTransform(out var transform);
+            TransformsDict[node.Id] = transform.worldMatrix;
+        }
+
+        public readonly void WriteDrawCommand(SceneNode node)
+        {
+            var nodeIndices = node.Mesh.Indices;
+            var cmd = new DrawElementsIndirectCommand
+            {
+                Count = nodeIndices.Length,
+                InstanceCount = 0,
+                FirstIndex = Indices.Count,
+                BaseVertex = Vertices.Count / node.Mesh.VertexDeclaration.StrideInFloats,
+                BaseInstance = 0
+            };
+            CommandsDict.Add(node.Id, cmd);
+            Vertices.AddRange(node.Mesh.Vertices);
+            Indices.AddRange(nodeIndices);
+        }       
+
+        public readonly void UpdateCommand(SceneNode node, bool shouldRender)
+        {
+            var cmd = CommandsDict[node.Id];
+            cmd.InstanceCount = shouldRender ? 1 : 0;
+            CommandsDict[node.Id] = cmd;
+        }
     }
 }

@@ -26,9 +26,10 @@ public class Scene
     protected readonly List<SceneNode> nodes = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
     protected readonly Shader defaultShader;
-    protected readonly UniformBuffer<CameraUniform> vboCamera;
-    protected readonly UniformBuffer<MaterialUniform> vboMaterial;
-    protected readonly UniformBuffer<LightUniform> vboLight;
+    protected internal readonly UniformBuffer<CameraUniform> vboCamera;
+    protected internal readonly UniformBuffer<LightUniform> vboLight;
+    protected internal readonly UniformBuffer<MaterialUniform> vboMaterial;
+    protected readonly Renderer renderer = new();
     protected ICamera? camera;
 
     internal bool isLoaded;
@@ -41,8 +42,8 @@ public class Scene
     public Scene(string? name)
     {
         defaultShader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
-        vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
         vboLight = new UniformBuffer<LightUniform>("light", 1);
+        vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
         vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         Name = name ?? GetType().Name;
 
@@ -167,6 +168,12 @@ public class Scene
         vboMaterial.BindToShaderProgram(defaultShader);
     }
 
+    public virtual void OnLoaded()
+    {
+        var renderList = renderLayers[RenderGroup.Default];
+        renderer.PrepareBatching(renderList);
+    }
+
     /// <summary>
     /// Fired when the scene gets activated.
     /// </summary>
@@ -204,7 +211,8 @@ public class Scene
         RenderNodeList(renderList, elapsedSeconds);
 
         renderList = renderLayers[RenderGroup.Default];
-        RenderNodeList(renderList, elapsedSeconds);
+        //RenderNodeList(renderList, elapsedSeconds);
+        renderer.RenderLayer(this, renderList, elapsedSeconds);
 
         renderList = renderLayers[RenderGroup.DistanceSorted];
         RenderNodeList(renderList, elapsedSeconds);
@@ -268,7 +276,7 @@ public class Scene
         }
     }
 
-    private void RenderNode(SceneNode node, double elapsed)
+    internal void RenderNode(SceneNode node, double elapsed)
     {
         var material = node.Material;
         var shader = material.Shader;

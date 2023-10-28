@@ -10,29 +10,30 @@ namespace OpenRender.SceneManagement;
 
 public class SceneNode
 {
+    private static uint idCounter = 0;
+    private readonly uint id;
     private bool showBoundingSphere;
     private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
 
     protected Transform transform = new();
+    
 
-    public SceneNode()
+    public SceneNode(Mesh? mesh, Material? material = default, Vector3? position = default)
     {
+        id = Interlocked.Increment(ref idCounter);
         SetScale(Vector3.One);
-        SetPosition(Vector3.Zero);
+        SetPosition(position ?? Vector3.Zero);
         SetRotation(Vector3.Zero);
         RenderGroup = RenderGroup.Default;
-        IsBatchingAllowed = true;
-    }
+        IsBatchingAllowed = false;
 
-    public SceneNode(Mesh mesh, Material? material = default, Vector3? position = default) : this()
-    {
         Material = material ?? new();
         SetMesh(mesh);
-        if (position != null) SetPosition(position.Value);
     }
 
+    public uint Id => id;
     public BoundingSphere BoundingSphere => mesh.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
@@ -60,9 +61,9 @@ public class SceneNode
         set
         {
             if (value)
-                FrameBits.ClearFlag(FrameBitsFlags.BatchAllowed);
-            else
                 FrameBits.SetFlag(FrameBitsFlags.BatchAllowed);
+            else
+                FrameBits.ClearFlag(FrameBitsFlags.BatchAllowed);
         }
     }
 
@@ -74,7 +75,7 @@ public class SceneNode
 
     public Mesh Mesh => mesh;
 
-    public void SetMesh(in Mesh mesh)
+    public void SetMesh(in Mesh? mesh)
     {
         if (mesh == null) return;
         

@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace OpenRender.Core.Rendering;
 
 [StructLayout(LayoutKind.Explicit)]
-public struct MaterialUniform : ISize
+public struct MaterialUniform
 {
     [FieldOffset(0)]
     public Vector3 Diffuse;
@@ -14,6 +14,4 @@ public struct MaterialUniform : ISize
     public Vector3 Specular;
     [FieldOffset(44)]
     public float Shininess;
-
-    public static int Size => 48;
 }

@@ -8,12 +8,13 @@ internal class RandomNode : SceneNode
 {
     private readonly int rotationAxis;
 
-    public RandomNode(Mesh mesh, Material material) : base(mesh, material)
+    public RandomNode(Mesh mesh, Material material, int area) : base(mesh, material)
     {
-        const int Area = 500;
-        SetPosition(new Vector3(Random.Shared.Next(-Area, Area + 1), Random.Shared.Next(-Area, Area + 1), Random.Shared.Next(-Area, Area + 1)));
-        SetScale(Random.Shared.Next(2, 5));
+        SetScale(Random.Shared.Next(1, 3) / 2f);
+        SetPosition(new Vector3(Random.Shared.Next(-area, area + 1), Random.Shared.Next(-area, area + 1), Random.Shared.Next(-area, area + 1)));
+        SetRotation(new Vector3(Random.Shared.Next(0, 360), Random.Shared.Next(0, 360), Random.Shared.Next(0, 360)));
         rotationAxis = Random.Shared.Next(0, 2);
+        IsBatchingAllowed = true;
     }
 
     public override void OnUpdate(Scene scene, double elapsed)

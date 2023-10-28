@@ -2,13 +2,9 @@
 using System.Runtime.InteropServices;
 
 namespace OpenRender.Core.Rendering;
-public interface ISize
-{
-    static abstract int Size { get; }
-}
 
-[StructLayout(LayoutKind.Explicit, Pack = 1)]
-public struct CameraUniform: ISize
+[StructLayout(LayoutKind.Explicit)]
+public struct CameraUniform//: ISize
 {
     [FieldOffset(0)]
     public Matrix4 view;
@@ -21,6 +17,4 @@ public struct CameraUniform: ISize
 
     [FieldOffset(144)]
     public Vector3 direction;
-
-    public static int Size => 160;
 }
