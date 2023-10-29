@@ -3,6 +3,7 @@ using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace OpenRender.Core.Rendering;
 
@@ -60,21 +61,19 @@ public class Renderer
             batch.Vertices.Clear();
             batch.Indices.Clear();
 
-            var commands = batch.CommandsDict.Values.ToArray();
-            var transforms = batch.TransformsDict.Values.ToArray();
-            GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, commands.Length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands);
-            GL.NamedBufferSubData(batch.TransformsBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
+            //var commands = batch.CommandsDict.Values.ToArray();
+            //var transforms = batch.TransformsDict.Values.ToArray();
+            //var materials = batch.Materials.ToArray();
+            //var textures = batch.Textures.ToArray();
+            //GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, commands.Length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands);
+            //GL.NamedBufferSubData(batch.WorldMatricesBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
+            //GL.NamedBufferSubData(batch.MaterialsBufferName, IntPtr.Zero, materials.Length * Unsafe.SizeOf<MaterialData>(), materials);
         }
     }
 
     public void RenderLayer(Scene scene, IEnumerable<SceneNode> renderList, double elapsedSeconds)
     {
-        var lastShaderProgram = 0;        
-        foreach(var batch in batchDataDictionary.Values)
-        {
-            //batch.CommandsDict.Clear();
-            //batch.TransformsDict.Clear();
-        }
+        var lastShaderProgram = 0;
 
         foreach (var node in renderList)
         {
@@ -108,11 +107,17 @@ public class Renderer
             }
             var commands = batch.CommandsDict.Values.ToArray();
             var transforms = batch.TransformsDict.Values.ToArray();
+            var materials = batch.Materials.ToArray();
+            var textures = batch.Textures.ToArray();
             GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, commands.Length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), commands);
-            GL.NamedBufferSubData(batch.TransformsBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
-            //GL.NamedBufferSubData(batch.Vao.VertexBuffer!.Vbo, IntPtr.Zero, batch.Vertices.Count * sizeof(float), batch.Vertices.ToArray());
+            GL.NamedBufferSubData(batch.WorldMatricesBufferName, IntPtr.Zero, transforms.Length * Unsafe.SizeOf<Matrix4>(), transforms);
+            GL.NamedBufferSubData(batch.MaterialsBufferName, IntPtr.Zero, materials.Length * Unsafe.SizeOf<MaterialData>(), materials);
+            GL.NamedBufferSubData(batch.TexturesBufferName, IntPtr.Zero, textures.Length * Unsafe.SizeOf<TextureData>(), textures);
+
             GL.BindVertexArray(batch.Vao);
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, batch.TransformsBufferName);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, batch.WorldMatricesBufferName);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, batch.MaterialsBufferName);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, batch.TexturesBufferName);
             GL.BindBuffer(BufferTarget.DrawIndirectBuffer, batch.CommandsBufferName);
             GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, commands.Length, 0);
             Log.CheckGlError();
@@ -135,8 +140,10 @@ public class Renderer
     {
         var data = new BatchData
         {
-            CommandsDict = new Dictionary<uint, DrawElementsIndirectCommand>(),
-            TransformsDict = new Dictionary<uint, Matrix4>(),
+            CommandsDict = new(),
+            TransformsDict = new(),
+            Materials = new(),
+            Textures = new(),
             Shader = shader,
             VertexDeclaration = vertexDeclaration,
             Vertices = new List<float>(),
@@ -144,14 +151,22 @@ public class Renderer
             Vao = new()
         };
         GL.CreateBuffers(1, out data.CommandsBufferName);
-        GL.CreateBuffers(1, out data.TransformsBufferName);
+        GL.CreateBuffers(1, out data.WorldMatricesBufferName);
         GL.CreateBuffers(1, out data.MaterialsBufferName);
+        GL.CreateBuffers(1, out data.TexturesBufferName);
 
         //  prepare draw commands
         GL.NamedBufferStorage(data.CommandsBufferName, MaxCommands * Unsafe.SizeOf<DrawElementsIndirectCommand>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
 
         //  prepare matrices
-        GL.NamedBufferStorage(data.TransformsBufferName, MaxCommands * Unsafe.SizeOf<Matrix4>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferStorage(data.WorldMatricesBufferName, MaxCommands * Unsafe.SizeOf<Matrix4>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+
+        //  prepare materials
+        GL.NamedBufferStorage(data.MaterialsBufferName, MaxCommands * Unsafe.SizeOf<MaterialData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+
+        //  prepare textures
+        GL.NamedBufferStorage(data.TexturesBufferName, MaxCommands * Unsafe.SizeOf<TextureData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+
         Log.CheckGlError();
 
         dict.Add(key, data);
@@ -189,25 +204,37 @@ public class Renderer
     private struct BatchData
     {
         public uint CommandsBufferName;
-        public uint TransformsBufferName;
+        public uint WorldMatricesBufferName;
         public uint MaterialsBufferName;
+        public uint TexturesBufferName;
 
         /// <summary>
         /// Holds draw commands of all batched nodes. Key is node ID.
         /// </summary>
         public Dictionary<uint, DrawElementsIndirectCommand> CommandsDict;
-        
+
         /// <summary>
-        /// Holds node transforms of all batched nodes. Key is node ID.
+        /// Holds model (or world) matrices of all batched nodes. Key is node ID.
         /// </summary>
         public Dictionary<uint, Matrix4> TransformsDict;
 
-        public List<float> Vertices;
-        public List<uint> Indices;
-        //public List<Transform> Transforms;
+        /// <summary>
+        /// Holds material data of all batched nodes. 
+        /// </summary>
+        public List<MaterialData> Materials;
+
+        /// <summary>
+        /// Holds bindless texture handles of all batched nodes. 
+        /// </summary>
+        public List<TextureData> Textures;
+
         public VertexArrayObject Vao;
         public VertexDeclaration VertexDeclaration;
         public Shader Shader;
+
+        public List<float> Vertices;
+        public List<uint> Indices;
+
 
         public readonly void WriteTransformData(SceneNode node)
         {
@@ -227,9 +254,32 @@ public class Renderer
                 BaseInstance = 0
             };
             CommandsDict.Add(node.Id, cmd);
+
+            //  write material data, this is a but more complex as we need bindless textures
+            var materialData = new MaterialData()
+            {
+                Diffuse = new Vector4(node.Material.DiffuseColor),
+                Emissive = new Vector4(node.Material.EmissiveColor),
+                Specular = new Vector4(node.Material.SpecularColor, node.Material.Shininess),
+                Extra = new Vector4(node.Material.DetailTextureFactor, 0,0,0),
+                //Shininess = node.Material.Shininess,
+                //DetailTextureFactor = node.Material.DetailTextureFactor,
+                //HasDiffuse = node.Material.HasDiffuse ? 1 : 0
+            };
+            Materials.Add(materialData);
+
+            TextureData textureData = new();
+            if (node.Material.HasDiffuse)
+            {
+                textureData.Diffuse = GL.Arb.GetTextureHandle(node.Material.Textures[0].Handle);
+                if (!Textures.Any(t => t.Diffuse == textureData.Diffuse))
+                    GL.Arb.MakeTextureHandleResident(textureData.Diffuse);
+            }
+            Textures.Add(textureData);
+
             Vertices.AddRange(node.Mesh.Vertices);
             Indices.AddRange(nodeIndices);
-        }       
+        }
 
         public readonly void UpdateCommand(SceneNode node, bool shouldRender)
         {
@@ -237,5 +287,38 @@ public class Renderer
             cmd.InstanceCount = shouldRender ? 1 : 0;
             CommandsDict[node.Id] = cmd;
         }
+    }
+
+    //[StructLayout(LayoutKind.Explicit)]
+    //private struct MaterialData
+    //{
+    //    [FieldOffset(0)]
+    //    public Vector3 Diffuse;
+    //    [FieldOffset(16)]
+    //    public Vector3 Emissive;
+    //    [FieldOffset(32)]
+    //    public Vector3 Specular;
+    //    [FieldOffset(44)]
+    //    public float Shininess;
+    //    [FieldOffset(48)]
+    //    public float DetailTextureFactor;
+    //}
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MaterialData
+    {
+        public Vector4 Diffuse;
+        public Vector4 Emissive;
+        public Vector4 Specular;
+        public Vector4 Extra;
+        //public float Shininess;
+        //public float DetailTextureFactor;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TextureData
+    {
+        public long Diffuse;
+        public long Detail;
+        public long Normal;
     }
 }

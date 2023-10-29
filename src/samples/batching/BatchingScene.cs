@@ -26,7 +26,7 @@ internal class BatchingScene : Scene
     public BatchingScene()
     {
         boxData = GeometryHelper.CreateBox();
-        sphereData = GeometryHelper.CreateSphere(16, 32);
+        sphereData = GeometryHelper.CreateSphere(24, 42);
     }
 
     public override void Load()
@@ -34,9 +34,9 @@ internal class BatchingScene : Scene
         base.Load();
         GL.ClearColor(Color4.DarkSlateBlue);
 
-        AddRotatingBoxes();
+        //AddRotatingBoxes();
         AddRandomNodes();
-        AddMetallicBoxes();
+       // AddMetallicBoxes();
         //AddSprites();
 
         var paths = new string[] {
@@ -256,12 +256,12 @@ internal class BatchingScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 1000;
-        const int Area = 100;
-        var shader = new Shader("Shaders/standard_ssbo.vert", "Shaders/standard.frag");
+        const int NodeCount = 27;
+        const int Area = 6;
+        var shader = new Shader("Shaders/standard-batching.vert", "Shaders/standard-batching.frag");
         var materials = new Material[]
         {
-            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
+            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 1.0f),
             Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
             Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
             Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
@@ -273,7 +273,7 @@ internal class BatchingScene : Scene
 
         for (var i = 0; i < NodeCount; i++)
         {
-            var mod = i % 7;
+            var mod = i % materials.Length;
             if (mod == 0)
             {
                 var sphere = new RandomNode(new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices), materials[mod], Area);

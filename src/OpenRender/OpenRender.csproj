@@ -16,7 +16,8 @@
   <ItemGroup>
     <None Remove="Shaders\instanced.vert" />
     <None Remove="Shaders\nine-slice.frag" />
-    <None Remove="Shaders\standard_ssbo.vert" />
+    <None Remove="Shaders\standard-batching.frag" />
+    <None Remove="Shaders\standard-batching.vert" />
   </ItemGroup>
 
   <ItemGroup>
@@ -38,7 +39,10 @@
     <Content Include="Shaders\instanced.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Shaders\standard_ssbo.vert">
+    <Content Include="Shaders\standard-batching.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Shaders\standard-batching.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Shaders\standard.frag">

@@ -104,5 +104,8 @@ public class Material
 
     public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
         Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
-   
+
+    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, Vector3 diffuseColor, float shininess = 0f, float detailTextureFactor = 0f) =>
+        Create(shader, new TextureDescriptor[] { textureDescriptor }, diffuseColor, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
+
 }

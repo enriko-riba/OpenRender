@@ -1,4 +1,5 @@
 #version 460
+#extension GL_ARB_bindless_texture : require
 
 layout (std140, binding = 0) uniform camera {    
     mat4 view;
@@ -16,16 +17,6 @@ struct Light {
 };
 layout(std140, binding = 1) uniform light {
     Light dirLight;
-};
-
- struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
-    float shininess;
-};
-layout(std140, binding = 2) uniform material {
-    Material mat;
 };
 
 layout(std140, binding = 0) readonly buffer ssbo_transform
@@ -46,12 +37,14 @@ out vec3 vertexNormal;
 out vec3 fragPos;
 out vec2 texCoord;
 out vec3 texCoordCube;
+flat out int drawID;
 
 void main(void)
 {
+    drawID = gl_DrawID;
     mat4 model = modelMatrices[gl_DrawID];
     vertexColor = aColor;
-    vertexNormal = normalize(model * vec4(aNormal, 0)).xyz;
+    vertexNormal = (model * vec4(aNormal, 0)).xyz;
     fragPos = (model * vec4(aPosition, 1.0)).xyz;
     texCoord = aTexCoord;
     texCoordCube = aPosition;
