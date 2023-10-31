@@ -1,32 +1,7 @@
-#version 330 core
+#version 460 core
 
-layout (std140) uniform camera {    
-    mat4 view;
-    mat4 projection;
-    vec3 cameraPos;
-    vec3 cameraDir;
-};
-
- struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
-    float shininess;
-};
-layout(std140) uniform material {
-    Material mat;
-};
-
-struct Light {    
-    vec3 position;    
-    vec3 ambient;
-    vec3 diffuse;
-    vec3 specular;
-    float falloff;
-};
-layout(std140) uniform light {
-    Light dirLight;
-};
+uniform mat4 projection;
+uniform mat4 view;
 
 layout (location = 0) in vec3 aPosition;
 out vec3 texCoordCube;

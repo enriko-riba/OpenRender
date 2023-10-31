@@ -1,5 +1,5 @@
-﻿
-using OpenRender.Core.Culling;
+﻿using OpenRender.Core.Culling;
+using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -12,14 +12,125 @@ public class Renderer
 {
     private const int MaxCommands = 5000;
 
+    private int lastProgramHandle;
+    private uint lastMaterial;
+    private bool hasNodeListChanged;
+    private bool hasCameraChanged;
+
+    private Frustum Frustum = new();
+    private readonly TextureBatcher textureBatcher;
+    private readonly List<Material> materialList = new();
+    protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
+
+    protected internal readonly UniformBuffer<CameraUniform> vboCamera;
+    protected internal readonly UniformBuffer<LightUniform> vboLight;
+    protected internal readonly UniformBuffer<MaterialUniform> vboMaterial;
+
+    public Renderer()
+    {
+        vboLight = new UniformBuffer<LightUniform>("light", 1);
+        vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
+        vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
+
+        // 16 is minimum per OpenGL standard
+        GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
+        textureBatcher = new TextureBatcher(textureUnitsCount);
+
+        // Create the default render layers
+        foreach (var renderGroup in Enum.GetValues<RenderGroup>())
+        {
+            renderLayers.Add(renderGroup, new List<SceneNode>());
+        }
+    }
+
     /// <summary>
     /// Key: shader.handle + vertex declaration
     /// </summary>
     private readonly Dictionary<string, BatchData> batchDataDictionary = new();
 
-    public void PrepareBatching(IEnumerable<SceneNode> renderList)
+    public void ResetMaterial() => lastMaterial = 0;
+
+
+    /// <summary>
+    /// Renders visible nodes in the list.
+    /// </summary>
+    /// <param name="list"></param>
+    /// <param name="elapsedSeconds"></param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void RenderNodeList(IEnumerable<SceneNode> list, double elapsedSeconds)
     {
-        var nodes = renderList.Where(n => n.FrameBits.HasFlag(FrameBitsFlags.BatchAllowed));
+        foreach (var node in list)
+        {
+            if ((node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0)
+            {
+                RenderNode(node, elapsedSeconds);
+            }
+        }
+    }
+    private void RenderNode(SceneNode node, double elapsed)
+    {
+        var material = node.Material;
+        var shader = material.Shader;
+        shader.Use();
+        if (lastProgramHandle != shader.Handle)
+        {
+            lastProgramHandle = shader.Handle;
+            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
+            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
+            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
+        }
+
+        if (shader.UniformExists("model"))
+        {
+            node.GetWorldMatrix(out var worldMatrix);
+            shader.SetMatrix4("model", ref worldMatrix);
+        }
+
+        if (lastMaterial != material.Id)
+        {
+            lastMaterial = material.Id;
+            var settings = new MaterialUniform()
+            {
+                Diffuse = material.DiffuseColor,
+                Emissive = material.EmissiveColor,
+                Specular = material.SpecularColor,
+                Shininess = material.Shininess,
+            };
+            vboMaterial.UpdateSettings(ref settings);
+            if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
+            if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
+            if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
+
+            _ = textureBatcher.BindTextureUnits(material);
+        }
+
+        node.OnDraw(elapsed);
+    }
+
+    internal void AddNode(SceneNode node)
+    {
+        renderLayers[node.RenderGroup].Add(node);
+        hasNodeListChanged = true;
+    }
+
+    internal void RemoveNode(SceneNode node)
+    {
+        renderLayers[node.RenderGroup].Remove(node);
+        hasNodeListChanged = true;
+    }
+
+    internal void RemoveAllNodes()
+    {
+        foreach (var layer in renderLayers.Values)
+        {
+            layer.Clear();
+        }
+        hasNodeListChanged = true;
+    }
+
+    public void PrepareBatching()
+    {
+        var nodes = renderLayers[RenderGroup.Default].Where(n => n.FrameBits.HasFlag(FrameBitsFlags.BatchAllowed));
         var shaderFrequencies = CalculateShaderFrequency(nodes);
         var batchFrequency = new Dictionary<string, int>();
 
@@ -64,9 +175,47 @@ public class Renderer
         }
     }
 
-    public void RenderLayer(Scene scene, IEnumerable<SceneNode> renderList, double elapsedSeconds)
+    public void BeforeRenderFrame(ICamera camera, IReadOnlyList<LightUniform> lights)
+    {
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+
+        //  set shared uniform blocks for all programs before render loop
+        var cam = new CameraUniform()
+        {
+            view = camera.ViewMatrix,
+            projection = camera.ProjectionMatrix,
+            position = camera.Position,
+            direction = camera.Front
+        };
+        vboCamera.UpdateSettings(ref cam);
+
+        if (lights.Any())
+        {
+            //  TODO: pass lights array
+            var dirLight = lights[0];
+            vboLight.UpdateSettings(ref dirLight);
+        }
+    }
+
+    public void RenderFrame(double elapsedSeconds)
+    {
+        //  render each layer separately
+        var renderList = renderLayers[RenderGroup.SkyBox];
+        RenderNodeList(renderList, elapsedSeconds);
+
+        RenderDefaultLayer(elapsedSeconds);
+
+        renderList = renderLayers[RenderGroup.DistanceSorted];
+        RenderNodeList(renderList, elapsedSeconds);
+
+        renderList = renderLayers[RenderGroup.UI];
+        RenderNodeList(renderList, elapsedSeconds);
+    }
+
+    public void RenderDefaultLayer(double elapsedSeconds)
     {
         var lastShaderProgram = 0;
+        var renderList = renderLayers[RenderGroup.Default];
 
         foreach (var node in renderList)
         {
@@ -80,7 +229,7 @@ public class Renderer
 
             if (shouldRender && !batchExists)
             {
-                scene.RenderNode(node, elapsedSeconds);
+                RenderNode(node, elapsedSeconds);
             }
         }
 
@@ -92,11 +241,11 @@ public class Renderer
             {
                 lastShaderProgram = batch.Shader.Handle;
                 batch.Shader.Use();
-                if (scene.vboCamera.IsUniformSupported(batch.Shader)) scene.vboCamera.BindToShaderProgram(batch.Shader);
-                if (scene.vboLight.IsUniformSupported(batch.Shader)) scene.vboLight.BindToShaderProgram(batch.Shader);
-                if (scene.vboMaterial.IsUniformSupported(batch.Shader)) scene.vboMaterial.BindToShaderProgram(batch.Shader);
+                if (vboCamera.IsUniformSupported(batch.Shader)) vboCamera.BindToShaderProgram(batch.Shader);
+                if (vboLight.IsUniformSupported(batch.Shader)) vboLight.BindToShaderProgram(batch.Shader);
+                if (vboMaterial.IsUniformSupported(batch.Shader)) vboMaterial.BindToShaderProgram(batch.Shader);
             }
-           
+
             var length = batch.LastIndex + 1;
             GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), batch.CommandsDataArray);
             GL.NamedBufferSubData(batch.WorldMatricesBufferName, IntPtr.Zero, length * Unsafe.SizeOf<Matrix4>(), batch.WorldMatricesDataArray);
@@ -177,6 +326,62 @@ public class Renderer
         return frequencies;
     }
 
+    internal void Update(ICamera? camera, IEnumerable<SceneNode> nodes)
+    {
+        CullFrustum(camera, nodes);
+        SortRenderList(camera);
+        OptimizeTextureUnitUsage(nodes);
+    }
+
+
+    private void CullFrustum(ICamera? camera, IEnumerable<SceneNode> nodes)
+    {
+        hasCameraChanged = (camera?.Update() ?? false);
+        if (hasCameraChanged)
+        {
+            Frustum.Update(camera!);
+            CullingHelper.FrustumCull(Frustum, nodes);
+        }
+    }
+
+    private void OptimizeTextureUnitUsage(IEnumerable<SceneNode> nodes)
+    {
+        if (hasNodeListChanged)
+        {
+            UpdateSceneMaterials(nodes);
+            textureBatcher.Reset();
+            textureBatcher.SortMaterials(materialList);
+        }
+    }
+
+    private void SortRenderList(ICamera? camera)
+    {
+        if (hasCameraChanged || hasNodeListChanged)
+        {
+            var distanceSortedLayer = renderLayers[RenderGroup.DistanceSorted];
+            if (distanceSortedLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
+            {
+                distanceSortedLayer.Sort(new DistanceComparer(camera!.Position));
+            }
+
+            var defaultLayer = renderLayers[RenderGroup.Default];
+            if (defaultLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
+            {
+                defaultLayer.Sort((a, b) => a.Material.Shader.Handle - b.Material.Shader.Handle);
+            }
+        }
+    }
+
+    private void UpdateSceneMaterials(IEnumerable<SceneNode> nodes)
+    {
+        materialList.Clear();
+        materialList.AddRange(nodes
+            .Select(n => n.Material)
+            .DistinctBy(m => m.Id));
+    }
+
+
+
     /// <summary>
     /// Holds batch related data like commands, SSBO buffers, batch geometry.
     /// </summary>
@@ -209,7 +414,7 @@ public class Renderer
         public MaterialData[] MaterialDataArray = new MaterialData[MaxCommands];
         public TextureData[] TextureDataArray = new TextureData[MaxCommands];
         public int LastIndex = -1;
-              
+
 
         public void WriteDrawCommand(SceneNode node)
         {

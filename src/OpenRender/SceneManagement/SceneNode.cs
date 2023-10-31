@@ -33,7 +33,7 @@ public class SceneNode
     }
 
     public uint Id => id;
-    public BoundingSphere BoundingSphere => mesh.BoundingSphere;
+    public BoundingSphere? BoundingSphere => mesh?.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
 
@@ -125,7 +125,7 @@ public class SceneNode
 
     public virtual void OnDraw(double elapsed)
     {
-        GL.BindVertexArray(mesh.Vao);
+        GL.BindVertexArray(mesh!.Vao!);
         if (mesh.Vao.DrawMode == DrawMode.Indexed)
             GL.DrawElements(PrimitiveType.Triangles, mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0);
         else
@@ -136,7 +136,6 @@ public class SceneNode
             sphereMeshRenderer.Shader.SetMatrix4("model", ref transform.worldMatrix);
             sphereMeshRenderer.Render();
         }
-        //GL.BindVertexArray(0);
     }
 
     public void AddChild(SceneNode child)

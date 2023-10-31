@@ -264,10 +264,10 @@ internal class BatchingScene : Scene
             Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 2.0f),
             Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
             Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
-            //Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
-            //Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
-            //Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
-            //Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
+            Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
+            Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
+            Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
 
@@ -277,6 +277,7 @@ internal class BatchingScene : Scene
             if (mod == 0)
             {
                 var sphere = new RandomNode(new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices), materials[mod], Area);
+                sphere.SetScale(Random.Shared.Next(1, 3) / 2f);
                 AddNode(sphere);
             }
             else

@@ -11,8 +11,8 @@ namespace OpenRender.Components;
 
 public sealed class SkyBox : SceneNode
 {
-    private Matrix4? projectionMatrix = null;
-
+    private Matrix4 projectionMatrix = Matrix4.Identity;
+    private Shader shader;
     public SkyBox(string[] texturePaths) : base(default, default)
     {
         ArgumentNullException.ThrowIfNull(texturePaths);
@@ -24,7 +24,7 @@ public sealed class SkyBox : SceneNode
             TextureTarget: TextureTarget.TextureCubeMap,
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge);
-        var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
+        shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
         Material = Material.Create(shader, desc);
 
         var (vertices, indices) = GeometryHelper.CreateCube();
@@ -52,16 +52,12 @@ public sealed class SkyBox : SceneNode
         {
             GL.DepthFunc(DepthFunction.Lequal);
         }
-
-        var cameraUniform = Scene!.VboCamera.Data!.Value;
-        var oldProjection = cameraUniform.projection;
-        cameraUniform.projection = projectionMatrix!.Value;
-        Scene!.VboCamera.UpdateSettings(ref cameraUniform);
+        
+        var view = Scene!.Camera!.ViewMatrix;
+        shader.SetMatrix4("view", ref view);
+        shader.SetMatrix4("projection", ref projectionMatrix);
 
         base.OnDraw(elapsed);
-
-        cameraUniform.projection = oldProjection;
-        Scene!.VboCamera.UpdateSettings(ref cameraUniform);
 
         //  restore previous values
         if (depthFunc != (int)DepthFunction.Lequal)

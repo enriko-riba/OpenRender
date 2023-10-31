@@ -35,6 +35,5 @@ public class SphereMeshRenderer
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
         GL.DrawElements(PrimitiveType.Triangles, vao.DataLength, DrawElementsType.UnsignedInt, 0);
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
-        GL.BindVertexArray(0);
     }
 }

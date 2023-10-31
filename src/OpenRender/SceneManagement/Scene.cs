@@ -1,11 +1,9 @@
-﻿using OpenRender.Core;
-using OpenRender.Core.Culling;
+﻿using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
-using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
-using System.Runtime.CompilerServices;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace OpenRender.SceneManagement;
 
@@ -13,26 +11,15 @@ public class Scene
 {
     public const int MaxLights = 4;
 
+    private bool isLoaded;
     private readonly List<LightUniform> lights = new();
-    private readonly List<Material> materialList = new();
-    private readonly TextureBatcher textureBatcher;
-
-    private uint lastMaterial;
-    private int lastProgramHandle;
-    private bool hasNodeListChanged;
-    private bool hasCameraChanged;
-
     private readonly List<Action> actionQueue = new();
     protected readonly List<SceneNode> nodes = new();
-    protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
     protected readonly Shader defaultShader;
-    protected internal readonly UniformBuffer<CameraUniform> vboCamera;
-    protected internal readonly UniformBuffer<LightUniform> vboLight;
-    protected internal readonly UniformBuffer<MaterialUniform> vboMaterial;
+
     protected readonly Renderer renderer = new();
     protected ICamera? camera;
 
-    internal bool isLoaded;
     internal SceneManager scm = default!;
 
     internal IReadOnlyList<SceneNode> Nodes => nodes;
@@ -42,21 +29,10 @@ public class Scene
     public Scene(string? name)
     {
         defaultShader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
-        vboLight = new UniformBuffer<LightUniform>("light", 1);
-        vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
-        vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
         Name = name ?? GetType().Name;
-
-        // 16 is minimum per OpenGL standard
-        GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
-        textureBatcher = new TextureBatcher(textureUnitsCount);
-
-        // Create the default render layers
-        foreach (var renderGroup in Enum.GetValues<RenderGroup>())
-        {
-            renderLayers.Add(renderGroup, new List<SceneNode>());
-        }
     }
+
+    public bool IsLoaded => isLoaded;
 
     public SceneManager SceneManager => scm;
 
@@ -68,7 +44,7 @@ public class Scene
 
     public Shader DefaultShader => defaultShader;
 
-    public UniformBuffer<CameraUniform> VboCamera => vboCamera;
+    //public UniformBuffer<CameraUniform> VboCamera => vboCamera;
 
     public Color4 BackgroundColor { get; set; } = Color4.CornflowerBlue;
 
@@ -107,11 +83,10 @@ public class Scene
     public void AddNode(SceneNode node)
     {
         if (node.Scene != null) throw new ArgumentException("Node is already added to a scene!", nameof(node));
-        hasNodeListChanged = true;
         nodes.Add(node);
         node.Scene = this; // Set the Scene reference for the added node
         node.OnResize(this, new(Width, Height));   //  trigger resize event
-        renderLayers[node.RenderGroup].Add(node);
+        renderer.AddNode(node);
     }
 
     /// <summary>
@@ -121,9 +96,8 @@ public class Scene
     public void RemoveNode(SceneNode node)
     {
         var isRemoved = nodes.Remove(node);
-        hasNodeListChanged = hasNodeListChanged || isRemoved;
         node.Scene = null; // Remove the Scene reference from the removed node
-        renderLayers[node.RenderGroup].Remove(node);
+        renderer.RemoveNode(node);
     }
 
     /// <summary>
@@ -134,18 +108,20 @@ public class Scene
         nodes.ForEach(n =>
         {
             n.Scene = null;
-            renderLayers[n.RenderGroup].Remove(n);
         });
         nodes.Clear();
-        hasNodeListChanged = true;
+        renderer.RemoveAllNodes();
     }
 
     /// <summary>
     /// Resets the tracked last material used for rendering, this will force the material to be updated on the next frame.
     /// Note: this is needed if material related properties like textures or lights are updated directly via OpenGL functions instead of the material class.
     /// </summary>
-    public void ResetMaterial() => lastMaterial = 0;
+    public void ResetMaterial() => renderer.ResetMaterial();
 
+    /// <summary>
+    /// Sets up OpenGL state and loads the default shader.    
+    /// </summary>
     public virtual void Load()
     {
         GL.FrontFace(FrontFaceDirection.Ccw);
@@ -156,22 +132,23 @@ public class Scene
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
         GL.ClearColor(BackgroundColor);
+        isLoaded = true;
 
 #if DEBUG
         var fnDebugProc = Utility.DebugMessageDelegate;
         GL.DebugMessageCallback(fnDebugProc, IntPtr.Zero);
         GL.Enable(EnableCap.DebugOutput);
         GL.Enable(EnableCap.DebugOutputSynchronous);
-#endif
-        vboCamera.BindToShaderProgram(defaultShader);
-        vboLight.BindToShaderProgram(defaultShader);
-        vboMaterial.BindToShaderProgram(defaultShader);
+#endif        
     }
 
+    /// <summary>
+    /// Fired when the scene gets loaded.
+    /// Note: if overridden, the base <see cref="Load()"/> method must be called.
+    /// </summary>
     public virtual void OnLoaded()
     {
-        var renderList = renderLayers[RenderGroup.Default];
-        renderer.PrepareBatching(renderList);
+        renderer.PrepareBatching();
     }
 
     /// <summary>
@@ -186,57 +163,10 @@ public class Scene
     public virtual void RenderFrame(double elapsedSeconds)
     {
         ArgumentNullException.ThrowIfNull(camera);
-
-        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-
-        //  set shared uniform blocks for all programs before render loop
-        var cam = new CameraUniform()
-        {
-            view = camera.ViewMatrix,
-            projection = camera.ProjectionMatrix,
-            position = camera.Position,
-            direction = camera.Front
-        };
-        vboCamera.UpdateSettings(ref cam);
-
-        if (lights.Any())
-        {
-            //  TODO: pass lights array
-            var dirLight = lights[0];
-            vboLight.UpdateSettings(ref dirLight);
-        }
-
-        //  render each layer separately
-        var renderList = renderLayers[RenderGroup.SkyBox];
-        RenderNodeList(renderList, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.Default];
-        //RenderNodeList(renderList, elapsedSeconds);
-        renderer.RenderLayer(this, renderList, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.DistanceSorted];
-        RenderNodeList(renderList, elapsedSeconds);
-
-        renderList = renderLayers[RenderGroup.UI];
-        RenderNodeList(renderList, elapsedSeconds);
+        renderer.BeforeRenderFrame(camera!, lights);
+        renderer.RenderFrame(elapsedSeconds);
     }
 
-    /// <summary>
-    /// Renders visible nodes in the list.
-    /// </summary>
-    /// <param name="list"></param>
-    /// <param name="elapsedSeconds"></param>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private void RenderNodeList(IEnumerable<SceneNode> list, double elapsedSeconds)
-    {
-        foreach (var node in list)
-        {
-            if ((node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0)
-            {
-                RenderNode(node, elapsedSeconds);
-            }
-        }
-    }
 
     /// <summary>
     /// Invokes <see cref="SceneNode.OnUpdate(Scene, double)"/> for each node, applies frustum culling to build 
@@ -255,11 +185,7 @@ public class Scene
             action.Invoke();
         }
         actionQueue.Clear();
-
-        CullFrustum();
-        SortRenderList();
-        OptimizeTextureUnitUsage();
-        hasNodeListChanged = false;
+        renderer.Update(camera, nodes);
     }
 
     public virtual void OnMouseWheel(MouseWheelEventArgs e) { }
@@ -273,102 +199,6 @@ public class Scene
         foreach (var node in nodes)
         {
             node.OnResize(this, e);
-        }
-    }
-
-    internal void RenderNode(SceneNode node, double elapsed)
-    {
-        var material = node.Material;
-        var shader = material.Shader;
-        shader.Use();
-        if (lastProgramHandle != shader.Handle)
-        {
-            lastProgramHandle = shader.Handle;
-            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
-            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
-            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
-        }
-
-        if (shader.UniformExists("model"))
-        {
-            node.GetWorldMatrix(out var worldMatrix);
-            shader.SetMatrix4("model", ref worldMatrix);
-        }
-
-        if (lastMaterial != material.Id)
-        {
-            lastMaterial = material.Id;
-            var settings = new MaterialUniform()
-            {
-                Diffuse = material.DiffuseColor,
-                Emissive = material.EmissiveColor,
-                Specular = material.SpecularColor,
-                Shininess = material.Shininess,
-            };
-            vboMaterial.UpdateSettings(ref settings);
-            if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
-            if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
-            if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
-
-            _ = textureBatcher.BindTextureUnits(material);            
-        }
-
-        node.OnDraw(elapsed);
-        Log.CheckGlError("SceneNode.OnDraw");
-        //GL.UseProgram(0);
-    }
-
-    public int GetBatchedTextureUnit(Texture texture)
-    {
-        var unit = textureBatcher.GetTextureUnitWithTexture(texture.Handle);
-        return unit < 0 ? 0 : unit;
-    }
-
-    public Frustum Frustum = new();
-
-    private void CullFrustum()
-    {
-        hasCameraChanged = (camera?.Update() ?? false);
-        if (hasCameraChanged)
-        {
-            Frustum.Update(camera!);
-            CullingHelper.CullNodes(Frustum, nodes);
-        }
-    }
-
-    private void OptimizeTextureUnitUsage()
-    {
-        if (hasNodeListChanged)
-        {
-            UpdateSceneMaterials();
-            textureBatcher.Reset();
-            textureBatcher.SortMaterials(materialList);
-        }
-    }
-
-    private void UpdateSceneMaterials()
-    {
-        materialList.Clear();
-        materialList.AddRange(nodes
-            .Select(n => n.Material)
-            .DistinctBy(m => m.Id));
-    }
-
-    private void SortRenderList()
-    {
-        if (hasCameraChanged || hasNodeListChanged)
-        {
-            var distanceSortedLayer = renderLayers[RenderGroup.DistanceSorted];
-            if (distanceSortedLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
-            {
-                distanceSortedLayer.Sort(new DistanceComparer(camera!.Position));
-            }
-
-            var defaultLayer = renderLayers[RenderGroup.Default];
-            if (defaultLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
-            {
-                defaultLayer.Sort((a, b) => a.Material.Shader.Handle - b.Material.Shader.Handle);
-            }
         }
     }
 }

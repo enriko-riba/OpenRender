@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace OpenRender.Core.Rendering;
 
 [StructLayout(LayoutKind.Explicit)]
-public struct CameraUniform//: ISize
+public struct CameraUniform
 {
     [FieldOffset(0)]
     public Matrix4 view;

@@ -17,7 +17,7 @@ public class SceneManager : GameWindow
         base(gameWindowSettings, nativeWindowSettings)
     {
         RenderFrame += Render;
-        UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
+        //UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
         Resize += (e) => activeScene?.OnResize(e);
         MouseMove += (e) => activeScene?.OnMouseMove(e);
         MouseWheel += (e) => activeScene?.OnMouseWheel(e);
@@ -49,11 +49,10 @@ public class SceneManager : GameWindow
     {
         var scene = sceneList.First(s => s.Name == sceneName);
         activeScene = scene;
-        if (!scene.isLoaded)
+        if (!scene.IsLoaded)
         {
             scene.scm = this;
             scene.Load();
-            scene.isLoaded = true;
             scene.OnLoaded();
         }
         scene.OnResize(new ResizeEventArgs(ClientSize.X, ClientSize.Y));
@@ -63,6 +62,7 @@ public class SceneManager : GameWindow
 
     private void Render(FrameEventArgs e)
     {
+        activeScene?.UpdateFrame(e.Time);
         activeScene?.RenderFrame(e.Time);
         SwapBuffers();
 

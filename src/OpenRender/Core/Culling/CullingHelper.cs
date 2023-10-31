@@ -6,14 +6,14 @@ namespace OpenRender.Core.Culling;
 
 internal sealed class CullingHelper
 {
-    public static void CullNodes(Frustum frustum, IEnumerable<SceneNode> allNodes)
+    public static void FrustumCull(Frustum frustum, IEnumerable<SceneNode> allNodes)
     {
         var planes = frustum.Planes;
         foreach (var node in allNodes)
         {
             if (node.IsVisible && !node.DisableCulling)
             {
-                if (!IsSphereInFrustum(planes, node.BoundingSphere.Center, node.BoundingSphere.Radius))
+                if (node.BoundingSphere.HasValue && !IsSphereInFrustum(planes, node.BoundingSphere.Value.Center, node.BoundingSphere.Value.Radius))
                 {
                     node.FrameBits.SetFlag(FrameBitsFlags.FrustumCulled);
                 }
