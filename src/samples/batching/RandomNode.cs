@@ -10,7 +10,7 @@ internal class RandomNode : SceneNode
 
     public RandomNode(Mesh mesh, Material material, int area) : base(mesh, material)
     {
-        SetScale(Random.Shared.Next(1, 3) / 2f);
+        SetScale(new Vector3(Random.Shared.Next(1, 3) / 2f, Random.Shared.Next(1, 3) / 2f, Random.Shared.Next(1, 3) / 2f));
         SetPosition(new Vector3(Random.Shared.Next(-area, area + 1), Random.Shared.Next(-area, area + 1), Random.Shared.Next(-area, area + 1)));
         SetRotation(new Vector3(Random.Shared.Next(0, 360), Random.Shared.Next(0, 360), Random.Shared.Next(0, 360)));
         rotationAxis = Random.Shared.Next(0, 2);

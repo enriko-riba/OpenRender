@@ -34,10 +34,10 @@ internal class BatchingScene : Scene
         base.Load();
         GL.ClearColor(Color4.DarkSlateBlue);
 
-        //AddRotatingBoxes();
+        AddRotatingBoxes();
         AddRandomNodes();
-       // AddMetallicBoxes();
-        //AddSprites();
+        AddMetallicBoxes();
+        AddSprites();
 
         var paths = new string[] {
             "Resources/xpos.png",
@@ -52,7 +52,7 @@ internal class BatchingScene : Scene
 
         var dirLight = new LightUniform()
         {
-            Direction = new Vector3(-0.95f, -0.995f, 0.75f),
+            Direction = new Vector3(-0.65f, -0.95f, 0.85f),
             Ambient = new Vector3(0.065f, 0.06f, 0.065f),
             Diffuse = new Vector3(0.8f),
             Specular = new Vector3(1),
@@ -256,18 +256,18 @@ internal class BatchingScene : Scene
 
     private void AddRandomNodes()
     {
-        const int NodeCount = 27;
-        const int Area = 6;
+        const int NodeCount = 5000;
+        const int Area = 150;
         var shader = new Shader("Shaders/standard-batching.vert", "Shaders/standard-batching.frag");
         var materials = new Material[]
         {
-            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 1.0f),
+            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 2.0f),
             Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
             Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
-            Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
-            Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
-            Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
-            Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
+            //Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
+            //Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
+            //Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            //Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
 

@@ -41,12 +41,12 @@ flat out int drawID;
 
 void main(void)
 {
-    drawID = gl_DrawID;
     mat4 model = modelMatrices[gl_DrawID];
     vertexColor = aColor;
-    vertexNormal = (model * vec4(aNormal, 0)).xyz;
+    vertexNormal = mat3(transpose(inverse(model))) * aNormal;  
     fragPos = (model * vec4(aPosition, 1.0)).xyz;
     texCoord = aTexCoord;
     texCoordCube = aPosition;
+    drawID = gl_DrawID;
     gl_Position = projection * view * model * vec4(aPosition, 1.0);
 }

@@ -1,7 +1,6 @@
 ﻿using OpenRender.Core;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -13,12 +12,12 @@ public class SceneNode
     private static uint idCounter = 0;
     private readonly uint id;
     private bool showBoundingSphere;
-    private Mesh mesh;
+    private Mesh? mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
 
     protected Transform transform = new();
-    
+
 
     public SceneNode(Mesh? mesh, Material? material = default, Vector3? position = default)
     {
@@ -78,7 +77,7 @@ public class SceneNode
     public void SetMesh(in Mesh? mesh)
     {
         if (mesh == null) return;
-        
+
         this.mesh = mesh;
         if (mesh.Vao == null) mesh.Build();
         var vb = mesh.Vao?.VertexBuffer;
@@ -235,13 +234,13 @@ public class SceneNode
     protected virtual void UpdateMatrix()
     {
         var parent = Parent?.transform;
-        transform.UpdateMatrix(parent);        
+        transform.UpdateMatrix(parent);
     }
 
     internal void Invalidate()
     {
         UpdateMatrix();
-        if(mesh?.BoundingSphere is not null)
+        if (mesh?.BoundingSphere is not null)
             mesh.BoundingSphere.Update(in transform.Scale, in transform.worldMatrix);
         foreach (var child in children)
         {

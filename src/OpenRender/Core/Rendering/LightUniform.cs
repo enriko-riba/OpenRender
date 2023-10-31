@@ -11,8 +11,13 @@ public struct LightUniform
     /// </summary>   
     [FieldOffset(0)]
     public Vector3 Position;
+
+    /// <summary>
+    /// Direction for directional lights or position for point and spot lights.
+    /// </summary>  
     [FieldOffset(0)]
     public Vector3 Direction;
+
     [FieldOffset(16)]
     public Vector3 Ambient;
     [FieldOffset(32)]
