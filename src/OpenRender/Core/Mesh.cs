@@ -1,15 +1,16 @@
 ﻿using OpenRender.Core.Buffers;
+using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 
 namespace OpenRender.Core;
 
 /// <summary>
-/// Mesh is just a container for a vertex buffer and draw mode.
+/// Mesh is just a container for a geometry data.
 /// </summary>
 public class Mesh
 {
-    protected readonly float[] vertices;
+    private readonly float[] vertices;
     private readonly uint[] indices;
 
     public VertexDeclaration VertexDeclaration { get; private set; }
@@ -19,6 +20,7 @@ public class Mesh
         VertexDeclaration = vertexDeclaration;
         this.indices = indices;
         this.vertices = GetVertices(vertexDeclaration, vertices);
+        BoundingSphere = CullingHelper.CalculateBoundingSphere(VertexDeclaration.StrideInFloats, this.vertices);
     }
 
     public Mesh(VertexDeclaration vertexDeclaration, Vertex2D[] vertices, uint[] indices)
@@ -26,6 +28,7 @@ public class Mesh
         VertexDeclaration = vertexDeclaration;
         this.indices = indices;
         this.vertices = GetVertices(vertexDeclaration, vertices);
+        BoundingSphere = CullingHelper.CalculateBoundingSphere(VertexDeclaration.StrideInFloats, this.vertices);
     }
 
     public Mesh(VertexDeclaration vertexDeclaration, float[] vertices, uint[] indices)
@@ -33,24 +36,24 @@ public class Mesh
         VertexDeclaration = vertexDeclaration;
         this.vertices = vertices;
         this.indices = indices;
+        BoundingSphere = CullingHelper.CalculateBoundingSphere(VertexDeclaration.StrideInFloats, vertices);
     }
        
-    public VertexArrayObject? Vao;
-    public BoundingSphere BoundingSphere = new();
+    public BoundingSphere BoundingSphere;
+
     public uint[] Indices => indices;
     public float[] Vertices => vertices;
-
-    /// <summary>
-    /// Creates the VAO and buffer objects.
-    /// </summary>
-    public void Build()
+   
+    public VertexArrayObject BuildVao()
     {
         if (vertices != null)
         {
-            Vao = new VertexArrayObject();
-            Vao.AddBuffer(VertexDeclaration, new Buffer<float>(vertices));
-            Vao.AddIndexBuffer(new IndexBuffer(indices));
+            var vao = new VertexArrayObject();
+            vao.AddBuffer(VertexDeclaration, new Buffer<float>(vertices));
+            vao.AddIndexBuffer(new IndexBuffer(indices));
+            return vao;
         }
+        throw new ArgumentNullException(nameof(vertices));
     }
 
     public static float[] GetVertices<T>(VertexDeclaration vertexDeclaration, T[] vertices) where T: IVertexData

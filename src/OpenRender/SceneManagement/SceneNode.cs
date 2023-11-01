@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
 using OpenTK.Graphics.OpenGL4;
@@ -54,6 +55,7 @@ public class SceneNode
                 FrameBits.SetFlag(FrameBitsFlags.NotVisible);
         }
     }
+
     public bool IsBatchingAllowed
     {
         get => FrameBits.HasFlag(FrameBitsFlags.BatchAllowed);
@@ -72,27 +74,18 @@ public class SceneNode
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
-    public Mesh Mesh => mesh;
-
     internal string StringTag { get; set; } = string.Empty;
+
+    protected VertexArrayObject? Vao;
 
     public void SetMesh(in Mesh? mesh)
     {
         if (mesh == null) return;
-
         this.mesh = mesh;
-        if (mesh.Vao == null) mesh.Build();
-        var vb = mesh.Vao?.VertexBuffer;
-        if (vb != null)
-        {
-            var bs = CullingHelper.CalculateBoundingSphere(mesh.VertexDeclaration.StrideInFloats, vb.Data);
-            this.mesh.BoundingSphere = bs with
-            {
-                Radius = bs.LocalRadius * MathF.MaxMagnitude(MathF.MaxMagnitude(transform.Scale.X, transform.Scale.Y), transform.Scale.Z),
-                Center = bs.LocalCenter + transform.Position,
-            };
-        }
+        //if (mesh.Vao == null) mesh.Build();
     }
+
+    public Mesh Mesh => mesh ?? throw new NullReferenceException(nameof(mesh));
 
     public bool ShowBoundingSphere
     {
@@ -127,11 +120,17 @@ public class SceneNode
 
     public virtual void OnDraw(double elapsed)
     {
-        GL.BindVertexArray(mesh!.Vao!);
-        if (mesh.Vao.DrawMode == DrawMode.Indexed)
-            GL.DrawElements(PrimitiveType.Triangles, mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0);
+        if(Vao == null)
+        {
+            Vao = mesh!.BuildVao();           
+        }
+
+        GL.BindVertexArray(Vao!);
+        
+        if (Vao.DrawMode == DrawMode.Indexed)
+            GL.DrawElements(PrimitiveType.Triangles, Vao.DataLength, DrawElementsType.UnsignedInt, 0);
         else
-            GL.DrawArrays(PrimitiveType.Triangles, 0, mesh.Vao.DataLength);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, Vao.DataLength);
 
         if (ShowBoundingSphere)
         {

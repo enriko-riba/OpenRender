@@ -1,11 +1,11 @@
 ﻿using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
+using OpenRender.Core.Rendering.Batching;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace OpenRender.Core.Rendering;
 
@@ -18,7 +18,7 @@ public class Renderer
     private bool hasNodeListChanged;
     private bool hasCameraChanged;
 
-    private Frustum Frustum = new();
+    private readonly Frustum frustum = new();
     private readonly TextureBatcher textureBatcher;
     private readonly List<Material> materialList = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
@@ -137,7 +137,6 @@ public class Renderer
 
         foreach (var node in nodes)
         {
-            ArgumentNullException.ThrowIfNull(node.Mesh);            
             node.StringTag = GetBatchingKey(node);
             var frequency = shaderFrequencies[node.Material.Shader.Handle];
             if (frequency > 1)
@@ -152,12 +151,11 @@ public class Renderer
         //  create and update individual batches
         foreach (var node in nodes)
         {
-           
             if (batchFrequency.ContainsKey(node.StringTag) && batchFrequency[node.StringTag] > 1)
             {
                 if (!batchDataDictionary.ContainsKey(node.StringTag))
                 {
-                    AddNewBatch(batchDataDictionary, node.StringTag, node.Material.Shader, node.Mesh.VertexDeclaration);
+                    AddNewBatch(batchDataDictionary, node.StringTag, node.Material.Shader, node.Mesh.VertexDeclaration, nodes.Count());
                 }
                 var data = batchDataDictionary[node.StringTag];
                 data.WriteDrawCommand(node);
@@ -222,7 +220,7 @@ public class Renderer
         foreach (var node in renderList)
         {
             var shouldRender = (node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0;
-            
+
             var batchExists = batchDataDictionary.TryGetValue(node.StringTag, out var batch);
             if (batchExists)
             {
@@ -276,9 +274,9 @@ public class Renderer
         return key;
     }
 
-    private static void AddNewBatch(IDictionary<string, BatchData> dict, string key, Shader shader, VertexDeclaration vertexDeclaration)
+    private static void AddNewBatch(IDictionary<string, BatchData> dict, string key, Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
     {
-        var data = new BatchData(shader, vertexDeclaration);
+        var data = new BatchData(shader, vertexDeclaration, maxBatchSize);
 
         GL.CreateBuffers(1, out data.CommandsBufferName);
         GL.CreateBuffers(1, out data.WorldMatricesBufferName);
@@ -341,8 +339,8 @@ public class Renderer
         hasCameraChanged = (camera?.Update() ?? false);
         if (hasCameraChanged)
         {
-            Frustum.Update(camera!);
-            CullingHelper.FrustumCull(Frustum, nodes);
+            frustum.Update(camera!);
+            CullingHelper.FrustumCull(frustum, nodes);
         }
     }
 
@@ -380,126 +378,5 @@ public class Renderer
         materialList.AddRange(nodes
             .Select(n => n.Material)
             .DistinctBy(m => m.Id));
-    }
-
-
-
-    /// <summary>
-    /// Holds batch related data like commands, SSBO buffers, batch geometry.
-    /// </summary>
-    private class BatchData
-    {
-        public BatchData(Shader shader, VertexDeclaration vertexDeclaration)
-        {
-            Shader = shader;
-            VertexDeclaration = vertexDeclaration;
-        }
-
-        public VertexArrayObject Vao = new();
-        public List<float> Vertices = new();
-        public List<uint> Indices = new();
-
-        public uint CommandsBufferName;
-        public uint WorldMatricesBufferName;
-        public uint MaterialsBufferName;
-        public uint TexturesBufferName;
-
-        public VertexDeclaration VertexDeclaration;
-        public Shader Shader;
-
-        /// <summary>
-        /// Contains SceneNode ID mappings to array indices.
-        /// </summary>
-        public Dictionary<uint, int> MapperDict = new();
-
-        public DrawElementsIndirectCommand[] CommandsDataArray = new DrawElementsIndirectCommand[MaxCommands];
-        public Matrix4[] WorldMatricesDataArray = new Matrix4[MaxCommands];
-        public MaterialData[] MaterialDataArray = new MaterialData[MaxCommands];
-        public TextureData[] TextureDataArray = new TextureData[MaxCommands];
-        public int LastIndex = -1;
-
-
-        public void WriteDrawCommand(SceneNode node)
-        {
-            ArgumentNullException.ThrowIfNull(node.Mesh);
-
-            var nodeIndices = node.Mesh.Indices;
-            var cmd = new DrawElementsIndirectCommand
-            {
-                Count = nodeIndices.Length,
-                InstanceCount = 0,
-                FirstIndex = Indices.Count,
-                BaseVertex = Vertices.Count / node.Mesh.VertexDeclaration.StrideInFloats,
-                BaseInstance = 0
-            };
-
-            //  write material data, this is a but more complex as we need bindless textures
-            var materialData = new MaterialData()
-            {
-                Diffuse = node.Material.DiffuseColor,
-                Emissive = node.Material.EmissiveColor,
-                Specular = node.Material.SpecularColor,
-                Shininess = node.Material.Shininess,
-                DetailTextureFactor = node.Material.DetailTextureFactor,
-                HasDiffuse = node.Material.HasDiffuse ? 1 : 0,
-                HasNormal = 0,
-            };
-
-            TextureData textureData = new();
-            if (node.Material.HasDiffuse)
-            {
-                textureData.Diffuse = GL.Arb.GetTextureHandle(node.Material.Textures[0].Handle);
-                if (!TextureDataArray.Any(x => x.Diffuse == textureData.Diffuse))
-                    GL.Arb.MakeTextureHandleResident(textureData.Diffuse);
-            }
-            //  TODO: handle detail and normal textures residency
-
-            node.GetTransform(out var transform);
-
-            MapperDict[node.Id] = ++LastIndex;
-            TextureDataArray[LastIndex] = textureData;
-            MaterialDataArray[LastIndex] = materialData;
-            WorldMatricesDataArray[LastIndex] = transform.worldMatrix;
-            CommandsDataArray[LastIndex] = cmd;
-
-            Vertices.AddRange(node.Mesh.Vertices);
-            Indices.AddRange(nodeIndices);
-        }
-
-        public void UpdateCommand(SceneNode node, bool shouldRender)
-        {
-            var idx = MapperDict[node.Id];
-            CommandsDataArray[idx].InstanceCount = shouldRender ? 1 : 0;
-            node.GetTransform(out var transform);
-            WorldMatricesDataArray[idx] = transform.worldMatrix;
-        }
-    }
-
-    [StructLayout(LayoutKind.Explicit, Size = 64)]
-    private struct MaterialData
-    {
-        [FieldOffset(0)]
-        public Vector3 Diffuse;
-        [FieldOffset(16)]
-        public Vector3 Emissive;
-        [FieldOffset(32)]
-        public Vector3 Specular;
-        [FieldOffset(44)]
-        public float Shininess;
-        [FieldOffset(48)]
-        public float DetailTextureFactor;
-        [FieldOffset(52)]
-        public int HasDiffuse;
-        [FieldOffset(56)]
-        public int HasNormal;
-        //the Size is effectively adding the padding        
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct TextureData
-    {
-        public long Diffuse;
-        public long Detail;
-        public long Normal;
     }
 }

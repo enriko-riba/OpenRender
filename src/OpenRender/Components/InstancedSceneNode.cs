@@ -16,6 +16,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
     public InstancedSceneNode(Mesh mesh, int maxNumberOfInstances, Material? material = default) : base(mesh, material)
     {
+        Vao = mesh.BuildVao();
         RenderGroup = RenderGroup.Default;
         instanceData = new TInstanceData[maxNumberOfInstances];
 
@@ -23,13 +24,13 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
         uint bufferSlot = 1;    //  buffer slot for instance data
         GL.CreateBuffers(1, out vbInstanceData);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbInstanceData, -1, "InstancedSceneNode_Buffer2");
-        GL.VertexArrayVertexBuffer(mesh.Vao, bufferSlot, vbInstanceData, 0, Unsafe.SizeOf<Matrix4>());
-        GL.VertexArrayBindingDivisor(mesh.Vao, bufferSlot, 1);
+        GL.VertexArrayVertexBuffer(Vao, bufferSlot, vbInstanceData, 0, Unsafe.SizeOf<Matrix4>());
+        GL.VertexArrayBindingDivisor(Vao, bufferSlot, 1);
         for (uint i = 0; i < 4; i++)
         {
-            GL.VertexArrayAttribFormat(mesh.Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
-            GL.VertexArrayAttribBinding(mesh.Vao, attributeIndexStart + i, bufferSlot);
-            GL.EnableVertexArrayAttrib(mesh.Vao, attributeIndexStart + i);
+            GL.VertexArrayAttribFormat(Vao, attributeIndexStart + i, 4, VertexAttribType.Float, false, i * sizeof(float) * 4);
+            GL.VertexArrayAttribBinding(Vao, attributeIndexStart + i, bufferSlot);
+            GL.EnableVertexArrayAttrib(Vao, attributeIndexStart + i);
         }
         GL.NamedBufferStorage(vbInstanceData, maxNumberOfInstances * Unsafe.SizeOf<TInstanceData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         Log.CheckGlError();
@@ -57,12 +58,11 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
     public override void OnDraw(double elapsed)
     {
-        ArgumentNullException.ThrowIfNull(Mesh);
-        GL.BindVertexArray(Mesh.Vao!);
-        if (Mesh.Vao!.DrawMode == DrawMode.Indexed)
-            GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
+        GL.BindVertexArray(Vao);
+        if (Vao!.DrawMode == DrawMode.Indexed)
+            GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else
-            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.Vao.DataLength, instanceDataList.Count);
+            GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Vao.DataLength, instanceDataList.Count);
         Log.CheckGlError();
     }
 }
