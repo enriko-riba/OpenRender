@@ -1,5 +1,4 @@
-﻿using OpenRender.SceneManagement;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 
@@ -17,7 +16,7 @@ public abstract class CameraBase : ICamera
 
     private Vector3 position;
     private float aspectRatio;
-    
+
     protected bool isDirty;
     protected readonly float nearPlane;
     protected readonly float farPlane;
@@ -143,6 +142,16 @@ public abstract class CameraBase : ICamera
     /// <param name="pitchDegrees">The pitch angle in degrees.</param>
     /// <param name="rollDegrees">The roll angle in degrees.</param>
     public abstract void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
+
+    /// <summary>
+    /// Moves the camera forward by the specified distance.
+    /// </summary>
+    /// <param name="distance">The distance to move the camera forward.</param>
+    public void MoveForward(float distance)
+    {
+        Position += Front * distance;
+        isDirty = true;
+    }
 
     /// <summary>
     /// Updates the camera's view and projection matrices if necessary.

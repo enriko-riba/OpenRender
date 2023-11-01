@@ -16,15 +16,6 @@ public class Camera3D : CameraBase
     /// <param name="farPlane">The distance to the far clipping plane.</param>
     public Camera3D(Vector3 position, float aspectRatio, float nearPlane = 0.1f, float farPlane = 500) : base(position, aspectRatio, nearPlane, farPlane) { }
 
-    /// <summary>
-    /// Moves the camera forward by the specified distance.
-    /// </summary>
-    /// <param name="distance">The distance to move the camera forward.</param>
-    public void MoveForward(float distance)
-    {
-        Position -= Front * distance;
-        isDirty = true;
-    }
 
     /// <summary>
     /// Adds rotation to the camera by the specified yaw, pitch, and roll angle increments in degrees.

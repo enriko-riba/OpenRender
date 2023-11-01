@@ -16,6 +16,8 @@ public interface ICamera
     float NearPlaneDistance { get;}
     float FarPlaneDistance { get; }
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
+    void MoveForward(float distance);
+
     /// <summary>
     /// If dirty, updates camera matrices.
     /// </summary>

@@ -129,18 +129,17 @@ internal class PlaygroundScene : Scene
 
     private void HandleMovement(double elapsedTime)
     {
-        const float MovementSpeed = 50;
+        const float MovementSpeed = 30;
         var movementPerSecond = (float)elapsedTime * MovementSpeed;
 
         var input = SceneManager.KeyboardState;
         if (input.IsKeyDown(Keys.W))
         {
-            camera!.Position += camera.Front * movementPerSecond; // Forward
+            camera!.MoveForward(movementPerSecond);
         }
-
         if (input.IsKeyDown(Keys.S))
         {
-            camera!.Position -= camera.Front * movementPerSecond; // Backwards
+            camera!.MoveForward(-movementPerSecond);
         }
         if (input.IsKeyDown(Keys.A))
         {
@@ -164,7 +163,7 @@ internal class PlaygroundScene : Scene
 
     private void HandleRotation(double elapsedTime)
     {
-        const float RotationSpeed = 45;
+        const float RotationSpeed = 20;
 
         var mouseState = SceneManager.MouseState;
         var rotationPerSecond = (float)(elapsedTime * RotationSpeed);
