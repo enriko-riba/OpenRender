@@ -17,7 +17,7 @@ public class SceneManager : GameWindow
         base(gameWindowSettings, nativeWindowSettings)
     {
         RenderFrame += Render;
-        //UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
+        UpdateFrame += (e) => activeScene?.UpdateFrame(e.Time);
         Resize += (e) => activeScene?.OnResize(e);
         MouseMove += (e) => activeScene?.OnMouseMove(e);
         MouseWheel += (e) => activeScene?.OnMouseWheel(e);
@@ -62,7 +62,6 @@ public class SceneManager : GameWindow
 
     private void Render(FrameEventArgs e)
     {
-        activeScene?.UpdateFrame(e.Time);
         activeScene?.RenderFrame(e.Time);
         SwapBuffers();
 
