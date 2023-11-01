@@ -33,7 +33,7 @@ public class SceneNode
     }
 
     public uint Id => id;
-    public BoundingSphere? BoundingSphere => mesh?.BoundingSphere;
+    public BoundingSphere BoundingSphere => mesh?.BoundingSphere ?? new();
 
     public IEnumerable<SceneNode> Children => children;
 
@@ -73,6 +73,8 @@ public class SceneNode
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
     public Mesh Mesh => mesh;
+
+    internal string StringTag { get; set; } = string.Empty;
 
     public void SetMesh(in Mesh? mesh)
     {

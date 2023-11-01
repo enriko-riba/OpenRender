@@ -1,4 +1,5 @@
-﻿using OpenRender.Core.Culling;
+﻿using OpenRender.Core.Buffers;
+using OpenRender.Core.Culling;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
@@ -22,15 +23,15 @@ public class Renderer
     private readonly List<Material> materialList = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
 
-    protected internal readonly UniformBuffer<CameraUniform> vboCamera;
-    protected internal readonly UniformBuffer<LightUniform> vboLight;
-    protected internal readonly UniformBuffer<MaterialUniform> vboMaterial;
+    protected internal readonly UniformBlockBuffer<CameraUniform> vboCamera;
+    protected internal readonly UniformBlockBuffer<LightUniform> vboLight;
+    protected internal readonly UniformBlockBuffer<MaterialUniform> vboMaterial;
 
     public Renderer()
     {
-        vboLight = new UniformBuffer<LightUniform>("light", 1);
-        vboCamera = new UniformBuffer<CameraUniform>("camera", 0);
-        vboMaterial = new UniformBuffer<MaterialUniform>("material", 2);
+        vboLight = new UniformBlockBuffer<LightUniform>("light", 1);
+        vboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
+        vboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
@@ -136,28 +137,29 @@ public class Renderer
 
         foreach (var node in nodes)
         {
+            ArgumentNullException.ThrowIfNull(node.Mesh);            
+            node.StringTag = GetBatchingKey(node);
             var frequency = shaderFrequencies[node.Material.Shader.Handle];
             if (frequency > 1)
             {
-                var key = GetBatchingKey(node);
-                if (batchFrequency.ContainsKey(key))
-                    batchFrequency[key]++;
+                if (batchFrequency.ContainsKey(node.StringTag))
+                    batchFrequency[node.StringTag]++;
                 else
-                    batchFrequency[key] = 1;
+                    batchFrequency[node.StringTag] = 1;
             }
         }
 
         //  create and update individual batches
         foreach (var node in nodes)
         {
-            var key = GetBatchingKey(node);
-            if (batchFrequency.ContainsKey(key) && batchFrequency[key] > 1)
+           
+            if (batchFrequency.ContainsKey(node.StringTag) && batchFrequency[node.StringTag] > 1)
             {
-                if (!batchDataDictionary.ContainsKey(key))
+                if (!batchDataDictionary.ContainsKey(node.StringTag))
                 {
-                    AddNewBatch(batchDataDictionary, key, node.Material.Shader, node.Mesh.VertexDeclaration);
+                    AddNewBatch(batchDataDictionary, node.StringTag, node.Material.Shader, node.Mesh.VertexDeclaration);
                 }
-                var data = batchDataDictionary[key];
+                var data = batchDataDictionary[node.StringTag];
                 data.WriteDrawCommand(node);
             }
         }
@@ -220,8 +222,8 @@ public class Renderer
         foreach (var node in renderList)
         {
             var shouldRender = (node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0;
-            var key = GetBatchingKey(node);
-            var batchExists = batchDataDictionary.TryGetValue(key, out var batch);
+            
+            var batchExists = batchDataDictionary.TryGetValue(node.StringTag, out var batch);
             if (batchExists)
             {
                 batch!.UpdateCommand(node, shouldRender);
@@ -409,6 +411,7 @@ public class Renderer
         /// Contains SceneNode ID mappings to array indices.
         /// </summary>
         public Dictionary<uint, int> MapperDict = new();
+
         public DrawElementsIndirectCommand[] CommandsDataArray = new DrawElementsIndirectCommand[MaxCommands];
         public Matrix4[] WorldMatricesDataArray = new Matrix4[MaxCommands];
         public MaterialData[] MaterialDataArray = new MaterialData[MaxCommands];
@@ -418,6 +421,7 @@ public class Renderer
 
         public void WriteDrawCommand(SceneNode node)
         {
+            ArgumentNullException.ThrowIfNull(node.Mesh);
 
             var nodeIndices = node.Mesh.Indices;
             var cmd = new DrawElementsIndirectCommand

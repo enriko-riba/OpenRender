@@ -1,6 +1,6 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Buffers;
 
 public class VertexArrayObject
 {
@@ -41,7 +41,7 @@ public class VertexArrayObject
         if (buffer is Buffer<float> && VertexBuffer is null)
         {
             VertexBuffer = buffer as Buffer<float>;
-            if(string.IsNullOrEmpty(name))VertexBuffer?.SetLabel("VBO");
+            if (string.IsNullOrEmpty(name)) VertexBuffer?.SetLabel("VBO");
         }
     }
 

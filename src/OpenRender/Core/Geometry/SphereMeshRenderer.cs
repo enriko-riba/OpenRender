@@ -1,4 +1,5 @@
-﻿using OpenRender.Core.Rendering;
+﻿using OpenRender.Core.Buffers;
+using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Mathematics;
 

@@ -1,6 +1,6 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Buffers;
 
 /// <summary>
 /// Contains common vertex declarations.

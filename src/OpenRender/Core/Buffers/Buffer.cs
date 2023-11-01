@@ -1,7 +1,7 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using System.Runtime.CompilerServices;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Buffers;
 
 /// <summary>
 /// VBO wrapper that allows for easy data upload and retrieval.

@@ -13,7 +13,7 @@ internal sealed class CullingHelper
         {
             if (node.IsVisible && !node.DisableCulling)
             {
-                if (node.BoundingSphere.HasValue && !IsSphereInFrustum(planes, node.BoundingSphere.Value.Center, node.BoundingSphere.Value.Radius))
+                if (!IsSphereInFrustum(planes, node.BoundingSphere.Center, node.BoundingSphere.Radius))
                 {
                     node.FrameBits.SetFlag(FrameBitsFlags.FrustumCulled);
                 }

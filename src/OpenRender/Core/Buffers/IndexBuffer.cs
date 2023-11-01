@@ -1,4 +1,4 @@
-﻿namespace OpenRender.Core.Rendering;
+﻿namespace OpenRender.Core.Buffers;
 
 public class IndexBuffer : Buffer<uint>
 {

@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Buffers;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -56,8 +57,9 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
     public override void OnDraw(double elapsed)
     {
+        ArgumentNullException.ThrowIfNull(Mesh);
         GL.BindVertexArray(Mesh.Vao!);
-        if (Mesh.Vao.DrawMode == DrawMode.Indexed)
+        if (Mesh.Vao!.DrawMode == DrawMode.Indexed)
             GL.DrawElementsInstanced(PrimitiveType.Triangles, Mesh.Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else
             GL.DrawArraysInstanced(PrimitiveType.Triangles, 0, Mesh.Vao.DataLength, instanceDataList.Count);

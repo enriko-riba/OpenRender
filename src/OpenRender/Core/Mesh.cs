@@ -1,4 +1,5 @@
-﻿using OpenRender.Core.Geometry;
+﻿using OpenRender.Core.Buffers;
+using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 
 namespace OpenRender.Core;
@@ -51,6 +52,7 @@ public class Mesh
             Vao.AddIndexBuffer(new IndexBuffer(indices));
         }
     }
+
     public static float[] GetVertices<T>(VertexDeclaration vertexDeclaration, T[] vertices) where T: IVertexData
     {
         var length = vertices.Length * vertexDeclaration.StrideInFloats;

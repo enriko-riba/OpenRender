@@ -1,20 +1,21 @@
-﻿using OpenTK.Graphics.OpenGL4;
+﻿using OpenRender.Core.Rendering;
+using OpenTK.Graphics.OpenGL4;
 using System.Runtime.CompilerServices;
 
-namespace OpenRender.Core.Rendering;
+namespace OpenRender.Core.Buffers;
 
-public class UniformBuffer<T> where T : struct
+public class UniformBlockBuffer<T> where T : struct
 {
-    private readonly int bindingPoint; 
+    private readonly int bindingPoint;
     private readonly int bufferHandle;
     private readonly string uniformName;
 
-    public UniformBuffer(string uniformName, int bindingPoint)
+    public UniformBlockBuffer(string uniformName, int bindingPoint)
     {
         GL.CreateBuffers(1, out bufferHandle);
 
         // Bind buffer object to uniform buffer target
-        GL.NamedBufferStorage(bufferHandle, Unsafe.SizeOf<T>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferStorage(bufferHandle, Unsafe.SizeOf<T>(), nint.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, bufferHandle, -1, $"UB {uniformName}");
         Log.CheckGlError();
 
@@ -29,8 +30,8 @@ public class UniformBuffer<T> where T : struct
         GL.BindBufferRange(BufferRangeTarget.UniformBuffer, bindingPoint, bufferHandle, 0, Unsafe.SizeOf<T>());
     }
 
-    public void UpdateSettings(ref T settings) => 
-        GL.NamedBufferSubData(bufferHandle, IntPtr.Zero, Unsafe.SizeOf<T>(), ref settings);
+    public void UpdateSettings(ref T settings) =>
+        GL.NamedBufferSubData(bufferHandle, nint.Zero, Unsafe.SizeOf<T>(), ref settings);
 
     public bool IsUniformSupported(Shader program)
     {
