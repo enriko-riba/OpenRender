@@ -78,17 +78,21 @@ void main()
     vec3 texDiffuse = vec3(1);
     vec3 texDetail = vec3(1);
     
-    if(uHasDiffuseTexture != 0)
+    if(uHasDiffuseTexture > 0)
     {
         texDiffuse = vec3(texture(texture_diffuse, texCoord));
+    }
+    else
+    {
+        texDiffuse = vertexColor;
     }
 
     if(uDetailTextureFactor > 0)
     {		
 		texDetail = vec3(texture(texture_detail, texCoord * uDetailTextureFactor));
     }
-    vec3 texColor = texDetail * texDiffuse;
-    
+    vec3 texColor = texDetail * texDiffuse;    
+
     if(uHasNormalTexture > 0)
     {    
         vec3 normalMap = texture(texture_normal, texCoord).rgb;

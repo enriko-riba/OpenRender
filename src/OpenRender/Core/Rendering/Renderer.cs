@@ -18,20 +18,26 @@ public class Renderer
     private bool hasNodeListChanged;
     private bool hasCameraChanged;
 
+    /// <summary>
+    /// Key: shader.handle + vertex declaration
+    /// </summary>
+    private readonly Dictionary<string, BatchData> batchDataDictionary = new();
+
     private readonly Frustum frustum = new();
     private readonly TextureBatcher textureBatcher;
     private readonly List<Material> materialList = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
 
-    protected internal readonly UniformBlockBuffer<CameraUniform> vboCamera;
-    protected internal readonly UniformBlockBuffer<LightUniform> vboLight;
-    protected internal readonly UniformBlockBuffer<MaterialUniform> vboMaterial;
+    protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
+    protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
+    protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
+
 
     public Renderer()
     {
-        vboLight = new UniformBlockBuffer<LightUniform>("light", 1);
-        vboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
-        vboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
+        uboLight = new UniformBlockBuffer<LightUniform>("light", 1);
+        uboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
+        uboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
@@ -43,11 +49,6 @@ public class Renderer
             renderLayers.Add(renderGroup, new List<SceneNode>());
         }
     }
-
-    /// <summary>
-    /// Key: shader.handle + vertex declaration
-    /// </summary>
-    private readonly Dictionary<string, BatchData> batchDataDictionary = new();
 
     public void ResetMaterial() => lastMaterial = 0;
 
@@ -76,9 +77,9 @@ public class Renderer
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
-            if (vboCamera.IsUniformSupported(shader)) vboCamera.BindToShaderProgram(shader);
-            if (vboLight.IsUniformSupported(shader)) vboLight.BindToShaderProgram(shader);
-            if (vboMaterial.IsUniformSupported(shader)) vboMaterial.BindToShaderProgram(shader);
+            if (uboCamera.IsUniformSupported(shader)) uboCamera.BindToShaderProgram(shader);
+            if (uboLight.IsUniformSupported(shader)) uboLight.BindToShaderProgram(shader);
+            if (uboMaterial.IsUniformSupported(shader)) uboMaterial.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -97,7 +98,7 @@ public class Renderer
                 Specular = material.SpecularColor,
                 Shininess = material.Shininess,
             };
-            vboMaterial.UpdateSettings(ref settings);
+            uboMaterial.UpdateSettings(ref settings);
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
             if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
@@ -187,13 +188,13 @@ public class Renderer
             position = camera.Position,
             direction = camera.Front
         };
-        vboCamera.UpdateSettings(ref cam);
+        uboCamera.UpdateSettings(ref cam);
 
         if (lights.Any())
         {
             //  TODO: pass lights array
             var dirLight = lights[0];
-            vboLight.UpdateSettings(ref dirLight);
+            uboLight.UpdateSettings(ref dirLight);
         }
     }
 
@@ -241,9 +242,9 @@ public class Renderer
             {
                 lastShaderProgram = batch.Shader.Handle;
                 batch.Shader.Use();
-                if (vboCamera.IsUniformSupported(batch.Shader)) vboCamera.BindToShaderProgram(batch.Shader);
-                if (vboLight.IsUniformSupported(batch.Shader)) vboLight.BindToShaderProgram(batch.Shader);
-                if (vboMaterial.IsUniformSupported(batch.Shader)) vboMaterial.BindToShaderProgram(batch.Shader);
+                if (uboCamera.IsUniformSupported(batch.Shader)) uboCamera.BindToShaderProgram(batch.Shader);
+                if (uboLight.IsUniformSupported(batch.Shader)) uboLight.BindToShaderProgram(batch.Shader);
+                if (uboMaterial.IsUniformSupported(batch.Shader)) uboMaterial.BindToShaderProgram(batch.Shader);
             }
 
             var length = batch.LastIndex + 1;

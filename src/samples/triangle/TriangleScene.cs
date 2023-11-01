@@ -10,6 +10,10 @@ internal class TriangleScene : Scene
 {
     private VertexArrayObject vao = default!;
 
+    private readonly UniformBlockBuffer<CameraUniform> uboCamera = new("camera", 0);
+    private readonly UniformBlockBuffer<LightUniform> uboLight = new("light", 1);
+    private readonly UniformBlockBuffer<MaterialUniform> uboMaterial = new("material", 2);
+
     public override void Load()
     {
         //  Note: rendering a triangle manually as this method shows is complicated.
@@ -43,7 +47,14 @@ internal class TriangleScene : Scene
             0f, 0f, 1.0f,   // top middle
         };
 
-        //  create a vertex buffer from the vertices an tell OpenGL to use it       
+
+        //  the default shader expects material light and camera uniforms,
+        //  so we need to create those and bind them to the shader.
+        //  The scene creates the uniform buffer objects for camera,
+        //  light and material and handles binding them to the shader.
+        //  As we are not using this mechanism we must do it manually.
+
+        //  create buffers for vertices, colors and normals and tell OpenGL to use it       
         vao = new VertexArrayObject();
         vao.AddBuffer(VertexDeclarations.VertexPosition, vertices, name: "VBO Position");
         vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout(VertexAttribLocation.Color, 3, VertexAttribType.Float)), colors, name: "VBO Color");
@@ -51,29 +62,37 @@ internal class TriangleScene : Scene
         GL.BindVertexArray(vao);
 
         var modelMatrix = Matrix4.Identity;
-        var shader = defaultShader;
-        shader.Use();
-        shader.SetMatrix4("model", ref modelMatrix);
+        defaultShader.Use();
+        defaultShader.SetMatrix4("model", ref modelMatrix);
 
-        //  the default shader expects material and light uniform,
-        //  so we need to create those and bind them to the shader.
-        //  The scene creates the uniform buffer objects for camera,
-        //  light and material and handles binding them to the shader.
-        //  As we are not using this mechanism we must do it manually.
+        //  bind three uniform blocks to the shader
+        if (uboCamera.IsUniformSupported(defaultShader)) uboCamera.BindToShaderProgram(defaultShader);
+        if (uboLight.IsUniformSupported(defaultShader)) uboLight.BindToShaderProgram(defaultShader);
+        if (uboMaterial.IsUniformSupported(defaultShader)) uboMaterial.BindToShaderProgram(defaultShader);
+
+        // upload data to the three uniform blocks
         var lightUniform = new LightUniform()
         {
             Direction = new Vector3(0, 0, -1),
             Ambient = new Vector3(0.010f),
             Diffuse = new Vector3(1),
         };
-        AddLight(lightUniform);
-        var materialUniform = new MaterialUniform();
-        vboMaterial.UpdateSettings(ref materialUniform);
+        var materialUniform = new MaterialUniform() { Diffuse = Vector3.One };        
+        var cam = new CameraUniform()
+        {
+            view = camera.ViewMatrix,
+            projection = camera.ProjectionMatrix,
+            position = camera.Position,
+            direction = camera.Front
+        };
+        uboLight.UpdateSettings(ref lightUniform);
+        uboMaterial.UpdateSettings(ref materialUniform);
+        uboCamera.UpdateSettings(ref cam);
     }
 
     public override void RenderFrame(double elapsedSeconds)
     {
-        base.RenderFrame(elapsedSeconds);
+        GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
         GL.DrawArrays(PrimitiveType.Triangles, 0, vao.DataLength);
     }
 }

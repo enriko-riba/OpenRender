@@ -3,7 +3,6 @@ using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
-using static System.Formats.Asn1.AsnWriter;
 
 namespace OpenRender.SceneManagement;
 
@@ -95,7 +94,7 @@ public class Scene
     /// <param name="node"></param>
     public void RemoveNode(SceneNode node)
     {
-        var isRemoved = nodes.Remove(node);
+        nodes.Remove(node);
         node.Scene = null; // Remove the Scene reference from the removed node
         renderer.RemoveNode(node);
     }
@@ -105,10 +104,7 @@ public class Scene
     /// </summary>
     public void RemoveAllNodes()
     {
-        nodes.ForEach(n =>
-        {
-            n.Scene = null;
-        });
+        nodes.ForEach(n => n.Scene = null);
         nodes.Clear();
         renderer.RemoveAllNodes();
     }
