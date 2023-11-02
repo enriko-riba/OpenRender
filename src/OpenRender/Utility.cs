@@ -20,9 +20,6 @@ public static class Utility
         IntPtr pMessage,        // Pointer to message string.
         IntPtr pUserParam)      // The pointer you gave to OpenGL
     {
-        // In order to access the string pointed to by pMessage, you can use Marshal
-        // class to copy its contents to a C# string without unsafe code. You can
-        // also use the new function Marshal.PtrToStringUTF8 since .NET Core 1.1.
         var message = Marshal.PtrToStringUTF8(pMessage, length);
 
         if (severity > DebugSeverity.DebugSeverityNotification)

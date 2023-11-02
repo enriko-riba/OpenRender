@@ -19,7 +19,7 @@ public class Material
     public IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
 
     public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
-
+    public bool HasDetail => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Detail) ?? false;
     public bool HasNormal => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Normal) ?? false;
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }

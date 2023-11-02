@@ -2,6 +2,7 @@
 using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
+using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -18,7 +19,7 @@ public class SceneNode
     private readonly List<SceneNode> children = new();
 
     protected Transform transform = new();
-
+    protected VertexArrayObject? Vao;
 
     public SceneNode(Mesh? mesh, Material? material = default, Vector3? position = default)
     {
@@ -34,6 +35,7 @@ public class SceneNode
     }
 
     public uint Id => id;
+
     public BoundingSphere BoundingSphere => mesh?.BoundingSphere ?? new();
 
     public IEnumerable<SceneNode> Children => children;
@@ -74,16 +76,7 @@ public class SceneNode
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
-    internal string StringTag { get; set; } = string.Empty;
-
-    protected VertexArrayObject? Vao;
-
-    public void SetMesh(in Mesh? mesh)
-    {
-        if (mesh == null) return;
-        this.mesh = mesh;
-        //if (mesh.Vao == null) mesh.Build();
-    }
+    public void SetMesh(in Mesh? mesh) => this.mesh = mesh;
 
     public Mesh Mesh => mesh ?? throw new NullReferenceException(nameof(mesh));
 
@@ -104,6 +97,11 @@ public class SceneNode
     public RenderGroup RenderGroup { get; set; }
 
     /// <summary>
+    /// Reference to the parent Scene
+    /// </summary>
+    public Scene? Scene { get; internal set; }
+
+    /// <summary>
     /// Action method invoked from <see cref="OnUpdate(Scene, double)"/>.
     /// When inheriting <see cref="SceneNode"/> overriding the <see cref="OnUpdate(Scene, double)"/> method is the preferred way of adding custom update logic.
     /// </summary>
@@ -120,13 +118,10 @@ public class SceneNode
 
     public virtual void OnDraw(double elapsed)
     {
-        if(Vao == null)
-        {
-            Vao = mesh!.BuildVao();           
-        }
+        Vao ??= mesh!.BuildVao();
 
-        GL.BindVertexArray(Vao!);
-        
+        GL.BindVertexArray(Vao);
+
         if (Vao.DrawMode == DrawMode.Indexed)
             GL.DrawElements(PrimitiveType.Triangles, Vao.DataLength, DrawElementsType.UnsignedInt, 0);
         else
@@ -143,9 +138,8 @@ public class SceneNode
     {
         children.Add(child);
         child.Parent = this;
+        Scene?.AddNode(child);
         Invalidate();
-        Scene?.RemoveNode(child);
-        Scene?.AddNode(child); // Add the child node to the Scene's master list
     }
 
     public void RemoveChild(SceneNode child)
@@ -153,8 +147,8 @@ public class SceneNode
         if (children.Remove(child))
         {
             child.Parent = null;
+            Scene?.RemoveNode(child);
             Invalidate();
-            Scene?.RemoveNode(child); // Remove the child node from the Scene's master list
         }
     }
 
@@ -248,10 +242,7 @@ public class SceneNode
         }
     }
 
-    /// <summary>
-    /// Reference to the parent Scene
-    /// </summary>
-    internal Scene? Scene { get; set; }
-
     internal FrameBits FrameBits;
+
+    internal string StringTag { get; set; } = string.Empty;
 }

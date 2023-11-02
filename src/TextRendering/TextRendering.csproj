@@ -25,7 +25,7 @@
 	<ItemGroup>
 		<PackageReference Include="SixLabors.Fonts" Version="2.0.0" />
 		<PackageReference Include="SixLabors.ImageSharp" Version="3.0.2" />
-		<PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.0.0" />
+		<PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.0.1" />
 	</ItemGroup>
 	<ItemGroup>
 	  <ProjectReference Include="..\OpenRender\OpenRender.csproj" />
