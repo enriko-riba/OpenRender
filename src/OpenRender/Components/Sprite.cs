@@ -45,7 +45,7 @@ public class Sprite : SceneNode
                 new TextureDescriptor(textureName,
                     TextureType: TextureType.Diffuse,
                     MagFilter: TextureMagFilter.Linear,
-                    MinFilter: TextureMinFilter.NearestMipmapLinear,
+                    MinFilter: TextureMinFilter.LinearMipmapLinear,
                     TextureWrapS: TextureWrapMode.ClampToBorder,
                     TextureWrapT: TextureWrapMode.ClampToBorder,
                     GenerateMipMap: true)

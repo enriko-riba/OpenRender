@@ -267,7 +267,6 @@ internal class PlaygroundScene : Scene
             Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
-        materials[1].BatchingKey = 1;
 
         for (var i = 0; i < NodeCount; i++)
         {

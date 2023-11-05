@@ -51,6 +51,8 @@ public class Shader
 
         // create the program
         Handle = GL.CreateProgram();
+        DebugName = $"{Handle}: '{vertPath}','{fragPath}'";
+
         GL.AttachShader(Handle, vertexShader);
         GL.AttachShader(Handle, fragmentShader);
         LinkProgram(Handle);
@@ -81,12 +83,11 @@ public class Shader
             var idx = GL.GetUniformBlockIndex(Handle, key);
             uniformBlockIndices.Add(key, idx);
         }
-        Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, string.Join(", ", uniformBlockIndices.Keys));
+        Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, uniformBlockIndices.Count > 0 ? string.Join(", ", uniformBlockIndices.Keys) : "n/a");
 
-        Log.Info("created program {0}", Handle);
+        Log.Info("created program {0}", DebugName);
         Log.CheckGlError();
 
-        DebugName = $"{Handle}: '{vertPath}','{fragPath}'";
         shaderCache.Add(cacheKey, this);
     }
 

@@ -69,6 +69,7 @@ public class Renderer
             }
         }
     }
+
     private void RenderNode(SceneNode node, double elapsed)
     {
         var material = node.Material;

@@ -196,6 +196,10 @@ internal class BatchingScene : Scene
 
     private void AddRotatingBoxes()
     {
+        var sampler = Sampler.Create(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.MirroredRepeat, TextureWrapMode.MirroredRepeat);
+        var tb = TextureBase.FromDescriptor(new TextureDescriptor("Resources/container.png"));
+        var bt = new BindlessTexture(tb, sampler);
+
         var (vertices, indices) = GeometryHelper.CreateQuad();
 
         var mat1 = Material.Create(

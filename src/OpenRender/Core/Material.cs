@@ -1,6 +1,7 @@
 ﻿using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenTK.Mathematics;
+using OpenTK.Graphics.OpenGL4;
 
 namespace OpenRender.Core;
 
@@ -9,6 +10,53 @@ namespace OpenRender.Core;
 /// </summary>
 public class Material
 {
+    private readonly static Material defaultMaterial;
+
+    static Material()
+    {
+        var sampler = Sampler.Create(TextureMinFilter.Nearest, TextureMagFilter.Nearest, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
+        var defaultDiffuse = TextureBase.FromFile(new string[] { "Resources/default-diffuse.png" }, false);
+        var defaultDetail = TextureBase.FromFile(new string[] { "Resources/default-detail.png" }, false);
+        var defaultNormal = TextureBase.FromFile(new string[] { "Resources/default-normal.png" }, false);
+        var defaultSpecular = TextureBase.FromFile(new string[] { "Resources/default-specular.png" }, false);
+        var defaultBump = TextureBase.FromFile(new string[] { "Resources/default-bump.png" }, false);
+        /*
+            public long Diffuse;
+            public long Detail;
+            public long Normal;
+            public long Specular;
+            public long Bump;
+            public long T6;
+            public long T7;
+            public long T8;
+        */
+        defaultMaterial = new Material()
+        {
+            TextureBases = new TextureBase[] { 
+                defaultDiffuse, 
+                defaultDetail, 
+                defaultNormal, 
+                defaultSpecular, 
+                defaultBump, 
+                defaultBump, 
+                defaultBump, 
+                defaultBump 
+            },
+            BindlessTextures = new BindlessTexture[] { 
+                new(defaultDiffuse, sampler), 
+                new (defaultDetail, sampler), 
+                new (defaultNormal, sampler), 
+                new(defaultSpecular, sampler), 
+                new(defaultBump, sampler), 
+                new(defaultBump, sampler), 
+                new(defaultBump, sampler), 
+                new(defaultBump, sampler) 
+            },
+        };
+    }
+
+    public static Material Default => defaultMaterial;
+
     public const int MaxTextures = 8;
 
     private static uint counter;
@@ -26,20 +74,17 @@ public class Material
 
     public Texture[]? Textures { get; private set; }
 
-    /// <summary>
-    /// An arbitrary value used to group objects for batching.
-    /// If the value is -1 the object is not batched else all objects sharing the same batching key are
-    /// rendered in a single batch.
-    /// Note: batching is only possible if the batched object use the same material and mesh. While 
-    /// OpenRenderer allows to batch objects with different materials and meshes the result is undefined.
-    /// </summary>
-    public int BatchingKey { get; set; } = -1;
+
+    public TextureBase[] TextureBases { get; private set; } = new TextureBase[8];
+
+    public BindlessTexture[] BindlessTextures { get; private set; } = new BindlessTexture[8];
 
     /// <summary>
     /// Shader program used to render the object.
     /// </summary>
     public Shader Shader { get; set; } = default!;
 
+    #region Colors
     /// <summary>
     /// Scaling factor of the detail texture. Has no impact without detail texture. 
     /// If 0 the detail texture is not applied even if it is defined. 
@@ -66,6 +111,7 @@ public class Material
     /// Color emitted from the object surface. This color is for self luminating objects, scene lights have no effect on emissive color.
     /// </summary>
     public Vector3 EmissiveColor { get; set; } = Vector3.Zero;
+    #endregion
 
     private void Initialize()
     {
@@ -96,10 +142,10 @@ public class Material
         return mat;
     }
 
-    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) => 
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) =>
         Create(shader, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
 
-    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) => 
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) =>
         Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
 
     public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>

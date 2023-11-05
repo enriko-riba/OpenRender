@@ -50,8 +50,18 @@ layout(std140, binding = 2) uniform material {
 };
 
 
-layout(std430, binding = 1) readonly buffer ssbo_textures {
-    sampler2D textures[];
+struct Textures {
+    sampler2D diffuse;
+    sampler2D detail;
+    sampler2D normal;
+    sampler2D specular;
+    sampler2D bump;
+    sampler2D t6;
+    sampler2D t7;
+    sampler2D t8;
+};
+layout(std140, binding = 3) uniform textures {
+    Textures tex;
 };
 
 uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1

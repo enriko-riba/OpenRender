@@ -42,6 +42,7 @@ public sealed class SkyBox : SceneNode
 
     public override void OnDraw(double elapsed)
     {
+        GL.DepthMask(false);
         GL.GetInteger(GetPName.DepthFunc, out var depthFunc);
         var isCullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
 
@@ -51,15 +52,16 @@ public sealed class SkyBox : SceneNode
         }
         if (depthFunc != (int)DepthFunction.Lequal)
         {
-            GL.DepthFunc(DepthFunction.Lequal);
+           GL.DepthFunc(DepthFunction.Lequal);
         }
-        
+
         var view = Scene!.Camera!.ViewMatrix;
         shader.SetMatrix4("view", ref view);
         shader.SetMatrix4("projection", ref projectionMatrix);
 
         base.OnDraw(elapsed);
-
+        
+        GL.DepthMask(true);
         //  restore previous values
         if (depthFunc != (int)DepthFunction.Lequal)
         {

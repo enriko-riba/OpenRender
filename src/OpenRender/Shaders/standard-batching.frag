@@ -46,6 +46,11 @@ struct Textures {
     sampler2D diffuse;
     sampler2D detail;
     sampler2D normal;
+    sampler2D specular;
+    sampler2D bump;
+    sampler2D t6;
+    sampler2D t7;
+    sampler2D t8;
 };
 layout(std430, binding = 2) readonly buffer ssbo_textures {
     Textures textures[];

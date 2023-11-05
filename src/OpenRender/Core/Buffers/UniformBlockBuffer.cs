@@ -6,11 +6,11 @@ namespace OpenRender.Core.Buffers;
 
 public class UniformBlockBuffer<T> where T : struct
 {
-    private readonly int bindingPoint;
-    private readonly int bufferHandle;
+    private readonly uint bindingPoint;
+    private readonly uint bufferHandle;
     private readonly string uniformName;
 
-    public UniformBlockBuffer(string uniformName, int bindingPoint)
+    public UniformBlockBuffer(string uniformName, uint bindingPoint)
     {
         GL.CreateBuffers(1, out bufferHandle);
 
@@ -26,7 +26,7 @@ public class UniformBlockBuffer<T> where T : struct
     public void BindToShaderProgram(Shader program)
     {
         var uniformBlockIndex = program.GetUniformBlockIndex(uniformName);
-        GL.UniformBlockBinding(program.Handle, uniformBlockIndex, bindingPoint);
+        GL.UniformBlockBinding((uint)program.Handle, (uint)uniformBlockIndex, bindingPoint);
         GL.BindBufferRange(BufferRangeTarget.UniformBuffer, bindingPoint, bufferHandle, 0, Unsafe.SizeOf<T>());
     }
 

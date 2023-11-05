@@ -90,7 +90,13 @@ public class Texture
         GL.TextureParameter(handle, TextureParameterName.TextureWrapT, (int)textureWrapT);
         GL.TextureParameter(handle, TextureParameterName.TextureMinFilter, (int)minFilter);
         GL.TextureParameter(handle, TextureParameterName.TextureMagFilter, (int)magFilter);
-        GL.TextureStorage2D(handle, 1, SizedInternalFormat.Rgba8, width, height);
+
+        var mipmapLevels = 1;
+        if (generateMipMap)
+        {
+            mipmapLevels = 1 + (int)Math.Floor(Math.Log2(Math.Max(width, height)));
+        }
+        GL.TextureStorage2D(handle, mipmapLevels, SizedInternalFormat.Rgba8, width, height);
         GL.TextureSubImage2D(handle, 0, 0, 0, width, height, PixelFormat.Rgba, PixelType.UnsignedByte, buffer);
 
         if (generateMipMap)
@@ -162,7 +168,12 @@ public class Texture
 
             using var stream = File.OpenRead(paths[0]);
             image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
-            GL.TextureStorage2D(handle, 2, SizedInternalFormat.Srgb8Alpha8, image.Width, image.Height);
+            var mipmapLevels = 1;
+            if (generateMipMap)
+            {
+                mipmapLevels = 1 + (int)Math.Floor(Math.Log2(Math.Max(image.Width, image.Height)));
+            }
+            GL.TextureStorage2D(handle, mipmapLevels, SizedInternalFormat.Srgb8Alpha8, image.Width, image.Height);
             GL.TextureSubImage2D(handle, 0, 0, 0, image.Width, image.Height, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
 
             if (generateMipMap)

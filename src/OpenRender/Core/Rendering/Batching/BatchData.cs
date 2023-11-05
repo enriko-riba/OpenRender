@@ -1,5 +1,4 @@
 ﻿using OpenRender.Core.Buffers;
-using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -73,7 +72,7 @@ internal class BatchData
         TextureData textureData = new();
         if (node.Material.HasDiffuse)
         {
-            textureData.Diffuse = GL.Arb.GetTextureHandle(node.Material.Textures[0].Handle);
+            textureData.Diffuse = GL.Arb.GetTextureHandle(node.Material.Textures![0].Handle);
             if (!TextureDataArray.Any(x => x.Diffuse == textureData.Diffuse))
                 GL.Arb.MakeTextureHandleResident(textureData.Diffuse);
         }
