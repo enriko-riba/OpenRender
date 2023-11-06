@@ -32,25 +32,25 @@ public class Material
         */
         defaultMaterial = new Material()
         {
-            TextureBases = new TextureBase[] { 
-                defaultDiffuse, 
-                defaultDetail, 
-                defaultNormal, 
-                defaultSpecular, 
-                defaultBump, 
-                defaultBump, 
-                defaultBump, 
-                defaultBump 
+            TextureBases = new TextureBase[] {
+                defaultDiffuse,
+                defaultDetail,
+                defaultNormal,
+                defaultSpecular,
+                defaultBump,
+                defaultBump,
+                defaultBump,
+                defaultBump
             },
-            BindlessTextures = new BindlessTexture[] { 
-                new(defaultDiffuse, sampler), 
-                new (defaultDetail, sampler), 
-                new (defaultNormal, sampler), 
-                new(defaultSpecular, sampler), 
-                new(defaultBump, sampler), 
-                new(defaultBump, sampler), 
-                new(defaultBump, sampler), 
-                new(defaultBump, sampler) 
+            BindlessTextures = new BindlessTexture[] {
+                new(defaultDiffuse, sampler),
+                new (defaultDetail, sampler),
+                new (defaultNormal, sampler),
+                new(defaultSpecular, sampler),
+                new(defaultBump, sampler),
+                new(defaultBump, sampler),
+                new(defaultBump, sampler),
+                new(defaultBump, sampler)
             },
         };
     }
@@ -60,11 +60,11 @@ public class Material
     public const int MaxTextures = 8;
 
     private static uint counter;
-    private int[]? textureHandles;
+    //private int[]? textureHandles;
 
     public uint Id { get; init; }
 
-    public IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
+    // public IEnumerable<int> TextureHandles => textureHandles ?? Enumerable.Empty<int>();
 
     public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
     public bool HasDetail => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Detail) ?? false;
@@ -72,7 +72,7 @@ public class Material
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
-    public Texture[]? Textures { get; private set; }
+    //public Texture[]? Textures { get; private set; }
 
 
     public TextureBase[] TextureBases { get; private set; } = new TextureBase[8];
@@ -115,8 +115,24 @@ public class Material
 
     private void Initialize()
     {
-        Textures = Texture.CreateFromMaterial(this);
-        textureHandles = Textures.Select(t => t.Handle).ToArray();
+        foreach (var descriptor in TextureDescriptors ?? Array.Empty<TextureDescriptor>())
+        {
+            var tb = TextureBase.FromDescriptor(descriptor);
+            var sampler = Sampler.FromDescriptor(descriptor);
+            var bt = new BindlessTexture(tb, sampler);
+            if(descriptor.TextureType == TextureType.CubeMap)
+            {
+                TextureBases[0] = tb;
+                BindlessTextures[0] = bt;
+            }
+            else
+            {
+                TextureBases[(int)descriptor.TextureType] = tb;
+                BindlessTextures[(int)descriptor.TextureType] = bt;
+            }
+        }
+        //Textures = Texture.CreateFromMaterial(this);
+        //textureHandles = Textures.Select(t => t.Handle).ToArray();
     }
 
     public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";

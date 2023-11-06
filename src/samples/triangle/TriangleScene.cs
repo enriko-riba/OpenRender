@@ -66,9 +66,9 @@ internal class TriangleScene : Scene
         defaultShader.SetMatrix4("model", ref modelMatrix);
 
         //  bind three uniform blocks to the shader
-        if (uboCamera.IsUniformSupported(defaultShader)) uboCamera.BindToShaderProgram(defaultShader);
-        if (uboLight.IsUniformSupported(defaultShader)) uboLight.BindToShaderProgram(defaultShader);
-        if (uboMaterial.IsUniformSupported(defaultShader)) uboMaterial.BindToShaderProgram(defaultShader);
+        if (uboCamera.IsUniformBlockSupported(defaultShader)) uboCamera.BindToShaderProgram(defaultShader);
+        if (uboLight.IsUniformBlockSupported(defaultShader)) uboLight.BindToShaderProgram(defaultShader);
+        if (uboMaterial.IsUniformBlockSupported(defaultShader)) uboMaterial.BindToShaderProgram(defaultShader);
 
         // upload data to the three uniform blocks
         var lightUniform = new LightUniform()

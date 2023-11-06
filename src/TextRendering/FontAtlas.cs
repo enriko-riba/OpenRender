@@ -11,7 +11,7 @@ internal class FontAtlas : IFontAtlas
         TextOptions = textOptions;
     }
 
-    public Texture Texture { get; internal set; } = default!;
+    public TextureBase Texture { get; internal set; } = default!;
 
     public Dictionary<char, GlyphInfo> Glyphs { get; } = new Dictionary<char, GlyphInfo>();
 

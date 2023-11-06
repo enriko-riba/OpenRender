@@ -1,6 +1,5 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 using PixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 
 namespace OpenRender.Core.Textures;
@@ -130,6 +129,11 @@ public class TextureBase: IDisposable
         }
         else if (textureTarget == TextureTarget.TextureCubeMap && paths.Length == 6)
         {
+            GL.TextureParameterI(handle, TextureParameterName.TextureWrapS, new[] { (int)TextureWrapMode.ClampToEdge });
+            GL.TextureParameterI(handle, TextureParameterName.TextureWrapT, new[] { (int)TextureWrapMode.ClampToEdge });
+            GL.TextureParameterI(handle, TextureParameterName.TextureMinFilter, new[] { (int)TextureMinFilter.Linear });
+            GL.TextureParameterI(handle, TextureParameterName.TextureMagFilter, new[] { (int)TextureMagFilter.Linear });
+
             StbImage.stbi_set_flip_vertically_on_load(0);
             for (var face = 0; face < paths.Length; face++)
             {

@@ -2,6 +2,7 @@
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using System.Xml.Linq;
 
 namespace OpenRender.Core.Rendering;
 
@@ -149,7 +150,7 @@ public class Shader
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);
-    }
+    }    
 
     /// <summary>
     /// Sets a uniform Matrix4.
@@ -222,7 +223,10 @@ public class Shader
         if (IsUniformValid(name)) GL.Uniform2(uniformLocations[name], data);
     }
 
+    public bool UniformBlockExists(string name) => uniformBlockIndices.ContainsKey(name);    
+    
     public bool UniformExists(string name) => uniformLocations.ContainsKey(name);
+
     private bool IsUniformValid(string name)
     {
         if (!uniformLocations.ContainsKey(name))

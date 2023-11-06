@@ -33,7 +33,7 @@ public class UniformBlockBuffer<T> where T : struct
     public void UpdateSettings(ref T settings) =>
         GL.NamedBufferSubData(bufferHandle, nint.Zero, Unsafe.SizeOf<T>(), ref settings);
 
-    public bool IsUniformSupported(Shader program)
+    public bool IsUniformBlockSupported(Shader program)
     {
         var uniformBlockIndex = program.GetUniformBlockIndex(uniformName);
         return uniformBlockIndex != -1;

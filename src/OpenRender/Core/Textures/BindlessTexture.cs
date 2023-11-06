@@ -14,7 +14,11 @@ public class BindlessTexture : IDisposable
 
     public ulong Handle => handle;
 
-    public void MakeResident() => GL.Arb.MakeTextureHandleResident(handle);
+    public void MakeResident()
+    {
+        var isResident = GL.Arb.IsTextureHandleResident(handle);
+        if(!isResident) GL.Arb.MakeTextureHandleResident(handle);
+    }
 
     public void MakeNonResident() => GL.Arb.MakeTextureHandleNonResident(handle);
 

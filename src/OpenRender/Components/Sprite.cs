@@ -44,7 +44,7 @@ public class Sprite : SceneNode
             new TextureDescriptor[] {
                 new TextureDescriptor(textureName,
                     TextureType: TextureType.Diffuse,
-                    MagFilter: TextureMagFilter.Linear,
+                    MagFilter: TextureMagFilter.Nearest,
                     MinFilter: TextureMinFilter.LinearMipmapLinear,
                     TextureWrapS: TextureWrapMode.ClampToBorder,
                     TextureWrapT: TextureWrapMode.ClampToBorder,
@@ -52,8 +52,8 @@ public class Sprite : SceneNode
             }
         );
 
-        size.X = Material.Textures![0].Width;
-        size.Y = Material.Textures[0].Height;
+        size.X = Material.TextureBases[0].Width;
+        size.Y = Material.TextureBases[0].Height;
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
@@ -75,11 +75,13 @@ public class Sprite : SceneNode
         get => size;
         set
         {
-            if ((Material?.Textures?.Length ?? 0) > 0)
-            {
-                var texture = Material!.Textures![0];
-                SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
-            }
+            var texture = Material!.TextureBases![0];
+            SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
+            //if ((Material?.Textures?.Length ?? 0) > 0)
+            //{
+            //    var texture = Material!.TextureBases![0];
+            //    SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
+            //}
             size = value;
         }
     }
@@ -155,12 +157,18 @@ public class Sprite : SceneNode
     /// </summary>
     public override void SetScale(in Vector3 scale)
     {
-        if ((Material?.Textures?.Length ?? 0) > 0)
+        if (Material != null)
         {
-            var texture = Material!.Textures![0];
+            var texture = Material!.TextureBases![0];
             size.X = (int)MathF.Round(scale.X * texture.Width);
             size.Y = (int)MathF.Round(scale.Y * texture.Height);
         }
+        //if ((Material?.Textures?.Length ?? 0) > 0)
+        //{
+        //    var texture = Material!.TextureBases![0];
+        //    size.X = (int)MathF.Round(scale.X * texture.Width);
+        //    size.Y = (int)MathF.Round(scale.Y * texture.Height);
+        //}
         base.SetScale(scale);
     }
 
@@ -216,7 +224,7 @@ public class Sprite : SceneNode
     {
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
         if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
-        var texture = Material.Textures![0];
+        var texture = Material.TextureBases[0];
         shader.SetUniform4("sourceFrame",
             (float)sourceRectangle.X / texture.Width,
             1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / texture.Height,

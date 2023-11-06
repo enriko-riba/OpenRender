@@ -3,17 +3,6 @@
 
 #define MAX_LIGHTS 4
 
-//  predefined sampler names
-uniform sampler2D texture_diffuse;
-uniform sampler2D texture_detail;
-uniform sampler2D texture_normal;
-uniform sampler2D texture_specular;
-uniform sampler2D texture_additional1;
-uniform sampler2D texture_additional2;
-uniform sampler2D texture_additional3;
-uniform sampler2D texture_additional4;
-uniform samplerCube texture_cubemap;
-
 //	light types
 #define DIR_LIGHT			0
 #define POINT_LIGHT			1
@@ -49,7 +38,6 @@ layout(std140, binding = 2) uniform material {
     Material mat;
 };
 
-
 struct Textures {
     sampler2D diffuse;
     sampler2D detail;
@@ -64,7 +52,7 @@ layout(std140, binding = 3) uniform textures {
     Textures tex;
 };
 
-uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
+uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from diffuse
 uniform float uDetailTextureFactor;     //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
 uniform int uHasNormalTexture;          //  should the normal map txture be sampled from texture_normal
 
@@ -90,7 +78,7 @@ void main()
     
     if(uHasDiffuseTexture > 0)
     {
-        texDiffuse = vec3(texture(texture_diffuse, texCoord));
+        texDiffuse = vec3(texture(tex.diffuse, texCoord));
     }
     else
     {
@@ -99,13 +87,13 @@ void main()
 
     if(uDetailTextureFactor > 0)
     {		
-		texDetail = vec3(texture(texture_detail, texCoord * uDetailTextureFactor));
+		texDetail = vec3(texture(tex.detail, texCoord * uDetailTextureFactor));
     }
     vec3 texColor = texDetail * texDiffuse;    
 
     if(uHasNormalTexture > 0)
     {    
-        vec3 normalMap = texture(texture_normal, texCoord).rgb;
+        vec3 normalMap = texture(tex.normal, texCoord).rgb;
         norm = normalize(normalMap * 2.0 - 1.0);
     }
 

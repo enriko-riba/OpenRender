@@ -5,12 +5,12 @@ public enum TextureType
     /// <summary>
     /// No explicitly assigned type, this texture type is treated as diffuse.
     /// </summary>
-    Unknown,
+    Unknown = 0,
 
     /// <summary>
     /// Main color texture, stretched over the whole object.
     /// </summary>
-    Diffuse,
+    Diffuse = Unknown,
 
     /// <summary>
     /// Detail or noise texture, tiled over the object based on the detail factor.
@@ -30,7 +30,7 @@ public enum TextureType
     /// <summary>
     /// Application specific usage in custom shaders.
     /// </summary>
-    Additional1,
+    Bump,
 
     /// <summary>
     /// Application specific usage in custom shaders.

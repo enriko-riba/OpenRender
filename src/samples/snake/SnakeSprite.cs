@@ -1,11 +1,11 @@
 ﻿using OpenRender.Components;
 using OpenRender.Core;
-using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using Samples.Snake.Logic;
 using static Samples.Snake.Constants;
 
 namespace Samples.Snake;
+
 internal class SnakeSprite : Sprite
 {
     private readonly IEnumerable<SnakeTile> snakeTiles;

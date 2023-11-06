@@ -87,11 +87,12 @@ public sealed class FontAtlasGenerator
         //image.SaveAsPng("font-atlas.png");
 
         var buffer = MemoryMarshal.AsBytes(image.GetPixelMemoryGroup().Single().Span).ToArray();
-        fontAtlas.Texture = Texture.FromByteArray(buffer,
+        fontAtlas.Texture = TextureBase.FromByteArray(buffer,
             sizeW,
             sizeH,
-            "fontAtlasSampler",
-            minFilter: TextureMinFilter.Nearest, magFilter: TextureMagFilter.Nearest);
+            "fontAtlasSampler"
+            //minFilter: TextureMinFilter.Nearest, magFilter: TextureMagFilter.Nearest);
+            );
         return fontAtlas;
     }
 

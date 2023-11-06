@@ -1,10 +1,10 @@
-#version 330 core
-layout (location = 0) in vec2 vertex; 
-layout (location = 3) in vec2 aTexCoord;
+#version 460
 
 uniform mat4 projection;
 uniform mat4 model;
 
+layout (location = 0) in vec2 vertex; 
+layout (location = 3) in vec2 aTexCoord;
 out vec2 texUV;
 
 void main()

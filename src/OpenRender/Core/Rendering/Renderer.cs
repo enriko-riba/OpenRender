@@ -1,7 +1,6 @@
 ﻿using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering.Batching;
-using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -24,24 +23,27 @@ public class Renderer
     private readonly Dictionary<string, BatchData> batchDataDictionary = new();
 
     private readonly Frustum frustum = new();
-    private readonly TextureBatcher textureBatcher;
-    private readonly List<Material> materialList = new();
+    //private readonly TextureBatcher textureBatcher;
+    //private readonly List<Material> materialList = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
 
     protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
     protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
     protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
+    protected internal readonly UniformBlockBuffer<TextureData> uboTextures;
 
 
     public Renderer()
     {
-        uboLight = new UniformBlockBuffer<LightUniform>("light", 1);
         uboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
+        uboLight = new UniformBlockBuffer<LightUniform>("light", 1);
         uboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
+        uboTextures = new UniformBlockBuffer<TextureData>("textures", 3);
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
-        textureBatcher = new TextureBatcher(textureUnitsCount);
+        Log.Info($"MaxTextureImageUnits: {textureUnitsCount}");
+        //textureBatcher = new TextureBatcher(textureUnitsCount);
 
         // Create the default render layers
         foreach (var renderGroup in Enum.GetValues<RenderGroup>())
@@ -78,9 +80,10 @@ public class Renderer
         if (lastProgramHandle != shader.Handle)
         {
             lastProgramHandle = shader.Handle;
-            if (uboCamera.IsUniformSupported(shader)) uboCamera.BindToShaderProgram(shader);
-            if (uboLight.IsUniformSupported(shader)) uboLight.BindToShaderProgram(shader);
-            if (uboMaterial.IsUniformSupported(shader)) uboMaterial.BindToShaderProgram(shader);
+            if (uboCamera.IsUniformBlockSupported(shader)) uboCamera.BindToShaderProgram(shader);
+            if (uboLight.IsUniformBlockSupported(shader)) uboLight.BindToShaderProgram(shader);
+            if (uboMaterial.IsUniformBlockSupported(shader)) uboMaterial.BindToShaderProgram(shader);
+            if (uboTextures.IsUniformBlockSupported(shader)) uboTextures.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -103,8 +106,24 @@ public class Renderer
             if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
             if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
             if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
-
-            _ = textureBatcher.BindTextureUnits(material);
+            if (uboTextures.IsUniformBlockSupported(shader))
+            {
+                material.BindlessTextures[0]?.MakeResident();
+                TextureData textureData = new()
+                { 
+                    Diffuse = material.BindlessTextures[0]?.Handle ?? 0,
+                    Detail = material.BindlessTextures[1]?.Handle??0,
+                    Normal = material.BindlessTextures[2]?.Handle ?? 0,
+                    Specular  = material.BindlessTextures[3]?.Handle ?? 0,
+                    Bump = material.BindlessTextures[4]?.Handle ?? 0,
+                    T6 = material.BindlessTextures[5]?.Handle ?? 0,
+                    T7 = material.BindlessTextures[6]?.Handle ?? 0,
+                    T8 = material.BindlessTextures[7]?.Handle ?? 0
+                };
+                uboTextures.UpdateSettings(ref textureData);
+            }
+            
+            //_ = textureBatcher.BindTextureUnits(material);
         }
 
         node.OnDraw(elapsed);
@@ -243,9 +262,9 @@ public class Renderer
             {
                 lastShaderProgram = batch.Shader.Handle;
                 batch.Shader.Use();
-                if (uboCamera.IsUniformSupported(batch.Shader)) uboCamera.BindToShaderProgram(batch.Shader);
-                if (uboLight.IsUniformSupported(batch.Shader)) uboLight.BindToShaderProgram(batch.Shader);
-                if (uboMaterial.IsUniformSupported(batch.Shader)) uboMaterial.BindToShaderProgram(batch.Shader);
+                if (uboCamera.IsUniformBlockSupported(batch.Shader)) uboCamera.BindToShaderProgram(batch.Shader);
+                if (uboLight.IsUniformBlockSupported(batch.Shader)) uboLight.BindToShaderProgram(batch.Shader);
+                if (uboMaterial.IsUniformBlockSupported(batch.Shader)) uboMaterial.BindToShaderProgram(batch.Shader);
             }
 
             var length = batch.LastIndex + 1;
@@ -332,7 +351,7 @@ public class Renderer
     {
         CullFrustum(camera, nodes);
         SortRenderList(camera);
-        OptimizeTextureUnitUsage(nodes);
+        //OptimizeTextureUnitUsage(nodes);
     }
 
 
@@ -346,15 +365,15 @@ public class Renderer
         }
     }
 
-    private void OptimizeTextureUnitUsage(IEnumerable<SceneNode> nodes)
-    {
-        if (hasNodeListChanged)
-        {
-            UpdateSceneMaterials(nodes);
-            textureBatcher.Reset();
-            textureBatcher.SortMaterials(materialList);
-        }
-    }
+    //private void OptimizeTextureUnitUsage(IEnumerable<SceneNode> nodes)
+    //{
+    //    if (hasNodeListChanged)
+    //    {
+    //        UpdateSceneMaterials(nodes);
+    //        textureBatcher.Reset();
+    //        textureBatcher.SortMaterials(materialList);
+    //    }
+    //}
 
     private void SortRenderList(ICamera? camera)
     {
@@ -374,11 +393,11 @@ public class Renderer
         }
     }
 
-    private void UpdateSceneMaterials(IEnumerable<SceneNode> nodes)
-    {
-        materialList.Clear();
-        materialList.AddRange(nodes
-            .Select(n => n.Material)
-            .DistinctBy(m => m.Id));
-    }
+    //private void UpdateSceneMaterials(IEnumerable<SceneNode> nodes)
+    //{
+    //    materialList.Clear();
+    //    materialList.AddRange(nodes
+    //        .Select(n => n.Material)
+    //        .DistinctBy(m => m.Id));
+    //}
 }

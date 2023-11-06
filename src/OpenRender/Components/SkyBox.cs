@@ -39,6 +39,7 @@ public sealed class SkyBox : SceneNode
     {
         projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
     }
+     
 
     public override void OnDraw(double elapsed)
     {
@@ -52,15 +53,18 @@ public sealed class SkyBox : SceneNode
         }
         if (depthFunc != (int)DepthFunction.Lequal)
         {
-           GL.DepthFunc(DepthFunction.Lequal);
+            GL.DepthFunc(DepthFunction.Lequal);
         }
 
         var view = Scene!.Camera!.ViewMatrix;
         shader.SetMatrix4("view", ref view);
         shader.SetMatrix4("projection", ref projectionMatrix);
+        
+        GL.BindTextureUnit(0, Material.TextureBases[0].Handle);
+        shader.SetInt("texture_cubemap", 0);
 
         base.OnDraw(elapsed);
-        
+
         GL.DepthMask(true);
         //  restore previous values
         if (depthFunc != (int)DepthFunction.Lequal)
