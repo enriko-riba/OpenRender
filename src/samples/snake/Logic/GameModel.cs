@@ -236,17 +236,18 @@ public class GameModel
 
     private static Direction CalcCornerDirection(Direction prevDir, Direction bodyDir)
     {
-        if (prevDir == Direction.South && bodyDir == Direction.East) return Direction.East;
-        if (prevDir == Direction.South && bodyDir == Direction.West) return Direction.North;
-        if (prevDir == Direction.North && bodyDir == Direction.East) return Direction.South;
-        if (prevDir == Direction.North && bodyDir == Direction.West) return Direction.West;
-
-        if (prevDir == Direction.East && bodyDir == Direction.South) return Direction.West;
-        if (prevDir == Direction.East && bodyDir == Direction.North) return Direction.North;
-        if (prevDir == Direction.West && bodyDir == Direction.South) return Direction.South;
-        if (prevDir == Direction.West && bodyDir == Direction.North) return Direction.East;
-
-        throw new Exception("invalid direction combination!");
+        return prevDir switch
+        {
+            Direction.South when bodyDir == Direction.East => Direction.East,
+            Direction.South when bodyDir == Direction.West => Direction.North,
+            Direction.North when bodyDir == Direction.East => Direction.South,
+            Direction.North when bodyDir == Direction.West => Direction.West,
+            Direction.East when bodyDir == Direction.South => Direction.West,
+            Direction.East when bodyDir == Direction.North => Direction.North,
+            Direction.West when bodyDir == Direction.South => Direction.South,
+            Direction.West when bodyDir == Direction.North => Direction.East,
+            _ => throw new Exception("invalid direction combination!")
+        };
     }
 
     private static SnakeTile CreateHeadTile(SnakeTile currentTile, Direction headDirection)

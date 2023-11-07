@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using OpenRender.Core.Textures;
 using OpenTK.Mathematics;
 
 namespace Samples.Snake;
@@ -12,8 +13,14 @@ internal class Button : OpenRender.Components.Button
     private const int BtnWidth = 160;
     private const int BtnHeight = 45;
     private const int BtnEdgeSize = 30;
+    private static (Mesh mesh, Material material) mm;
 
-    public Button(string caption) : base(caption, "Resources/btnAtlas.png", BtnEdgeSize, BtnWidth, BtnHeight)
+    static Button()
+    {
+        mm = CreateMeshAndMaterial("Resources/btnAtlas.png");
+    }
+    
+    public Button(string caption) : base(mm.mesh, mm.material, caption, BtnEdgeSize, BtnWidth, BtnHeight)
     {
         SourceRectangle = new Rectangle(0, 0, 200, 60);
         Update = (node, elapsed) =>

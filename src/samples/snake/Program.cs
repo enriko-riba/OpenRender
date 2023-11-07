@@ -25,7 +25,7 @@ var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new (0f, 
 var tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas);
 
 // start app with menu scene
-var scene = new MainScene(tr);
+var scene = new SnakeScene(tr);
 scm.AddScene(scene);
 scm.ActivateScene(scene.Name);
 scm.Run();

@@ -19,13 +19,19 @@ public class AnimatedSprite : Sprite
     private Rectangle[]? currentSequence;
     private Rectangle currentFrame;
 
-    public AnimatedSprite(string textureName) : this(textureName, null, null) { }
-    public AnimatedSprite(string textureName, Action? onComplete) : this(textureName, onComplete, null) { }
-    public AnimatedSprite(string textureName, Action? onComplete, Action? onUpdate) : base(textureName)
+    public static AnimatedSprite Create(string textureName, Action? onComplete = null, Action? onUpdate = null)
+    {
+        ArgumentNullException.ThrowIfNull(textureName);
+        var (mesh, material) = CreateMeshAndMaterial(textureName);
+        var sprite = new AnimatedSprite(mesh, material, onComplete, onUpdate);
+        return sprite;
+    }
+
+    public AnimatedSprite(Mesh mesh, Material material, Action? onComplete, Action? onUpdate) : base(mesh, material)
     {
         onUpdateAction = onUpdate;
         onCompleteAction = onComplete;
-    }
+    }   
 
     public int Fps { get; set; } = 4;
 

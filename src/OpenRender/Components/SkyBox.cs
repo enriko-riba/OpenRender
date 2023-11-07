@@ -11,29 +11,33 @@ using OpenTK.Windowing.Common;
 namespace OpenRender.Components;
 
 public sealed class SkyBox : SceneNode
-{
+{    
     private Matrix4 projectionMatrix = Matrix4.Identity;
-    private Shader shader;
-    public SkyBox(string[] texturePaths) : base(default, default)
+
+    public static SkyBox Create(string[] texturePaths)
     {
         ArgumentNullException.ThrowIfNull(texturePaths);
         if (texturePaths.Length != 6) throw new ArgumentException("SkyBox needs 6 images", nameof(texturePaths));
-
-
         var desc = new TextureDescriptor(texturePaths,
             TextureType: TextureType.CubeMap,
             TextureTarget: TextureTarget.TextureCubeMap,
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge);
-        shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
-        Material = Material.Create(shader, desc);
+        var shader = new Shader("Shaders/skybox.vert", "Shaders/skybox.frag");
+        var material = Material.Create(shader, desc);
 
         var (vertices, indices) = GeometryHelper.CreateCube();
         var skyBoxMesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
-        SetMesh(skyBoxMesh);
+        var skybox = new SkyBox(skyBoxMesh, material);
+        return skybox;
+    }
+
+    public SkyBox(Mesh mesh, Material material) : base(mesh, material)
+    {
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
     }
+
 
     public override void OnResize(Scene scene, ResizeEventArgs e)
     {
@@ -57,11 +61,11 @@ public sealed class SkyBox : SceneNode
         }
 
         var view = Scene!.Camera!.ViewMatrix;
-        shader.SetMatrix4("view", ref view);
-        shader.SetMatrix4("projection", ref projectionMatrix);
+        Material.Shader.SetMatrix4("view", ref view);
+        Material.Shader.SetMatrix4("projection", ref projectionMatrix);
         
         GL.BindTextureUnit(0, Material.TextureBases[0].Handle);
-        shader.SetInt("texture_cubemap", 0);
+        Material.Shader.SetInt("texture_cubemap", 0);
 
         base.OnDraw(elapsed);
 

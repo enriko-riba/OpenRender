@@ -23,8 +23,6 @@ public class Renderer
     private readonly Dictionary<string, BatchData> batchDataDictionary = new();
 
     private readonly Frustum frustum = new();
-    //private readonly TextureBatcher textureBatcher;
-    //private readonly List<Material> materialList = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
 
     protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
@@ -43,7 +41,6 @@ public class Renderer
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
         Log.Info($"MaxTextureImageUnits: {textureUnitsCount}");
-        //textureBatcher = new TextureBatcher(textureUnitsCount);
 
         // Create the default render layers
         foreach (var renderGroup in Enum.GetValues<RenderGroup>())
@@ -108,22 +105,20 @@ public class Renderer
             if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
             if (uboTextures.IsUniformBlockSupported(shader))
             {
-                material.BindlessTextures[0]?.MakeResident();
+                //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
                 TextureData textureData = new()
                 { 
-                    Diffuse = material.BindlessTextures[0]?.Handle ?? 0,
-                    Detail = material.BindlessTextures[1]?.Handle??0,
-                    Normal = material.BindlessTextures[2]?.Handle ?? 0,
-                    Specular  = material.BindlessTextures[3]?.Handle ?? 0,
-                    Bump = material.BindlessTextures[4]?.Handle ?? 0,
-                    T6 = material.BindlessTextures[5]?.Handle ?? 0,
-                    T7 = material.BindlessTextures[6]?.Handle ?? 0,
-                    T8 = material.BindlessTextures[7]?.Handle ?? 0
+                    Diffuse = material.BindlessTextures[0],
+                    Detail = material.BindlessTextures[1],
+                    Normal = material.BindlessTextures[2],
+                    Specular  = material.BindlessTextures[3],
+                    Bump = material.BindlessTextures[4],
+                    T6 = material.BindlessTextures[5],
+                    T7 = material.BindlessTextures[6],
+                    T8 = material.BindlessTextures[7]
                 };
                 uboTextures.UpdateSettings(ref textureData);
-            }
-            
-            //_ = textureBatcher.BindTextureUnits(material);
+            }            
         }
 
         node.OnDraw(elapsed);
@@ -257,7 +252,6 @@ public class Renderer
         //  render all batches
         foreach (var batch in batchDataDictionary.Values)
         {
-            //if (batch.FrameCommands.Count == 0) continue;
             if (lastShaderProgram != batch.Shader.Handle)
             {
                 lastShaderProgram = batch.Shader.Handle;
@@ -331,7 +325,7 @@ public class Renderer
         var frequencies = new Dictionary<int, int>();
         foreach (var node in nodes)
         {
-            var handle = node.Material?.Shader.Handle ?? 0;
+            var handle = node.Material.Shader.Handle;
             if (handle > 0)
             {
                 if (frequencies.ContainsKey(handle))
@@ -351,7 +345,6 @@ public class Renderer
     {
         CullFrustum(camera, nodes);
         SortRenderList(camera);
-        //OptimizeTextureUnitUsage(nodes);
     }
 
 
@@ -364,16 +357,6 @@ public class Renderer
             CullingHelper.FrustumCull(frustum, nodes);
         }
     }
-
-    //private void OptimizeTextureUnitUsage(IEnumerable<SceneNode> nodes)
-    //{
-    //    if (hasNodeListChanged)
-    //    {
-    //        UpdateSceneMaterials(nodes);
-    //        textureBatcher.Reset();
-    //        textureBatcher.SortMaterials(materialList);
-    //    }
-    //}
 
     private void SortRenderList(ICamera? camera)
     {
@@ -392,12 +375,4 @@ public class Renderer
             }
         }
     }
-
-    //private void UpdateSceneMaterials(IEnumerable<SceneNode> nodes)
-    //{
-    //    materialList.Clear();
-    //    materialList.AddRange(nodes
-    //        .Select(n => n.Material)
-    //        .DistinctBy(m => m.Id));
-    //}
 }

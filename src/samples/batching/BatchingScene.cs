@@ -47,7 +47,7 @@ internal class BatchingScene : Scene
             "Resources/zpos.png",
             "Resources/zneg.png",
         };
-        var skyBox = new SkyBox(paths);
+        var skyBox = SkyBox.Create(paths);
         AddNode(skyBox);
 
         var dirLight = new LightUniform()
@@ -197,8 +197,8 @@ internal class BatchingScene : Scene
     private void AddRotatingBoxes()
     {
         var sampler = Sampler.Create(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.MirroredRepeat, TextureWrapMode.MirroredRepeat);
-        var tb = TextureBase.FromDescriptor(new TextureDescriptor("Resources/container.png"));
-        var bt = new BindlessTexture(tb, sampler);
+        //var tb = TextureBase.FromDescriptor(new TextureDescriptor("Resources/container.png"));
+        //var bt = tb.GetBindlessHandle(sampler);
 
         var (vertices, indices) = GeometryHelper.CreateQuad();
 
@@ -308,22 +308,20 @@ internal class BatchingScene : Scene
 
     private void AddSprites()
     {
-        smiley = new Sprite("Resources/awesomeface-sprite.png");
+        smiley = Sprite.Create("Resources/awesomeface-sprite.png");
         smiley.SetPosition(new(950, 200));
         smiley.Size = new(70, 70); //  scale and size are interchangeable
         AddNode(smiley);
 
-        var child = new Sprite("Resources/awesomeface-sprite.png");
+        var child = Sprite.Create("Resources/awesomeface-sprite.png");
         child.SetPosition(new(100, 80));
         child.SetScale(new Vector3(0.5f));  //  scale and size are interchangeable
         child.AngleRotation = -45;
         smiley.AddChild(child);
 
-        animatedSprite = new AnimatedSprite("Resources/test-sprite-sheet.png")
-        {
-            Size = new(60, 65)
-        };
+        animatedSprite = AnimatedSprite.Create("Resources/test-sprite-sheet.png");
         AddNode(animatedSprite);
+        animatedSprite.Size = new(60, 65);
         animatedSprite.SetPosition(new(770, 210));
         animatedSprite.AddAnimation("left", new Rectangle[] {
             new (0, 0, 50, 50),

@@ -1,5 +1,4 @@
-﻿using OpenRender.Core.Rendering;
-using OpenRender.SceneManagement;
+﻿using OpenRender.Core;
 using OpenTK.Mathematics;
 
 namespace OpenRender.Components;
@@ -29,27 +28,47 @@ public class NineSlicePlane : Sprite
     /// <summary>
     /// Creates a new nine slice plane sprite.
     /// </summary>
-    /// <param name="textureName">the texture resource</param>
-    /// <param name="ltrbSize">uniform size applied to all texture edges (left, top, right, bottom)</param>
+    /// <param name="textureName"></param>
+    /// <param name="leftWidth"></param>
+    /// <param name="topHeight"></param>
+    /// <param name="rightWidth"></param>
+    /// <param name="bottomHeight"></param>
     /// <param name="width"></param>
     /// <param name="height"></param>
-    public NineSlicePlane(string textureName, int ltrbSize, int width, int height) : this(textureName, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height) { }
+    /// <returns></returns>
+    public static NineSlicePlane Create(string textureName, int leftWidth, int topHeight, int rightWidth, int bottomHeight, int width, int height)
+    {
+        ArgumentNullException.ThrowIfNull(textureName);
+        var (mesh, material) = CreateMeshAndMaterial(textureName, "Shaders/sprite.vert", "Shaders/nine-slice.frag");
+        var nsp = new NineSlicePlane(mesh, material, leftWidth, topHeight, rightWidth, bottomHeight, width, height);
+        return nsp;
+    }
 
-    public NineSlicePlane(string textureName, int leftWidth, int topHeight, int rightWidth, int bottomHeight, int width, int height) : base(textureName)
+    /// <summary>
+    /// Creates a new nine slice plane sprite.
+    /// </summary>
+    /// <param name="mesh"></param>
+    /// <param name="material"></param>
+    /// <param name="leftWidth"></param>
+    /// <param name="topHeight"></param>
+    /// <param name="rightWidth"></param>
+    /// <param name="bottomHeight"></param>
+    /// <param name="width"></param>
+    /// <param name="height"></param>
+    public NineSlicePlane(Mesh mesh, Material material, int leftWidth, int topHeight, int rightWidth, int bottomHeight, int width, int height) : base(mesh, material)
     {
         this.leftWidth = leftWidth;
         this.topHeight = topHeight;
         this.rightWidth = rightWidth;
         this.bottomHeight = bottomHeight;
-        shader = new Shader("Shaders/sprite.vert", "Shaders/nine-slice.frag");
-        shader.SetMatrix4("projection", ref projection);
-        Material.Shader = shader;
-        Tint = Color4.White;    //  need to re apply the tint in order to setup the shaders uniform
+        Tint = Color4.White;
         Size = new Vector2i(width, height);
+        Material.Shader.SetMatrix4("projection", ref projection);
     }
 
     public override void OnDraw(double elapsed)
     {
+        var shader = Material.Shader;
         shader.SetInt("leftWidth", leftWidth);
         shader.SetInt("topHeight", topHeight);
         shader.SetInt("rightWidth", rightWidth);

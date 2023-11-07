@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core.Buffers;
+using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 
@@ -68,12 +69,14 @@ internal class BatchData
             HasNormal = 0,
         };
 
-        TextureData textureData = new();
-        if (node.Material.HasDiffuse)
+        TextureData textureData = new()
         {
-            textureData.Diffuse = node.Material.BindlessTextures[0].Handle;
-            node.Material.BindlessTextures[0].MakeResident();
-        }
+            Diffuse = node.Material.BindlessTextures[0]
+        };
+        TextureBase.MakeResident(textureData.Diffuse);
+        
+        //  TODO: handle detail and normal textures residency
+
         //if(node.Material.HasDetail)
         //{
         //    var detailTextureIndex = node.Material.TextureDescriptors!.First(ti => ti?.TextureType == TextureType.Detail);
@@ -82,7 +85,6 @@ internal class BatchData
         //    if (!TextureDataArray.Any(x => x.Diffuse == textureData.Diffuse))
         //        GL.Arb.MakeTextureHandleResident(textureData.Diffuse);
         //}
-        //  TODO: handle detail and normal textures residency
 
         node.GetTransform(out var transform);
 

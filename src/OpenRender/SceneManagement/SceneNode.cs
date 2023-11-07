@@ -6,6 +6,7 @@ using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
+using System.Diagnostics.CodeAnalysis;
 
 namespace OpenRender.SceneManagement;
 
@@ -14,14 +15,14 @@ public class SceneNode
     private static uint idCounter = 0;
     private readonly uint id;
     private bool showBoundingSphere;
-    private Mesh? mesh;
+    private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = new();
 
     protected Transform transform = new();
     protected VertexArrayObject? Vao;
 
-    public SceneNode(Mesh? mesh, Material? material = default, Vector3? position = default)
+    public SceneNode(Mesh mesh, Material material, Vector3? position = default)
     {
         id = Interlocked.Increment(ref idCounter);
         SetScale(Vector3.One);
@@ -30,13 +31,13 @@ public class SceneNode
         RenderGroup = RenderGroup.Default;
         IsBatchingAllowed = false;
 
-        Material = material ?? new();
+        Material = material;
         SetMesh(mesh);
     }
 
     public uint Id => id;
 
-    public BoundingSphere BoundingSphere => mesh?.BoundingSphere ?? new();
+    public BoundingSphere BoundingSphere => mesh.BoundingSphere;
 
     public IEnumerable<SceneNode> Children => children;
 
@@ -76,9 +77,10 @@ public class SceneNode
 
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
-    public void SetMesh(in Mesh? mesh) => this.mesh = mesh;
+    [MemberNotNull(nameof(SceneNode.mesh))]
+    public void SetMesh(in Mesh mesh) => this.mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
 
-    public Mesh Mesh => mesh ?? throw new NullReferenceException(nameof(mesh));
+    public Mesh Mesh => mesh;
 
     public bool ShowBoundingSphere
     {
@@ -118,7 +120,7 @@ public class SceneNode
 
     public virtual void OnDraw(double elapsed)
     {
-        Vao ??= mesh!.BuildVao();
+        Vao ??= mesh.BuildVao();
 
         GL.BindVertexArray(Vao);
 

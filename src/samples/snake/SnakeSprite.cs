@@ -11,7 +11,13 @@ internal class SnakeSprite : Sprite
     private readonly IEnumerable<SnakeTile> snakeTiles;
     private readonly Rectangle[] spriteFrames = new Rectangle[4];
 
-    public SnakeSprite(IEnumerable<SnakeTile> snakeTiles) : base("Resources/atlas.png")
+    public static SnakeSprite Create(IEnumerable<SnakeTile> snakeTiles)
+    {
+        var (mesh, material) = CreateMeshAndMaterial("Resources/atlas.png");
+        return new SnakeSprite(mesh, material, snakeTiles);
+    }
+
+    public SnakeSprite(Mesh mesh, Material material, IEnumerable<SnakeTile> snakeTiles) : base(mesh, material)
     {
         this.snakeTiles = snakeTiles;
         spriteFrames[(int)FrameType.Head] = new(128, 0, TileSourceSize, TileSourceSize);
@@ -45,9 +51,8 @@ internal class SnakeSprite : Sprite
             SetPosition(position);
             SourceRectangle = src;
             AngleRotation = rotation;
-            shader.SetMatrix4("model", ref transform.worldMatrix);
+            Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
             base.OnDraw(elapsed);
         }
-        base.OnDraw(elapsed);
     }
 }

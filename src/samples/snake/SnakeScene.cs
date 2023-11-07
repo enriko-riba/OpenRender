@@ -12,30 +12,24 @@ using static Samples.Snake.Constants;
 
 namespace Samples.Snake;
 
-internal class MainScene : Scene
+internal class SnakeScene : Scene
 {
     private const int BtnWidth = 350;
     private const int BtnHeight = 75;
 
     private readonly ITextRenderer textRenderer;
     private readonly GameModel gameModel = new();
-    private readonly Rectangle[] spriteFrames = new Rectangle[4];
     private readonly Dictionary<Vector2, Sprite> gridSprites = new();
     private readonly SnakeSprite snakeSprite;
     private Button btnResume = default!;
     private Button btnExit = default!;
     private Direction requestedDirection = Direction.None;
 
-    public MainScene(ITextRenderer textRenderer) : base()
+    public SnakeScene(ITextRenderer textRenderer) : base()
     {
         BackgroundColor = Color4.Purple;
         this.textRenderer = textRenderer;
-
-        spriteFrames[(int)FrameType.Head] = new(128, 0, TileSourceSize, TileSourceSize);
-        spriteFrames[(int)FrameType.Tail] = new(192, 0, TileSourceSize, TileSourceSize);
-        spriteFrames[(int)FrameType.Body] = new(0, 0, TileSourceSize, TileSourceSize);
-        spriteFrames[(int)FrameType.BodyCorner] = new(64, 0, TileSourceSize, TileSourceSize);
-        snakeSprite = new(gameModel.SnakeTiles);
+        snakeSprite = SnakeSprite.Create(gameModel.SnakeTiles);
     }
 
     public override void Load()
@@ -44,7 +38,7 @@ internal class MainScene : Scene
 
         base.Load();
         camera = new Camera2D(new Vector3(0, 0, 0), Width, Height);
-        AddNode(new Ground(0, Margin, Width, Height, Color4.DarkOliveGreen));
+        AddNode(Ground.Create(0, Margin, Width, Height, Color4.DarkOliveGreen));
         AddNode(snakeSprite);
         gameModel.NextLevel();
         CreateObjects();
@@ -52,10 +46,10 @@ internal class MainScene : Scene
         var btnX = (Width - BtnWidth) / 2;
         var btnY = Height / 2;
         btnResume = new BigButton("Start - or press space")
-        {          
+        {
             TextRenderer = textRenderer,
             OnClick = HandleStartClick,
-            Tint = new Color4(0.75f, 0.5f, 0.75f, 1),
+            Tint = new Color4(0.75f, 0.5f, 0.75f, 1)
         };
         btnResume.SetPosition(new(btnX, btnY));
         AddNode(btnResume);
@@ -64,10 +58,11 @@ internal class MainScene : Scene
         {
             TextRenderer = textRenderer,
             OnClick = SceneManager.Close,
-            Tint = new Color4(1, 0.4f, 0.4f, 1),
+            Tint = new Color4(1, 0.4f, 0.4f, 1)
         };
         btnExit.SetPosition(new(btnX, btnY + BtnHeight * 1.25f));
-        AddNode(btnExit);        
+        btnExit.SetPosition(new(btnX, btnY + BtnHeight * 1.25f));
+        AddNode(btnExit);
     }
 
     public override void RenderFrame(double elapsedSeconds)
@@ -77,7 +72,7 @@ internal class MainScene : Scene
             OpenTK.Windowing.Common.CursorState.Hidden :
             OpenTK.Windowing.Common.CursorState.Normal;
         btnResume.IsVisible = gameModel.State != GameState.Started;
-        btnExit.IsVisible = btnResume.IsVisible;    
+        btnExit.IsVisible = btnResume.IsVisible;
         switch (gameModel.State)
         {
             case GameState.Died:
@@ -146,21 +141,17 @@ internal class MainScene : Scene
                 switch (gameModel.Grid[i, j])
                 {
                     case TileType.Block:
-                        var sprBlock = new Sprite("Resources/atlas.png")
-                        {
-                            SourceRectangle = new Rectangle(0, 64, TileSourceSize, TileSourceSize),
-                            Size = new(TileSize, TileSize),
-                        };
+                        var sprBlock = Sprite.Create("Resources/atlas.png");
+                        sprBlock.SourceRectangle = new Rectangle(0, 65, SmallTileSourceSize, SmallTileSourceSize);
+                        sprBlock.Size = new(TileSize, TileSize);
                         sprBlock.SetPosition(new(x, y));
                         AddNode(sprBlock);
                         gridSprites[new(i, j)] = sprBlock;
                         break;
 
                     case TileType.Bomb:
-                        var animatedSprite = new AnimatedSprite("Resources/atlas.png")
-                        {
-                            Size = new Vector2i(TileSize, TileSize),
-                        };
+                        var animatedSprite = AnimatedSprite.Create("Resources/atlas.png");
+                        animatedSprite.Size = new Vector2i(TileSize, TileSize);
                         animatedSprite.SetPosition(new(x, y));
                         animatedSprite.AddAnimation("bomb", new Rectangle[] {
                             new (64, 128, TileSourceSize, TileSourceSize),
@@ -176,10 +167,8 @@ internal class MainScene : Scene
                         break;
 
                     case TileType.FoodFrog:
-                        var sprFrog = new AnimatedSprite("Resources/atlas.png")
-                        {
-                            Size = new Vector2i(TileSize, TileSize),
-                        };
+                        var sprFrog = AnimatedSprite.Create("Resources/atlas.png");
+                        sprFrog.Size = new Vector2i(TileSize, TileSize);
                         sprFrog.SetPosition(new(x, y));
                         sprFrog.AddAnimation("idle", new Rectangle[] {
                             new (192, 64, TileSourceSize, TileSourceSize),
@@ -191,11 +180,9 @@ internal class MainScene : Scene
                         break;
 
                     case TileType.FoodApple:
-                        var sprApple = new Sprite("Resources/atlas.png")
-                        {
-                            SourceRectangle = new Rectangle(0, 192, TileSourceSize, TileSourceSize),
-                            Size = new(TileSize, TileSize),
-                        };
+                        var sprApple = Sprite.Create("Resources/atlas.png");
+                        sprApple.SourceRectangle = new Rectangle(0, 192, TileSourceSize, TileSourceSize);
+                        sprApple.Size = new(TileSize, TileSize);
                         sprApple.SetPosition(new(x, y));
                         AddNode(sprApple);
                         gridSprites[new(i, j)] = sprApple;
@@ -206,10 +193,7 @@ internal class MainScene : Scene
 
     }
 
-    private void HandleSnakeDestroyed()
-    {
-        requestedDirection = Direction.None;
-    }
+    private void HandleSnakeDestroyed() => requestedDirection = Direction.None;
 
     private DateTime nextMove = DateTime.Now;
     private void HandleStartedInput()
@@ -274,9 +258,8 @@ internal class MainScene : Scene
     }
 
     private void DrawMenuTextCentered(int xOffset, int yOffset, string text, int fontSize, Color4 color)
-    {        
+    {
         var size = textRenderer.Measure(text, fontSize);
-        //Log.Debug($"DrawMenuTextCentered: size: {size.Width}, w:{Width}, h:{Height}, x:{xOffset + (Width - size.Width) / 2}");
         textRenderer.Render(text, fontSize, xOffset + (Width - size.Width) / 2, yOffset + (Height - size.Height) / 2, color.ToVector3());
     }
 
@@ -293,7 +276,9 @@ internal class MainScene : Scene
 
     private class BigButton : Button
     {
-        public BigButton(string caption): base(caption, "Resources/btnAtlas.png", 30, BtnWidth, BtnHeight)
+        private static (Mesh mesh, Material material) mm = CreateMeshAndMaterial("Resources/btnAtlas.png", "Shaders/sprite.vert", "Shaders/nine-slice.frag");
+
+        public BigButton(string caption) : base(mm.mesh, mm.material, caption, 30, BtnWidth, BtnHeight)
         {
             SourceRectangle = new Rectangle(0, 0, 200, 60);
             Update = (node, elapsed) =>
@@ -301,10 +286,10 @@ internal class MainScene : Scene
                 var btn = (node as Button)!;
                 var rect = btn.SourceRectangle;
                 rect.Y = btn.IsPressed ? 120 :
-                            btn.IsHovering ? 60 : 0;
+                         btn.IsHovering ? 60 : 0;
                 btn.SourceRectangle = rect;
                 btn.CaptionColor = btn.IsPressed ? Color4.YellowGreen : Color4.White;
-            };            
+            };
         }
     }
 }

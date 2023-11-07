@@ -1,5 +1,6 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
+using System.Reflection.Metadata;
 using PixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 
 namespace OpenRender.Core.Textures;
@@ -21,7 +22,7 @@ public class TextureBase: IDisposable
     /// <summary>
     /// Source path of image - for debugging.
     /// </summary>
-    public string Name { get; set; } = default!;
+    public string DebugName { get; set; } = default!;
 
     /// <summary>
     /// The texture width in pixels.
@@ -41,7 +42,22 @@ public class TextureBase: IDisposable
     /// <param name="unit"></param>
     public void Use(TextureUnit unit) => GL.BindTextureUnit((uint)(unit - TextureUnit.Texture0), Handle);
 
-    public override string ToString() => $"{Handle} '{Name}', {TextureTarget}";
+    public ulong GetBindlessHandle(Sampler sampler, bool? makeResident = true) => GetBindlessHandle(sampler.Handle, makeResident);
+
+    public ulong GetBindlessHandle(uint samplerHandle, bool? makeResident = true)
+    {
+        var rh = (ulong) GL.Arb.GetTextureSamplerHandle(Handle, samplerHandle);        
+        if(makeResident ?? true) MakeResident(rh);        
+        return rh;
+    }
+
+    public override string ToString() => $"{Handle} '{DebugName}', {TextureTarget}";
+
+    public static void MakeResident(ulong bindlessHandle)
+    {
+        var isResident = GL.Arb.IsTextureHandleResident(bindlessHandle);
+        if (!isResident) GL.Arb.MakeTextureHandleResident(bindlessHandle);
+    }
 
     public static TextureBase FromByteArray(byte[] buffer,
         int width,
@@ -70,7 +86,7 @@ public class TextureBase: IDisposable
         }
         var texture = new TextureBase(handle)
         {
-            Name = name,
+            DebugName = name,
             Width = width,
             Height = height,
             TextureTarget = textureTarget,
@@ -100,7 +116,6 @@ public class TextureBase: IDisposable
        
         GL.CreateTextures(textureTarget, 1, out uint handle);
         GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
-        GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, name);
 
         ImageResult? image = null;
         if (textureTarget == TextureTarget.Texture2D)
@@ -150,7 +165,7 @@ public class TextureBase: IDisposable
 
         var texture = new TextureBase(handle)
         {
-            Name = paths[0],
+            DebugName = paths[0],
             TextureTarget = textureTarget,
             Width = image!.Width,
             Height = image.Height,
@@ -167,92 +182,4 @@ public class TextureBase: IDisposable
         GL.DeleteTexture(Handle);
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>
-    /// Creates an array of texture objects based on the input <see cref="Material"/>.
-    /// </summary>
-    /// <param name="material"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
-    //public static Texture[] CreateFromMaterial(Material material)
-    //{
-    //    var textures = new Texture[material.TextureDescriptors?.Length ?? 0];
-    //    if (material.TextureDescriptors?.Any() ?? false)
-    //    {
-    //        var diffuseCount = 0;
-    //        var detailCount = 0;
-    //        var normalCount = 0;
-    //        var specularCount = 0;
-    //        var additionalCount = 0;
-    //        var cubeMapCount = 0;
-    //        var counter = 0;
-    //        foreach (var textureDescriptor in material.TextureDescriptors!)
-    //        {
-    //            switch (textureDescriptor.TextureType)
-    //            {
-    //                case TextureType.Diffuse:
-    //                case TextureType.Unknown:
-    //                    if (diffuseCount++ > 0)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Multiple diffuse textures supplied!");
-    //                    }
-    //                    break;
-
-    //                case TextureType.Detail:
-    //                    if (detailCount++ > 0)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Multiple detail textures supplied!");
-    //                    }
-    //                    break;
-    //                case TextureType.Normal:
-    //                    if (normalCount++ > 0)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Multiple normal textures supplied!");
-    //                    }
-    //                    break;
-
-    //                case TextureType.Specular:
-    //                    if (specularCount++ > 0)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Multiple specular textures supplied!");
-    //                    }
-    //                    break;
-
-    //                case TextureType.Additional1:
-    //                    if (additionalCount++ > 3)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
-    //                    }
-    //                    break;
-    //                case TextureType.Additional2:
-    //                    if (additionalCount++ > 3)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
-    //                    }
-    //                    break;
-    //                case TextureType.Additional3:
-    //                    if (additionalCount++ > 3)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
-    //                    }
-    //                    break;
-    //                case TextureType.Additional4:
-    //                    if (additionalCount++ > 3)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Max 4 additional textures are supported!");
-    //                    }
-    //                    break;
-    //                case TextureType.CubeMap:
-    //                    if (cubeMapCount++ > 0)
-    //                    {
-    //                        throw new ArgumentOutOfRangeException(nameof(material), "Multiple cube map textures supplied!");
-    //                    }
-    //                    break;
-    //            }
-    //            var t = FromDescriptor(textureDescriptor);
-    //            textures[counter++] = t;
-    //        }
-    //    }
-    //    return textures;
-    //}
 }

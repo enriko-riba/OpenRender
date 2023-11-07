@@ -1,4 +1,5 @@
-﻿using OpenRender.Core.Rendering.Text;
+﻿using OpenRender.Core;
+using OpenRender.Core.Rendering.Text;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
@@ -15,11 +16,19 @@ public class Button : NineSlicePlane
     private bool isHovering;
     private bool isPressed;
 
-    /// <inheritdoc/>
-    public Button(string textureName, int ltrbSize, int width, int height) : base(textureName, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height){}
+    public static Button Create(string textureName, int ltrbSize, int width, int height)
+    {
+        ArgumentNullException.ThrowIfNull(textureName);
+        var (mesh, material) = CreateMeshAndMaterial(textureName, "Shaders/sprite.vert", "Shaders/nine-slice.frag");
+        var btn = new Button(mesh, material, ltrbSize, width, height);
+        return btn;
+    }
 
     /// <inheritdoc/>
-    public Button(string caption, string textureName, int ltrbSize, int width, int height) : this(textureName, ltrbSize, width, height)
+    public Button(Mesh mesh, Material material, int ltrbSize, int width, int height) : base(mesh, material, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height) { }
+
+    /// <inheritdoc/>
+    public Button(Mesh mesh, Material material, string caption, int ltrbSize, int width, int height) : base(mesh, material, ltrbSize, ltrbSize, ltrbSize, ltrbSize, width, height)
     {
         Caption = caption;
     }
@@ -36,7 +45,7 @@ public class Button : NineSlicePlane
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
-        base.OnUpdate(scene, elapsed);        
+        base.OnUpdate(scene, elapsed);
         HandleMouseState(scene.SceneManager.MouseState);
     }
 
@@ -46,8 +55,8 @@ public class Button : NineSlicePlane
         if (Caption != null && TextRenderer != null)
         {
             var rect = TextRenderer.Measure(Caption);
-            var x = (size.X-rect.Width) / 2;
-            var y = (size.Y-rect.Height) / 2;
+            var x = (size.X - rect.Width) / 2;
+            var y = (size.Y - rect.Height) / 2;
             TextRenderer.Render(Caption, transform.Position.X + x, transform.Position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
             Scene?.ResetMaterial();
         }
@@ -87,7 +96,7 @@ public class Button : NineSlicePlane
             if (!mouseState.IsButtonDown(MouseButton.Left))
             {
                 isPressed = false;
-                if (OnClick != null) 
+                if (OnClick != null)
                     Scene?.AddAction(OnClick);
                 else
                     Log.Warn("OnClick handler is null, did you forget to assign a click handler?");

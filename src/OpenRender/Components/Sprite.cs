@@ -18,7 +18,6 @@ public class Sprite : SceneNode
     private float angleRotation;
     private Vector2 pivot;
 
-    protected Shader shader;
     protected Matrix4 projection;
 
     /// <summary>
@@ -35,35 +34,50 @@ public class Sprite : SceneNode
     /// Creates a new 2D sprite object
     /// </summary>
     /// <param name="textureName"></param>
-    public Sprite(string textureName) : base(default, default)
+    public Sprite(Mesh mesh, Material material) : base(mesh, material)
     {
-        ArgumentNullException.ThrowIfNull(textureName);
-
-        shader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
-        Material = Material.Create(shader,
-            new TextureDescriptor[] {
-                new TextureDescriptor(textureName,
-                    TextureType: TextureType.Diffuse,
-                    MagFilter: TextureMagFilter.Nearest,
-                    MinFilter: TextureMinFilter.LinearMipmapLinear,
-                    TextureWrapS: TextureWrapMode.ClampToBorder,
-                    TextureWrapT: TextureWrapMode.ClampToBorder,
-                    GenerateMipMap: true)
-            }
-        );
-
         size.X = Material.TextureBases[0].Width;
         size.Y = Material.TextureBases[0].Height;
         sourceRectangle.Width = size.X;
         sourceRectangle.Height = size.Y;
 
-        var (vertices, indices) = GeometryHelper.Create2dQuad();        
-        var mesh = new Mesh(Vertex2D.VertexDeclaration, vertices, indices);
-        SetMesh(mesh);
         Tint = Color4.White;
         Pivot = new Vector2(0.5f, 0.5f);
         DisableCulling = true;
         RenderGroup = RenderGroup.UI;
+    }
+
+    /// <summary>
+    /// Creates a new 2D sprite object
+    /// </summary>
+    /// <param name="textureName"></param>
+    public static Sprite Create(string textureName)
+    {
+        ArgumentNullException.ThrowIfNull(textureName);
+        var (mesh, material) = CreateMeshAndMaterial(textureName);
+        var sprite = new Sprite(mesh, material);
+        return sprite;
+    }
+
+    public static (Mesh mesh, Material material) CreateMeshAndMaterial(string textureName, string? vertexShader = "Shaders/sprite.vert", string? fragmentShader = "Shaders/sprite.frag")
+    {
+        ArgumentNullException.ThrowIfNull(textureName);
+
+        var shader = new Shader(vertexShader ?? "Shaders/sprite.vert", fragmentShader ?? "Shaders/sprite.frag");
+        var material = Material.Create(shader,
+            new TextureDescriptor[] {
+                new TextureDescriptor(textureName,
+                    TextureType: TextureType.Diffuse,
+                    MagFilter: TextureMagFilter.Nearest,
+                    MinFilter: TextureMinFilter.Nearest,
+                    TextureWrapS: TextureWrapMode.ClampToEdge,
+                    TextureWrapT: TextureWrapMode.ClampToEdge,
+                    GenerateMipMap: true)
+            }
+        );
+        var (vertices, indices) = GeometryHelper.Create2dQuad();
+        var mesh = new Mesh(Vertex2D.VertexDeclaration, vertices, indices);
+        return (mesh, material);
     }
 
     /// <summary>
@@ -75,13 +89,8 @@ public class Sprite : SceneNode
         get => size;
         set
         {
-            var texture = Material!.TextureBases![0];
+            var texture = Material.TextureBases![0];
             SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
-            //if ((Material?.Textures?.Length ?? 0) > 0)
-            //{
-            //    var texture = Material!.TextureBases![0];
-            //    SetScale(new Vector3((float)value.X / texture.Width, (float)value.Y / texture.Height, 1));
-            //}
             size = value;
         }
     }
@@ -103,10 +112,7 @@ public class Sprite : SceneNode
     public Color4 Tint
     {
         get => new(tint.X, tint.Y, tint.Z, 1);
-        set
-        {
-            tint = new(value.R, value.G, value.B);
-        }
+        set => tint = new(value.R, value.G, value.B);
     }
 
     /// <summary>
@@ -159,16 +165,10 @@ public class Sprite : SceneNode
     {
         if (Material != null)
         {
-            var texture = Material!.TextureBases![0];
+            var texture = Material.TextureBases![0];
             size.X = (int)MathF.Round(scale.X * texture.Width);
             size.Y = (int)MathF.Round(scale.Y * texture.Height);
         }
-        //if ((Material?.Textures?.Length ?? 0) > 0)
-        //{
-        //    var texture = Material!.TextureBases![0];
-        //    size.X = (int)MathF.Round(scale.X * texture.Width);
-        //    size.Y = (int)MathF.Round(scale.Y * texture.Height);
-        //}
         base.SetScale(scale);
     }
 
@@ -180,7 +180,7 @@ public class Sprite : SceneNode
     public override void OnResize(Scene scene, ResizeEventArgs e)
     {
         projection = Matrix4.CreateOrthographicOffCenter(0, e.Width, e.Height, 0, -1, 1);
-        shader.SetMatrix4("projection", ref projection);
+        Material.Shader.SetMatrix4("projection", ref projection);
     }
 
     /// <summary>
@@ -188,8 +188,6 @@ public class Sprite : SceneNode
     /// </summary>
     protected override void UpdateMatrix()
     {
-        //  calculate scale, account for quad vertices in range [0,1] so we need to multiply with texture size
-        //var spriteScale = new Vector3(scale.X * size.X, scale.Y * size.Y, 1);
         var spriteScale = new Vector3(size.X, size.Y, 1);
         Matrix4.CreateScale(spriteScale, out transform.scaleMatrix);
 
@@ -225,12 +223,12 @@ public class Sprite : SceneNode
         var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
         if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
         var texture = Material.TextureBases[0];
-        shader.SetUniform4("sourceFrame",
+        Material.Shader.SetUniform4("sourceFrame",
             (float)sourceRectangle.X / texture.Width,
             1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / texture.Height,
             (float)sourceRectangle.Width / texture.Width,
             (float)sourceRectangle.Height / texture.Height);
-        shader.SetVector3("tint", ref tint);
+        Material.Shader.SetVector3("tint", ref tint);
         base.OnDraw(elapsed);
         if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }

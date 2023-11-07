@@ -104,10 +104,7 @@ public class Shader
     /// </summary>
     /// <param name="uniformBlockName"></param>
     /// <returns></returns>
-    public int GetUniformBlockIndex(string uniformBlockName)
-    {
-        return uniformBlockIndices.TryGetValue(uniformBlockName, out var index) ? index : -1;
-    }
+    public int GetUniformBlockIndex(string uniformBlockName) => uniformBlockIndices.TryGetValue(uniformBlockName, out var index) ? index : -1;
 
     /// <summary>
     /// Returns the index or location of the named uniform.
@@ -125,10 +122,7 @@ public class Shader
     /// </summary>
     /// <param name="attribName"></param>
     /// <returns></returns>
-    public int GetAttributeLocation(string attribName)
-    {
-        return GL.GetAttribLocation(Handle, attribName);
-    }
+    public int GetAttributeLocation(string attribName) => GL.GetAttribLocation(Handle, attribName);
 
     /// <summary>
     /// Sets a uniform int.
