@@ -1,6 +1,5 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using StbImageSharp;
-using System.Reflection.Metadata;
 using PixelFormat = OpenTK.Graphics.OpenGL4.PixelFormat;
 
 namespace OpenRender.Core.Textures;
@@ -8,7 +7,7 @@ namespace OpenRender.Core.Textures;
 /// <summary>
 /// Helper class to load and store textures.
 /// </summary>
-public class TextureBase: IDisposable
+public class TextureBase : IDisposable
 {
     private static readonly Dictionary<string, TextureBase> textureCache = new();
 
@@ -46,8 +45,8 @@ public class TextureBase: IDisposable
 
     public ulong GetBindlessHandle(uint samplerHandle, bool? makeResident = true)
     {
-        var rh = (ulong) GL.Arb.GetTextureSamplerHandle(Handle, samplerHandle);        
-        if(makeResident ?? true) MakeResident(rh);        
+        var rh = (ulong)GL.Arb.GetTextureSamplerHandle(Handle, samplerHandle);
+        if (makeResident ?? true) MakeResident(rh);
         return rh;
     }
 
@@ -76,7 +75,7 @@ public class TextureBase: IDisposable
             return cachedTexture;
         }
         var mipmapLevels = 1;
-        if(generateMipMap)
+        if (generateMipMap)
         {
             mipmapLevels = 1 + (int)Math.Floor(Math.Log2(Math.Max(width, height)));
         }
@@ -116,7 +115,7 @@ public class TextureBase: IDisposable
         {
             return cachedTexture;
         }
-       
+
         GL.CreateTextures(textureTarget, 1, out uint handle);
         GL.PixelStore(PixelStoreParameter.PackAlignment, 1);
 
@@ -129,7 +128,7 @@ public class TextureBase: IDisposable
 
             using var stream = File.OpenRead(paths[0]);
             image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
-            
+
             var mipmapLevels = 1;
             if (generateMipMap)
             {
