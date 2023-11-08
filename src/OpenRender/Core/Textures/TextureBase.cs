@@ -55,8 +55,11 @@ public class TextureBase: IDisposable
 
     public static void MakeResident(ulong bindlessHandle)
     {
-        var isResident = GL.Arb.IsTextureHandleResident(bindlessHandle);
-        if (!isResident) GL.Arb.MakeTextureHandleResident(bindlessHandle);
+        if (bindlessHandle > 0)
+        {
+            var isResident = GL.Arb.IsTextureHandleResident(bindlessHandle);
+            if (!isResident) GL.Arb.MakeTextureHandleResident(bindlessHandle);
+        }
     }
 
     public static TextureBase FromByteArray(byte[] buffer,

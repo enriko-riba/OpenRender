@@ -1,16 +1,11 @@
 ﻿namespace OpenRender.Core.Textures;
 
 public enum TextureType
-{
-    /// <summary>
-    /// No explicitly assigned type, this texture type is treated as diffuse.
-    /// </summary>
-    Unknown = 0,
-
+{    
     /// <summary>
     /// Main color texture, stretched over the whole object.
     /// </summary>
-    Diffuse = Unknown,
+    Diffuse,
 
     /// <summary>
     /// Detail or noise texture, tiled over the object based on the detail factor.

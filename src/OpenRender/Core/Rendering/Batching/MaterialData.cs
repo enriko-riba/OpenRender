@@ -14,10 +14,12 @@ public struct MaterialData
     [FieldOffset(44)]
     public float Shininess;
     [FieldOffset(48)]
-    public float DetailTextureFactor;
+    public float DetailTextureScaleFactor;
     [FieldOffset(52)]
-    public int HasDiffuse;
+    public float DetailTextureBlendFactor;
     [FieldOffset(56)]
+    public int HasDiffuse;
+    [FieldOffset(60)]
     public int HasNormal;
     //the Size is effectively adding the padding to 64 bytes        
 }

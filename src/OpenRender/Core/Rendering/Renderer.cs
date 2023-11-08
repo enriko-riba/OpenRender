@@ -98,29 +98,27 @@ public class Renderer
                 Emissive = material.EmissiveColor,
                 Specular = material.SpecularColor,
                 Shininess = material.Shininess,
+                DetailTextureScaleFactor = material.DetailTextureScaleFactor,
+                DetailTextureBlendFactor = material.DetailTextureBlendFactor,
+                HasDiffuse = material.HasDiffuse ? 1 : 0,
+                HasNormal = material.HasNormal ? 1 : 0
             };
             uboMaterial.UpdateSettings(ref settings);
-            if (shader.UniformExists("uHasDiffuseTexture")) shader.SetInt("uHasDiffuseTexture", material.HasDiffuse ? 1 : 0);
-            if (shader.UniformExists("uDetailTextureFactor")) shader.SetFloat("uDetailTextureFactor", material.DetailTextureFactor);
-            if (shader.UniformExists("uHasNormalTexture")) shader.SetInt("uHasNormalTexture", material.HasNormal ? 1 : 0);
-            if (uboTextures.IsUniformBlockSupported(shader))
-            {
-                //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
-                TextureData textureData = new()
-                { 
-                    Diffuse = material.BindlessTextures[0],
-                    Detail = material.BindlessTextures[1],
-                    Normal = material.BindlessTextures[2],
-                    Specular  = material.BindlessTextures[3],
-                    Bump = material.BindlessTextures[4],
-                    T6 = material.BindlessTextures[5],
-                    T7 = material.BindlessTextures[6],
-                    T8 = material.BindlessTextures[7]
-                };
-                uboTextures.UpdateSettings(ref textureData);
-            }            
+            
+            //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
+            TextureData textureData = new()
+            { 
+                Diffuse = material.BindlessTextures[0],
+                Detail = material.BindlessTextures[1],
+                Normal = material.BindlessTextures[2],
+                Specular  = material.BindlessTextures[3],
+                Bump = material.BindlessTextures[4],
+                T6 = material.BindlessTextures[5],
+                T7 = material.BindlessTextures[6],
+                T8 = material.BindlessTextures[7]
+            };
+            uboTextures.UpdateSettings(ref textureData);                        
         }
-
         node.OnDraw(elapsed);
     }
 

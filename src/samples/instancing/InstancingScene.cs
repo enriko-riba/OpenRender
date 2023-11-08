@@ -51,7 +51,7 @@ internal class InstancingScene : Scene
             emissiveColor: new Vector3(0.05f, 0.04f, 0.03f),
             specularColor: Vector3.Zero,
             shininess: 0,
-            detailTextureFactor: 0
+            detailTextureScaleFactor: 0
         );
         var (vertices, indices) = GeometryHelper.CreateBox();
         var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);

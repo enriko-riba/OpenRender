@@ -84,7 +84,12 @@ public class Material
     /// If 0 the detail texture is not applied even if it is defined. 
     /// Values < 1 are stretching the detail texture while values > 1 are repeating the detail texture over the object surface.
     /// </summary>
-    public float DetailTextureFactor { get; set; }
+    public float DetailTextureScaleFactor { get; set; }
+
+    /// <summary>
+    /// Blending factor of the detail texture. Has no impact without detail texture.
+    /// </summary>
+    public float DetailTextureBlendFactor { get; set; }
 
     /// <summary>
     /// Diffuse color multiplied with light color.
@@ -128,7 +133,7 @@ public class Material
 
     public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
 
-    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f)
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f)
     {
         var textureCount = textureDescriptors?.Length ?? 0;
         if (textureCount > MaxTextures) throw new ArgumentOutOfRangeException(nameof(textureDescriptors));
@@ -138,7 +143,8 @@ public class Material
             Shader = shader,
             TextureDescriptors = textureDescriptors,
             Shininess = shininess,
-            DetailTextureFactor = detailTextureFactor,
+            DetailTextureScaleFactor = detailTextureScaleFactor,
+            DetailTextureBlendFactor = detailTextureBlendFactor,
             DiffuseColor = diffuseColor,
             SpecularColor = specularColor,
             EmissiveColor = emissiveColor,
@@ -149,16 +155,16 @@ public class Material
         return mat;
     }
 
-    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureFactor = 0f) =>
-        Create(shader, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureFactor);
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 specularColor, float shininess = 0, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
+        Create(shader, textureDescriptors, diffuseColor, Vector3.Zero, specularColor, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
-    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureFactor = 0f) =>
-        Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
+    public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, float shininess = 0f, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
+        Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
-    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureFactor = 0f) =>
-        Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureFactor);
+    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
+        Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
-    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, Vector3 diffuseColor, float shininess = 0f, float detailTextureFactor = 0f) =>
-        Create(shader, new TextureDescriptor[] { textureDescriptor }, diffuseColor, Vector3.Zero, Vector3.One, shininess, detailTextureFactor);
+    public static Material Create(Shader shader, TextureDescriptor textureDescriptor, Vector3 diffuseColor, float shininess = 0f, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
+        Create(shader, new TextureDescriptor[] { textureDescriptor }, diffuseColor, Vector3.Zero, Vector3.One, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
 }

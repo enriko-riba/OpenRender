@@ -20,19 +20,19 @@ layout(std140, binding = 1) uniform light {
     Light dirLight;
 };
 
-struct Material {   
+ struct Material {   
     vec3 diffuse;
     vec3 emissive;
     vec3 specular;
     float shininess;
+    float detailTextureScaleFactor;
+    float detailTextureBlendFactor;
+    int hasDiffuseTexture;
+    int hasNormalTexture;
 };
 layout(std140, binding = 2) uniform material {
     Material mat;
 };
-
-
-uniform int uHasDiffuseTexture;         //  should the diffuse color be sampled from texture_diffuse1
-uniform float uDetailTextureFactor;     //  scale of detail texture that is blended with diffuse, if 0 detail sampling is not used
 
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aNormal;

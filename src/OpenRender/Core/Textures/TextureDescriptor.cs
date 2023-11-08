@@ -26,7 +26,7 @@ public record TextureDescriptor(
     public TextureDescriptor(string path,
     TextureMinFilter MinFilter = TextureMinFilter.LinearMipmapLinear,
     TextureMagFilter MagFilter = TextureMagFilter.Linear,
-    TextureType TextureType = TextureType.Unknown,
+    TextureType TextureType = TextureType.Diffuse,
     TextureWrapMode TextureWrapS = TextureWrapMode.Repeat,
     TextureWrapMode TextureWrapT = TextureWrapMode.Repeat,
     bool GenerateMipMap = true,

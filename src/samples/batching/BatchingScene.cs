@@ -52,8 +52,8 @@ internal class BatchingScene : Scene
 
         var dirLight = new LightUniform()
         {
-            Direction = new Vector3(-0.65f, -0.95f, 0.85f),
-            Ambient = new Vector3(0.065f, 0.06f, 0.065f),
+            Direction = new Vector3(-0.95f, -0.995f, 0.85f),
+            Ambient = new Vector3(0.15f, 0.10f, 0.15f),
             Diffuse = new Vector3(0.8f),
             Specular = new Vector3(1),
         };
@@ -197,8 +197,6 @@ internal class BatchingScene : Scene
     private void AddRotatingBoxes()
     {
         var sampler = Sampler.Create(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.MirroredRepeat, TextureWrapMode.MirroredRepeat);
-        //var tb = TextureBase.FromDescriptor(new TextureDescriptor("Resources/container.png"));
-        //var bt = tb.GetBindlessHandle(sampler);
 
         var (vertices, indices) = GeometryHelper.CreateQuad();
 
@@ -208,7 +206,7 @@ internal class BatchingScene : Scene
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail)
             },
-            detailTextureFactor: 10f,
+            detailTextureScaleFactor: 10f,
             shininess: 0.15f
         );
         var mat2 = Material.Create(
@@ -217,7 +215,7 @@ internal class BatchingScene : Scene
                 new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail)
             },
-            detailTextureFactor: 3f,
+            detailTextureScaleFactor: 3f,
             shininess: 0.25f
         );
 
@@ -264,12 +262,15 @@ internal class BatchingScene : Scene
         var shader = new Shader("Shaders/standard-batching.vert", "Shaders/standard-batching.frag");
         var materials = new Material[]
         {
-            Material.Create(shader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 2.0f),
-            Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
-            Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
-            Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
-            Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
-            Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            Material.Create(shader, new TextureDescriptor[]{
+                new("Resources/ball13.jpg"), 
+                new("Resources/container.png", TextureType: TextureType.Detail) 
+            }, shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
+            Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.85f),
+            Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.60f),
+            Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
+            Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.15f),
+            Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
@@ -296,7 +297,7 @@ internal class BatchingScene : Scene
         var mat = Material.Create(defaultShader,
             new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
             0.70f);
-        mat.EmissiveColor = new(0.05f, 0.07f, 0.005f);
+        mat.EmissiveColor = new(0.05f, 0.09f, 0.05f);
 
         for (var i = 0; i < 50; i++)
         {

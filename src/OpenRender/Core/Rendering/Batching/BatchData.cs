@@ -57,34 +57,38 @@ internal class BatchData
             BaseInstance = 0
         };
 
-        //  write material data, this is a but more complex as we need bindless textures
         var materialData = new MaterialData()
         {
             Diffuse = node.Material.DiffuseColor,
             Emissive = node.Material.EmissiveColor,
             Specular = node.Material.SpecularColor,
             Shininess = node.Material.Shininess,
-            DetailTextureFactor = node.Material.DetailTextureFactor,
+            DetailTextureScaleFactor = node.Material.DetailTextureScaleFactor,
+            DetailTextureBlendFactor = node.Material.DetailTextureBlendFactor,
             HasDiffuse = node.Material.HasDiffuse ? 1 : 0,
             HasNormal = 0,
         };
 
         TextureData textureData = new()
         {
-            Diffuse = node.Material.BindlessTextures[0]
+            Diffuse = node.Material.BindlessTextures[0],
+            Detail = node.Material.BindlessTextures[1],
+            Normal = node.Material.BindlessTextures[2],
+            Specular = node.Material.BindlessTextures[3],
+            Bump = node.Material.BindlessTextures[4],
+            T6 = node.Material.BindlessTextures[5],
+            T7 = node.Material.BindlessTextures[6],
+            T8 = node.Material.BindlessTextures[7],
         };
         TextureBase.MakeResident(textureData.Diffuse);
-        
-        //  TODO: handle detail and normal textures residency
+        TextureBase.MakeResident(textureData.Detail);
+        TextureBase.MakeResident(textureData.Normal);
+        TextureBase.MakeResident(textureData.Specular);
+        TextureBase.MakeResident(textureData.Bump);
+        TextureBase.MakeResident(textureData.T6);
+        TextureBase.MakeResident(textureData.T7);
+        TextureBase.MakeResident(textureData.T8);
 
-        //if(node.Material.HasDetail)
-        //{
-        //    var detailTextureIndex = node.Material.TextureDescriptors!.First(ti => ti?.TextureType == TextureType.Detail);
-        //    var detailTexture = node.Material.Textures![detailTextureIndex];
-        //    textureData.Detail = GL.Arb.GetTextureHandle(node.Material.Textures[0].Handle);
-        //    if (!TextureDataArray.Any(x => x.Diffuse == textureData.Diffuse))
-        //        GL.Arb.MakeTextureHandleResident(textureData.Diffuse);
-        //}
 
         node.GetTransform(out var transform);
 

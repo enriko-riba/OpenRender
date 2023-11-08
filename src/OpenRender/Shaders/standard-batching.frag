@@ -30,13 +30,14 @@ layout(std140, binding = 1) uniform light {
 };
 
  struct Material {   
-    vec4 diffuse;
-    vec4 emissive;
+    vec3 diffuse;
+    vec3 emissive;
     vec3 specular;
     float shininess;
-    float uDetailTextureFactor;
-    int hasDiffuseMap;
-    int hasNormalMap;
+    float detailTextureScaleFactor;
+    float detailTextureBlendFactor;
+    int hasDiffuseTexture;
+    int hasNormalTexture;
 };
 layout(std430, binding = 1) readonly buffer ssbo_material {
     Material mat[];
@@ -66,6 +67,7 @@ out vec4 outputColor;
 void main()
 {    
     outputColor = vec4(0);
+
     vec3 norm = normalize(vertexNormal);
     vec3 lightDir = normalize(dirLight.position);
     vec3 viewDir = normalize(cameraPos - fragPos);
@@ -78,17 +80,18 @@ void main()
     sampler2D texture_detail = textures[drawID].detail;
     sampler2D texture_normal = textures[drawID].normal;
 
-    if(mat.hasDiffuseMap > 0)
+    if(mat.hasDiffuseTexture > 0)
     {
         texDiffuse = vec3(texture(texture_diffuse, texCoord));
     }
-    if(mat.uDetailTextureFactor > 0)
+    if(mat.detailTextureScaleFactor > 0)
     {
-        texDetail = vec3(texture(texture_detail, texCoord * mat.uDetailTextureFactor));
+        texDetail = vec3(texture(texture_detail, texCoord * mat.detailTextureScaleFactor));
+        texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
     }
-    vec3 texColor = texDiffuse * texDetail * max(vertexColor + mat.diffuse.rgb, 1.0);
+    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse.rgb, 1.0);
     
-    if(mat.hasNormalMap > 0)
+    if(mat.hasNormalTexture > 0)
     {   
         vec3 normalMap = texture(texture_normal, texCoord).rgb;
         norm = normalize(normalMap * 2.0 - 1.0);
@@ -103,7 +106,7 @@ void main()
         vec3 R = normalize(2 * NdotL * norm + lightDir);     
         Sc = pow(clamp(dot(R, viewDir), 0.0, 1.0), mat.shininess) * mat.specular;
     }
-    outputColor += vec4((mat.emissive.rgb + Ac + Dc + Sc) * texColor, 1);
+    outputColor += vec4(mat.emissive.rgb + (Ac + Dc + Sc) * texColor, 1);
 }
 
 /*

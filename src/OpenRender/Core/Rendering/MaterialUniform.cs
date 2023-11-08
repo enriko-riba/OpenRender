@@ -14,4 +14,12 @@ public struct MaterialUniform
     public Vector3 Specular;
     [FieldOffset(44)]
     public float Shininess;
+    [FieldOffset(48)]
+    public float DetailTextureScaleFactor;
+    [FieldOffset(52)]
+    public float DetailTextureBlendFactor;
+    [FieldOffset(56)]
+    public int HasDiffuse;
+    [FieldOffset(60)]
+    public int HasNormal;
 }

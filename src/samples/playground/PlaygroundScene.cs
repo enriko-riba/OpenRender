@@ -53,8 +53,8 @@ internal class PlaygroundScene : Scene
 
         var dirLight = new LightUniform()
         {
-            Direction = new Vector3(-0.95f, -0.995f, 0.75f),
-            Ambient = new Vector3(0.065f, 0.06f, 0.065f),
+            Direction = new Vector3(-0.95f, -0.995f, 0.85f),
+            Ambient = new Vector3(0.15f, 0.10f, 0.15f),
             Diffuse = new Vector3(0.8f),
             Specular = new Vector3(1),
         };
@@ -204,7 +204,7 @@ internal class PlaygroundScene : Scene
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail)
             },
-            detailTextureFactor: 10f,
+            detailTextureScaleFactor: 10f,
             shininess: 0.15f
         );
         var mat2 = Material.Create(
@@ -213,7 +213,7 @@ internal class PlaygroundScene : Scene
                 new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail)
             },
-            detailTextureFactor: 3f,
+            detailTextureScaleFactor: 3f,
             shininess: 0.25f
         );
 
@@ -258,12 +258,15 @@ internal class PlaygroundScene : Scene
         const int NodeCount = 5000;
         var materials = new Material[]
         {
-            Material.Create(defaultShader, new TextureDescriptor("Resources/ball13.jpg"), shininess: 0.75f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.95f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.65f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.45f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.35f),
-            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.25f),
+            Material.Create(defaultShader, new TextureDescriptor[]{
+                new("Resources/ball13.jpg"),
+                new("Resources/container.png", TextureType: TextureType.Detail)
+            }, shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.85f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.60f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.15f),
+            Material.Create(defaultShader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.15f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/ypos.png"), shininess: 0.15f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/container.png"), shininess: 0.10f)
         };
