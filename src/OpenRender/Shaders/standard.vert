@@ -9,31 +9,6 @@ layout (std140, binding = 0) uniform camera {
     vec3 cameraDir;
 };
 
-struct Light {    
-    vec3 position;    
-    vec3 ambient;
-    vec3 diffuse;
-    vec3 specular;
-    float falloff;
-};
-layout(std140, binding = 1) uniform light {
-    Light dirLight;
-};
-
- struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
-    float shininess;
-    float detailTextureScaleFactor;
-    float detailTextureBlendFactor;
-    int hasDiffuseTexture;
-    int hasNormalTexture;
-};;
-layout(std140, binding = 2) uniform material {
-    Material mat;
-};
-
 layout (location = 0) in vec3 aPosition;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec3 aColor;

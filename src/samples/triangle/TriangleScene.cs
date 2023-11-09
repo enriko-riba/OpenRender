@@ -1,5 +1,7 @@
-﻿using OpenRender.Core.Buffers;
+﻿using OpenRender.Core;
+using OpenRender.Core.Buffers;
 using OpenRender.Core.Rendering;
+using OpenRender.Core.Rendering.Batching;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -10,15 +12,18 @@ internal class TriangleScene : Scene
 {
     private VertexArrayObject vao = default!;
 
+    //  note: the binding points for the block uniforms are not arbitrary numbers, they need to match the shader implementation.
+    //  The default shader implementation uses binding points 0, 1, 2, 3 for camera, light, material and textures respectively.
     private readonly UniformBlockBuffer<CameraUniform> uboCamera = new("camera", 0);
     private readonly UniformBlockBuffer<LightUniform> uboLight = new("light", 1);
     private readonly UniformBlockBuffer<MaterialUniform> uboMaterial = new("material", 2);
+    private readonly UniformBlockBuffer<ResidentTextureData> uboTextures = new("textures", 3);
 
     public override void Load()
     {
         //  Note: rendering a triangle manually as this method shows is complicated.
         //  Using built in components like SceneNode, Mesh, Material is the preferred and more intuitive way,
-        //  it would replace most of this code, but it is a good example of how to use the low level API. 
+        //  as it would replace most of this code. Still this is a good example of how to use the low level API. 
 
 
         //  base class sets up important state
@@ -69,15 +74,36 @@ internal class TriangleScene : Scene
         if (uboCamera.IsUniformBlockSupported(defaultShader)) uboCamera.BindToShaderProgram(defaultShader);
         if (uboLight.IsUniformBlockSupported(defaultShader)) uboLight.BindToShaderProgram(defaultShader);
         if (uboMaterial.IsUniformBlockSupported(defaultShader)) uboMaterial.BindToShaderProgram(defaultShader);
+        if (uboTextures.IsUniformBlockSupported(defaultShader)) uboTextures.BindToShaderProgram(defaultShader);
 
-        // upload data to the three uniform blocks
+        // upload light, material, camera and texture data to uniform blocks
         var lightUniform = new LightUniform()
         {
             Direction = new Vector3(0, 0, -1),
             Ambient = new Vector3(0.010f),
             Diffuse = new Vector3(1),
         };
-        var materialUniform = new MaterialUniform() { Diffuse = Vector3.One };        
+
+        //  usually the material uniform is populated from the material assigned to a scene node,
+        //  here we just create a default material that provides reasonable defaults and textures
+        var material = Material.Default;
+        var materialUniform = new MaterialUniform()
+        {
+            Diffuse = material.DiffuseColor,
+            Emissive = material.EmissiveColor,
+            Specular = material.SpecularColor,
+        };
+        ResidentTextureData textureData = new()
+        {
+            Diffuse = material.BindlessTextures[0],
+            Detail = material.BindlessTextures[1],
+            Normal = material.BindlessTextures[2],
+            Specular = material.BindlessTextures[3],
+            Bump = material.BindlessTextures[4],
+            T6 = material.BindlessTextures[5],
+            T7 = material.BindlessTextures[6],
+            T8 = material.BindlessTextures[7]
+        };
         var cam = new CameraUniform()
         {
             view = camera.ViewMatrix,
@@ -88,6 +114,7 @@ internal class TriangleScene : Scene
         uboLight.UpdateSettings(ref lightUniform);
         uboMaterial.UpdateSettings(ref materialUniform);
         uboCamera.UpdateSettings(ref cam);
+        uboTextures.UpdateSettings(ref textureData);
     }
 
     public override void RenderFrame(double elapsedSeconds)

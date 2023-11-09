@@ -36,8 +36,6 @@ layout(std140, binding = 1) uniform light {
     float shininess;
     float detailTextureScaleFactor;
     float detailTextureBlendFactor;
-    int hasDiffuseTexture;
-    int hasNormalTexture;
 };
 layout(std430, binding = 1) readonly buffer ssbo_material {
     Material mat[];
@@ -80,22 +78,14 @@ void main()
     sampler2D texture_detail = textures[drawID].detail;
     sampler2D texture_normal = textures[drawID].normal;
 
-    if(mat.hasDiffuseTexture > 0)
-    {
-        texDiffuse = vec3(texture(texture_diffuse, texCoord));
-    }
-    if(mat.detailTextureScaleFactor > 0)
-    {
-        texDetail = vec3(texture(texture_detail, texCoord * mat.detailTextureScaleFactor));
-        texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
-    }
-    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse.rgb, 1.0);
+    texDiffuse = vec3(texture(texture_diffuse, texCoord));
+    texDetail = vec3(texture(texture_detail, texCoord * mat.detailTextureScaleFactor));
+    texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
+
+    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);
     
-    if(mat.hasNormalTexture > 0)
-    {   
-        vec3 normalMap = texture(texture_normal, texCoord).rgb;
-        norm = normalize(normalMap * 2.0 - 1.0);
-    }
+    vec3 normalMap = texture(texture_normal, texCoord).rgb;
+    //norm = normalize(normalMap * 2.0 - 1.0);
 
     vec3 Dc = dirLight.diffuse * clamp(dot(-lightDir, norm), 0.0, 1.0);
     vec3 Ac = dirLight.ambient;
@@ -108,42 +98,3 @@ void main()
     }
     outputColor += vec4(mat.emissive.rgb + (Ac + Dc + Sc) * texColor, 1);
 }
-
-/*
-
-//-----------------------------------------------------------------------------------------------
-//
-//	Description:	specular light equation based on the simplified Blinn Phong equation.
-//				
-//-----------------------------------------------------------------------------------------------
-vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
-{    
-	vec3 specular = vec3(0);
-	if(length(specularColor)>0)
-	{
-		vec3 viewer = normalize(cameraPos - worldPosition);
-		
-		// Compute the half vector
-		vec3 half_vector = normalize(directionToLight + viewer);
-	 
-		// Compute the angle between the half vector and normal
-		float  HdotN = max( 0.0f, dot( half_vector, worldNormal ) );
-	 
-		// Compute the specular color
-		specular = specularColor * pow( HdotN, specularPower ) * lightColor;
-		specular = clamp(specular, 0, 1.0);
-    }   
-    return specular;
-}
-
-//-----------------------------------------------------------------------------------------------
-//
-//	Description:	inverted range attenuation equation.
-//				
-//-----------------------------------------------------------------------------------------------
-float Attenuation(float lDistance, float lRange, float falloff)
-{
-    float att = 1.0 - clamp(lDistance*falloff / lRange, 0 , 1.0);
-    return att;
-}
-*/

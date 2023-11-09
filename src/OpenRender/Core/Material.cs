@@ -63,10 +63,6 @@ public class Material
 
     public uint Id { get; init; }
 
-    public bool HasDiffuse => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Diffuse) ?? false;
-    public bool HasDetail => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Detail) ?? false;
-    public bool HasNormal => TextureDescriptors?.Any(ti => ti?.TextureType == TextureType.Normal) ?? false;
-
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
     public TextureBase[] TextureBases { get; private set; } = new TextureBase[8];
@@ -129,6 +125,16 @@ public class Material
                 BindlessTextures[(int)descriptor.TextureType] = tb.GetBindlessHandle(sampler);
             }
         }
+
+        // fill in missing textures with default 1x1 pixel textures
+        for(var i = 0; i < TextureBases.Length; i++)
+        {
+            if (TextureBases[i] == null)
+            {
+                TextureBases[i] = Default.TextureBases[i];
+                BindlessTextures[i] = Default.BindlessTextures[i];
+            }
+        }
     }
 
     public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
@@ -151,6 +157,7 @@ public class Material
             Id = id
         };
         mat.Initialize();
+        
         if (diffuseColor.Length == 0 && textureCount > 0) Log.Warn("Material created with no diffuse color, that's probably not what you want!");
         return mat;
     }

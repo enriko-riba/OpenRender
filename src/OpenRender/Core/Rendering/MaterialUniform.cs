@@ -18,8 +18,4 @@ public struct MaterialUniform
     public float DetailTextureScaleFactor;
     [FieldOffset(52)]
     public float DetailTextureBlendFactor;
-    [FieldOffset(56)]
-    public int HasDiffuse;
-    [FieldOffset(60)]
-    public int HasNormal;
 }

@@ -28,7 +28,7 @@ public class Renderer
     protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
     protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
     protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
-    protected internal readonly UniformBlockBuffer<TextureData> uboTextures;
+    protected internal readonly UniformBlockBuffer<ResidentTextureData> uboTextures;
 
 
     public Renderer()
@@ -36,7 +36,7 @@ public class Renderer
         uboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
         uboLight = new UniformBlockBuffer<LightUniform>("light", 1);
         uboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
-        uboTextures = new UniformBlockBuffer<TextureData>("textures", 3);
+        uboTextures = new UniformBlockBuffer<ResidentTextureData>("textures", 3);
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
@@ -100,13 +100,13 @@ public class Renderer
                 Shininess = material.Shininess,
                 DetailTextureScaleFactor = material.DetailTextureScaleFactor,
                 DetailTextureBlendFactor = material.DetailTextureBlendFactor,
-                HasDiffuse = material.HasDiffuse ? 1 : 0,
-                HasNormal = material.HasNormal ? 1 : 0
+                //HasDiffuse = material.HasDiffuse ? 1 : 0,
+                //HasNormal = material.HasNormal ? 1 : 0
             };
             uboMaterial.UpdateSettings(ref settings);
             
             //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
-            TextureData textureData = new()
+            ResidentTextureData textureData = new()
             { 
                 Diffuse = material.BindlessTextures[0],
                 Detail = material.BindlessTextures[1],
@@ -263,7 +263,7 @@ public class Renderer
             GL.NamedBufferSubData(batch.CommandsBufferName, IntPtr.Zero, length * Unsafe.SizeOf<DrawElementsIndirectCommand>(), batch.CommandsDataArray);
             GL.NamedBufferSubData(batch.WorldMatricesBufferName, IntPtr.Zero, length * Unsafe.SizeOf<Matrix4>(), batch.WorldMatricesDataArray);
             GL.NamedBufferSubData(batch.MaterialsBufferName, IntPtr.Zero, length * Unsafe.SizeOf<MaterialData>(), batch.MaterialDataArray);
-            GL.NamedBufferSubData(batch.TexturesBufferName, IntPtr.Zero, length * Unsafe.SizeOf<TextureData>(), batch.TextureDataArray);
+            GL.NamedBufferSubData(batch.TexturesBufferName, IntPtr.Zero, length * Unsafe.SizeOf<ResidentTextureData>(), batch.TextureDataArray);
 
             GL.BindVertexArray(batch.Vao);
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, batch.WorldMatricesBufferName);
@@ -306,7 +306,7 @@ public class Renderer
         GL.NamedBufferStorage(data.MaterialsBufferName, MaxCommands * Unsafe.SizeOf<MaterialData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
 
         //  prepare textures
-        GL.NamedBufferStorage(data.TexturesBufferName, MaxCommands * Unsafe.SizeOf<TextureData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferStorage(data.TexturesBufferName, MaxCommands * Unsafe.SizeOf<ResidentTextureData>(), IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
 
         Log.CheckGlError();
 

@@ -17,7 +17,7 @@ internal class BatchData
         CommandsDataArray = new DrawElementsIndirectCommand[maxBatchSize];
         WorldMatricesDataArray = new Matrix4[maxBatchSize];
         MaterialDataArray = new MaterialData[maxBatchSize];
-        TextureDataArray = new TextureData[maxBatchSize];
+        TextureDataArray = new ResidentTextureData[maxBatchSize];
         LastIndex = -1;
     }
 
@@ -41,7 +41,7 @@ internal class BatchData
     public DrawElementsIndirectCommand[] CommandsDataArray;
     public Matrix4[] WorldMatricesDataArray;
     public MaterialData[] MaterialDataArray;
-    public TextureData[] TextureDataArray;
+    public ResidentTextureData[] TextureDataArray;
     public int LastIndex;
 
 
@@ -65,11 +65,11 @@ internal class BatchData
             Shininess = node.Material.Shininess,
             DetailTextureScaleFactor = node.Material.DetailTextureScaleFactor,
             DetailTextureBlendFactor = node.Material.DetailTextureBlendFactor,
-            HasDiffuse = node.Material.HasDiffuse ? 1 : 0,
-            HasNormal = 0,
+            //HasDiffuse = node.Material.HasDiffuse ? 1 : 0,
+            //HasNormal = 0,
         };
 
-        TextureData textureData = new()
+        ResidentTextureData textureData = new()
         {
             Diffuse = node.Material.BindlessTextures[0],
             Detail = node.Material.BindlessTextures[1],

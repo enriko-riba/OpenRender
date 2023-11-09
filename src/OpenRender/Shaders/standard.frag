@@ -35,8 +35,6 @@ layout(std140, binding = 1) uniform light {
     float shininess;
     float detailTextureScaleFactor;
     float detailTextureBlendFactor;
-    int hasDiffuseTexture;
-    int hasNormalTexture;
 };
 layout(std140, binding = 2) uniform material {
     Material mat;
@@ -76,30 +74,17 @@ void main()
     vec3 texDiffuse = vec3(1);
     vec3 texDetail = vec3(1);
     
-    if(mat.hasDiffuseTexture > 0)
-    {
-        texDiffuse = vec3(texture(tex.diffuse, texCoord));
-    }
-    else
-    {
-        texDiffuse = vertexColor;
-    }
-
-    if(mat.detailTextureScaleFactor > 0)
-    {		
-		texDetail = vec3(texture(tex.detail, texCoord * mat.detailTextureScaleFactor));
-        texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
-    }
+    texDiffuse = vec3(texture(tex.diffuse, texCoord)) + vertexColor;
+    texDetail = vec3(texture(tex.detail, texCoord * mat.detailTextureScaleFactor));
+    float blendFactor = mat.detailTextureScaleFactor == 0 ? 0 : mat.detailTextureBlendFactor;
+    texDiffuse = mix(texDiffuse, texDetail, blendFactor) * mat.diffuse;
     
-    if(mat.hasNormalTexture > 0)
-    {    
-        vec3 normalMap = texture(tex.normal, texCoord).rgb;
-        norm = normalize(normalMap * 2.0 - 1.0);
-    }
+    vec3 normalMap = texture(tex.normal, texCoord).rgb;
+    //norm = normalize(normalMap * 2.0 - 1.0);
 
-    vec3 Ac = texDiffuse * dirLight.ambient * (vertexColor + mat.diffuse);
-    vec3 Dc = texDiffuse * LambertianComponent(lightDir, norm, dirLight.diffuse) * (vertexColor + mat.diffuse);
-    vec3 Sc = texDiffuse * SpecularComponent(lightDir, norm, fragPos, dirLight.specular, mat.specular, mat.shininess) * (vertexColor + mat.diffuse);    
+    vec3 Ac = texDiffuse * dirLight.ambient;
+    vec3 Dc = texDiffuse * LambertianComponent(lightDir, norm, dirLight.diffuse);
+    vec3 Sc = texDiffuse * SpecularComponent(lightDir, norm, fragPos, dirLight.specular, mat.specular, mat.shininess);    
     outputColor += vec4(mat.emissive + Ac + Dc + Sc, 1);
 }
 

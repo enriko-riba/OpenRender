@@ -8,17 +8,6 @@ layout (std140, binding = 0) uniform camera {
     vec3 cameraDir;
 };
 
-struct Light {    
-    vec3 position;    
-    vec3 ambient;
-    vec3 diffuse;
-    vec3 specular;
-    float falloff;
-};
-layout(std140, binding = 1) uniform light {
-    Light dirLight;
-};
-
 layout(std140, binding = 0) readonly buffer ssbo_transform
 {
     mat4 modelMatrices[];

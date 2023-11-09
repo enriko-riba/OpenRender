@@ -3,7 +3,7 @@
 namespace OpenRender.Core.Rendering.Batching;
 
 [StructLayout(LayoutKind.Sequential)]
-public struct TextureData
+public struct ResidentTextureData
 {
     public ulong Diffuse;
     public ulong Detail;
