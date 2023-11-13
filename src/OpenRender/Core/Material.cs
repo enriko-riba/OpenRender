@@ -6,7 +6,7 @@ using OpenTK.Graphics.OpenGL4;
 namespace OpenRender.Core;
 
 /// <summary>
-/// Defines lightning properties and the shader used to render the object.
+/// Defines lightning properties, textures and shader used to render a object.
 /// </summary>
 public class Material
 {
@@ -15,11 +15,11 @@ public class Material
     static Material()
     {
         var sampler = Sampler.Create(TextureMinFilter.Nearest, TextureMagFilter.Nearest, TextureWrapMode.ClampToBorder, TextureWrapMode.ClampToBorder);
-        var defaultDiffuse = TextureBase.FromFile(new string[] { "Resources/default-diffuse.png" }, false);
-        var defaultDetail = TextureBase.FromFile(new string[] { "Resources/default-detail.png" }, false);
-        var defaultNormal = TextureBase.FromFile(new string[] { "Resources/default-normal.png" }, false);
-        var defaultSpecular = TextureBase.FromFile(new string[] { "Resources/default-specular.png" }, false);
-        var defaultBump = TextureBase.FromFile(new string[] { "Resources/default-bump.png" }, false);
+        var defaultDiffuse = Texture.FromFile(new string[] { "Resources/default-diffuse.png" }, false);
+        var defaultDetail = Texture.FromFile(new string[] { "Resources/default-detail.png" }, false);
+        var defaultNormal = Texture.FromFile(new string[] { "Resources/default-normal.png" }, false, isNormalMap: true);
+        var defaultSpecular = Texture.FromFile(new string[] { "Resources/default-specular.png" }, false);
+        var defaultBump = Texture.FromFile(new string[] { "Resources/default-bump.png" }, false);
         /*
             public long Diffuse;
             public long Detail;
@@ -32,7 +32,7 @@ public class Material
         */
         defaultMaterial = new Material()
         {
-            TextureBases = new TextureBase[] {
+            Textures = new Texture[] {
                 defaultDiffuse,
                 defaultDetail,
                 defaultNormal,
@@ -42,7 +42,7 @@ public class Material
                 defaultBump,
                 defaultBump
             },
-            BindlessTextures = new ulong[] {
+            BindlessTextureHandles = new ulong[] {
                 defaultDiffuse.GetBindlessHandle(sampler),
                 defaultDetail.GetBindlessHandle(sampler),
                 defaultNormal.GetBindlessHandle(sampler),
@@ -65,9 +65,9 @@ public class Material
 
     public TextureDescriptor[]? TextureDescriptors { get; init; }
 
-    public TextureBase[] TextureBases { get; private set; } = new TextureBase[8];
+    public Texture[] Textures { get; private set; } = new Texture[8];
 
-    public ulong[] BindlessTextures { get; private set; } = new ulong[8];
+    public ulong[] BindlessTextureHandles { get; private set; } = new ulong[8];
 
     /// <summary>
     /// Shader program used to render the object.
@@ -112,27 +112,27 @@ public class Material
     {
         foreach (var descriptor in TextureDescriptors ?? Array.Empty<TextureDescriptor>())
         {
-            var tb = TextureBase.FromDescriptor(descriptor);
+            var tb = Texture.FromDescriptor(descriptor);
             var sampler = Sampler.FromDescriptor(descriptor);
             if (descriptor.TextureType == TextureType.CubeMap)
             {
-                TextureBases[0] = tb;
-                BindlessTextures[0] = tb.GetBindlessHandle(sampler);
+                Textures[0] = tb;
+                BindlessTextureHandles[0] = tb.GetBindlessHandle(sampler);
             }
             else
             {
-                TextureBases[(int)descriptor.TextureType] = tb;
-                BindlessTextures[(int)descriptor.TextureType] = tb.GetBindlessHandle(sampler);
+                Textures[(int)descriptor.TextureType] = tb;
+                BindlessTextureHandles[(int)descriptor.TextureType] = tb.GetBindlessHandle(sampler);
             }
         }
 
         // fill in missing textures with default 1x1 pixel textures
-        for(var i = 0; i < TextureBases.Length; i++)
+        for(var i = 0; i < Textures.Length; i++)
         {
-            if (TextureBases[i] == null)
+            if (Textures[i] == null)
             {
-                TextureBases[i] = Default.TextureBases[i];
-                BindlessTextures[i] = Default.BindlessTextures[i];
+                Textures[i] = Default.Textures[i];
+                BindlessTextureHandles[i] = Default.BindlessTextureHandles[i];
             }
         }
     }

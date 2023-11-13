@@ -30,7 +30,8 @@ public record TextureDescriptor(
     TextureWrapMode TextureWrapS = TextureWrapMode.Repeat,
     TextureWrapMode TextureWrapT = TextureWrapMode.Repeat,
     bool GenerateMipMap = true,
-    TextureTarget TextureTarget = TextureTarget.Texture2D) : this(
+    TextureTarget TextureTarget = TextureTarget.Texture2D,
+    bool IsNormalMap = false) : this(
         new string[] { path }, 
         MinFilter,
         MagFilter,

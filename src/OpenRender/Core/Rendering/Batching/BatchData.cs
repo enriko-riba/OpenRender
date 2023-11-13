@@ -65,29 +65,27 @@ internal class BatchData
             Shininess = node.Material.Shininess,
             DetailTextureScaleFactor = node.Material.DetailTextureScaleFactor,
             DetailTextureBlendFactor = node.Material.DetailTextureBlendFactor,
-            //HasDiffuse = node.Material.HasDiffuse ? 1 : 0,
-            //HasNormal = 0,
         };
 
         ResidentTextureData textureData = new()
         {
-            Diffuse = node.Material.BindlessTextures[0],
-            Detail = node.Material.BindlessTextures[1],
-            Normal = node.Material.BindlessTextures[2],
-            Specular = node.Material.BindlessTextures[3],
-            Bump = node.Material.BindlessTextures[4],
-            T6 = node.Material.BindlessTextures[5],
-            T7 = node.Material.BindlessTextures[6],
-            T8 = node.Material.BindlessTextures[7],
+            Diffuse = node.Material.BindlessTextureHandles[0],
+            Detail = node.Material.BindlessTextureHandles[1],
+            Normal = node.Material.BindlessTextureHandles[2],
+            Specular = node.Material.BindlessTextureHandles[3],
+            Bump = node.Material.BindlessTextureHandles[4],
+            T6 = node.Material.BindlessTextureHandles[5],
+            T7 = node.Material.BindlessTextureHandles[6],
+            T8 = node.Material.BindlessTextureHandles[7],
         };
-        TextureBase.MakeResident(textureData.Diffuse);
-        TextureBase.MakeResident(textureData.Detail);
-        TextureBase.MakeResident(textureData.Normal);
-        TextureBase.MakeResident(textureData.Specular);
-        TextureBase.MakeResident(textureData.Bump);
-        TextureBase.MakeResident(textureData.T6);
-        TextureBase.MakeResident(textureData.T7);
-        TextureBase.MakeResident(textureData.T8);
+        Texture.MakeResident(textureData.Diffuse);
+        Texture.MakeResident(textureData.Detail);
+        Texture.MakeResident(textureData.Normal);
+        Texture.MakeResident(textureData.Specular);
+        Texture.MakeResident(textureData.Bump);
+        Texture.MakeResident(textureData.T6);
+        Texture.MakeResident(textureData.T7);
+        Texture.MakeResident(textureData.T8);
 
 
         node.GetTransform(out var transform);

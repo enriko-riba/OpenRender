@@ -204,7 +204,7 @@ internal class BatchingScene : Scene
             defaultShader,
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
-                new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail)
+                new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail),
             },
             detailTextureScaleFactor: 10f,
             shininess: 0.15f
@@ -213,7 +213,8 @@ internal class BatchingScene : Scene
             defaultShader,
             new TextureDescriptor[] {
                 new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
-                new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail)
+                new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail),
+                new TextureDescriptor ("Resources/awesomeface-normal.png", MinFilter: TextureMinFilter.Nearest, MagFilter: TextureMagFilter.Nearest, TextureType: TextureType.Normal)
             },
             detailTextureScaleFactor: 3f,
             shininess: 0.25f
@@ -264,10 +265,13 @@ internal class BatchingScene : Scene
         {
             Material.Create(shader, new TextureDescriptor[]{
                 new("Resources/ball13.jpg"), 
-                new("Resources/container.png", TextureType: TextureType.Detail) 
+                new("Resources/container.png", TextureType: TextureType.Detail)
             }, shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
             Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.85f),
-            Material.Create(shader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.60f),
+            Material.Create(shader, new TextureDescriptor[]{            
+                new ("Resources/awesomeface.png"),
+                new TextureDescriptor ("Resources/awesomeface-normal.png", TextureType: TextureType.Normal)
+            }, shininess: 0.60f),
             Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.15f),
@@ -280,13 +284,17 @@ internal class BatchingScene : Scene
             var mod = i % materials.Length;
             if (mod == 0)
             {
-                var sphere = new RandomNode(new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices), materials[mod], Area);
+                var mesh = new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices);
+                mesh.CreateTBN();
+                var sphere = new RandomNode(mesh, materials[mod], Area);
                 sphere.SetScale(Random.Shared.Next(1, 3) / 2f);
                 AddNode(sphere);
             }
             else
             {
-                var cube = new RandomNode(new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices), materials[mod], Area);
+                var mesh = new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices);
+                mesh.CreateTBN();
+                var cube = new RandomNode(mesh, materials[mod], Area);
                 AddNode(cube);
             }
         }
@@ -295,7 +303,8 @@ internal class BatchingScene : Scene
     private void AddMetallicBoxes()
     {
         var mat = Material.Create(defaultShader,
-            new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
+            new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse),
+            new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal)},
             0.70f);
         mat.EmissiveColor = new(0.05f, 0.09f, 0.05f);
 

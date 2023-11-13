@@ -62,6 +62,21 @@ in vec3 fragPos;
 flat in int drawID;
 out vec4 outputColor;
 
+vec3 BumpMap(vec3 normal)
+{
+     vec3 posDX = dFdxFine(fragPos);  // choose dFdx (#version 420) or dFdxFine (#version 450) here
+     vec3 posDY = dFdyFine (fragPos);
+     vec3 r1 = cross (posDY, normal);
+     vec3 r2 = cross (normal, posDX);
+     float det = dot (posDX, r1);
+     float Hll = texture(textures[drawID].bump, texCoord).x;    //-- height from bump map texture, tc=texture coordinates
+     float Hlr = texture(textures[drawID].bump, texCoord + dFdx(texCoord.xy)).x;
+     float Hul = texture(textures[drawID].bump, texCoord + dFdy(texCoord.xy)).x;
+     vec3 surf_grad = sign(det) * ( (Hlr - Hll) * r1 + (Hul - Hll) * r2 );    
+     const float bump_amt = 0.8;       // bump_amt = adjustable bump amount
+     return normal * (1.0-bump_amt) + bump_amt * normalize(abs(det) * normal - surf_grad );  // bump normal    
+}
+
 void main()
 {    
     outputColor = vec4(0);
@@ -82,11 +97,9 @@ void main()
     texDetail = vec3(texture(texture_detail, texCoord * mat.detailTextureScaleFactor));
     texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
 
-    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);
-    
-    vec3 normalMap = texture(texture_normal, texCoord).rgb;
-    //norm = normalize(normalMap * 2.0 - 1.0);
-
+    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);   
+    //norm = BumpMap(norm);
+   
     vec3 Dc = dirLight.diffuse * clamp(dot(-lightDir, norm), 0.0, 1.0);
     vec3 Ac = dirLight.ambient;
     vec3 Sc = vec3(0);

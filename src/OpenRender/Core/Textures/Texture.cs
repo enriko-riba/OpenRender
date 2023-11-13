@@ -7,11 +7,11 @@ namespace OpenRender.Core.Textures;
 /// <summary>
 /// Helper class to load and store textures.
 /// </summary>
-public class TextureBase : IDisposable
+public class Texture : IDisposable
 {
-    private static readonly Dictionary<string, TextureBase> textureCache = new();
+    private static readonly Dictionary<string, Texture> textureCache = new();
 
-    private TextureBase(uint glHandle)
+    private Texture(uint glHandle)
     {
         Handle = glHandle;
     }
@@ -61,7 +61,7 @@ public class TextureBase : IDisposable
         }
     }
 
-    public static TextureBase FromByteArray(byte[] buffer,
+    public static Texture FromByteArray(byte[] buffer,
         int width,
         int height,
         string name,
@@ -86,7 +86,7 @@ public class TextureBase : IDisposable
         {
             GL.GenerateTextureMipmap(handle);
         }
-        var texture = new TextureBase(handle)
+        var texture = new Texture(handle)
         {
             DebugName = name,
             Width = width,
@@ -101,13 +101,14 @@ public class TextureBase : IDisposable
         return texture;
     }
 
-    public static TextureBase FromDescriptor(TextureDescriptor descriptor) => FromFile(
+    public static Texture FromDescriptor(TextureDescriptor descriptor) => FromFile(
             descriptor.Paths,
             descriptor.GenerateMipMap,
-            descriptor.TextureTarget
+            descriptor.TextureTarget,
+            descriptor.TextureType == TextureType.Normal
     );
 
-    public static TextureBase FromFile(string[] paths, bool generateMipMap = true, TextureTarget textureTarget = TextureTarget.Texture2D)
+    public static Texture FromFile(string[] paths, bool generateMipMap = true, TextureTarget textureTarget = TextureTarget.Texture2D, bool isNormalMap = false)
     {
         var name = string.Join(':', paths);
         var key = $"{textureTarget}|{name}";
@@ -136,7 +137,10 @@ public class TextureBase : IDisposable
                 mipmapLevels = 1 + (int)Math.Floor(Math.Log2(Math.Max(image.Width, image.Height)));
             }
 
-            GL.TextureStorage2D(handle, mipmapLevels, SizedInternalFormat.Srgb8Alpha8, image.Width, image.Height);
+            if(isNormalMap)
+                GL.TextureStorage2D(handle, mipmapLevels, SizedInternalFormat.Rgba8, image.Width, image.Height);
+            else
+                GL.TextureStorage2D(handle, mipmapLevels, SizedInternalFormat.Srgb8Alpha8, image.Width, image.Height);
             GL.TextureSubImage2D(handle, 0, 0, 0, image.Width, image.Height, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
 
             if (generateMipMap)
@@ -165,7 +169,7 @@ public class TextureBase : IDisposable
             throw new NotImplementedException();
         }
 
-        var texture = new TextureBase(handle)
+        var texture = new Texture(handle)
         {
             DebugName = paths[0],
             TextureTarget = textureTarget,

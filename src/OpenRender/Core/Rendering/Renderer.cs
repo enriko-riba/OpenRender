@@ -100,22 +100,20 @@ public class Renderer
                 Shininess = material.Shininess,
                 DetailTextureScaleFactor = material.DetailTextureScaleFactor,
                 DetailTextureBlendFactor = material.DetailTextureBlendFactor,
-                //HasDiffuse = material.HasDiffuse ? 1 : 0,
-                //HasNormal = material.HasNormal ? 1 : 0
             };
             uboMaterial.UpdateSettings(ref settings);
             
             //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
             ResidentTextureData textureData = new()
             { 
-                Diffuse = material.BindlessTextures[0],
-                Detail = material.BindlessTextures[1],
-                Normal = material.BindlessTextures[2],
-                Specular  = material.BindlessTextures[3],
-                Bump = material.BindlessTextures[4],
-                T6 = material.BindlessTextures[5],
-                T7 = material.BindlessTextures[6],
-                T8 = material.BindlessTextures[7]
+                Diffuse = material.BindlessTextureHandles[0],
+                Detail = material.BindlessTextureHandles[1],
+                Normal = material.BindlessTextureHandles[2],
+                Specular  = material.BindlessTextureHandles[3],
+                Bump = material.BindlessTextureHandles[4],
+                T6 = material.BindlessTextureHandles[5],
+                T7 = material.BindlessTextureHandles[6],
+                T8 = material.BindlessTextureHandles[7]
             };
             uboTextures.UpdateSettings(ref textureData);                        
         }
@@ -151,28 +149,28 @@ public class Renderer
 
         foreach (var node in nodes)
         {
-            node.StringTag = GetBatchingKey(node);
+            node.BatchingKey = GetBatchingKey(node);
             var frequency = shaderFrequencies[node.Material.Shader.Handle];
             if (frequency > 1)
             {
-                if (batchFrequency.ContainsKey(node.StringTag))
-                    batchFrequency[node.StringTag]++;
+                if (batchFrequency.ContainsKey(node.BatchingKey))
+                    batchFrequency[node.BatchingKey]++;
                 else
-                    batchFrequency[node.StringTag] = 1;
+                    batchFrequency[node.BatchingKey] = 1;
             }
         }
 
         //  create and update individual batches
         foreach (var node in nodes)
         {
-            if (batchFrequency.ContainsKey(node.StringTag) && batchFrequency[node.StringTag] > 1)
+            if (batchFrequency.TryGetValue(node.BatchingKey, out var frequency) && frequency > 1)
             {
-                if (!batchDataDictionary.ContainsKey(node.StringTag))
+                if (!batchDataDictionary.TryGetValue(node.BatchingKey, out var batch))
                 {
-                    AddNewBatch(batchDataDictionary, node.StringTag, node.Material.Shader, node.Mesh.VertexDeclaration, nodes.Count());
+                    batch = CreateNewBatch(node.Material.Shader, node.Mesh.VertexDeclaration, nodes.Count());
+                    batchDataDictionary[node.BatchingKey] = batch;
                 }
-                var data = batchDataDictionary[node.StringTag];
-                data.WriteDrawCommand(node);
+                batch.WriteDrawCommand(node);
             }
         }
 
@@ -183,6 +181,7 @@ public class Renderer
             var buffer = new Buffer<float>(batch.Vertices.ToArray(), BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
             batch.Vao.AddBuffer(batch.VertexDeclaration, buffer, name: "Batch VBO");
             batch.Vao.AddIndexBuffer(new IndexBuffer(batch.Indices.ToArray()), "Batch IBO");
+            //  TODO: what if vao contains multiple buffers, e.g. tangent/bitangent?
 
             batch.Vertices.Clear();
             batch.Indices.Clear();
@@ -235,7 +234,7 @@ public class Renderer
         {
             var shouldRender = (node.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0;
 
-            var batchExists = batchDataDictionary.TryGetValue(node.StringTag, out var batch);
+            var batchExists = batchDataDictionary.TryGetValue(node.BatchingKey, out var batch);
             if (batchExists)
             {
                 batch!.UpdateCommand(node, shouldRender);
@@ -287,7 +286,7 @@ public class Renderer
         return key;
     }
 
-    private static void AddNewBatch(IDictionary<string, BatchData> dict, string key, Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
+    private static BatchData CreateNewBatch( Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
     {
         var data = new BatchData(shader, vertexDeclaration, maxBatchSize);
 
@@ -310,7 +309,7 @@ public class Renderer
 
         Log.CheckGlError();
 
-        dict.Add(key, data);
+        return data;
     }
 
     /// <summary>

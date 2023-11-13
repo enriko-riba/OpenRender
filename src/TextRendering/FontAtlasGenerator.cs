@@ -87,7 +87,7 @@ public sealed class FontAtlasGenerator
         //image.SaveAsPng("font-atlas.png");
 
         var buffer = MemoryMarshal.AsBytes(image.GetPixelMemoryGroup().Single().Span).ToArray();
-        fontAtlas.Texture = TextureBase.FromByteArray(buffer,
+        fontAtlas.Texture = Texture.FromByteArray(buffer,
             sizeW,
             sizeH,
             "fontAtlasSampler"

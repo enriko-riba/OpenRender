@@ -8,6 +8,27 @@ public interface IVertexData
     float[] Data { get; }
 }
 
+public readonly struct VertexPosition
+{
+    public VertexPosition(float x, float y, float z)
+    {
+        X = x;
+        Y = y;
+        Z = z;
+    }
+    
+    public VertexPosition(ReadOnlySpan<float> data)
+    {
+        X = data[0];
+        Y = data[1];
+        Z = data[2];
+    }
+
+    public float X { get; }
+    public float Y { get; }
+    public float Z { get; }
+}
+
 public readonly struct Vertex : IVertexData
 {
     private readonly float[] dataArray = new float[8];

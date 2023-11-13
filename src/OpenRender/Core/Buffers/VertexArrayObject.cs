@@ -20,7 +20,7 @@ public class VertexArrayObject
         AddBuffer(vertexDeclaration, buffer, name: name);
     }
 
-    public void AddBuffer<T>(VertexDeclaration vertexDeclaration, Buffer<T> buffer, uint? bindingDivisor = 0, string? name = null) where T : struct
+    public void AddBuffer<T>(VertexDeclaration vertexDeclaration, Buffer<T> buffer, string? name = null) where T : struct
     {
         foreach (var attribute in vertexDeclaration.Attributes)
         {
@@ -30,7 +30,6 @@ public class VertexArrayObject
             GL.VertexArrayBindingDivisor(vao, attribute.Location, attribute.Divisor);
         }
         GL.VertexArrayVertexBuffer(vao, lastBindingPoint, buffer.Vbo, 0, vertexDeclaration.Stride);
-        GL.VertexArrayBindingDivisor(vao, lastBindingPoint, bindingDivisor ?? 0);
         Log.CheckGlError();
 
         if (DataLength == 0) dataLength = buffer.Data.Length;

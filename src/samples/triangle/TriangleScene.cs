@@ -95,14 +95,14 @@ internal class TriangleScene : Scene
         };
         ResidentTextureData textureData = new()
         {
-            Diffuse = material.BindlessTextures[0],
-            Detail = material.BindlessTextures[1],
-            Normal = material.BindlessTextures[2],
-            Specular = material.BindlessTextures[3],
-            Bump = material.BindlessTextures[4],
-            T6 = material.BindlessTextures[5],
-            T7 = material.BindlessTextures[6],
-            T8 = material.BindlessTextures[7]
+            Diffuse = material.BindlessTextureHandles[0],
+            Detail = material.BindlessTextureHandles[1],
+            Normal = material.BindlessTextureHandles[2],
+            Specular = material.BindlessTextureHandles[3],
+            Bump = material.BindlessTextureHandles[4],
+            T6 = material.BindlessTextureHandles[5],
+            T7 = material.BindlessTextureHandles[6],
+            T8 = material.BindlessTextureHandles[7]
         };
         var cam = new CameraUniform()
         {

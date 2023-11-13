@@ -64,7 +64,7 @@ public sealed class SkyBox : SceneNode
         Material.Shader.SetMatrix4("view", ref view);
         Material.Shader.SetMatrix4("projection", ref projectionMatrix);
         
-        GL.BindTextureUnit(0, Material.TextureBases[0].Handle);
+        GL.BindTextureUnit(0, Material.Textures[0].Handle);
         Material.Shader.SetInt("texture_cubemap", 0);
 
         base.OnDraw(elapsed);

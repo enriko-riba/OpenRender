@@ -131,10 +131,13 @@ public class Scene
         isLoaded = true;
 
 #if DEBUG
-        var fnDebugProc = Utility.DebugMessageDelegate;
-        GL.DebugMessageCallback(fnDebugProc, IntPtr.Zero);
-        GL.Enable(EnableCap.DebugOutput);
-        GL.Enable(EnableCap.DebugOutputSynchronous);
+        if (Utility.IsExtensionSupported("KHR_debug") || Utility.IsExtensionSupported("GL_KHR_debug"))
+        {
+            var fnDebugProc = Utility.DebugMessageDelegate;
+            GL.DebugMessageCallback(fnDebugProc, IntPtr.Zero);
+            GL.Enable(EnableCap.DebugOutput);
+            GL.Enable(EnableCap.DebugOutputSynchronous);
+        }
 #endif        
     }
 

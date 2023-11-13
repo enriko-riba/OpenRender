@@ -78,7 +78,11 @@ public class SceneNode
     public void GetRotationMatrix(out Matrix4 rotationMatrix) => rotationMatrix = transform.rotationMatrix;
 
     [MemberNotNull(nameof(SceneNode.mesh))]
-    public void SetMesh(in Mesh mesh) => this.mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
+    public void SetMesh(in Mesh mesh)
+    {
+        this.mesh = mesh ?? throw new ArgumentNullException(nameof(mesh));
+        Vao = mesh.BuildVao();
+    }    
 
     public Mesh Mesh => mesh;
 
@@ -120,11 +124,9 @@ public class SceneNode
 
     public virtual void OnDraw(double elapsed)
     {
-        Vao ??= mesh.BuildVao();
+        GL.BindVertexArray(Vao!);
 
-        GL.BindVertexArray(Vao);
-
-        if (Vao.DrawMode == DrawMode.Indexed)
+        if (Vao!.DrawMode == DrawMode.Indexed)
             GL.DrawElements(PrimitiveType.Triangles, Vao.DataLength, DrawElementsType.UnsignedInt, 0);
         else
             GL.DrawArrays(PrimitiveType.Triangles, 0, Vao.DataLength);
@@ -246,5 +248,5 @@ public class SceneNode
 
     internal FrameBits FrameBits;
 
-    internal string StringTag { get; set; } = string.Empty;
+    internal string BatchingKey { get; set; } = string.Empty;
 }

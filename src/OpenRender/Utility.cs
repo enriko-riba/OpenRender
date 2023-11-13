@@ -33,6 +33,17 @@ public static class Utility
         }
     }
 
+    public static bool IsExtensionSupported(string name)
+    {
+        var n = GL.GetInteger(GetPName.NumExtensions);
+        for (var i = 0; i < n; i++)
+        {
+            var extension = GL.GetString(StringNameIndexed.Extensions, (uint)i)!;
+            if (extension == name) return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Creates a rotation quaternion which rotates the eyeDirection to point to the targetDirection
     /// </summary>
@@ -74,7 +85,7 @@ public static class Utility
     }
 
     /// <summary>
-    /// 
+    /// Creates a Vector3 from a Color4.
     /// </summary>
     /// <param name="color"></param>
     /// <returns></returns>

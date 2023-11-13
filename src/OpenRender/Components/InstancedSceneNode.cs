@@ -14,7 +14,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
     private readonly List<TStateData> stateDataList = new();
     private readonly TInstanceData[] instanceData;
 
-    public InstancedSceneNode(Mesh mesh, int maxNumberOfInstances, Material? material = default) : base(mesh, material)
+    public InstancedSceneNode(Mesh mesh, int maxNumberOfInstances, Material material) : base(mesh, material)
     {
         Vao = mesh.BuildVao();
         RenderGroup = RenderGroup.Default;
@@ -36,7 +36,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
         Log.CheckGlError();
 
         var shader = new Shader("Shaders/instanced.vert", "Shaders/standard.frag");
-        material!.Shader = shader;
+        material.Shader = shader;
         DisableCulling = true;
     }
 

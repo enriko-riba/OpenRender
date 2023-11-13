@@ -63,6 +63,20 @@ out vec4 outputColor;
 
 vec3 LambertianComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 lightColor);
 vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower);
+vec3 BumpMap(vec3 normal)
+{
+     vec3 posDX = dFdxFine(fragPos);  // choose dFdx (#version 420) or dFdxFine (#version 450) here
+     vec3 posDY = dFdyFine (fragPos);
+     vec3 r1 = cross (posDY, normal);
+     vec3 r2 = cross (normal, posDX);
+     float det = dot (posDX , r1);
+     float Hll = texture(tex.bump, texCoord).x;    //-- height from bump map texture, tc=texture coordinates
+     float Hlr = texture(tex.bump, texCoord + dFdx(texCoord.xy)).x;
+     float Hul = texture(tex.bump, texCoord + dFdy(texCoord.xy)).x;
+     vec3 surf_grad = sign(det) * ( (Hlr - Hll) * r1 + (Hul - Hll)* r2 );    
+     const float bump_amt = 0.8;       // bump_amt = adjustable bump amount
+     return normal * (1.0-bump_amt) + bump_amt * normalize(abs(det) * normal - surf_grad );  // bump normal    
+}
 
 void main()
 { 
@@ -79,8 +93,8 @@ void main()
     float blendFactor = mat.detailTextureScaleFactor == 0 ? 0 : mat.detailTextureBlendFactor;
     texDiffuse = mix(texDiffuse, texDetail, blendFactor) * mat.diffuse;
     
-    vec3 normalMap = texture(tex.normal, texCoord).rgb;
-    //norm = normalize(normalMap * 2.0 - 1.0);
+    //norm = BumpMap(norm);
+    
 
     vec3 Ac = texDiffuse * dirLight.ambient;
     vec3 Dc = texDiffuse * LambertianComponent(lightDir, norm, dirLight.diffuse);
