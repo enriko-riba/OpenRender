@@ -61,8 +61,8 @@ in vec3 fragPos;
 
 out vec4 outputColor;
 
-vec3 LambertianComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 lightColor);
-vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower);
+vec3 LambertianComponent(in vec3 directionToLight, in vec3 N, in vec3 lightColor);
+vec3 SpecularComponent(in vec3 directionToLight, in vec3 N, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower);
 vec3 BumpMap(vec3 normal)
 {
      vec3 posDX = dFdxFine(fragPos);  // choose dFdx (#version 420) or dFdxFine (#version 450) here
@@ -81,9 +81,8 @@ vec3 BumpMap(vec3 normal)
 void main()
 { 
     outputColor = vec4(0);
-    vec3 norm = normalize(vertexNormal);
-    vec3 viewDir = normalize(cameraPos - fragPos);
-    vec3 lightDir = -normalize(dirLight.position);
+    vec3 N = normalize(vertexNormal);
+    vec3 L = -normalize(dirLight.position);
    
     vec3 texDiffuse = vec3(1);
     vec3 texDetail = vec3(1);
@@ -92,14 +91,25 @@ void main()
     texDetail = vec3(texture(tex.detail, texCoord * mat.detailTextureScaleFactor));
     float blendFactor = mat.detailTextureScaleFactor == 0 ? 0 : mat.detailTextureBlendFactor;
     texDiffuse = mix(texDiffuse, texDetail, blendFactor) * mat.diffuse;
-    
-    //norm = BumpMap(norm);
-    
+    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);
 
-    vec3 Ac = texDiffuse * dirLight.ambient;
-    vec3 Dc = texDiffuse * LambertianComponent(lightDir, norm, dirLight.diffuse);
-    vec3 Sc = texDiffuse * SpecularComponent(lightDir, norm, fragPos, dirLight.specular, mat.specular, mat.shininess);    
-    outputColor += vec4(mat.emissive + Ac + Dc + Sc, 1);
+    //N = BumpMap(norm);    
+    float lambert = clamp(dot(N, L), 0, 1);
+    vec3 Ac = dirLight.ambient;
+    vec3 Dc = dirLight.diffuse * lambert;
+    vec3 Sc = vec3(0);
+
+    if(lambert > 0)
+    {
+        // blinn-phong
+        vec3 V = normalize(cameraPos - fragPos);
+        vec3 H = normalize(L + V);
+        float specular = clamp(dot(H, N), 0, 1);
+        float exponent = pow(2, mat.shininess * 2.0) + 2;       
+        Sc = pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular;
+    }
+    outputColor += vec4(mat.emissive.rgb + (Sc + Ac + Dc) * texColor, 1);
+    outputColor = clamp(outputColor, 0, 1);
 }
 
 
@@ -108,36 +118,36 @@ void main()
 //	Description:	basic lambertian light equation.
 //				
 //-----------------------------------------------------------------------------------------------
-vec3 LambertianComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 lightColor)
-{
-    float d = dot(directionToLight, worldNormal);
-	float lamb = max(d, 0);
-	return lamb * lightColor;
-}
-
+//vec3 LambertianComponent(in vec3 directionToLight, in vec3 N, in vec3 lightColor)
+//{
+//    float d = dot(directionToLight, N);
+//	float lamb = max(d, 0);
+//	return lamb * lightColor;
+//}
+//
 //-----------------------------------------------------------------------------------------------
 //
 //	Description:	basic specular light equation.
 //				
 //-----------------------------------------------------------------------------------------------
-vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
-{
-	vec3 resultColor = vec3(0);
-	if(length(specularColor)>0)
-	{
-        float NdotL = dot(worldNormal, directionToLight);
-        if(NdotL > 0) 
-        {
-		    vec3 reflectionVector = normalize(reflect(-directionToLight, worldNormal));
-		    vec3 directionToCamera = normalize(cameraPos - worldPosition);
-            float d = dot(reflectionVector, directionToCamera);
-		    resultColor = lightColor * clamp(d * specularColor, 0.0, 1.0) * specularPower;
-		    resultColor = clamp(resultColor, 0.0, 1.0);
-        }
-	}	
-	return resultColor;
-}
-
+//vec3 SpecularComponent(in vec3 directionToLight, in vec3 N, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
+//{
+//	vec3 resultColor = vec3(0);
+//	if(length(specularColor)>0)
+//	{
+//        float NdotL = dot(N, directionToLight);
+//        if(NdotL > 0) 
+//        {
+//		    vec3 reflectionVector = normalize(reflect(-directionToLight, N));
+//		    vec3 directionToCamera = normalize(cameraPos - worldPosition);
+//            float d = dot(reflectionVector, directionToCamera);
+//		    resultColor = lightColor * clamp(d * specularColor, 0.0, 1.0) * specularPower;
+//		    resultColor = clamp(resultColor, 0.0, 1.0);
+//        }
+//	}	
+//	return resultColor;
+//}
+//
 /*
 
 //-----------------------------------------------------------------------------------------------
@@ -145,7 +155,7 @@ vec3 SpecularComponent(in vec3 directionToLight, in vec3 worldNormal, in vec3 wo
 //	Description:	specular light equation based on the simplified Blinn Phong equation.
 //				
 //-----------------------------------------------------------------------------------------------
-vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 worldNormal, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
+vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 N, in vec3 worldPosition, in vec3 lightColor, in vec3 specularColor, in float specularPower)
 {    
 	vec3 specular = vec3(0);
 	if(length(specularColor)>0)
@@ -156,7 +166,7 @@ vec3 BlinnPhongSpecular( in vec3 directionToLight, in vec3 worldNormal, in vec3 
 		vec3 half_vector = normalize(directionToLight + viewer);
 	 
 		// Compute the angle between the half vector and normal
-		float  HdotN = max( 0.0f, dot( half_vector, worldNormal ) );
+		float  HdotN = max( 0.0f, dot( half_vector, N ) );
 	 
 		// Compute the specular color
 		specular = specularColor * pow( HdotN, specularPower ) * lightColor;

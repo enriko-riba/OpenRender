@@ -91,10 +91,13 @@ public class Mesh
             tbData[idx + 4] = r * (-duv2.X * edge1.Y + duv1.X * edge2.Y);
             tbData[idx + 5] = r * (-duv2.X * edge1.Z + duv1.X * edge2.Z);
         }
+
         var tbBuffer = new Buffer<float>(tbData);
+        //  TODO: find the max attribute location in the vertex declaration and use that + 1, +2 for tangent and bitangent
         var tangentLayout = new VertexAttribLayout("tangent", 0, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float, 0);
         var bitangentLayout = new VertexAttribLayout("bitangent", 1, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float, 0);
         vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout[] { tangentLayout, bitangentLayout }), tbBuffer, name: "TB");
+        //  TODO: patch the current vertex declaration to add those new attributes
     }
     
     private VertexArrayObject? vao;

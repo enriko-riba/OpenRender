@@ -52,6 +52,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "triangle", "src\samples\tri
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "batching", "src\samples\batching\batching.csproj", "{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "testing", "src\samples\testing\testing.csproj", "{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -86,6 +88,10 @@ Global
 		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -100,6 +106,7 @@ Global
 		{3BAF8E0B-32B0-4DCA-BCC4-E8B3D14DD1BF} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4} = {3A37113B-D520-4A02-B89A-8309402078A5}
+		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55} = {3A37113B-D520-4A02-B89A-8309402078A5}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {298EB5BC-94B1-4DF8-B27D-C392B73A8015}

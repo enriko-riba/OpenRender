@@ -53,7 +53,7 @@ internal class BatchingScene : Scene
         var dirLight = new LightUniform()
         {
             Direction = new Vector3(-0.95f, -0.995f, 0.85f),
-            Ambient = new Vector3(0.15f, 0.10f, 0.15f),
+            Ambient = new Vector3(0.1f, 0.05f, 0.1f),
             Diffuse = new Vector3(0.8f),
             Specular = new Vector3(1),
         };
@@ -266,12 +266,12 @@ internal class BatchingScene : Scene
             Material.Create(shader, new TextureDescriptor[]{
                 new("Resources/ball13.jpg"), 
                 new("Resources/container.png", TextureType: TextureType.Detail)
-            }, shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
-            Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.85f),
+            }, shininess: 1f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
+            Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 0.60f),
             Material.Create(shader, new TextureDescriptor[]{            
                 new ("Resources/awesomeface.png"),
                 new TextureDescriptor ("Resources/awesomeface-normal.png", TextureType: TextureType.Normal)
-            }, shininess: 0.60f),
+            }, shininess: 0.40f),
             Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.15f),

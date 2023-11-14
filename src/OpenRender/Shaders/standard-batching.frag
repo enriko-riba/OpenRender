@@ -81,9 +81,8 @@ void main()
 {    
     outputColor = vec4(0);
 
-    vec3 norm = normalize(vertexNormal);
-    vec3 lightDir = normalize(dirLight.position);
-    vec3 viewDir = normalize(cameraPos - fragPos);
+    vec3 N = normalize(vertexNormal);
+    vec3 L = -normalize(dirLight.position);
 
     vec3 texDiffuse = vec3(1);
     vec3 texDetail = vec3(1);
@@ -95,19 +94,25 @@ void main()
 
     texDiffuse = vec3(texture(texture_diffuse, texCoord));
     texDetail = vec3(texture(texture_detail, texCoord * mat.detailTextureScaleFactor));
-    texDiffuse = mix(texDiffuse, texDetail, mat.detailTextureBlendFactor);
-
-    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);   
-    //norm = BumpMap(norm);
-   
-    vec3 Dc = dirLight.diffuse * clamp(dot(-lightDir, norm), 0.0, 1.0);
+    float blendFactor = mat.detailTextureScaleFactor == 0 ? 0 : mat.detailTextureBlendFactor;
+    texDiffuse = mix(texDiffuse, texDetail, blendFactor) * mat.diffuse;
+    vec3 texColor = texDiffuse * min(vertexColor + mat.diffuse, 1.0);  
+    
+    //N = BumpMap(N);
+    float lambert = clamp(dot(N, L), 0, 1);
     vec3 Ac = dirLight.ambient;
+    vec3 Dc = dirLight.diffuse * lambert;
     vec3 Sc = vec3(0);
-    float NdotL = dot(norm, -lightDir);
-    if(NdotL > 0)
+
+    if(lambert > 0)
     {
-        vec3 R = normalize(2 * NdotL * norm + lightDir);     
-        Sc = pow(clamp(dot(R, viewDir), 0.0, 1.0), mat.shininess) * mat.specular;
+        // blinn-phong
+        vec3 V = normalize(cameraPos - fragPos);
+        vec3 H = normalize(L + V);
+        float specular = clamp(dot(H, N), 0, 1);
+        float exponent = pow(2, mat.shininess * 2.0) + 2;       
+        Sc = pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular;
     }
-    outputColor += vec4(mat.emissive.rgb + (Ac + Dc + Sc) * texColor, 1);
+    outputColor += vec4(mat.emissive.rgb + (Sc + Ac + Dc) * texColor, 1);
+    outputColor = clamp(outputColor, 0, 1);
 }

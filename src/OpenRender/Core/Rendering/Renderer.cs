@@ -30,7 +30,6 @@ public class Renderer
     protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
     protected internal readonly UniformBlockBuffer<ResidentTextureData> uboTextures;
 
-
     public Renderer()
     {
         uboCamera = new UniformBlockBuffer<CameraUniform>("camera", 0);
