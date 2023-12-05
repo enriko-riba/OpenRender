@@ -21,7 +21,7 @@ public enum VertexAttribLocation
 /// <summary>
 /// Holds information about a vertex attribute layout.
 /// </summary>
-public struct VertexAttribLayout
+public struct VertexAttribLayout(string debugName, uint location, int size, VertexAttribType type, uint offset, uint divisor)
 {
     public VertexAttribLayout(VertexAttribLocation location, int size, VertexAttribType type) :
         this(location.ToString(), (uint)location, size, type, 0, 0)
@@ -38,42 +38,32 @@ public struct VertexAttribLayout
         this(debugName, location, size, type, 0, divisor)
     { }
 
-    public VertexAttribLayout(string debugName, uint location, int size, VertexAttribType type, uint offset, uint divisor)
-    {
-        DebugName = debugName;
-        Location = location;
-        Size = size;
-        Type = type;
-        Offset = offset;
-        Divisor = divisor;
-    }
-
     /// <summary>
     /// Attribute name for debug purposes.
     /// </summary>
-    public string DebugName { get; set; }
+    public string DebugName { get; set; } = debugName;
 
     /// <summary>
     /// Attribute location.
     /// </summary>
-    public uint Location { get; set; }
+    public uint Location { get; set; } = location;
 
     /// <summary>
     /// Size in <see cref="Type"/> units.
     /// </summary>
-    public int Size { get; set; }
+    public int Size { get; set; } = size;
 
-    public VertexAttribType Type { get; set; }
+    public VertexAttribType Type { get; set; } = type;
 
     /// <summary>
     /// Offset in bytes.
     /// </summary>
-    public uint Offset { get; set; }
+    public uint Offset { get; set; } = offset;
 
     /// <summary>
     /// Divisor for instanced rendering.
     /// </summary>
-    public uint Divisor { get; set; }
+    public uint Divisor { get; set; } = divisor;
 
     public bool Normalized { get; set; }
 

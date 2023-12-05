@@ -7,7 +7,7 @@ namespace OpenRender.SceneManagement;
 public class SceneManager : GameWindow
 {
     private readonly Stopwatch sw = new();
-    private readonly List<Scene> sceneList = new();
+    private readonly List<Scene> sceneList = [];
     private Scene? activeScene;
 
     private long lastFpsTime = 0;

@@ -10,8 +10,8 @@ namespace OpenRender.SceneManagement;
 public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TInstanceData : struct
 {
     private readonly uint vbInstanceData;
-    private readonly List<TInstanceData> instanceDataList = new();
-    private readonly List<TStateData> stateDataList = new();
+    private readonly List<TInstanceData> instanceDataList = [];
+    private readonly List<TStateData> stateDataList = [];
     private readonly TInstanceData[] instanceData;
 
     public InstancedSceneNode(Mesh mesh, int maxNumberOfInstances, Material material) : base(mesh, material)

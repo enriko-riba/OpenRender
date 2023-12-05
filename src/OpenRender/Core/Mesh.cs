@@ -7,17 +7,19 @@ using OpenTK.Mathematics;
 namespace OpenRender.Core;
 
 /// <summary>
-/// Mesh is just a container for a geometry data.
+/// Mesh is just a container for geometry data.
+/// Currently, only interleaved vertex data is supported, therefore the mesh contains only one vertex buffer.
 /// </summary>
 public class Mesh
 {
-    private readonly float[] vertices;
+    private float[] vertices;
     private readonly uint[] indices;
 
     public VertexDeclaration VertexDeclaration { get; private set; }
 
     public Mesh(VertexDeclaration vertexDeclaration, Vertex[] vertices, uint[] indices) :
-        this(vertexDeclaration, GetVertices(vertexDeclaration, vertices), indices) { }
+        this(vertexDeclaration, GetVertices(vertexDeclaration, vertices), indices)
+    { }
 
     public Mesh(VertexDeclaration vertexDeclaration, Vertex2D[] vertices, uint[] indices)
     {
@@ -40,6 +42,7 @@ public class Mesh
     public uint[] Indices => indices;
     public float[] Vertices => vertices;
 
+    //  TODO: fix TBN calculation, atm completely broken. TB should be calculated for a triangle and then added to all three vertices.
     public void CreateTBN()
     {
         // TBN requires normals
@@ -48,12 +51,14 @@ public class Mesh
             throw new InvalidOperationException("TBN requires normals!");
         }
 
-        vao ??= BuildVao();
-        var uvOffset = VertexDeclaration.Attributes.First(x => x.Location == (uint)VertexAttribLocation.TextureCoord).Offset / sizeof(float);
-        var stride = VertexDeclaration.StrideInFloats;        
+        var stride = VertexDeclaration.StrideInFloats;
+        var newStride = stride + 6;  //  3 floats tangent + 3 floats bitangent
         var vertexCount = vertices.Length / stride;
+        var dstData = new float[vertexCount * newStride];
+
+        var uvOffset = VertexDeclaration.Attributes.First(x => x.Location == (uint)VertexAttribLocation.TextureCoord).Offset / sizeof(float);
         var tbData = new float[vertexCount * 6];    //  3 floats tangent + 3 floats bitangent
-        for (var i = 0; i < indices.Length; i += stride)
+        for (var i = 0; i < indices.Length; i += 3)
         {
             var i0 = indices[i];
             var i1 = indices[i + 1];
@@ -81,8 +86,11 @@ public class Mesh
             var duv1 = uv1 - uv0;
             var duv2 = uv2 - uv0;
 
-            var r = 1.0f / (duv1.X * duv2.Y - duv2.X * duv1.Y);
+            var f = (duv1.X * duv2.Y - duv2.X * duv1.Y);
+            if (Math.Abs(f) < 1e-6f) f = 1.0f;
+            var r = 1.0f / f;
 
+            //  calculated tangent and bitangent
             var idx = (i / stride) * 6;
             tbData[idx + 0] = r * (duv2.Y * edge1.X - duv1.Y * edge2.X);
             tbData[idx + 1] = r * (duv2.Y * edge1.Y - duv1.Y * edge2.Y);
@@ -92,18 +100,30 @@ public class Mesh
             tbData[idx + 5] = r * (-duv2.X * edge1.Z + duv1.X * edge2.Z);
         }
 
-        var tbBuffer = new Buffer<float>(tbData);
-        //  TODO: find the max attribute location in the vertex declaration and use that + 1, +2 for tangent and bitangent
-        var tangentLayout = new VertexAttribLayout("tangent", 0, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float, 0);
-        var bitangentLayout = new VertexAttribLayout("bitangent", 1, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float, 0);
-        vao.AddBuffer(new VertexDeclaration(new VertexAttribLayout[] { tangentLayout, bitangentLayout }), tbBuffer, name: "TB");
-        //  TODO: patch the current vertex declaration to add those new attributes
+        for (var i = 0; i < vertexCount; i++)
+        {
+            // Copy original attributes and add tangent and bitangent
+            var dstIndex = (i / stride) * newStride;
+            vertices.AsSpan(i * stride, stride).CopyTo(dstData.AsSpan(dstIndex, stride));
+            tbData.AsSpan().Slice(i * 6, 6).CopyTo(dstData.AsSpan(dstIndex + stride, 6));
+        }
+
+        vertices = dstData;
+        var tangentLayout = new VertexAttribLayout(VertexAttribLocation.Tangent, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float);
+        var bitangentLayout = new VertexAttribLayout(VertexAttribLocation.Bitangent, 3, OpenTK.Graphics.OpenGL4.VertexAttribType.Float);
+        VertexDeclaration = VertexDeclaration.AppendAttribute(tangentLayout)
+                                             .AppendAttribute(bitangentLayout);
     }
-    
+
     private VertexArrayObject? vao;
 
     public VertexArrayObject BuildVao()
     {
+        if (vao != null)
+        {
+            return vao;
+        }
+
         if (vertices != null)
         {
             vao = new VertexArrayObject();

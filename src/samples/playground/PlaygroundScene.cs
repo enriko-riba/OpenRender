@@ -200,19 +200,19 @@ internal class PlaygroundScene : Scene
 
         var mat1 = Material.Create(
             defaultShader,
-            new TextureDescriptor[] {
-                new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
-                new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail)
-            },
+            [
+                new ("Resources/container.png", TextureType: TextureType.Diffuse),
+                new ("Resources/awesomeface.png", TextureType: TextureType.Detail)
+            ],
             detailTextureScaleFactor: 10f,
             shininess: 0.15f
         );
         var mat2 = Material.Create(
             defaultShader,
-            new TextureDescriptor[] {
-                new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
-                new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail)
-            },
+            [
+                new("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
+                new("Resources/container.png", TextureType: TextureType.Detail)
+            ],
             detailTextureScaleFactor: 3f,
             shininess: 0.25f
         );
@@ -258,10 +258,10 @@ internal class PlaygroundScene : Scene
         const int NodeCount = 5000;
         var materials = new Material[]
         {
-            Material.Create(defaultShader, new TextureDescriptor[]{
+            Material.Create(defaultShader, [
                 new("Resources/ball13.jpg"),
                 new("Resources/container.png", TextureType: TextureType.Detail)
-            }, shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
+            ], shininess: 2.0f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/metallic.png"), shininess: 1.85f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/awesomeface.png"), shininess: 0.60f),
             Material.Create(defaultShader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
@@ -289,7 +289,7 @@ internal class PlaygroundScene : Scene
     private void AddMetallicBoxes()
     {
         var mat = Material.Create(defaultShader,
-            new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse) },
+            [new ("Resources/metallic.png", TextureType: TextureType.Diffuse)],
             0.70f);
         mat.EmissiveColor = new(0.05f, 0.07f, 0.005f);
 
@@ -318,16 +318,16 @@ internal class PlaygroundScene : Scene
         AddNode(animatedSprite);
         animatedSprite.Size = new(60, 65);
         animatedSprite.SetPosition(new(770, 210));
-        animatedSprite.AddAnimation("left", new Rectangle[] {
+        animatedSprite.AddAnimation("left", [
             new (0, 0, 50, 50),
             new (50, 0, 50, 50),
             new (100, 0, 50, 50)
-        });
-        animatedSprite.AddAnimation("right", new Rectangle[] {
+        ]);
+        animatedSprite.AddAnimation("right", [
             new (0, 50, 50, 50),
             new (50, 50, 50, 50),
             new (100, 50, 50, 50)
-        });
+        ]);
         animatedSprite.Play("left", 3);
     }
 }

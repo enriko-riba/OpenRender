@@ -1,4 +1,4 @@
-﻿using OpenRender.Components;
+﻿using ImGuiNET;
 using OpenRender.Core;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
@@ -16,6 +16,7 @@ internal class TestScene : Scene
 {
     private readonly ITextRenderer tr;
 
+
     public TestScene(ITextRenderer textRenderer) : base()
     {
         BackgroundColor = Color4.DarkBlue;
@@ -27,6 +28,13 @@ internal class TestScene : Scene
     public override void Load()
     {
         base.Load();
+
+        var context = ImGui.CreateContext();
+        ImGui.SetCurrentContext(context);
+        var io = ImGui.GetIO();
+        io.Fonts.AddFontDefault();
+
+
         var dirLight = new LightUniform()
         {
             Direction = new Vector3(-0.95f, -0.995f, 0.85f),
@@ -56,7 +64,7 @@ internal class TestScene : Scene
         base.UpdateFrame(elapsedSeconds);
 
         if (!SceneManager.IsFocused) return;
-        if (SceneManager.KeyboardState.IsKeyDown(Keys.Escape))  SceneManager.Close();
+        if (SceneManager.KeyboardState.IsKeyDown(Keys.Escape)) SceneManager.Close();
         if (SceneManager.KeyboardState.IsKeyPressed(Keys.F1)) ShowBoundingSphere = !ShowBoundingSphere;
         if (SceneManager.KeyboardState.IsKeyPressed(Keys.F11)) SceneManager.WindowState = SceneManager.WindowState == WindowState.Fullscreen ?
             WindowState.Normal : WindowState.Fullscreen;
@@ -72,6 +80,8 @@ internal class TestScene : Scene
         const int TextStartY = 0;
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
+
+        //ImGuiTest(elapsedSeconds);
     }
 
     private void HandleMovement(double elapsedTime)
@@ -113,7 +123,7 @@ internal class TestScene : Scene
 
         var mouseState = SceneManager.MouseState;
         var rotationPerSecond = (float)(elapsedTime * RotationSpeed);
-        
+
         if (SceneManager.KeyboardState.IsKeyDown(Keys.Q))
         {
             camera!.AddRotation(0, 0, rotationPerSecond);
@@ -145,16 +155,73 @@ internal class TestScene : Scene
         var (vertices, indices) = GeometryHelper.CreateBox();
         var shader = new Shader("Shaders/standard-batching.vert", "Shaders/standard-batching.frag");
         var mat = Material.Create(shader,
-            new TextureDescriptor[] { new TextureDescriptor("Resources/container.png", TextureType: TextureType.Diffuse),
-            new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal)},
+            [
+                new("Resources/container.png", TextureType: TextureType.Diffuse),
+                new("Resources/container-normal.png", TextureType: TextureType.Normal)
+            ],
             0.70f);
         mat.EmissiveColor = new(0.05f, 0.09f, 0.05f);
         for (var i = 0; i < 50; i++)
         {
-            var box = new SceneNode(new Mesh(Vertex.VertexDeclaration, vertices, indices), mat);
+            var box = new TestNode(new Mesh(Vertex.VertexDeclaration, vertices, indices), mat);
             box.SetPosition(new(-250 + i * 10, 0, -50));
             AddNode(box);
             box.IsBatchingAllowed = true;
         }
+    }
+
+
+    private float _f;
+    private bool _showImGuiDemoWindow;
+    private int _counter;
+    private int _dragInt;
+
+    private void ImGuiTest(double elapsedSeconds)
+    {
+        var io = ImGui.GetIO();
+        io.DisplaySize = new System.Numerics.Vector2(SceneManager.Size.X, SceneManager.Size.Y);
+        io.DeltaTime = (float)elapsedSeconds; // DeltaTime is in seconds.
+        ImGui.NewFrame();
+        ImGui.Text("");
+        ImGui.Text(string.Empty);
+        ImGui.Text("Hello, world!");                                        // Display some text (you can use a format string too)
+        ImGui.SliderFloat("float", ref _f, 0, 1, _f.ToString("0.000"));  // Edit 1 float using a slider from 0.0f to 1.0f    
+                                                                         //ImGui.ColorEdit3("clear color", ref _clearColor);                   // Edit 3 floats representing a color
+
+        ImGui.Text($"Mouse position: {ImGui.GetMousePos()}");
+
+        ImGui.Checkbox("ImGui Demo Window", ref _showImGuiDemoWindow);                 // Edit bools storing our windows open/close state
+        //ImGui.Checkbox("Another Window", ref _showAnotherWindow);
+        //ImGui.Checkbox("Memory Editor", ref _showMemoryEditor);
+        if (ImGui.Button("Button"))                                         // Buttons return true when clicked (NB: most widgets return true when edited/activated)
+            _counter++;
+        ImGui.SameLine(0, -1);
+        ImGui.Text($"counter = {_counter}");
+
+        ImGui.DragInt("Draggable Int", ref _dragInt);
+
+        var framerate = ImGui.GetIO().Framerate;
+        ImGui.Text($"Application average {1000.0f / framerate:0.##} ms/frame ({framerate:0.#} FPS)");
+    }
+}
+
+internal class TestNode : SceneNode
+{
+    private readonly int rotationAxis;
+
+    public TestNode(Mesh mesh, Material material) : base(mesh, material)
+    {
+        IsBatchingAllowed = true;
+        rotationAxis = Random.Shared.Next(0, 2);
+    }
+
+    public override void OnUpdate(Scene scene, double elapsedSeconds)
+    {
+        var rot = AngleRotation;
+        if (rotationAxis == 0) rot.X += (float)(Random.Shared.NextDouble() * elapsedSeconds * 2);
+        if (rotationAxis == 1) rot.Y += (float)(Random.Shared.NextDouble() * elapsedSeconds * 2);
+        if (rotationAxis == 2) rot.Z += (float)(Random.Shared.NextDouble() * elapsedSeconds * 2);
+        SetRotation(rot);
+        base.OnUpdate(scene, elapsedSeconds);
     }
 }

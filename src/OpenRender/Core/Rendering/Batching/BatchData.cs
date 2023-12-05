@@ -8,41 +8,30 @@ namespace OpenRender.Core.Rendering.Batching;
 /// <summary>
 /// Holds batch related data like commands, SSBO buffers, batch geometry.
 /// </summary>
-internal class BatchData
+internal class BatchData(Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
 {
-    public BatchData(Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
-    {
-        Shader = shader;
-        VertexDeclaration = vertexDeclaration;
-        CommandsDataArray = new DrawElementsIndirectCommand[maxBatchSize];
-        WorldMatricesDataArray = new Matrix4[maxBatchSize];
-        MaterialDataArray = new MaterialData[maxBatchSize];
-        TextureDataArray = new ResidentTextureData[maxBatchSize];
-        LastIndex = -1;
-    }
-
     public VertexArrayObject Vao = new();
-    public List<float> Vertices = new();
-    public List<uint> Indices = new();
+    public List<float> Vertices = [];
+    public List<uint> Indices = [];
 
     public uint CommandsBufferName;
     public uint WorldMatricesBufferName;
     public uint MaterialsBufferName;
     public uint TexturesBufferName;
 
-    public VertexDeclaration VertexDeclaration;
-    public Shader Shader;
+    public VertexDeclaration VertexDeclaration = vertexDeclaration;
+    public Shader Shader = shader;
 
     /// <summary>
     /// Contains SceneNode ID mappings to array indices.
     /// </summary>
-    public Dictionary<uint, int> MapperDict = new();
+    public Dictionary<uint, int> MapperDict = [];
 
-    public DrawElementsIndirectCommand[] CommandsDataArray;
-    public Matrix4[] WorldMatricesDataArray;
-    public MaterialData[] MaterialDataArray;
-    public ResidentTextureData[] TextureDataArray;
-    public int LastIndex;
+    public DrawElementsIndirectCommand[] CommandsDataArray = new DrawElementsIndirectCommand[maxBatchSize];
+    public Matrix4[] WorldMatricesDataArray = new Matrix4[maxBatchSize];
+    public MaterialData[] MaterialDataArray = new MaterialData[maxBatchSize];
+    public ResidentTextureData[] TextureDataArray = new ResidentTextureData[maxBatchSize];
+    public int LastIndex = -1;
 
 
     public void WriteDrawCommand(SceneNode node)

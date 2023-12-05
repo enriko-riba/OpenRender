@@ -2,17 +2,15 @@
 using OpenTK.Mathematics;
 
 namespace OpenRender.Core;
-public class DistanceComparer : IComparer<SceneNode>
+public class DistanceComparer(Vector3 cameraPosition) : IComparer<SceneNode>
 {
-    private Vector3 cameraPosition;
-
-    public DistanceComparer(Vector3 cameraPosition)
+    public int Compare(SceneNode? a, SceneNode? b)
     {
-        this.cameraPosition = cameraPosition;
-    }
+        if (a == null || b == null)
+        {
+            return 0;
+        }
 
-    public int Compare(SceneNode a, SceneNode b)
-    {
         a.GetPosition(out var aPosition);
         b.GetPosition(out var bPosition);
         var distanceA = Vector3.Distance(aPosition, cameraPosition);

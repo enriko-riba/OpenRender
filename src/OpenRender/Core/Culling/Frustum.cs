@@ -9,10 +9,7 @@ public class Frustum
 
     public Vector4[] Planes => planes;
 
-    public void Update(in ICamera camera)
-    {
-        ExtractPlanes(camera.ViewProjectionMatrix);
-    }
+    public void Update(in ICamera camera) => ExtractPlanes(camera.ViewProjectionMatrix);
 
     private void ExtractPlanes(in Matrix4 m)
     {

@@ -17,14 +17,14 @@ public class VertexDeclaration
             AddAttribute(attribute);
     }
 
-    private readonly List<VertexAttribLayout> attributes = new();
+    private readonly List<VertexAttribLayout> attributes = [];
 
     /// <summary>
     /// Adds a vertex attribute layout to the vertex declaration.
     /// </summary>
     /// <param name="attributeLayout"></param>
     /// <exception cref="ArgumentException"></exception>
-    public void AddAttribute(VertexAttribLayout attributeLayout)
+    private void AddAttribute(VertexAttribLayout attributeLayout)
     {
         if (attributeLayout.Location < 0)
             throw new ArgumentException($"Layout location must be greater than or equal to 0!", nameof(attributeLayout));
@@ -52,6 +52,23 @@ public class VertexDeclaration
             size += (uint)attrib.Size * GetAttributeTypeSize(attrib.Type);
         }
         Stride = (int)size;
+    }
+
+    /// <summary>
+    /// Appends the attribute to the end of the vertex declaration.
+    /// </summary>
+    /// <param name="attributeLayout"></param>
+    public VertexDeclaration AppendAttribute(VertexAttribLayout attributeLayout)
+    {
+        List<VertexAttribLayout> newAttributes = [.. attributes];
+        var last = newAttributes[^1];
+        var lastOffsetInBytes = last.Offset;
+        var size = (uint)last.Size * GetAttributeTypeSize(last.Type);
+        attributeLayout.Offset = lastOffsetInBytes + size;
+        newAttributes.Add(attributeLayout);
+        var vdx = new VertexDeclaration(newAttributes);
+        return vdx;
+        //Stride += (int)size;
     }
 
     /// <summary>

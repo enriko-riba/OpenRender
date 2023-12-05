@@ -25,6 +25,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\..\OpenRender\OpenRender.csproj" />
 		<ProjectReference Include="..\..\TextRendering\TextRendering.csproj" />
+		<PackageReference Include="ImGui.NET" Version="1.90.0.1" />
 	</ItemGroup>
 
 	<ItemGroup>

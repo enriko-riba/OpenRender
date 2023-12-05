@@ -19,7 +19,7 @@ internal class SnakeScene : Scene
 
     private readonly ITextRenderer textRenderer;
     private readonly GameModel gameModel = new();
-    private readonly Dictionary<Vector2, Sprite> gridSprites = new();
+    private readonly Dictionary<Vector2, Sprite> gridSprites = [];
     private readonly SnakeSprite snakeSprite;
     private Button btnResume = default!;
     private Button btnExit = default!;
@@ -153,14 +153,14 @@ internal class SnakeScene : Scene
                         var animatedSprite = AnimatedSprite.Create("Resources/atlas.png");
                         animatedSprite.Size = new Vector2i(TileSize, TileSize);
                         animatedSprite.SetPosition(new(x, y));
-                        animatedSprite.AddAnimation("bomb", new Rectangle[] {
+                        animatedSprite.AddAnimation("bomb", [
                             new (64, 128, TileSourceSize, TileSourceSize),
                             new (128, 128, TileSourceSize, TileSourceSize),
                             new (192, 128, TileSourceSize, TileSourceSize),
                             new (64, 192, TileSourceSize, TileSourceSize),
                             new (128, 192, TileSourceSize, TileSourceSize),
                             new (192, 192, TileSourceSize, TileSourceSize)
-                        });
+                        ]);
                         animatedSprite.Play("bomb", 4);
                         AddNode(animatedSprite);
                         gridSprites[new(i, j)] = animatedSprite;
@@ -170,10 +170,10 @@ internal class SnakeScene : Scene
                         var sprFrog = AnimatedSprite.Create("Resources/atlas.png");
                         sprFrog.Size = new Vector2i(TileSize, TileSize);
                         sprFrog.SetPosition(new(x, y));
-                        sprFrog.AddAnimation("idle", new Rectangle[] {
+                        sprFrog.AddAnimation("idle", [
                             new (192, 64, TileSourceSize, TileSourceSize),
                             new (0, 128, TileSourceSize, TileSourceSize),
-                        });
+                        ]);
                         sprFrog.Play("idle", 1);
                         AddNode(sprFrog);
                         gridSprites[new(i, j)] = sprFrog;
@@ -269,10 +269,7 @@ internal class SnakeScene : Scene
         textRenderer.Render(text, fontSize, xOffset, yOffset + (TileSize - size.Height) / 2, color.ToVector3());
     }
 
-    private void DrawText(int xOffset, int yOffset, string text, int fontSize, Color4 color)
-    {
-        textRenderer.Render(text, fontSize, xOffset, yOffset, color.ToVector3());
-    }
+    private void DrawText(int xOffset, int yOffset, string text, int fontSize, Color4 color) => textRenderer.Render(text, fontSize, xOffset, yOffset, color.ToVector3());
 
     private class BigButton : Button
     {

@@ -7,7 +7,7 @@ using Samples.Snake;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
-    Size = new Vector2i(1600, 1280),
+    ClientSize = new Vector2i(1600, 1280),
     Title = "OpenRender Snake",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,

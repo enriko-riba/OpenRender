@@ -1,5 +1,4 @@
-﻿using OpenTK.Graphics;
-using OpenTK.Graphics.OpenGL4;
+﻿using OpenTK.Graphics.OpenGL4;
 using System.Runtime.CompilerServices;
 
 namespace OpenRender;
@@ -24,7 +23,7 @@ public static class Log
 
     public static void Error(string message) => WriteLog(LevelError, message);
     public static void Error(string message, params object[] args) => Error(string.Format(message, args));
-    
+
     public static void CheckGlError([CallerMemberName] string name = "")
     {
         var error = GL.GetError();

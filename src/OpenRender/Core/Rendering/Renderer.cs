@@ -20,10 +20,10 @@ public class Renderer
     /// <summary>
     /// Key: shader.handle + vertex declaration
     /// </summary>
-    private readonly Dictionary<string, BatchData> batchDataDictionary = new();
+    private readonly Dictionary<string, BatchData> batchDataDictionary = [];
 
     private readonly Frustum frustum = new();
-    protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = new();
+    protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = [];
 
     protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
     protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
@@ -44,7 +44,7 @@ public class Renderer
         // Create the default render layers
         foreach (var renderGroup in Enum.GetValues<RenderGroup>())
         {
-            renderLayers.Add(renderGroup, new List<SceneNode>());
+            renderLayers.Add(renderGroup, []);
         }
     }
 
@@ -152,10 +152,7 @@ public class Renderer
             var frequency = shaderFrequencies[node.Material.Shader.Handle];
             if (frequency > 1)
             {
-                if (batchFrequency.ContainsKey(node.BatchingKey))
-                    batchFrequency[node.BatchingKey]++;
-                else
-                    batchFrequency[node.BatchingKey] = 1;
+                batchFrequency[node.BatchingKey] = batchFrequency.TryGetValue(node.BatchingKey, out var value) ? ++value : 1;
             }
         }
 
@@ -177,10 +174,9 @@ public class Renderer
         var batches = batchDataDictionary.Values;
         foreach (var batch in batches)
         {
-            var buffer = new Buffer<float>(batch.Vertices.ToArray(), BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+            var buffer = new Buffer<float>([.. batch.Vertices], BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
             batch.Vao.AddBuffer(batch.VertexDeclaration, buffer, name: "Batch VBO");
-            batch.Vao.AddIndexBuffer(new IndexBuffer(batch.Indices.ToArray()), "Batch IBO");
-            //  TODO: what if vao contains multiple buffers, e.g. tangent/bitangent?
+            batch.Vao.AddIndexBuffer(new IndexBuffer([.. batch.Indices]), "Batch IBO");           
 
             batch.Vertices.Clear();
             batch.Indices.Clear();
@@ -324,14 +320,7 @@ public class Renderer
             var handle = node.Material.Shader.Handle;
             if (handle > 0)
             {
-                if (frequencies.ContainsKey(handle))
-                {
-                    frequencies[handle]++;
-                }
-                else
-                {
-                    frequencies[handle] = 1;
-                }
+                frequencies[handle] = frequencies.TryGetValue(handle, out var value) ? ++value : 1;
             }
         }
         return frequencies;

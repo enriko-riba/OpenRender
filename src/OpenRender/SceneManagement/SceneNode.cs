@@ -17,7 +17,7 @@ public class SceneNode
     private bool showBoundingSphere;
     private Mesh mesh;
     private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
-    private readonly List<SceneNode> children = new();
+    private readonly List<SceneNode> children = [];
 
     protected Transform transform = new();
     protected VertexArrayObject? Vao;

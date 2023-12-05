@@ -15,11 +15,11 @@ public class Material
     static Material()
     {
         var sampler = Sampler.Create(TextureMinFilter.Nearest, TextureMagFilter.Nearest, TextureWrapMode.ClampToBorder, TextureWrapMode.ClampToBorder);
-        var defaultDiffuse = Texture.FromFile(new string[] { "Resources/default-diffuse.png" }, false);
-        var defaultDetail = Texture.FromFile(new string[] { "Resources/default-detail.png" }, false);
-        var defaultNormal = Texture.FromFile(new string[] { "Resources/default-normal.png" }, false, isNormalMap: true);
-        var defaultSpecular = Texture.FromFile(new string[] { "Resources/default-specular.png" }, false);
-        var defaultBump = Texture.FromFile(new string[] { "Resources/default-bump.png" }, false);
+        var defaultDiffuse = Texture.FromFile(["Resources/default-diffuse.png"], false);
+        var defaultDetail = Texture.FromFile(["Resources/default-detail.png"], false);
+        var defaultNormal = Texture.FromFile(["Resources/default-normal.png"], false, isNormalMap: true);
+        var defaultSpecular = Texture.FromFile(["Resources/default-specular.png"], false);
+        var defaultBump = Texture.FromFile(["Resources/default-bump.png"], false);
         /*
             public long Diffuse;
             public long Detail;
@@ -32,7 +32,7 @@ public class Material
         */
         defaultMaterial = new Material()
         {
-            Textures = new Texture[] {
+            Textures = [
                 defaultDiffuse,
                 defaultDetail,
                 defaultNormal,
@@ -41,8 +41,8 @@ public class Material
                 defaultBump,
                 defaultBump,
                 defaultBump
-            },
-            BindlessTextureHandles = new ulong[] {
+            ],
+            BindlessTextureHandles = [
                 defaultDiffuse.GetBindlessHandle(sampler),
                 defaultDetail.GetBindlessHandle(sampler),
                 defaultNormal.GetBindlessHandle(sampler),
@@ -51,7 +51,7 @@ public class Material
                 defaultBump.GetBindlessHandle(sampler),
                 defaultBump.GetBindlessHandle(sampler),
                 defaultBump.GetBindlessHandle(sampler)
-            },
+            ],
         };
     }
 
@@ -110,7 +110,7 @@ public class Material
 
     private void Initialize()
     {
-        foreach (var descriptor in TextureDescriptors ?? Array.Empty<TextureDescriptor>())
+        foreach (var descriptor in TextureDescriptors ?? [])
         {
             var tb = Texture.FromDescriptor(descriptor);
             var sampler = Sampler.FromDescriptor(descriptor);
@@ -169,9 +169,9 @@ public class Material
         Create(shader, textureDescriptors, Vector3.One, Vector3.Zero, Vector3.One, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
     public static Material Create(Shader shader, TextureDescriptor textureDescriptor, float shininess = 0f, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
-        Create(shader, new TextureDescriptor[] { textureDescriptor }, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
+        Create(shader, [textureDescriptor], shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
     public static Material Create(Shader shader, TextureDescriptor textureDescriptor, Vector3 diffuseColor, float shininess = 0f, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f) =>
-        Create(shader, new TextureDescriptor[] { textureDescriptor }, diffuseColor, Vector3.Zero, Vector3.One, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
+        Create(shader, [textureDescriptor], diffuseColor, Vector3.Zero, Vector3.One, shininess, detailTextureScaleFactor, detailTextureBlendFactor);
 
 }

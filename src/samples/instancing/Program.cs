@@ -6,7 +6,7 @@ using Samples.Instancing;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
-    Size = new Vector2i(1280, 1024),
+    ClientSize = new Vector2i(1280, 1024),
     Title = "OpenRender Instancing",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,

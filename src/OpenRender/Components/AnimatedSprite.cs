@@ -7,15 +7,15 @@ namespace OpenRender.Components;
 /// <summary>
 /// 2D sprite with textures atlas containing multiple frames drawn in a sequence.
 /// </summary>
-public class AnimatedSprite : Sprite
+public class AnimatedSprite(Mesh mesh, Material material, Action? onComplete, Action? onUpdate) : Sprite(mesh, material)
 {
     private float accumulator;
     private int frameIndex = -1;
     private int lastIndex = -1;
     private string? currentSequenceName;
-    private readonly Action? onUpdateAction;
-    private readonly Action? onCompleteAction;
-    private readonly Dictionary<string, Rectangle[]> animationSequences = new();
+    private readonly Action? onUpdateAction = onUpdate;
+    private readonly Action? onCompleteAction = onComplete;
+    private readonly Dictionary<string, Rectangle[]> animationSequences = [];
     private Rectangle[]? currentSequence;
     private Rectangle currentFrame;
 
@@ -26,12 +26,6 @@ public class AnimatedSprite : Sprite
         var sprite = new AnimatedSprite(mesh, material, onComplete, onUpdate);
         return sprite;
     }
-
-    public AnimatedSprite(Mesh mesh, Material material, Action? onComplete, Action? onUpdate) : base(mesh, material)
-    {
-        onUpdateAction = onUpdate;
-        onCompleteAction = onComplete;
-    }   
 
     public int Fps { get; set; } = 4;
 
@@ -83,10 +77,7 @@ public class AnimatedSprite : Sprite
         base.OnDraw(elapsed);
     }
 
-    public void AddAnimation(string animationName, Rectangle[] frames)
-    {
-        animationSequences.Add(animationName, frames);
-    }
+    public void AddAnimation(string animationName, Rectangle[] frames) => animationSequences.Add(animationName, frames);
 
     public void Stop()
     {

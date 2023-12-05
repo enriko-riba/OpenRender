@@ -43,10 +43,10 @@ internal class InstancingScene : Scene
         //  add one non-instanced node for visual anchoring when moving around
         var mat1 = Material.Create(
             defaultShader,
-            new TextureDescriptor[] {
+            [
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal),
-            },
+            ],
             diffuseColor: Vector3.One,
             emissiveColor: new Vector3(0.05f, 0.04f, 0.03f),
             specularColor: Vector3.Zero,
@@ -217,7 +217,7 @@ internal class InstancingScene : Scene
         var (vertices, indices) = GeometryHelper.CreateBox();
         var mat = Material.Create(
             defaultShader,
-            new TextureDescriptor[] { new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Diffuse) },
+            [new("Resources/awesomeface.png", TextureType: TextureType.Diffuse)],
             diffuseColor: Vector3.One,
             specularColor: Vector3.One,
             shininess: 0.45f);
@@ -251,7 +251,8 @@ internal class InstancingScene : Scene
     {
         private Matrix4 scaleMatrix;
         private Vector3 scale = Vector3.One;
-        private float factor = 1 + (float)Random.Shared.NextDouble() / 2;
+        private readonly float factor = 1 + (float)Random.Shared.NextDouble() / 2;
+
         /// <summary>
         /// Gets or sets the position.
         /// </summary>

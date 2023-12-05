@@ -32,7 +32,7 @@ public record TextureDescriptor(
     bool GenerateMipMap = true,
     TextureTarget TextureTarget = TextureTarget.Texture2D,
     bool IsNormalMap = false) : this(
-        new string[] { path }, 
+        [path], 
         MinFilter,
         MagFilter,
         TextureType,

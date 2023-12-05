@@ -9,7 +9,7 @@ namespace OpenRender.Core.Textures;
 /// </summary>
 public class Texture : IDisposable
 {
-    private static readonly Dictionary<string, Texture> textureCache = new();
+    private static readonly Dictionary<string, Texture> textureCache = [];
 
     private Texture(uint glHandle)
     {

@@ -202,20 +202,20 @@ internal class BatchingScene : Scene
 
         var mat1 = Material.Create(
             defaultShader,
-            new TextureDescriptor[] {
+            [
                 new TextureDescriptor ("Resources/container.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/awesomeface.png", TextureType: TextureType.Detail),
-            },
+            ],
             detailTextureScaleFactor: 10f,
             shininess: 0.15f
         );
         var mat2 = Material.Create(
             defaultShader,
-            new TextureDescriptor[] {
+            [
                 new TextureDescriptor ("Resources/awesomeface.png", TextureType: TextureType.Diffuse),
                 new TextureDescriptor("Resources/container.png", TextureType: TextureType.Detail),
                 new TextureDescriptor ("Resources/awesomeface-normal.png", MinFilter: TextureMinFilter.Nearest, MagFilter: TextureMagFilter.Nearest, TextureType: TextureType.Normal)
-            },
+            ],
             detailTextureScaleFactor: 3f,
             shininess: 0.25f
         );
@@ -263,15 +263,15 @@ internal class BatchingScene : Scene
         var shader = new Shader("Shaders/standard-batching.vert", "Shaders/standard-batching.frag");
         var materials = new Material[]
         {
-            Material.Create(shader, new TextureDescriptor[]{
+            Material.Create(shader, [
                 new("Resources/ball13.jpg"), 
                 new("Resources/container.png", TextureType: TextureType.Detail)
-            }, shininess: 1f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
+            ], shininess: 1f, detailTextureScaleFactor: 10f, detailTextureBlendFactor: 0.45f),
             Material.Create(shader, new TextureDescriptor("Resources/metallic.png"), shininess: 0.60f),
-            Material.Create(shader, new TextureDescriptor[]{            
+            Material.Create(shader, [
                 new ("Resources/awesomeface.png"),
                 new TextureDescriptor ("Resources/awesomeface-normal.png", TextureType: TextureType.Normal)
-            }, shininess: 0.40f),
+            ], shininess: 0.40f),
             Material.Create(shader, new TextureDescriptor("Resources/xneg.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/xpos.png"), shininess: 0.15f),
             Material.Create(shader, new TextureDescriptor("Resources/yneg.png"), shininess: 0.15f),
@@ -285,7 +285,6 @@ internal class BatchingScene : Scene
             if (mod == 0)
             {
                 var mesh = new Mesh(Vertex.VertexDeclaration, sphereData.vertices, sphereData.indices);
-                mesh.CreateTBN();
                 var sphere = new RandomNode(mesh, materials[mod], Area);
                 sphere.SetScale(Random.Shared.Next(1, 3) / 2f);
                 AddNode(sphere);
@@ -293,7 +292,6 @@ internal class BatchingScene : Scene
             else
             {
                 var mesh = new Mesh(Vertex.VertexDeclaration, boxData.vertices, boxData.indices);
-                mesh.CreateTBN();
                 var cube = new RandomNode(mesh, materials[mod], Area);
                 AddNode(cube);
             }
@@ -303,8 +301,10 @@ internal class BatchingScene : Scene
     private void AddMetallicBoxes()
     {
         var mat = Material.Create(defaultShader,
-            new TextureDescriptor[] { new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse),
-            new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal)},
+            [
+                new TextureDescriptor("Resources/metallic.png", TextureType: TextureType.Diffuse),
+                new TextureDescriptor ("Resources/container-normal.png", TextureType: TextureType.Normal)
+            ],
             0.70f);
         mat.EmissiveColor = new(0.05f, 0.09f, 0.05f);
 
@@ -333,16 +333,16 @@ internal class BatchingScene : Scene
         AddNode(animatedSprite);
         animatedSprite.Size = new(60, 65);
         animatedSprite.SetPosition(new(770, 210));
-        animatedSprite.AddAnimation("left", new Rectangle[] {
+        animatedSprite.AddAnimation("left", [
             new (0, 0, 50, 50),
             new (50, 0, 50, 50),
             new (100, 0, 50, 50)
-        });
-        animatedSprite.AddAnimation("right", new Rectangle[] {
+        ]);
+        animatedSprite.AddAnimation("right", [
             new (0, 50, 50, 50),
             new (50, 50, 50, 50),
             new (100, 50, 50, 50)
-        });
+        ]);
         animatedSprite.Play("left", 3);
     }
 }

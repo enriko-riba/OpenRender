@@ -6,13 +6,13 @@ using Samples.Batching;
 
 var nativeWindowSettings = new NativeWindowSettings()
 {
-    Size = new Vector2i(1280, 1024),
+    ClientSize = new Vector2i(1280, 1024),
     Title = "OpenRender Batching",
     Flags = ContextFlags.ForwardCompatible | ContextFlags.Debug,    // ForwardCompatible is needed to run on Mac OS
     Vsync = VSyncMode.Off,
     API = ContextAPI.OpenGL,
     APIVersion = new Version(4, 6),
-    NumberOfSamples = 32,
+    NumberOfSamples = 64,
 };
 
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
