@@ -1,10 +1,12 @@
 ﻿using OpenRender.Core.Textures;
-using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SixLabors.Fonts;
 using SixLabors.Fonts.Unicode;
+using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Advanced;
 using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using System.Runtime.InteropServices;
 
 namespace OpenRender.Text;
@@ -52,7 +54,7 @@ public sealed class FontAtlasGenerator
         fontAtlas.LineHeight = charHeight;
         fontAtlas.CharacterFrameSize = new Vector2i(charWidth + Padding, charHeight + Padding);
 
-        var image = new Image<Rgba32>(sizeW, sizeH);
+        var image = new Image<Rgba32>(sizeW, sizeH);        
         image.Mutate(ctx => ctx.BackgroundColor(backgroundColor.ToImageSharpColor()));
 
         var currentRow = 0;
@@ -116,7 +118,7 @@ public sealed class FontAtlasGenerator
             ColorFontSupport = ColorFontSupport.None,
             HorizontalAlignment = style.HorizontalAlignment,
             VerticalAlignment = style.VerticalAlignment,
-            Origin = new PointF(textureX, drawY),
+            Origin = new System.Numerics.Vector2(textureX, drawY),
         };
         var brush = new SolidBrush(Color.White);
 
@@ -143,7 +145,7 @@ public sealed class FontAtlasGenerator
                 UvMaxY = uvMaxY,
             };
             textureX += fontAtlas.CharWidth + Padding;
-            rto.Origin = new PointF(textureX, drawY);
+            rto.Origin = new System.Numerics.Vector2(textureX, drawY);
             fontAtlas.Glyphs.Add(text[j], gi);
         }
         textureY += fontAtlas.CharacterFrameSize.Y;
