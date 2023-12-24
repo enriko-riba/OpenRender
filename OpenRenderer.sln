@@ -54,6 +54,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "batching", "src\samples\bat
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "testing", "src\samples\testing\testing.csproj", "{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "spyro-game", "src\spyro-game\spyro-game.csproj", "{27A64445-8B1B-4134-AB2A-FBB2A11FA897}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -92,6 +94,10 @@ Global
 		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27A64445-8B1B-4134-AB2A-FBB2A11FA897}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27A64445-8B1B-4134-AB2A-FBB2A11FA897}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27A64445-8B1B-4134-AB2A-FBB2A11FA897}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27A64445-8B1B-4134-AB2A-FBB2A11FA897}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -107,6 +113,7 @@ Global
 		{ED793485-20AB-45AD-B220-A5DCBED9A82E} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{DFAAD5FF-6BF0-4499-AC68-11C8BB6C81A4} = {3A37113B-D520-4A02-B89A-8309402078A5}
 		{A7BF9BE3-CFCB-4E7B-BAF2-F9E305240A55} = {3A37113B-D520-4A02-B89A-8309402078A5}
+		{27A64445-8B1B-4134-AB2A-FBB2A11FA897} = {F9D2562F-7FEF-4687-95CD-0590CEA205A4}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {298EB5BC-94B1-4DF8-B27D-C392B73A8015}

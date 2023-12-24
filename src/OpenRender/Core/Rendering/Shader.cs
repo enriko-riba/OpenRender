@@ -1,8 +1,5 @@
-﻿using OpenRender.Core.Textures;
-using OpenTK.Graphics.OpenGL4;
+﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
-using System.Xml.Linq;
 
 namespace OpenRender.Core.Rendering;
 
@@ -11,10 +8,10 @@ namespace OpenRender.Core.Rendering;
 /// </summary>
 public class Shader
 {
-    private static readonly Dictionary<string, Shader> shaderCache = new();
+    private static readonly Dictionary<string, Shader> shaderCache = [];
 
-    private readonly Dictionary<string, int> uniformLocations = new();
-    private readonly Dictionary<string, int> uniformBlockIndices = new();
+    private readonly Dictionary<string, int> uniformLocations = [];
+    private readonly Dictionary<string, int> uniformBlockIndices = [];
     public readonly int Handle;
     private readonly string DebugName;
 
@@ -68,7 +65,7 @@ public class Shader
         Log.CheckGlError();
 
         // cache all uniform locations, querying them is slow
-        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniforms, out var numberOfUniforms);                        
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniforms, out var numberOfUniforms);
         for (var i = 0; i < numberOfUniforms; i++)
         {
             var key = GL.GetActiveUniform(Handle, i, out _, out _);
@@ -77,7 +74,7 @@ public class Shader
         }
         Log.Debug("active uniforms: {0} -> {1}", numberOfUniforms, string.Join(", ", uniformLocations.Keys));
 
-        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniformBlocks, out var numberOfUniformBlocks);            
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniformBlocks, out var numberOfUniformBlocks);
         for (var i = 0; i < numberOfUniformBlocks; i++)
         {
             GL.GetActiveUniformBlockName(Handle, i, 256, out _, out var key);
@@ -144,7 +141,7 @@ public class Shader
     {
         GL.UseProgram(Handle);
         if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);
-    }    
+    }
 
     /// <summary>
     /// Sets a uniform Matrix4.
@@ -217,8 +214,8 @@ public class Shader
         if (IsUniformValid(name)) GL.Uniform2(uniformLocations[name], data);
     }
 
-    public bool UniformBlockExists(string name) => uniformBlockIndices.ContainsKey(name);    
-    
+    public bool UniformBlockExists(string name) => uniformBlockIndices.ContainsKey(name);
+
     public bool UniformExists(string name) => uniformLocations.ContainsKey(name);
 
     private bool IsUniformValid(string name)

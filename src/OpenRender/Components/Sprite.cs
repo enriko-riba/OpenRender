@@ -65,7 +65,7 @@ public class Sprite : SceneNode
 
         var shader = new Shader(vertexShader ?? "Shaders/sprite.vert", fragmentShader ?? "Shaders/sprite.frag");
         var material = Material.Create(shader,
-            new TextureDescriptor[] {
+            [
                 new TextureDescriptor(textureName,
                     TextureType: TextureType.Diffuse,
                     MagFilter: TextureMagFilter.Nearest,
@@ -73,7 +73,7 @@ public class Sprite : SceneNode
                     TextureWrapS: TextureWrapMode.ClampToEdge,
                     TextureWrapT: TextureWrapMode.ClampToEdge,
                     GenerateMipMap: true)
-            }
+            ]
         );
         var (vertices, indices) = GeometryHelper.Create2dQuad();
         var mesh = new Mesh(Vertex2D.VertexDeclaration, vertices, indices);

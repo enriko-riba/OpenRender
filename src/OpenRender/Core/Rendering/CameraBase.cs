@@ -60,17 +60,17 @@ public abstract class CameraBase : ICamera
     /// <summary>
     /// Gets the front vector of the camera.
     /// </summary>
-    public Vector3 Front => front;
+    public virtual Vector3 Front => front;
 
     /// <summary>
     /// Gets the right vector of the camera.
     /// </summary>
-    public Vector3 Right => right;
+    public virtual Vector3 Right => right;
 
     /// <summary>
     /// Gets the up vector of the camera.
     /// </summary>
-    public Vector3 Up => up;
+    public virtual Vector3 Up => up;
 
     /// <summary>
     /// Gets the yaw angle of the camera in degrees.
@@ -92,6 +92,8 @@ public abstract class CameraBase : ICamera
         MathHelper.RadiansToDegrees((float)Math.Atan2(2 * orientation.X * orientation.W - 2 * orientation.Y * orientation.Z,
             1 - 2 * orientation.X * orientation.X - 2 * orientation.Z * orientation.Z));
 
+    public float MaxFov { get; set; } = 80f;
+
     /// <summary>
     /// Gets or sets the field of view (FOV) of the camera in degrees.
     /// </summary>
@@ -100,11 +102,13 @@ public abstract class CameraBase : ICamera
         get => MathHelper.RadiansToDegrees(fov);
         set
         {
-            var angle = MathHelper.Clamp(value, 1f, 85f);
+            var angle = MathHelper.Clamp(value, 1f, MaxFov);
             fov = MathHelper.DegreesToRadians(angle);
             isDirty = true;
         }
     }
+    
+    public void Invalidate() => isDirty = true;
 
     /// <summary>
     /// Gets or sets the position of the camera.
@@ -134,6 +138,7 @@ public abstract class CameraBase : ICamera
 
     public float NearPlaneDistance => nearPlane;
     public float FarPlaneDistance => farPlane;
+    public bool IsDirty => isDirty;
 
     /// <summary>
     /// Adds rotation to the camera by the specified yaw, pitch, and roll angle increments in degrees.
@@ -147,7 +152,7 @@ public abstract class CameraBase : ICamera
     /// Moves the camera forward by the specified distance.
     /// </summary>
     /// <param name="distance">The distance to move the camera forward.</param>
-    public void MoveForward(float distance)
+    public virtual void MoveForward(float distance)
     {
         Position += Front * distance;
         isDirty = true;

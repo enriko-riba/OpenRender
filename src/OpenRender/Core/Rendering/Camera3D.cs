@@ -5,18 +5,15 @@ namespace OpenRender.Core.Rendering;
 /// <summary>
 /// Represents a 3D camera.
 /// </summary>
-public class Camera3D : CameraBase
+/// <remarks>
+/// Initializes a new instance of the Camera class.
+/// </remarks>
+/// <param name="position">The position of the camera.</param>
+/// <param name="aspectRatio">The aspect ratio of the camera's viewport.</param>
+/// <param name="nearPlane">The distance to the near clipping plane.</param>
+/// <param name="farPlane">The distance to the far clipping plane.</param>
+public class Camera3D(Vector3 position, float aspectRatio, float nearPlane = 0.1f, float farPlane = 500) : CameraBase(position, aspectRatio, nearPlane, farPlane)
 {
-    /// <summary>
-    /// Initializes a new instance of the Camera class.
-    /// </summary>
-    /// <param name="position">The position of the camera.</param>
-    /// <param name="aspectRatio">The aspect ratio of the camera's viewport.</param>
-    /// <param name="nearPlane">The distance to the near clipping plane.</param>
-    /// <param name="farPlane">The distance to the far clipping plane.</param>
-    public Camera3D(Vector3 position, float aspectRatio, float nearPlane = 0.1f, float farPlane = 500) : base(position, aspectRatio, nearPlane, farPlane) { }
-
-
     /// <summary>
     /// Adds rotation to the camera by the specified yaw, pitch, and roll angle increments in degrees.
     /// </summary>

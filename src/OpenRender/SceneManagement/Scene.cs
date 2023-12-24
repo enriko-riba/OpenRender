@@ -11,9 +11,9 @@ public class Scene
     public const int MaxLights = 4;
 
     private bool isLoaded;
-    private readonly List<LightUniform> lights = new();
-    private readonly List<Action> actionQueue = new();
-    protected readonly List<SceneNode> nodes = new();
+    private readonly List<LightUniform> lights = [];
+    private readonly List<Action> actionQueue = [];
+    protected readonly List<SceneNode> nodes = [];
     protected readonly Shader defaultShader;
 
     protected readonly Renderer renderer = new();
@@ -43,8 +43,6 @@ public class Scene
 
     public Shader DefaultShader => defaultShader;
 
-    //public UniformBuffer<CameraUniform> VboCamera => vboCamera;
-
     public Color4 BackgroundColor { get; set; } = Color4.CornflowerBlue;
 
     public string Name { get; protected set; }
@@ -66,7 +64,13 @@ public class Scene
     /// Note: this is needed to correctly handle mutating scene state like node removals or additions, from code that gets executed inside <see cref="UpdateFrame"/>.
     /// </summary>
     /// <param name="action"></param>
-    public void AddAction(Action action) => actionQueue.Add(action);
+    public void AddAction(Action action) 
+    {
+        lock (actionQueue) 
+        {
+            actionQueue.Add(action);
+        }
+    }
 
     public void AddLight(LightUniform light)
     {
@@ -179,11 +183,14 @@ public class Scene
             node.OnUpdate(this, elapsedSeconds);
         }
 
-        foreach (var action in actionQueue)
+        lock (actionQueue)
         {
-            action.Invoke();
+            foreach (var action in actionQueue)
+            {
+                action.Invoke();
+            }
+            actionQueue.Clear();
         }
-        actionQueue.Clear();
         renderer.Update(camera, nodes);
     }
 

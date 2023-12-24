@@ -16,10 +16,10 @@ public class SceneNode
     private readonly uint id;
     private bool showBoundingSphere;
     private Mesh mesh;
-    private readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     private readonly List<SceneNode> children = [];
 
     protected Transform transform = new();
+    protected readonly SphereMeshRenderer sphereMeshRenderer = SphereMeshRenderer.DefaultSphereMeshRenderer;
     protected VertexArrayObject? Vao;
 
     public SceneNode(Mesh mesh, Material material, Vector3? position = default)
@@ -85,6 +85,8 @@ public class SceneNode
     }    
 
     public Mesh Mesh => mesh;
+
+    public virtual bool CullAction(Frustum frustum) => CullingHelper.IsSphereInFrustum(frustum.Planes, BoundingSphere.Center, BoundingSphere.Radius);
 
     public bool ShowBoundingSphere
     {
@@ -247,6 +249,8 @@ public class SceneNode
     }
 
     internal FrameBits FrameBits;
+    
+    public bool IsCulled => FrameBits.HasFlag(FrameBitsFlags.FrustumCulled);
 
     internal string BatchingKey { get; set; } = string.Empty;
 }

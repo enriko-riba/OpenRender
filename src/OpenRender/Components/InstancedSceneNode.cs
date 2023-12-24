@@ -1,11 +1,11 @@
 ﻿using OpenRender.Core;
 using OpenRender.Core.Buffers;
 using OpenRender.Core.Rendering;
+using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
 using System.Runtime.CompilerServices;
 
-namespace OpenRender.SceneManagement;
+namespace OpenRender.Components;
 
 public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TInstanceData : struct
 {
@@ -24,7 +24,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
         uint bufferSlot = 1;    //  buffer slot for instance data
         GL.CreateBuffers(1, out vbInstanceData);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vbInstanceData, -1, "InstancedSceneNode_Buffer2");
-        GL.VertexArrayVertexBuffer(Vao, bufferSlot, vbInstanceData, 0, Unsafe.SizeOf<Matrix4>());
+        GL.VertexArrayVertexBuffer(Vao, bufferSlot, vbInstanceData, 0, Unsafe.SizeOf<TInstanceData>());
         GL.VertexArrayBindingDivisor(Vao, bufferSlot, 1);
         for (uint i = 0; i < 4; i++)
         {
@@ -58,7 +58,7 @@ public class InstancedSceneNode<TInstanceData, TStateData> : SceneNode where TIn
 
     public override void OnDraw(double elapsed)
     {
-        GL.BindVertexArray(Vao);
+        GL.BindVertexArray(Vao!);
         if (Vao!.DrawMode == DrawMode.Indexed)
             GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao.DataLength, DrawElementsType.UnsignedInt, 0, instanceDataList.Count);
         else

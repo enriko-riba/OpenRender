@@ -1,4 +1,5 @@
-﻿using OpenRender.Core;
+﻿using OpenRender.Components;
+using OpenRender.Core;
 using OpenRender.Core.Buffers;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;

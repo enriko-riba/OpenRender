@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender.Core.Culling;
+using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 public interface ICamera
@@ -11,13 +12,15 @@ public interface ICamera
     Vector3 Right { get; }
     Vector3 Position { get; set; }
     Quaternion Orientation { get; }
+    bool IsDirty { get; }
+    public float MaxFov { get; set; }
     float Fov { get; set; }
     float AspectRatio { get; set; }
     float NearPlaneDistance { get;}
     float FarPlaneDistance { get; }
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
     void MoveForward(float distance);
-
+    void Invalidate();
     /// <summary>
     /// If dirty, updates camera matrices.
     /// </summary>
