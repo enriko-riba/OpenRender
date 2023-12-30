@@ -54,13 +54,12 @@ void main()
 { 
     Material mat = mat[materialIndex];
     sampler2D tex = bindlessTextures[textureIndex];
-
-    outputColor = vec4(0);
+    //vec3 N = -normalize(cross(dFdy(fragPos), dFdx(fragPos)));
     vec3 N = normalize(vertexNormal);
     vec3 L = -normalize(dirLight.position);
-    vec3 texDiffuse = vec3(texture(tex, texCoord));
-    
-    vec3 texColor = texDiffuse * mat.diffuse;
+
+    vec4 texDiffuse = vec4(texture(tex, texCoord));    
+    vec4 texColor = texDiffuse * vec4(mat.diffuse, 1);
 
     float lambert = clamp(dot(N, L), 0, 1);
     vec3 Ac = dirLight.ambient;
@@ -74,8 +73,7 @@ void main()
         vec3 H = normalize(L + V);
         float specular = clamp(dot(H, N), 0, 1);
         float exponent = pow(2, mat.shininess * 2.0) + 2;       
-        Sc = pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular;
+        Sc = clamp(pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular, 0, 1);
     }
-    outputColor += vec4(mat.emissive.rgb + (Sc + Ac + Dc) * texColor, 1);
-    outputColor = clamp(outputColor, 0, 1);
+    outputColor = clamp(vec4(mat.emissive.rgb + (Sc + Ac + Dc), 1) * texColor, 0, 1);
 }

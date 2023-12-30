@@ -8,6 +8,7 @@ using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.World;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 
 namespace SpyroGame.Components;
@@ -18,11 +19,11 @@ internal class ChunkRenderer : SceneNode
     private readonly uint materialsSSBO;
     private readonly List<ChunkRenderData> renderDataList = [];
     private readonly Mesh _mesh;
-
     private readonly Frustum frustum = new();
-    private int visibleChunks;
-    private int renderedBlocks;
 
+    private IEnumerable<ChunkRenderData> sortedChunkList = [];
+
+    internal ConcurrentQueue<(Chunk, BlockState[])> blockDataPriorityWorkQueue = [];
 
     public ChunkRenderer(Mesh mesh, Material material, ulong[] textureHandles, VoxelMaterial[] materials) : base(mesh, material)
     {
@@ -51,38 +52,60 @@ internal class ChunkRenderer : SceneNode
 
     public void AddChunkData(Chunk chunk, BlockState[] blockData)
     {
-        renderDataList.Add(CreateChunkRenderData(chunk, blockData));
-        //Log.Debug($"added chunk {chunk.Index}@{chunk.Position} with visible blocks {blockData.Length}, total chunks {renderDataList.Count}");
+        lock(renderDataList)
+        {
+            renderDataList.Add(CreateChunkRenderData(chunk, blockData));
+            //Log.Debug($"added chunk {chunk.Index}@{chunk.Position} with visible blocks {blockData.Length}, total chunks {renderDataList.Count}");
+        }
     }
 
-    public bool IsChunkAdded(Vector3 position) => renderDataList.Any(x => x.Position == position);
-    public int VisibleChunks => visibleChunks;
-    public int RenderedBlocks => renderedBlocks;
+    public bool IsChunkAdded(Vector3i position)
+    {
+        lock(renderDataList)
+            return renderDataList.Any(x => x.Position == position);
+    }
 
-    private static readonly Vector3 chunkPositionOffset = new ((Chunk.Size / 2f) - (0.5f));
+    public int ChunksInFrustum { get; private set; }
+    public int HiddenChunks { get; private set; }
+    public int RenderedBlocks { get; private set; }
+
+    private static readonly Vector3 chunkPositionOffset = new((VoxelHelper.ChunkSideSize / 2f) - (0.5f));
     public override void OnDraw(double elapsed)
     {
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, materialsSSBO);
+        Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
 
-        foreach (var chunkData in renderDataList)
+        HiddenChunks = 0;
+        RenderedBlocks = 0;
+        foreach (var chunkData in sortedChunkList)
         {
-            if (chunkData.Visible == false || chunkData.Count == 0) continue;
+            if (chunkData.Count == 0)
+            {
+                HiddenChunks++;
+                continue;
+            }
 
-            transform.worldMatrix.Row3.Xyz = chunkData.Position;
-            Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
+            RenderedBlocks += chunkData.Count;
 
             GL.BindVertexArray(chunkData.Vao!);
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkData.BlocksSSBO);
-
             if (!ShowBoundingSphere)
+            {
+                transform.worldMatrix.Row3.Xyz = chunkData.Position;
+                Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
                 GL.DrawElementsInstanced(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
+            }
             else
             {
                 //GL.Disable(EnableCap.CullFace);
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+                transform.worldMatrix.Row3.Xyz = chunkData.Position;
+                Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
+                GL.DrawElementsInstanced(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
+
                 transform.worldMatrix.Row3.Xyz = chunkData.Position + chunkPositionOffset;
-                Matrix4.CreateScale(Chunk.Size, out var scaleMatrix);
+                Matrix4.CreateScale(VoxelHelper.ChunkSideSize, out var scaleMatrix);
                 var worldMatrix = scaleMatrix * transform.worldMatrix;
                 Scene!.DefaultShader.Use();
                 Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
@@ -96,22 +119,27 @@ internal class ChunkRenderer : SceneNode
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
+        if (blockDataPriorityWorkQueue.TryDequeue(out var cbd))
+        {
+            AddChunkData(cbd.Item1, cbd.Item2);
+            Scene?.Camera?.Invalidate();
+        }
+
         if (Scene?.Camera?.IsDirty ?? false)
         {
-            visibleChunks = 0;
-            renderedBlocks = 0;
             frustum.Update(Scene.Camera);
             foreach (var chunkRenderData in renderDataList)
             {
                 var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, frustum.Planes);
                 chunkRenderData.Visible = visible;
-                if (visible)
-                {
-                    renderedBlocks += chunkRenderData.Count;
-                    visibleChunks++;
-                }
             }
+            sortedChunkList = renderDataList
+                .Where(x => x.Visible)
+                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene.Camera.Position))
+                .ToArray();
+            ChunksInFrustum = sortedChunkList.Count();
         }
+
     }
 
     private ChunkRenderData CreateChunkRenderData(Chunk chunk, BlockState[] blockData)
@@ -120,7 +148,7 @@ internal class ChunkRenderer : SceneNode
         vao.AddBuffer(_mesh.VertexDeclaration, new Buffer<float>(_mesh.Vertices));
         vao.AddIndexBuffer(new IndexBuffer(_mesh.Indices));
 
-        var maxInstances = (Chunk.Size * Chunk.Size * Chunk.Size) / 8;
+        var maxInstances = (VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize) / 8;
         maxInstances = maxInstances > blockData.Length ? maxInstances : blockData.Length;
 
         //  prepare block data SSBOs
@@ -134,13 +162,13 @@ internal class ChunkRenderer : SceneNode
            vao,
            blocksSSBO,
            blockData.Length,
-           chunk.Position,
-           chunk.AABB);
+           chunk.Aabb);
         return chunkData;
     }
 }
 
-internal record ChunkRenderData(VertexArrayObject Vao, uint BlocksSSBO, int Count, Vector3i Position, AABB Aabb)
+internal record ChunkRenderData(VertexArrayObject Vao, uint BlocksSSBO, int Count, AABB Aabb)
 {
     public bool Visible { get; set; }
+    public Vector3i Position => Aabb.min;
 }

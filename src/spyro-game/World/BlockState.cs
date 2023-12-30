@@ -14,7 +14,11 @@ internal struct BlockState
     /// </summary>
     public BlockDirection FrontDirection { get; set; }
 
-    public bool IsDestroyed { get; set; }
+    public readonly bool IsAir => BlockType == BlockType.None;
+    
+    public readonly bool IsTransparent => BlockType is BlockType.Water or BlockType.None;
+
+    public override readonly string ToString() => $"{Index}:{BlockType}";
 }
 
 public enum BlockType 
@@ -22,7 +26,11 @@ public enum BlockType
     None,
     Rock,
     Dirt,
+    GrassDirt,
     Grass,
+    Sand,
+    Snow,
+    Water,
 }
 
 public enum BlockDirection

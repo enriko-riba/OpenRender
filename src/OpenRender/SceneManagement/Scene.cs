@@ -72,11 +72,17 @@ public class Scene
         }
     }
 
-    public void AddLight(LightUniform light)
+    public void AddLight(in LightUniform light)
     {
         if (lights.Count >= MaxLights) throw new ArgumentOutOfRangeException(nameof(light), $"Max lights supported is {MaxLights}");
         lights.Add(light);
     }
+
+    public void UpdateLight(int index, in LightUniform light)
+    {
+        if (index >= MaxLights) throw new ArgumentOutOfRangeException(nameof(index), $"Max lights supported is {MaxLights}");
+        lights[index] = light;
+    }   
 
     /// <summary>
     /// Adds the given node to the scene.

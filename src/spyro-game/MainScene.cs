@@ -27,34 +27,38 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private readonly VoxelWorld world = new();
     private readonly Frustum frustum = new();
 
-    private Sprite crosshair;
-    private ChunkRenderer cr;
-    private const float MovementSpeed = 30;
-    private const float RotationSpeed = 25;
+    private Sprite crosshair = default!;
+    private ChunkRenderer cr = default!;
+    private const float MovementSpeed = 4;
+    private const float RotationSpeed = 20;
     private float movementPerSecond = MovementSpeed;
     private float rotationPerSecond = RotationSpeed;
     private bool isMouseMoving;
 
-    private const int TotalChunks = VoxelWorld.Size * VoxelWorld.Size * VoxelWorld.Size;
     private const int Padding = 50;
+
+    private static readonly Vector3 textColor = Color4.Black.ToVector3();
+    private Chunk? cameraCurrentChunk;
+    private LightUniform dirLight;
 
     public override void Load()
     {
         base.Load();
         BackgroundColor = Color4.DarkSlateBlue;
-        var yPosition = Chunk.Size * (VoxelWorld.GroundBaseLevel + 1f)+1;
-        camera = new CameraFps(new Vector3(Chunk.Size * VoxelWorld.Size / 2f, yPosition, Chunk.Size * VoxelWorld.Size / 2f), Width / (float)Height, 0.01f, farPlane: 400);
-        //camera = new  Camera3D(new Vector3(Chunk.Size * VoxelWorld.Size / 2f, yPosition, Chunk.Size * VoxelWorld.Size / 2f), Width / (float)Height, 0.01f, 400);
+
+        camera = new CameraFps(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ), Width / (float)Height, 0.1f, VoxelHelper.ChunkSideSize * 6);
+        //camera = new  Camera3D(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f, yPosition, VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f), Width / (float)Height, 0.01f, 320);
         camera.MaxFov = 60;
 
-        var dirLight = new LightUniform()
+        dirLight = new LightUniform()
         {
-            Direction = new Vector3(0, -0.90f, -1f),
+            Direction = new Vector3(0, -1, 0),
             Ambient = new Vector3(0.15f, 0.15f, 0.15f),
             Diffuse = new Vector3(1),
             Specular = new Vector3(1),
         };
         AddLight(dirLight);
+
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
             new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
@@ -64,8 +68,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             new KeyboardAction("back", [Keys.S], ()=> camera!.MoveForward(-movementPerSecond), false),
             new KeyboardAction("rot CCW", [Keys.Q], ()=> camera!.AddRotation(0, 0, -rotationPerSecond), false),
             new KeyboardAction("rot CW", [Keys.E], ()=> camera!.AddRotation(0, 0, rotationPerSecond), false),
-            new KeyboardAction("up", [Keys.LeftShift], ()=> camera!.Position += camera.Up * movementPerSecond, false),
-            new KeyboardAction("down", [Keys.LeftControl], ()=> camera!.Position -= camera.Up * movementPerSecond, false),
+            new KeyboardAction("up", [Keys.LeftShift], ()=> camera!.Position += Vector3.UnitY * movementPerSecond, false),
+            new KeyboardAction("down", [Keys.LeftControl], ()=> camera!.Position -= Vector3.UnitY * movementPerSecond, false),
             new KeyboardAction("wireframe", [Keys.F1], WireframeToggle),
         ]);
 
@@ -93,16 +97,14 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         SetupScene();
     }
 
-    private static readonly Vector3 textColor = Color4.Black.ToVector3();
-
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
         textRenderer.Render(fpsText, 20, 5, 4, textColor);
-        var text = $"World size: {VoxelWorld.Size:N0}, total chunks: {TotalChunks:N0}";
+        var text = $"World size: {VoxelHelper.WorldChunksXZ:N0}, total chunks: {VoxelHelper.TotalChunks:N0}";
         textRenderer.Render(text, 20, 5, 20, textColor);
-        text = $"Chunks visible: {cr.VisibleChunks:N0} culled: {TotalChunks - cr.VisibleChunks:N0}";
+        text = $"Chunks in frustum: {cr.ChunksInFrustum:N0} culled: {VoxelHelper.TotalChunks - cr.ChunksInFrustum:N0} hidden: {cr.HiddenChunks:N0}";
         textRenderer.Render(text, 20, 5, 36, textColor);
         text = $"Blocks rendered: {cr.RenderedBlocks:N0}";
         textRenderer.Render(text, 20, 5, 52, textColor);
@@ -111,19 +113,51 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         textRenderer.Render(text, 20, 5, 68, Vector3.UnitZ);
 
         //  show chunk index and position
-        var cameraChunkPosition = Chunk.Size * ((Vector3i)camera!.Position / Chunk.Size);
-        if (world.GetChunkByWorldPosition(cameraChunkPosition, out var chunk))
+        if (cameraCurrentChunk is not null)
         {
-            text = $"in chunk: {chunk.Index} at {chunk.Position}";
+            text = $"in chunk: {cameraCurrentChunk.Value.Index} at {cameraCurrentChunk.Value.Position}";
             textRenderer.Render(text, 20, 5, 84, Vector3.UnitZ);
         }
+
+        text = $"time: {timeOfDay.TimeOfDay}, sun direction: {dirLight.Direction}, ambient: {dirLight.Ambient}";
+        textRenderer.Render(text, 20, 5, 100, textColor);
     }
+
+    private DateTimeOffset dayTimeCycle = DateTimeOffset.UtcNow;
+    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(18.75));  //  we start at noon
 
     public override void UpdateFrame(double elapsedSeconds)
     {
+        var cycleTime = DateTimeOffset.UtcNow - dayTimeCycle;
+        if (cycleTime.TotalSeconds > 1)
+        {
+            dayTimeCycle = DateTimeOffset.UtcNow;
+            timeOfDay = timeOfDay.AddMinutes(cycleTime.TotalSeconds * 10);   //  one second wall clock time == one minute in game
+            UpdateSunDirection(timeOfDay);
+        }
+
         base.UpdateFrame(elapsedSeconds);
 
         frustum.Update(camera!);
+
+        var pos = camera!.Position;
+        pos.X = MathF.Round(camera.Position.X);
+        pos.Z = MathF.Round(camera.Position.Z);
+        if (world.GetChunkByGlobalPosition(pos, out var chunk))
+        {
+            cameraCurrentChunk = chunk;
+            var cameraChunkPosition = (pos - chunk.Position);
+            var height = VoxelHelper.HeightAmplitude * chunk.GetHeightNormalized((int)cameraChunkPosition.X, (int)cameraChunkPosition.Z);
+            pos.Y = MathF.Floor(height) + 3f;
+            pos.X = camera.Position.X;
+            pos.Z = camera.Position.Z;
+            camera.Position = pos;
+        }
+        else
+        {
+            cameraCurrentChunk = null;
+        }
+
 
         movementPerSecond = (float)elapsedSeconds * MovementSpeed;
         rotationPerSecond = (float)(elapsedSeconds * RotationSpeed);
@@ -160,7 +194,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         textRenderer.Projection = TextRenderer.CreateTextRenderingProjection(Width, Height);
         var clientSize = new Vector2(Width, Height);
         crosshair.SetScale(1);
-        crosshair.SetPosition((clientSize - crosshair.Size)/2);
+        crosshair.SetPosition((clientSize - crosshair.Size) / 2);
         crosshair.Pivot = new(0.0f, 1.0f);
     }
 
@@ -190,10 +224,16 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var cube = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices), cubeMaterial);
         cube.SetPosition(new(0, 0, -15));
         AddNode(cube);
-        cube.GetTransform(out var transform);
 
+
+
+        Log.Highlight($"initializing voxel world...");
+        var seed = 1337;
+        world.Initialize(seed);
 
         //  create voxel world
+        Log.Highlight($"preparing voxel textures and materials...");
+        world.stopwatch.Restart();
 
         //  prepare all textures and all materials
         var textureHandles = GetTextureHandles(world);
@@ -206,49 +246,51 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
         cr = new ChunkRenderer(mesh, dummyMaterial, textureHandles, materials);
         AddNode(cr);
-
-        //  find chunks nearest to camera to display them first
-        //var chunksData = world.GetImmediate(camera!.Position, 27);
-        //foreach (var (chunk, aabb, bs) in chunksData)
-        //{
-        //    cr.AddChunkData(chunk, bs.ToArray());
-        //}
-
-        //camera!.Update();
-        //frustum.Update(camera);
-        //cr.OnUpdate(this, 1);
-
-
-        var sortedChunks = world.chunks.Values
-                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, camera!.Position))    
-                .ToArray();
-
-        //  the only purpose of this list is to enable parallel processing and caching of BlockDataBufferElement
-        //  so that the createChunkRenderData can be called after parallel execution is completed
-        var blockDataList = new List<(Chunk, BlockState[])>(world.chunks.Count);
-        Log.Info("calculating visible blocks...");
-        world.stopwatch.Restart();       
-        Parallel.ForEach(sortedChunks, (chunk) =>
-        {
-            if (!cr.IsChunkAdded(chunk.Position))
-            {
-                //Log.Debug($"processing chunk {chunk.Index} on thread {Environment.CurrentManagedThreadId}");
-                var blockData = chunk.GetVisibleBlocks().ToArray();
-                blockDataList.Add((chunk, blockData));
-            }
-        });
-
-        Log.Highlight($"visible blocks calculated in {world.stopwatch.Elapsed}!");
+        Log.Highlight($"textures and materials prepared in {world.stopwatch.ElapsedMilliseconds:D4} ms");
         world.stopwatch.Restart();
 
-        foreach (var (chunk, blockData) in blockDataList)
+        //  find chunks nearest to camera to display them first
+        var chunksData = world.GetImmediate(camera!.Position, 12);
+        foreach (var (chunk, aabb, bs) in chunksData)
         {
-            cr.AddChunkData(chunk, blockData);
+            cr.AddChunkData(chunk, bs.ToArray());
         }
         camera!.Update();
         frustum.Update(camera);
         cr.OnUpdate(this, 1);
-        Log.Highlight($"chunk render data created in {world.stopwatch.ElapsedMilliseconds} ms!");
+        Log.Highlight($"initial chunks calculated in {world.stopwatch.ElapsedMilliseconds:D4} ms");
+        world.stopwatch.Restart();
+
+        var sortedChunks = world.chunks.Values
+            .Except(chunksData.Select(x => x.Item1))
+            .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, camera!.Position))
+            .ToArray();
+
+        Log.Info("calculating visible blocks...");
+        world.stopwatch.Restart();
+
+        var task = Task.Run(() =>
+        {
+            var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.WorldChunksXZ * 2 };
+            Parallel.ForEach(sortedChunks, options, (chunk) =>
+            {
+                try
+                {
+                    if (!cr.IsChunkAdded(chunk.Position))
+                    {
+                        var blockData = chunk.GetVisibleBlocks().ToArray();
+                        cr.blockDataPriorityWorkQueue.Enqueue((chunk, blockData));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"{ex.Message} chunk {chunk.Index}");
+                }
+            });
+            Log.Highlight($"visible blocks calculated in {world.stopwatch.Elapsed}!");
+            world.stopwatch.Restart();
+        });
+
     }
 
     private static (Vertex[], uint[]) CreateVoxelCube()
@@ -334,7 +376,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var textureNames = Enumerable.Range(0, world.textures.Keys.Cast<int>().Max() + 1)
             .Select(index => world.textures.ContainsKey((BlockType)index) ? world.textures[(BlockType)index] : null)
             .ToArray();
-        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.ClampToBorder, TextureWrapMode.ClampToBorder);
+        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
         var handles = textureNames.Where(x => !string.IsNullOrEmpty(x))
                                 .Select(x => Texture.FromFile([x!])
                                 .GetBindlessHandle(sampler))
@@ -353,5 +395,55 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             .Select(index => world.materials.TryGetValue(index, out var value) ? value : default)
             .ToArray();
         return materials;
+    }
+
+    private void UpdateSunDirection(DateTimeOffset dayTime)
+    {
+        // Define constants for sunrise, sunset, and noon times
+        var sunriseTime = new TimeSpan(6, 0, 0);
+        var sunsetTime = new TimeSpan(19, 0, 0);
+
+        var ambientDayValue =  new Vector3(0.02f);
+
+        var ambientNightMinValue= new Vector3(0.025f);
+        var ambientNightMaxValue= new Vector3(0.25f);
+
+
+        // Calculate time difference from sunrise and sunset
+        var timeDifferenceFromSunrise = dayTime.TimeOfDay - sunriseTime;
+
+        // Calculate normalized direction based on the time of day        
+        if (timeOfDay.TimeOfDay >= sunriseTime && timeOfDay.TimeOfDay < sunsetTime) // day cycle
+        {
+            // Between sunrise and sunset, calculate direction based on time difference
+            var t = (float)(timeDifferenceFromSunrise.TotalHours / (sunsetTime.TotalHours - sunriseTime.TotalHours));
+            var x = -1 + 2 * t;
+            var y = -MathF.Sqrt(1 - x * x);
+
+            dirLight.Direction = new Vector3(x, y, 0).Normalized();
+
+            //  ambient intensity
+
+            // Calculate the duration of the day cycle and distance from noon
+            var differenceFromSunrise = (float)(dayTime.TimeOfDay - sunriseTime).TotalHours;
+            var differenceFromSunset = (float)(sunsetTime - dayTime.TimeOfDay).TotalHours;
+            var timeDifference = differenceFromSunrise > differenceFromSunset ? differenceFromSunset: differenceFromSunrise;
+            t = MathHelper.Clamp(timeDifference / 2f, 0.0f, 1.0f);
+            dirLight.Ambient = Vector3.Lerp(ambientNightMaxValue, ambientDayValue, t);
+        }
+        else  // night cycle
+        {           
+            dirLight.Direction = Vector3.Zero;
+
+            // Calculate the duration of the night cycle and distance from midnight
+            var minMidnightDistance = MathHelper.Min(24f - sunsetTime.TotalHours, sunriseTime.TotalHours);
+            var midnightDistance = dayTime.TimeOfDay < sunriseTime ? dayTime.TimeOfDay.TotalHours : 24 - dayTime.TimeOfDay.TotalHours;
+
+            // Calculate normalized t for interpolation during the night cycle
+            var t = MathHelper.Clamp((float)(midnightDistance / minMidnightDistance), 0.0f, 1.0f);
+            dirLight.Ambient = Vector3.Lerp(ambientNightMinValue, ambientNightMaxValue,  t);
+        }
+
+        UpdateLight(0, dirLight);
     }
 }

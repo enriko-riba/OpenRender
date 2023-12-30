@@ -7,13 +7,11 @@ namespace SpyroGame.World;
 
 internal class VoxelWorld
 {
-    public const int Size = 10;
-    public const int GroundBaseLevel = (int)(Size * 0.75f);
-    public static readonly Vector3i ChunkHalfSize = new(Chunk.Size / 2);
-    public static readonly Vector3i ChunkSize = new(Chunk.Size);
+    public static readonly Vector3i ChunkHalfSize = new(VoxelHelper.ChunkSideSize / 2);
+    public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize);
 
-    //  key is chunk world position, value is the chunk   
-    internal readonly Dictionary<Vector3i, Chunk> chunks = [];
+    //  key is chunk index, value is the chunk   
+    internal readonly ConcurrentDictionary<int, Chunk> chunks = [];
 
     //  key is material id, value is the material
     internal readonly Dictionary<int, VoxelMaterial> materials = new() {
@@ -38,11 +36,39 @@ internal class VoxelWorld
                 Shininess = 0.0f
             }
         },
+        { (int)BlockType.GrassDirt, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0.0f, 0.0f, 0.0f),
+                Specular = new Vector3(0.3f, 0.5f, 0.3f),
+                Shininess = 0.4f
+            }
+        },
         { (int)BlockType.Grass, new VoxelMaterial() {
                 Diffuse = new Vector3(1, 1, 1),
                 Emissive = new Vector3(0.0f, 0.0f, 0.0f),
                 Specular = new Vector3(0.3f, 0.5f, 0.3f),
                 Shininess = 0.5f
+            }
+        },
+        { (int)BlockType.Sand, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
+                Specular = new Vector3(1),
+                Shininess = 0.3f
+            }
+        },
+        { (int)BlockType.Snow, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
+                Specular = new Vector3(1),
+                Shininess = 0.65f
+            }
+        },
+        { (int)BlockType.Water, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.7f, 0.7f, 0.8f),
+                Shininess = 0.0f
             }
         }
     };
@@ -52,35 +78,47 @@ internal class VoxelWorld
         { BlockType.None, "Resources/voxel/box-unwrap.png" },
         { BlockType.Rock, "Resources/voxel/rock.png" },
         { BlockType.Dirt, "Resources/voxel/dirt.png" },
+        { BlockType.GrassDirt, "Resources/voxel/grass-dirt.png" },
         { BlockType.Grass, "Resources/voxel/grass.png" },
+        { BlockType.Sand, "Resources/voxel/sand.png" },
+        { BlockType.Snow, "Resources/voxel/snow.png" },
+        { BlockType.Water, "Resources/voxel/water.png" },
     };
     internal Stopwatch stopwatch = Stopwatch.StartNew();
 
-    public VoxelWorld()
+    public void Initialize(int seed)
     {
-        // create chunks
-        for (var z = 0; z < Size; z++)
+        var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.ChunkSideSize / 2 };
+        for (var z = 0; z < VoxelHelper.WorldChunksXZ; z++)
         {
-            for (var y = 0; y < Size; y++)
+            for (var y = 0; y < VoxelHelper.WorldChunksY; y++)
             {
-                for (var x = 0; x < Size; x++)
+                Parallel.For(0, VoxelHelper.WorldChunksXZ, options, x =>
                 {
+                    var index = z * VoxelHelper.WorldSizeXZSquared + y * VoxelHelper.WorldChunksXZ + x;
+                    var position = new Vector3i(x * VoxelHelper.ChunkSideSize, y * VoxelHelper.ChunkSideSize, z * VoxelHelper.ChunkSideSize);
                     var chunk = new Chunk()
                     {
-                        Position = new Vector3i(x * Chunk.Size, y * Chunk.Size, z * Chunk.Size),
+                        Aabb = (position, position + ChunkSize)
                     };
-                    var index = z * Size * Size + y * Size + x;
-                    chunk.Initialize(this, index, y > GroundBaseLevel);
-                    chunks.Add(chunk.Position, chunk);
-                }
+                    chunk.Initialize(this, index, seed);
+                    _ = chunks.TryAdd(chunk.Index, chunk);
+                });
             }
         }
-        Log.Highlight($"VoxelWorld created {chunks.Count} chunks in {stopwatch.ElapsedMilliseconds} ms");
+
+        Log.Highlight($"VoxelWorld created {chunks.Count:N0} chunks in {stopwatch.ElapsedMilliseconds:N0} ms, empty chunks {chunks.Values.Where(x => x.IsEmpty).Count()}");
     }
 
-    public Chunk this[int index] => chunks.Values.ElementAt(index);
-       
-    public bool GetChunkByWorldPosition(Vector3i worldPosition, out Chunk chunk) => chunks.TryGetValue(worldPosition, out chunk);
+    public Chunk this[int index] => chunks[index];
+
+    public bool GetChunkByGlobalPosition(in Vector3 worldPosition, out Chunk chunk)
+    {
+        chunk = default;
+        var chunkPosition = (Vector3i)worldPosition / VoxelHelper.ChunkSideSize;
+        return VoxelHelper.IsGlobalPositionInWorld(worldPosition) &&
+            chunks.TryGetValue(chunkPosition.X + chunkPosition.Y * VoxelHelper.WorldChunksXZ + chunkPosition.Z * VoxelHelper.WorldSizeXZSquared, out chunk);
+    }
 
     /// <summary>
     /// Selects the closest chunks to the given position, calculates visible blocks per chunk and chunks aabb.
@@ -89,35 +127,19 @@ internal class VoxelWorld
     /// <param name="count"></param>
     /// <returns></returns>
     public (Chunk, AABB, IEnumerable<BlockState>)[] GetImmediate(Vector3 centerPosition, int count)
-    {       
+    {
         var closest = chunks.Values
-                .OrderBy(x => Vector3.DistanceSquared(x.Position + ChunkHalfSize, centerPosition))
-                .Take(count)
+                .Where(chunk => chunk.Position.Y + ChunkSize.Y < centerPosition.Y)                          //  chunks top must be lower then camera position
+                .OrderBy(chunk => Vector3.DistanceSquared(chunk.Position + ChunkHalfSize, centerPosition))  //  order by distance to camera
+                .Take(count)                                                                                //  take the specified number and calculate chunk data
                 .Select(chunk =>
                 {
                     var aabb = (chunk.Position, chunk.Position + ChunkSize);
                     var vb = chunk.GetVisibleBlocks();
                     return (chunk, aabb, vb);
                 })
-                .ToArray();        
+                .ToArray();
+
         return closest;
-    }    
-}
-
-/// <summary>
-/// Exposes static methods for voxel world operations, mainly focused on calculating positions and indices.
-/// </summary>
-public static class VoxelHelper
-{
-
-}
-
-/// <summary>
-/// Streams visible chunks blocks based on a priority queue.
-/// </summary>
-internal class VoxelStreamer
-{
-    private readonly ConcurrentQueue<int> priorityIndices = [];
-
-    public void EnqueueChunkIndex(int index) => priorityIndices.Enqueue(index);
+    }
 }

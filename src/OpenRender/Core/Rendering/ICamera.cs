@@ -1,5 +1,4 @@
-﻿using OpenRender.Core.Culling;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 public interface ICamera
@@ -16,7 +15,7 @@ public interface ICamera
     public float MaxFov { get; set; }
     float Fov { get; set; }
     float AspectRatio { get; set; }
-    float NearPlaneDistance { get;}
+    float NearPlaneDistance { get; }
     float FarPlaneDistance { get; }
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
     void MoveForward(float distance);

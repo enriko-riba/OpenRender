@@ -1,6 +1,7 @@
 #version 460
 
 uniform mat4 model;
+uniform int chunkSize;
 
 layout (std140, binding = 0) uniform camera {    
     mat4 view;
@@ -9,19 +10,18 @@ layout (std140, binding = 0) uniform camera {
     vec3 cameraDir;
 };
 
-layout (location = 0) in vec3 aPosition;
-layout (location = 1) in vec3 aNormal;
-layout (location = 3) in vec2 aTexCoord;
-
 struct BlockState {   
     uint index;
-    int blockType;
+    uint blockType;
     uint blockDirection;
-    uint isDestroyed;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];
 };
+
+layout (location = 0) in vec3 aPosition;
+layout (location = 1) in vec3 aNormal;
+layout (location = 3) in vec2 aTexCoord;
 
 out vec3 vertexNormal;
 out vec3 fragPos;
@@ -91,9 +91,9 @@ void main(void)
     vec3 rotatedNormal = rotationMatrix * aNormal;
 
     // Calculate block position based on block index
-    uint x = block.index % 32;
-    uint y = (block.index / 32) % 32;
-    uint z = block.index / (32 * 32);
+    uint x = block.index % chunkSize;
+    uint y = (block.index / chunkSize) % chunkSize;
+    uint z = block.index / (chunkSize * chunkSize);
     vec3 translatedPosition = rotatedPosition + vec3(x * spacing, y * spacing, z * spacing);
     vec4 worldPosition = model * vec4(translatedPosition, 1.0);
     

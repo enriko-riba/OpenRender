@@ -45,6 +45,7 @@ public class Sampler
         GL.SamplerParameter(handle, SamplerParameterName.TextureMagFilter, (int)magFilter);
         GL.SamplerParameter(handle, SamplerParameterName.TextureWrapS, (int)wrapS);
         GL.SamplerParameter(handle, SamplerParameterName.TextureWrapT, (int)wrapT);
+        //GL.SamplerParameter(handle, SamplerParameterName.TextureBorderColor, 0);
         Log.CheckGlError();
     }
 

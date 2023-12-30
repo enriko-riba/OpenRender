@@ -15,11 +15,11 @@ public class KeyboardActionMapper
             //  if all keys are pressed, invoke the action
             if (action.Keys.All(keyboardState.IsKeyDown))
             {
-                if (action.triggerOnChange && action.Keys.Any(keyboardState.WasKeyDown)) return;
+                if (action.TriggerOnChange && action.Keys.Any(keyboardState.WasKeyDown)) return;
                 action.Action();
             }
         }
     }
 }
 
-public record KeyboardAction(string Name, Keys[] Keys, Action Action, bool triggerOnChange = true);
+public record KeyboardAction(string Name, Keys[] Keys, Action Action, bool TriggerOnChange = true);
