@@ -24,6 +24,7 @@ public struct OutputMinMax
 
     public float min;
     public float max;
+    public readonly override string ToString() =>$"Min: {min} Max: {max}";
 }
 
 public partial class FastNoise

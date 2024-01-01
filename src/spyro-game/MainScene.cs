@@ -26,6 +26,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private readonly KeyboardActionMapper kbdActions = new();
     private readonly VoxelWorld world = new();
     private readonly Frustum frustum = new();
+    private DayNightCycle dayNightCycle = default!;
 
     private Sprite crosshair = default!;
     private ChunkRenderer cr = default!;
@@ -37,8 +38,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
     private const int Padding = 50;
 
-    private static readonly Vector3 textColor = Color4.Black.ToVector3();
+    private static readonly Vector3 textColor = new(0.3f);
     private Chunk? cameraCurrentChunk;
+    private Vector3i cameraCurrentChunkLocalPosition;
     private LightUniform dirLight;
 
     public override void Load()
@@ -46,7 +48,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         base.Load();
         BackgroundColor = Color4.DarkSlateBlue;
 
-        camera = new CameraFps(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ), Width / (float)Height, 0.1f, VoxelHelper.ChunkSideSize * 6);
+        camera = new CameraFps(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f), Width / (float)Height, 0.1f, VoxelHelper.ChunkSideSize * 8);
         //camera = new  Camera3D(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f, yPosition, VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f), Width / (float)Height, 0.01f, 320);
         camera.MaxFov = 60;
 
@@ -115,49 +117,38 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         //  show chunk index and position
         if (cameraCurrentChunk is not null)
         {
-            text = $"in chunk: {cameraCurrentChunk.Value.Index} at {cameraCurrentChunk.Value.Position}";
+            text = $"in chunk: {cameraCurrentChunk.Value} at {cameraCurrentChunk.Value.GetBlockAtLocalXZ(cameraCurrentChunkLocalPosition)}";
             textRenderer.Render(text, 20, 5, 84, Vector3.UnitZ);
         }
 
-        text = $"time: {timeOfDay.TimeOfDay}, sun direction: {dirLight.Direction}, ambient: {dirLight.Ambient}";
-        textRenderer.Render(text, 20, 5, 100, textColor);
-    }
+        text = $"time: {dayNightCycle.TimeOfDay}";
+        textRenderer.Render(text, 20, 5, 104, new(0.5f));
+        text = $"sun direction: {dayNightCycle.DirLight.Direction}, ambient: {dayNightCycle.DirLight.Ambient}";
+        textRenderer.Render(text, 20, 5, 120, new(0.5f));
 
-    private DateTimeOffset dayTimeCycle = DateTimeOffset.UtcNow;
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(18.75));  //  we start at noon
+        text = $"camera direction: {camera!.Front}";
+        textRenderer.Render(text, 20, 5, 140, new(0.5f));
+    }
 
     public override void UpdateFrame(double elapsedSeconds)
     {
-        var cycleTime = DateTimeOffset.UtcNow - dayTimeCycle;
-        if (cycleTime.TotalSeconds > 1)
-        {
-            dayTimeCycle = DateTimeOffset.UtcNow;
-            timeOfDay = timeOfDay.AddMinutes(cycleTime.TotalSeconds * 10);   //  one second wall clock time == one minute in game
-            UpdateSunDirection(timeOfDay);
-        }
-
         base.UpdateFrame(elapsedSeconds);
 
         frustum.Update(camera!);
 
         var pos = camera!.Position;
-        pos.X = MathF.Round(camera.Position.X);
-        pos.Z = MathF.Round(camera.Position.Z);
         if (world.GetChunkByGlobalPosition(pos, out var chunk))
         {
             cameraCurrentChunk = chunk;
-            var cameraChunkPosition = (pos - chunk.Position);
-            var height = VoxelHelper.HeightAmplitude * chunk.GetHeightNormalized((int)cameraChunkPosition.X, (int)cameraChunkPosition.Z);
+            cameraCurrentChunkLocalPosition = VoxelHelper.GetBlockCoordinatesGlobal(pos) - chunk!.Value.Position;
+            var height = chunk.Value.GetHeightNormalized(cameraCurrentChunkLocalPosition.X, cameraCurrentChunkLocalPosition.Z);
             pos.Y = MathF.Floor(height) + 3f;
-            pos.X = camera.Position.X;
-            pos.Z = camera.Position.Z;
             camera.Position = pos;
         }
         else
         {
             cameraCurrentChunk = null;
         }
-
 
         movementPerSecond = (float)elapsedSeconds * MovementSpeed;
         rotationPerSecond = (float)(elapsedSeconds * RotationSpeed);
@@ -180,6 +171,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         {
             isMouseMoving = true;
         }
+
+        dayNightCycle.Update();        
     }
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
@@ -204,6 +197,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
     private void SetupScene()
     {
+        dayNightCycle = new(this);
+        
+
         var paths = new string[] {
             "Resources/skybox/right.png",
             "Resources/skybox/left.png",
@@ -222,13 +218,11 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             0.10f);
         cubeMaterial.EmissiveColor = new(0.05f, 0.07f, 0.005f);
         var cube = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices), cubeMaterial);
-        cube.SetPosition(new(0, 0, -15));
+        cube.SetPosition(new(0, 0, 0));
         AddNode(cube);
 
-
-
         Log.Highlight($"initializing voxel world...");
-        var seed = 1337;
+        var seed = 1338;
         world.Initialize(seed);
 
         //  create voxel world
@@ -250,19 +244,19 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         world.stopwatch.Restart();
 
         //  find chunks nearest to camera to display them first
-        var chunksData = world.GetImmediate(camera!.Position, 12);
-        foreach (var (chunk, aabb, bs) in chunksData)
-        {
-            cr.AddChunkData(chunk, bs.ToArray());
-        }
-        camera!.Update();
-        frustum.Update(camera);
-        cr.OnUpdate(this, 1);
-        Log.Highlight($"initial chunks calculated in {world.stopwatch.ElapsedMilliseconds:D4} ms");
-        world.stopwatch.Restart();
+        //var chunksData = world.GetImmediate(camera!.Position, 12);
+        //foreach (var (chunk, aabb, bs) in chunksData)
+        //{
+        //    cr.AddChunkData(chunk, bs.ToArray());
+        //}
+        //camera!.Update();
+        //frustum.Update(camera);
+        //cr.OnUpdate(this, 1);
+        //Log.Highlight($"initial chunks calculated in {world.stopwatch.ElapsedMilliseconds:D4} ms");
+        //world.stopwatch.Restart();
 
         var sortedChunks = world.chunks.Values
-            .Except(chunksData.Select(x => x.Item1))
+            //.Except(chunksData.Select(x => x.Item1))
             .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, camera!.Position))
             .ToArray();
 
@@ -291,6 +285,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             world.stopwatch.Restart();
         });
 
+
+        dayNightCycle.Update();
     }
 
     private static (Vertex[], uint[]) CreateVoxelCube()
@@ -395,55 +391,5 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             .Select(index => world.materials.TryGetValue(index, out var value) ? value : default)
             .ToArray();
         return materials;
-    }
-
-    private void UpdateSunDirection(DateTimeOffset dayTime)
-    {
-        // Define constants for sunrise, sunset, and noon times
-        var sunriseTime = new TimeSpan(6, 0, 0);
-        var sunsetTime = new TimeSpan(19, 0, 0);
-
-        var ambientDayValue =  new Vector3(0.02f);
-
-        var ambientNightMinValue= new Vector3(0.025f);
-        var ambientNightMaxValue= new Vector3(0.25f);
-
-
-        // Calculate time difference from sunrise and sunset
-        var timeDifferenceFromSunrise = dayTime.TimeOfDay - sunriseTime;
-
-        // Calculate normalized direction based on the time of day        
-        if (timeOfDay.TimeOfDay >= sunriseTime && timeOfDay.TimeOfDay < sunsetTime) // day cycle
-        {
-            // Between sunrise and sunset, calculate direction based on time difference
-            var t = (float)(timeDifferenceFromSunrise.TotalHours / (sunsetTime.TotalHours - sunriseTime.TotalHours));
-            var x = -1 + 2 * t;
-            var y = -MathF.Sqrt(1 - x * x);
-
-            dirLight.Direction = new Vector3(x, y, 0).Normalized();
-
-            //  ambient intensity
-
-            // Calculate the duration of the day cycle and distance from noon
-            var differenceFromSunrise = (float)(dayTime.TimeOfDay - sunriseTime).TotalHours;
-            var differenceFromSunset = (float)(sunsetTime - dayTime.TimeOfDay).TotalHours;
-            var timeDifference = differenceFromSunrise > differenceFromSunset ? differenceFromSunset: differenceFromSunrise;
-            t = MathHelper.Clamp(timeDifference / 2f, 0.0f, 1.0f);
-            dirLight.Ambient = Vector3.Lerp(ambientNightMaxValue, ambientDayValue, t);
-        }
-        else  // night cycle
-        {           
-            dirLight.Direction = Vector3.Zero;
-
-            // Calculate the duration of the night cycle and distance from midnight
-            var minMidnightDistance = MathHelper.Min(24f - sunsetTime.TotalHours, sunriseTime.TotalHours);
-            var midnightDistance = dayTime.TimeOfDay < sunriseTime ? dayTime.TimeOfDay.TotalHours : 24 - dayTime.TimeOfDay.TotalHours;
-
-            // Calculate normalized t for interpolation during the night cycle
-            var t = MathHelper.Clamp((float)(midnightDistance / minMidnightDistance), 0.0f, 1.0f);
-            dirLight.Ambient = Vector3.Lerp(ambientNightMinValue, ambientNightMaxValue,  t);
-        }
-
-        UpdateLight(0, dirLight);
     }
 }

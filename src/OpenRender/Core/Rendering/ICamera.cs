@@ -10,7 +10,7 @@ public interface ICamera
     Vector3 Up { get; }
     Vector3 Right { get; }
     Vector3 Position { get; set; }
-    Quaternion Orientation { get; }
+    Quaternion Orientation { get; set; }
     bool IsDirty { get; }
     public float MaxFov { get; set; }
     float Fov { get; set; }

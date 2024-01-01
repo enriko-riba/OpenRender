@@ -4,9 +4,6 @@ namespace SpyroGame.World;
 
 internal struct Chunk
 {
-    private const bool WorldBorderBlocksVisible = true;
-
-
     private int index;
     private VoxelWorld world;
     public bool IsEmpty;
@@ -29,7 +26,7 @@ internal struct Chunk
     {
         var noiseIndex = x + z * VoxelHelper.ChunkSideSize;
         var height = HeightData[noiseIndex];
-        height = (height + 1f) / 2f;
+        height = height * VoxelHelper.HeightAmplitude + VoxelHelper.WaterLevel;
         return height;
     }
 
@@ -38,22 +35,19 @@ internal struct Chunk
         this.world = world;
         this.index = index;
 
-        //var worldX = index % VoxelHelper.WorldChunksXZ;
-        //var worldZ = index / VoxelHelper.WorldSizeXZSquared;
-        var worldY = (index / VoxelHelper.WorldChunksXZ) % VoxelHelper.WorldChunksXZ;
+        HeightData = VoxelHelper.CalcTerrainData(index, seed);
 
-        HeightData = VoxelHelper.CalcChunkHeightGrid(index, seed);
-
-        Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize];
+        Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
         var nonEmptyCount = 0;
-        for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (var y = 0; y < VoxelHelper.ChunkSideSize; y++)
+            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
-                for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    var height = GetHeightNormalized(x, z) * VoxelHelper.HeightAmplitude;
-                    var blockAltitude = worldY * VoxelHelper.ChunkSideSize + y;
+                    var height = GetHeightNormalized(x, z);
+                    var blockAltitude = y;
 
                     BlockType bt;
                     if (blockAltitude <= height + 1 && blockAltitude >= height)
@@ -82,7 +76,7 @@ internal struct Chunk
                             bt = BlockType.Water;
                         }
 
-                        if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude >= VoxelHelper.WaterLevel-1))
+                        if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
                         {
                             bt = BlockType.Sand;
                         }
@@ -92,7 +86,7 @@ internal struct Chunk
                             bt = BlockType.Rock;
                         }
                     }
-                    var blockIdx = x + y * VoxelHelper.ChunkSideSize + z * VoxelHelper.ChunkSideSizeSquare;
+                    var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
                     var block = new BlockState
                     {
                         Index = blockIdx,
@@ -112,13 +106,13 @@ internal struct Chunk
         if (IsEmpty) return [];
 
         List<BlockState> visibleBlocks = [];
-        for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (var y = 0; y < VoxelHelper.ChunkSideSize; y++)
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
                 for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
                 {
-                    var idx = x + y * VoxelHelper.ChunkSideSize + z * VoxelHelper.ChunkSideSizeSquare;
+                    var idx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
                     var block = Blocks[idx];
 
                     if (!block.IsAir && IsExternallyVisible(x, y, z))
@@ -129,29 +123,30 @@ internal struct Chunk
             }
         }
         //return Blocks;
+        var transparentBlocks = visibleBlocks.Where(b => b.IsTransparent).ToArray();
         return visibleBlocks;
     }
 
     private readonly bool IsExternallyVisible(int x, int y, int z)
     {
         // Check if the block is at the chunk boundary
-        if (x == 0 || y == 0 || z == 0 || x == VoxelHelper.ChunkSizeMinusOne || y == VoxelHelper.ChunkSizeMinusOne || z == VoxelHelper.ChunkSizeMinusOne)
+        if (x == 0 || y == 0 || z == 0 || x == VoxelHelper.ChunkSizeXZMinusOne || y == VoxelHelper.ChunkYSize - 1 || z == VoxelHelper.ChunkSizeXZMinusOne)
         {
             var worldPosition = Position + new Vector3i(x, y, z);
-            if (VoxelHelper.IsGlobalPositionOnWorldBoundary(worldPosition.X, worldPosition.Y, worldPosition.Z)) return WorldBorderBlocksVisible;
+            if (VoxelHelper.IsGlobalPositionOnWorldBoundary(worldPosition.X, worldPosition.Y, worldPosition.Z)) return false;
 
-            var isAdjacentAir =
+            var isAdjacentBlockTransparent =
                 (IsAdjacentChunkBlockTransparent(worldPosition.X - 1, worldPosition.Y, worldPosition.Z)) ||
                 (IsAdjacentChunkBlockTransparent(worldPosition.X + 1, worldPosition.Y, worldPosition.Z)) ||
                 (IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y - 1, worldPosition.Z)) ||
                 (IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y + 1, worldPosition.Z)) ||
                 (IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z - 1)) ||
                 (IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z + 1));
-            return isAdjacentAir;
+            return isAdjacentBlockTransparent;
         }
 
         // Check if any neighboring block is destroyed
-        return 
+        return
             IsBlockTransparent(x - 1, y, z) || IsBlockTransparent(x + 1, y, z) ||
             IsBlockTransparent(x, y - 1, z) || IsBlockTransparent(x, y + 1, z) ||
             IsBlockTransparent(x, y, z - 1) || IsBlockTransparent(x, y, z + 1);
@@ -184,11 +179,45 @@ internal struct Chunk
         }
 
         // The block is outside the world boundaries
-        return true;
+        return false;
     }
 
-    internal readonly bool IsBlockAir(int x, int y, int z) => Blocks[x + y * VoxelHelper.ChunkSideSize + z * VoxelHelper.ChunkSideSizeSquare].IsAir;
+    internal readonly bool IsBlockAir(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsAir;
 
-    internal readonly bool IsBlockTransparent(int x, int y, int z) => Blocks[x + y * VoxelHelper.ChunkSideSize + z * VoxelHelper.ChunkSideSizeSquare].IsTransparent;
+    internal readonly bool IsBlockTransparent(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsTransparent;
 
+    public override readonly string ToString() => $"{Index}@{Aabb}";
+
+    public BlockState GetBlockAtGlobalXZ(Vector3 position)
+    {        
+        //  convert to chunk local position
+        var localPosition = position - Position;
+
+        var startY = GetHeightNormalized((int)localPosition.X, (int)localPosition.Z);
+        var index = (int)position.X + (int)position.Z * VoxelHelper.ChunkSideSize + (int)Math.Ceiling(startY) * VoxelHelper.ChunkSideSizeSquare;
+        do
+        {
+            var block = Blocks[index];
+            if (!block.IsAir) 
+                return block;
+            index -= VoxelHelper.ChunkSideSizeSquare;
+        } while (index >= 0);
+        return default;
+    }
+
+    public BlockState GetBlockAtLocalXZ(Vector3 localPosition)
+    {
+        var x = (int)MathF.Round(localPosition.X);
+        var z = (int)MathF.Round(localPosition.Z);
+        var startY = GetHeightNormalized(x, z) + 1;
+        var index = x + z * VoxelHelper.ChunkSideSize + (int)Math.Ceiling(startY) * VoxelHelper.ChunkSideSizeSquare;
+        do
+        {
+            var block = Blocks[index];
+            if (!block.IsAir)
+                return block;
+            index -= VoxelHelper.ChunkSideSizeSquare;
+        } while (index >= 0);
+        return default;
+    }
 }

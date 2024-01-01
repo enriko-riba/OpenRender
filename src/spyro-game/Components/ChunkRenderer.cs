@@ -69,7 +69,17 @@ internal class ChunkRenderer : SceneNode
     public int HiddenChunks { get; private set; }
     public int RenderedBlocks { get; private set; }
 
-    private static readonly Vector3 chunkPositionOffset = new((VoxelHelper.ChunkSideSize / 2f) - (0.5f));
+    private static readonly Vector3 chunkPositionOffset = new(
+        (VoxelHelper.ChunkSideSize / 2f) - 0.5f,
+        (VoxelHelper.ChunkYSize / 2f) - 0.5f,
+        (VoxelHelper.ChunkSideSize / 2f) - 0.5f
+    );
+    //private static readonly Vector3 chunkPositionOffset = new(
+    //    VoxelHelper.ChunkSideSize / 2f,
+    //    VoxelHelper.ChunkYSize / 2f,
+    //    VoxelHelper.ChunkSideSize / 2f
+    //);
+
     public override void OnDraw(double elapsed)
     {
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
@@ -98,21 +108,21 @@ internal class ChunkRenderer : SceneNode
             }
             else
             {
-                //GL.Disable(EnableCap.CullFace);
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
                 transform.worldMatrix.Row3.Xyz = chunkData.Position;
                 Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
                 GL.DrawElementsInstanced(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
 
+                GL.Disable(EnableCap.CullFace);
                 transform.worldMatrix.Row3.Xyz = chunkData.Position + chunkPositionOffset;
-                Matrix4.CreateScale(VoxelHelper.ChunkSideSize, out var scaleMatrix);
+                Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
                 var worldMatrix = scaleMatrix * transform.worldMatrix;
                 Scene!.DefaultShader.Use();
                 Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
 
                 GL.DrawElements(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0);
             }
-            //GL.Enable(EnableCap.CullFace);
+            GL.Enable(EnableCap.CullFace);
         }
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }

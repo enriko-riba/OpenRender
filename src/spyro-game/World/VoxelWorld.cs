@@ -7,8 +7,8 @@ namespace SpyroGame.World;
 
 internal class VoxelWorld
 {
-    public static readonly Vector3i ChunkHalfSize = new(VoxelHelper.ChunkSideSize / 2);
-    public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize);
+    public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
+    public static readonly Vector3i ChunkHalfSize = ChunkSize / 2;
 
     //  key is chunk index, value is the chunk   
     internal readonly ConcurrentDictionary<int, Chunk> chunks = [];
@@ -23,36 +23,36 @@ internal class VoxelWorld
             }
         },
         { (int)BlockType.Rock, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.0f, 0.0f, 0.0f),
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
                 Specular = new Vector3(0.5f, 0.5f, 0.5f),
                 Shininess = 0.15f
             }
         },
         { (int)BlockType.Dirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.0f, 0.0f, 0.0f),
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
                 Specular = new Vector3(0.0f, 0.0f, 0.0f),
                 Shininess = 0.0f
             }
         },
         { (int)BlockType.GrassDirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.0f, 0.0f, 0.0f),
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
                 Specular = new Vector3(0.3f, 0.5f, 0.3f),
                 Shininess = 0.4f
             }
         },
         { (int)BlockType.Grass, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.0f, 0.0f, 0.0f),
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
                 Specular = new Vector3(0.3f, 0.5f, 0.3f),
                 Shininess = 0.5f
             }
         },
         { (int)BlockType.Sand, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
                 Specular = new Vector3(1),
                 Shininess = 0.3f
             }
@@ -68,7 +68,7 @@ internal class VoxelWorld
                 Diffuse = new Vector3(1, 1, 1),
                 Emissive = new Vector3(0),
                 Specular = new Vector3(0.7f, 0.7f, 0.8f),
-                Shininess = 0.0f
+                Shininess = 0.3f
             }
         }
     };
@@ -88,23 +88,23 @@ internal class VoxelWorld
 
     public void Initialize(int seed)
     {
-        var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.ChunkSideSize / 2 };
+        var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.WorldChunksXZ };
+
         for (var z = 0; z < VoxelHelper.WorldChunksXZ; z++)
         {
-            for (var y = 0; y < VoxelHelper.WorldChunksY; y++)
+            //for (var x = 0; x < VoxelHelper.WorldChunksXZ; x++)
+            Parallel.For(0, VoxelHelper.WorldChunksXZ, options, x =>
             {
-                Parallel.For(0, VoxelHelper.WorldChunksXZ, options, x =>
+                var index = z * VoxelHelper.WorldChunksXZ + x;
+                var position = new Vector3i(x * VoxelHelper.ChunkSideSize, 0, z * VoxelHelper.ChunkSideSize);
+                var chunk = new Chunk()
                 {
-                    var index = z * VoxelHelper.WorldSizeXZSquared + y * VoxelHelper.WorldChunksXZ + x;
-                    var position = new Vector3i(x * VoxelHelper.ChunkSideSize, y * VoxelHelper.ChunkSideSize, z * VoxelHelper.ChunkSideSize);
-                    var chunk = new Chunk()
-                    {
-                        Aabb = (position, position + ChunkSize)
-                    };
-                    chunk.Initialize(this, index, seed);
-                    _ = chunks.TryAdd(chunk.Index, chunk);
-                });
-            }
+                    Aabb = (position, position + ChunkSize)
+                };
+                chunk.Initialize(this, index, seed);
+                _ = chunks.TryAdd(chunk.Index, chunk);
+            });
+            //}
         }
 
         Log.Highlight($"VoxelWorld created {chunks.Count:N0} chunks in {stopwatch.ElapsedMilliseconds:N0} ms, empty chunks {chunks.Values.Where(x => x.IsEmpty).Count()}");
@@ -112,12 +112,19 @@ internal class VoxelWorld
 
     public Chunk this[int index] => chunks[index];
 
-    public bool GetChunkByGlobalPosition(in Vector3 worldPosition, out Chunk chunk)
+    public bool GetChunkByGlobalPosition(in Vector3 worldPosition, out Chunk? chunk)
     {
-        chunk = default;
-        var chunkPosition = (Vector3i)worldPosition / VoxelHelper.ChunkSideSize;
-        return VoxelHelper.IsGlobalPositionInWorld(worldPosition) &&
-            chunks.TryGetValue(chunkPosition.X + chunkPosition.Y * VoxelHelper.WorldChunksXZ + chunkPosition.Z * VoxelHelper.WorldSizeXZSquared, out chunk);
+        chunk = null;
+
+        if (!VoxelHelper.IsGlobalPositionInWorld(worldPosition)) return false;
+
+        var idx = VoxelHelper.GetChunkIndexFromGlobalPosition(worldPosition);
+        if(chunks.TryGetValue(idx, out var resultChunk))
+        {
+            chunk = resultChunk;
+            return true;
+        }
+        return false;
     }
 
     /// <summary>

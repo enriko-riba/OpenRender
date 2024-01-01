@@ -1,4 +1,6 @@
-﻿using System.Runtime.InteropServices;
+﻿using OpenTK.Mathematics;
+using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace SpyroGame.World;
 
@@ -18,6 +20,7 @@ internal struct BlockState
     
     public readonly bool IsTransparent => BlockType is BlockType.Water or BlockType.None;
 
+    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize / VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
     public override readonly string ToString() => $"{Index}:{BlockType}";
 }
 

@@ -21,7 +21,8 @@ public class Buffer<T> : IDisposable where T : struct
     {
         this.data = data;
         GL.CreateBuffers(1, out vbo);
-        GL.NamedBufferStorage(vbo, data.Length * Unsafe.SizeOf<T>(), data, flags);
+        if(data.Length > 0)
+            GL.NamedBufferStorage(vbo, data.Length * Unsafe.SizeOf<T>(), data, flags);
     }
 
     /// <summary>

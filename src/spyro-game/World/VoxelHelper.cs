@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender;
+using OpenTK.Mathematics;
 using SpyroGame.Noise;
 
 namespace SpyroGame.World;
@@ -7,26 +8,32 @@ namespace SpyroGame.World;
 /// </summary>
 public static class VoxelHelper
 {
-    public const int WorldChunksXZ = 10;
-    public const int WorldChunksY = 5;
-    public const int ChunkSideSize = 64;
+    public const int WorldChunksXZ = 30;
+    public const int ChunkSideSize = 16;
+    public const int ChunkYSize = 100;
 
     public const float HeightAmplitude = 30f;
-    public const float WaterLevel = 13f;
-    private const float NoiseFrequency = 0.075f;
+    public const float WaterLevel = ChunkYSize - HeightAmplitude;
+    private const float NoiseFrequency = 0.0205f;
 
     public const int WorldSizeXZSquared = WorldChunksXZ * WorldChunksXZ;
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;
-    public const int ChunkSizeMinusOne = ChunkSideSize - 1;
+    public const int ChunkSizeXZMinusOne = ChunkSideSize - 1;
     public const int MaxBlockPositionXZ = WorldChunksXZ * ChunkSideSize - 1;
-    public const int MaxBlockPositionY = WorldChunksY * ChunkSideSize - 1;
-    public const int TotalChunks = WorldChunksXZ * WorldChunksXZ * WorldChunksY;
+    public const int MaxBlockPositionY = ChunkYSize - 1;
+    public const int TotalChunks = WorldChunksXZ * WorldChunksXZ;
 
+    public static Vector3i GetBlockCoordinatesGlobal(in Vector3 position) => new Vector3i((int)MathF.Round(position.X), (int)MathF.Round(position.Y), (int)MathF.Round(position.Z));
 
-    public static bool IsGlobalPositionInWorld(in Vector3 position) =>
-        position.X >= 0 && position.X <= WorldChunksXZ * ChunkSideSize &&
-        position.Y >= 0 && position.Y <= WorldChunksY * ChunkSideSize &&
-        position.Z >= 0 && position.Z <= WorldChunksXZ * ChunkSideSize;
+    public static bool IsGlobalPositionInWorld(in Vector3 position){
+    
+        var x = (int)MathF.Round(position.X);
+        var z = (int)MathF.Round(position.Z);
+        var y = (int)MathF.Round(position.Y);
+        return x >= 0 && x < WorldChunksXZ * ChunkSideSize &&
+        z >= 0 && z < WorldChunksXZ * ChunkSideSize &&
+        y >=0 && y <= MaxBlockPositionY;
+    }
 
     public static bool IsGlobalPositionOnWorldBoundary(int x, int y, int z) =>
        x == 0 ||
@@ -38,15 +45,26 @@ public static class VoxelHelper
 
     public static int GetChunkIndexFromGlobalPosition(in Vector3i position)
     {
-        var chunkPosition = position / ChunkSideSize;
-        return chunkPosition.Z * WorldSizeXZSquared + chunkPosition.Y * WorldChunksXZ + chunkPosition.X;
+        var x = position.X / ChunkSideSize;
+        var z = position.Z / ChunkSideSize;
+        return x + z * WorldChunksXZ;
     }
 
-    public static float[] CalcChunkHeightGrid(int chunkIndex, int seed)
+    public static int GetChunkIndexFromGlobalPosition(in Vector3 position)
+    {
+        var x = (int)MathF.Round(position.X) / ChunkSideSize;
+        var z = (int)MathF.Round(position.Z) / ChunkSideSize;
+        return x + z * WorldChunksXZ;
+    }
+
+    public static float[] CalcTerrainData(int chunkIndex, int seed)
     {
         var worldX = chunkIndex % WorldChunksXZ;
-        var worldZ = chunkIndex / WorldSizeXZSquared;
-        //var worldY = (chunkIndex / WorldChunksXZ) % WorldChunksXZ;
-        return NoiseData.CreateFromEncoding("BwA=", worldX * ChunkSideSize, worldZ * ChunkSideSize, ChunkSideSize, NoiseFrequency, seed, out _);
+        var worldZ = chunkIndex / WorldChunksXZ;
+        var offsetX = worldX * ChunkSideSize;
+        var offsetZ = worldZ * ChunkSideSize;
+        var data = NoiseData.CreateFromEncoding("BwA=", worldX * ChunkSideSize, worldZ * ChunkSideSize, ChunkSideSize, NoiseFrequency, seed, out var minmax);
+        //Log.Info($"Calculating terrain data for chunk {chunkIndex} at {worldX},{worldZ}, noise offset {offsetX},{offsetZ}, minmax {minmax}");
+        return data;
     }
 }

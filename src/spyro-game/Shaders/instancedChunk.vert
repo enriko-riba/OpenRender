@@ -92,8 +92,8 @@ void main(void)
 
     // Calculate block position based on block index
     uint x = block.index % chunkSize;
-    uint y = (block.index / chunkSize) % chunkSize;
-    uint z = block.index / (chunkSize * chunkSize);
+    uint z = (block.index / chunkSize) % chunkSize;
+    uint y = block.index / (chunkSize * chunkSize);
     vec3 translatedPosition = rotatedPosition + vec3(x * spacing, y * spacing, z * spacing);
     vec4 worldPosition = model * vec4(translatedPosition, 1.0);
     

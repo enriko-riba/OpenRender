@@ -36,8 +36,8 @@ public class CameraFps : CameraBase
     {
         rotation.X += pitchDegrees;
         rotation.X %= 360;
-        if (rotation.X > 45) rotation.X = 45;
-        if (rotation.X < -45) rotation.X = -45;
+        if (rotation.X > 80) rotation.X = 80;
+        if (rotation.X < -89) rotation.X = -89;
         pitchRads = MathHelper.DegreesToRadians(rotation.X);
 
         rotation.Y -= yawDegrees;
@@ -69,7 +69,6 @@ public class CameraFps : CameraBase
         right = Vector3.Normalize(Vector3.Cross(front, Vector3.UnitY));
         up = Vector3.Normalize(Vector3.Cross(right, front));
 
-        //view = Matrix4.LookAt(position, position + front, up);
         view = Matrix4.LookAt(Position, Position + front, up);
         projection = Matrix4.CreatePerspectiveFieldOfView(fov, AspectRatio, nearPlane, farPlane);
         viewProjection = view * projection;

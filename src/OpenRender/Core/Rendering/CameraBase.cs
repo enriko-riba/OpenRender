@@ -39,8 +39,11 @@ public abstract class CameraBase : ICamera
 
     /// <summary>
     /// Gets the orientation of the camera.
-    /// </summary>
-    public Quaternion Orientation => orientation;
+    /// </summary>    
+    public Quaternion Orientation {
+        get => orientation;
+        set => orientation = value;
+    }
 
     /// <summary>
     /// Gets the projection matrix of the camera.
@@ -118,8 +121,11 @@ public abstract class CameraBase : ICamera
         get => position;
         set
         {
-            position = value;
-            isDirty = true;
+            if(position != value)
+            {
+                position = value;
+                isDirty = true;
+            }
         }
     }
 
