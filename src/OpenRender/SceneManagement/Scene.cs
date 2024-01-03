@@ -118,12 +118,11 @@ public class Scene
         nodes.Clear();
         renderer.RemoveAllNodes();
     }
-
+        
     /// <summary>
-    /// Resets the tracked last material used for rendering, this will force the material to be updated on the next frame.
-    /// Note: this is needed if material related properties like textures or lights are updated directly via OpenGL functions instead of the material class.
+    /// Returns the renderer used by the scene.
     /// </summary>
-    public void ResetMaterial() => renderer.ResetMaterial();
+    public Renderer Renderer => renderer;
 
     /// <summary>
     /// Sets up OpenGL state and loads the default shader.    

@@ -6,8 +6,11 @@ internal struct Chunk
 {
     private int index;
     private VoxelWorld world;
-    public bool IsEmpty;
+    
+    private bool isProcessed;
+    private Vector2i chunkPosition;
 
+    public readonly bool IsProcesses => isProcessed;
 
     public AABB Aabb { get; internal set; }
 
@@ -19,6 +22,8 @@ internal struct Chunk
     /// Bottom left chunk corner position in the world.
     /// </summary>
     public readonly Vector3i Position => Aabb.min;
+    public readonly BlockState[] VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent).ToArray();
+    public readonly BlockState[] TransparentBlocks => Blocks.Where(x => x.IsVisible && x.IsTransparent).ToArray();
 
     public float[] HeightData { get; private set; }
 
@@ -32,13 +37,14 @@ internal struct Chunk
 
     public void Initialize(VoxelWorld world, int index, int seed)
     {
+        if (isProcessed) return;
         this.world = world;
         this.index = index;
+        chunkPosition = new(index % VoxelHelper.WorldChunksXZ, index / VoxelHelper.WorldChunksXZ);
 
         HeightData = VoxelHelper.CalcTerrainData(index, seed);
 
         Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
-        var nonEmptyCount = 0;
 
         for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
@@ -46,65 +52,38 @@ internal struct Chunk
             {
                 for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    var height = GetHeightNormalized(x, z);
-                    var blockAltitude = y;
-
-                    BlockType bt;
-                    if (blockAltitude <= height + 1 && blockAltitude >= height)
-                    {
-                        bt = BlockType.GrassDirt;
-                    }
-                    else if (blockAltitude < height && blockAltitude >= height - 1)
-                    {
-                        bt = BlockType.Dirt;
-                    }
-                    else if (blockAltitude < height - 1)
-                    {
-                        bt = BlockType.Rock;
-                    }
-                    else
-                    {
-                        bt = BlockType.None;
-                    }
-
-                    //  special cases
-                    if (blockAltitude <= VoxelHelper.WaterLevel)
-                    {
-                        //  replace air with water
-                        if (bt == BlockType.None)
-                        {
-                            bt = BlockType.Water;
-                        }
-
-                        if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
-                        {
-                            bt = BlockType.Sand;
-                        }
-                        else if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude < VoxelHelper.WaterLevel - 1))
-                        {
-                            //  replace top layer underwater solid blocks with bedrock
-                            bt = BlockType.Rock;
-                        }
-                    }
-                    var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-                    var block = new BlockState
-                    {
-                        Index = blockIdx,
-                        BlockType = bt,
-                    };
-                    Blocks[blockIdx] = block;
-                    nonEmptyCount += bt == BlockType.None ? 0 : 1;
+                    GenerateBlock(x, y, z);
                 }
             }
         }
+    }
 
-        IsEmpty = nonEmptyCount == 0;
+    public void CalcVisibleBlocks()
+    {
+        if (isProcessed) return;
+        for (var y = VoxelHelper.ChunkYSize-1; y >= 0; y--)
+        {
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            {
+                for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+                {
+                    var idx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    var block = Blocks[idx];
+                    block.IsVisible = !block.IsAir;
+                    if (block.IsVisible)
+                    {
+                        var visibleFormOutside = IsExternallyVisible(x, y, z);
+                        block.IsVisible = visibleFormOutside;
+                    }
+                    Blocks[idx] = block;
+                }
+            }
+        }
+        isProcessed = true;
     }
 
     public readonly IEnumerable<BlockState> GetVisibleBlocks()
     {
-        if (IsEmpty) return [];
-
         List<BlockState> visibleBlocks = [];
         for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
@@ -122,8 +101,6 @@ internal struct Chunk
                 }
             }
         }
-        //return Blocks;
-        var transparentBlocks = visibleBlocks.Where(b => b.IsTransparent).ToArray();
         return visibleBlocks;
     }
 
@@ -171,11 +148,15 @@ internal struct Chunk
         {
             // Retrieve the adjacent chunk using the index
             var adjacentChunk = world[adjacentChunkIndex];
+            if (adjacentChunk == null)
+            {
+                return true;
+            }
 
             // Get the block local position in its owner chunk
-            var (cx, cy, cz) = blockWorldPosition - adjacentChunk.Position;
+            var (cx, cy, cz) = blockWorldPosition - adjacentChunk.Value.Position;
 
-            return adjacentChunk.IsBlockTransparent(cx, cy, cz);
+            return adjacentChunk.Value.IsBlockTransparent(cx, cy, cz);
         }
 
         // The block is outside the world boundaries
@@ -186,10 +167,9 @@ internal struct Chunk
 
     internal readonly bool IsBlockTransparent(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsTransparent;
 
-    public override readonly string ToString() => $"{Index}@{Aabb}";
 
-    public BlockState GetBlockAtGlobalXZ(Vector3 position)
-    {        
+    public readonly BlockState GetBlockAtGlobalXZ(Vector3 position)
+    {
         //  convert to chunk local position
         var localPosition = position - Position;
 
@@ -198,14 +178,14 @@ internal struct Chunk
         do
         {
             var block = Blocks[index];
-            if (!block.IsAir) 
+            if (!block.IsAir)
                 return block;
             index -= VoxelHelper.ChunkSideSizeSquare;
         } while (index >= 0);
         return default;
     }
 
-    public BlockState GetBlockAtLocalXZ(Vector3 localPosition)
+    public readonly BlockState GetBlockAtLocalXZ(Vector3 localPosition)
     {
         var x = (int)MathF.Round(localPosition.X);
         var z = (int)MathF.Round(localPosition.Z);
@@ -219,5 +199,58 @@ internal struct Chunk
             index -= VoxelHelper.ChunkSideSizeSquare;
         } while (index >= 0);
         return default;
+    }
+
+    public override readonly string ToString() => $"{Index}@{chunkPosition}";
+
+    private void GenerateBlock(int x, int y, int z)
+    {
+        var height = GetHeightNormalized(x, z);
+        var blockAltitude = y;
+
+        BlockType bt;
+        if (blockAltitude <= height + 1 && blockAltitude >= height)
+        {
+            bt = BlockType.GrassDirt;
+        }
+        else if (blockAltitude < height && blockAltitude >= height - 1)
+        {
+            bt = BlockType.Dirt;
+        }
+        else if (blockAltitude < height - 1)
+        {
+            bt = BlockType.Rock;
+        }
+        else
+        {
+            bt = BlockType.None;
+        }
+
+        //  special cases
+        if (blockAltitude <= VoxelHelper.WaterLevel)
+        {
+            //  replace air with water
+            if (bt == BlockType.None)
+            {
+                bt = BlockType.Water;
+            }
+
+            if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
+            {
+                bt = BlockType.Sand;
+            }
+            else if ((bt != BlockType.None) && (bt != BlockType.Water) && (blockAltitude < VoxelHelper.WaterLevel - 1))
+            {
+                //  replace top layer underwater solid blocks with bedrock
+                bt = BlockType.Rock;
+            }
+        }
+        var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+        var block = new BlockState
+        {
+            Index = blockIdx,
+            BlockType = bt,
+        };
+        Blocks[blockIdx] = block;
     }
 }

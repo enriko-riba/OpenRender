@@ -1,4 +1,7 @@
 ﻿using OpenRender;
+using OpenRender.Core.Culling;
+using OpenRender.Core.Rendering;
+using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -10,122 +13,193 @@ internal class VoxelWorld
     public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
     public static readonly Vector3i ChunkHalfSize = ChunkSize / 2;
 
+    /// <summary>
+    /// Queue of chunks to be created by background threads.
+    /// </summary>
+    private readonly PriorityQueue<IReadOnlyList<int>, int> priorityWorkQueue = new();
+
     //  key is chunk index, value is the chunk   
-    internal readonly ConcurrentDictionary<int, Chunk> chunks = [];
+    private readonly ConcurrentDictionary<int, Chunk> loadedChunks = [];
 
-    //  key is material id, value is the material
-    internal readonly Dictionary<int, VoxelMaterial> materials = new() {
-        { (int)BlockType.None, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.7f, 0.8f, 0.9f),
-                Shininess = 0.999f
-            }
-        },
-        { (int)BlockType.Rock, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.5f, 0.5f, 0.5f),
-                Shininess = 0.15f
-            }
-        },
-        { (int)BlockType.Dirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.0f, 0.0f, 0.0f),
-                Shininess = 0.0f
-            }
-        },
-        { (int)BlockType.GrassDirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.3f, 0.5f, 0.3f),
-                Shininess = 0.4f
-            }
-        },
-        { (int)BlockType.Grass, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.3f, 0.5f, 0.3f),
-                Shininess = 0.5f
-            }
-        },
-        { (int)BlockType.Sand, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(1),
-                Shininess = 0.3f
-            }
-        },
-        { (int)BlockType.Snow, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
-                Specular = new Vector3(1),
-                Shininess = 0.65f
-            }
-        },
-        { (int)BlockType.Water, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.7f, 0.7f, 0.8f),
-                Shininess = 0.3f
-            }
-        }
-    };
-
-    //  key is texture name, value texture handle index 
-    internal readonly Dictionary<BlockType, string> textures = new() {
-        { BlockType.None, "Resources/voxel/box-unwrap.png" },
-        { BlockType.Rock, "Resources/voxel/rock.png" },
-        { BlockType.Dirt, "Resources/voxel/dirt.png" },
-        { BlockType.GrassDirt, "Resources/voxel/grass-dirt.png" },
-        { BlockType.Grass, "Resources/voxel/grass.png" },
-        { BlockType.Sand, "Resources/voxel/sand.png" },
-        { BlockType.Snow, "Resources/voxel/snow.png" },
-        { BlockType.Water, "Resources/voxel/water.png" },
-    };
     internal Stopwatch stopwatch = Stopwatch.StartNew();
 
-    public void Initialize(int seed)
+    private readonly int seed;
+    private readonly List<int> surroundingChunkIndices = [];
+
+    private readonly ICamera camera;
+    private readonly Frustum frustum;
+    private int lastCameraChunkIndex = -1;
+
+    public VoxelWorld(Scene scene, int seed)
     {
-        var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.WorldChunksXZ };
+        frustum = scene.Renderer!.Frustum;
+        camera = scene.Camera!;
+        camera.CameraChanged += Camera_CameraChanged;
 
-        for (var z = 0; z < VoxelHelper.WorldChunksXZ; z++)
+        this.seed = seed;
+        var thread = new Thread(ChunkProcessor)
         {
-            //for (var x = 0; x < VoxelHelper.WorldChunksXZ; x++)
-            Parallel.For(0, VoxelHelper.WorldChunksXZ, options, x =>
-            {
-                var index = z * VoxelHelper.WorldChunksXZ + x;
-                var position = new Vector3i(x * VoxelHelper.ChunkSideSize, 0, z * VoxelHelper.ChunkSideSize);
-                var chunk = new Chunk()
-                {
-                    Aabb = (position, position + ChunkSize)
-                };
-                chunk.Initialize(this, index, seed);
-                _ = chunks.TryAdd(chunk.Index, chunk);
-            });
-            //}
-        }
-
-        Log.Highlight($"VoxelWorld created {chunks.Count:N0} chunks in {stopwatch.ElapsedMilliseconds:N0} ms, empty chunks {chunks.Values.Where(x => x.IsEmpty).Count()}");
+            IsBackground = true
+        };
+        thread.Start();
     }
 
-    public Chunk this[int index] => chunks[index];
+    public IReadOnlyList<int> SurroundingChunkIndices => surroundingChunkIndices;
 
-    public bool GetChunkByGlobalPosition(in Vector3 worldPosition, out Chunk? chunk)
+    public IEnumerable<Chunk> SurroundingChunks
+    {
+        get
+        {
+            var chunks = new Chunk[surroundingChunkIndices.Count];
+            for (var i = 0; i < surroundingChunkIndices.Count; i++)
+            {
+                var index = surroundingChunkIndices[i];
+                var chunk = this[index];
+                if (chunk is null)
+                {
+                    var x = index % VoxelHelper.WorldChunksXZ;
+                    var z = index / VoxelHelper.WorldChunksXZ;
+                    var position = new Vector3i(x * VoxelHelper.ChunkSideSize, 0, z * VoxelHelper.ChunkSideSize);
+                    chunk = new Chunk()
+                    {
+                        Aabb = (position, position + ChunkSize)
+                    };
+                }
+                chunks[i] = chunk!.Value;
+            }
+            return chunks;
+        }
+    }
+
+    public void Initialize(Action<Chunk> onChunkCompleteAction)
+    {
+        this.onChunkCompleteAction = onChunkCompleteAction;
+    }
+
+    /// <summary>
+    /// Gets a loaded chunk containing the given global position.
+    /// </summary>
+    /// <param name="globalPosition"></param>
+    /// <param name="chunk"></param>
+    /// <returns>True if chunk is loaded else false</returns>
+    public bool GetChunkByGlobalPosition(in Vector3 globalPosition, out Chunk? chunk)
     {
         chunk = null;
 
-        if (!VoxelHelper.IsGlobalPositionInWorld(worldPosition)) return false;
+        if (!VoxelHelper.IsGlobalPositionInWorld(globalPosition)) return false;
 
-        var idx = VoxelHelper.GetChunkIndexFromGlobalPosition(worldPosition);
-        if(chunks.TryGetValue(idx, out var resultChunk))
-        {
-            chunk = resultChunk;
-            return true;
-        }
-        return false;
+        var idx = VoxelHelper.GetChunkIndexFromGlobalPosition(globalPosition);
+        chunk = this[idx];
+        return chunk != null;
     }
+
+    public Chunk? this[int index] => loadedChunks.TryGetValue(index, out var chunk) ? chunk : null;
+
+
+    private void Camera_CameraChanged(object? sender, EventArgs e)
+    {
+        var index = VoxelHelper.GetChunkIndexFromGlobalPosition(camera.Position);
+        if (lastCameraChunkIndex != index)
+        {
+            Log.Debug($"Camera_CameraChanged() chunk index changed from {lastCameraChunkIndex} to {index}");
+            lastCameraChunkIndex = index;
+
+            //  update surrounding chunk indices
+            UpdateSurroundingChunkIndices(camera.Position, camera.FarPlaneDistance);
+
+            //  enqueue chunks for loading on background thread
+            priorityWorkQueue.Enqueue([.. surroundingChunkIndices], 10);
+        }
+    }
+
+    private void UpdateSurroundingChunkIndices(in Vector3 centerPosition, float farPlaneDistance)
+    {
+        surroundingChunkIndices.Clear();
+
+        // Calculate the camera chunk indices based on its position
+        var cameraChunkX = (int)(centerPosition.X / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)(centerPosition.Z / VoxelHelper.ChunkSideSize);
+
+        // Calculate the maximum distance a chunk can be from the camera in terms of chunks
+        var maxChunkDistanceInChunks = (int)Math.Ceiling(farPlaneDistance / VoxelHelper.ChunkSideSize) + 1;
+
+        // Calculate the range of chunks to check in X and Z directions
+        var minX = Math.Max(0, cameraChunkX - maxChunkDistanceInChunks);
+        var maxX = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkX + maxChunkDistanceInChunks);
+        var minZ = Math.Max(0, cameraChunkZ - maxChunkDistanceInChunks);
+        var maxZ = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkZ + maxChunkDistanceInChunks);
+
+        for (var z = minZ; z <= maxZ; z++)
+        {
+            for (var x = minX; x <= maxX; x++)
+            {
+                var chunkIndex = x + z * VoxelHelper.WorldChunksXZ;
+                surroundingChunkIndices.Add(chunkIndex);
+            }
+        }
+    }
+
+    //private void UpdateSurroundingChunkIndicesUnused(in Vector3 cameraPosition, float farPlaneDistance)
+    //{
+    //    surroundingChunkIndices.Clear();
+
+    //    // Calculate the camera chunk indices based on its position
+    //    var cameraChunkX = (int)(cameraPosition.X / VoxelHelper.ChunkSideSize);
+    //    var cameraChunkZ = (int)(cameraPosition.Z / VoxelHelper.ChunkSideSize);
+
+    //    // Calculate the maximum distance a chunk can be from the camera in terms of chunks
+    //    var maxChunkDistanceInChunks = (int)Math.Ceiling(farPlaneDistance / VoxelHelper.ChunkSideSize) + 1;
+
+    //    // Calculate the range of chunks to check in X and Z directions
+    //    var minX = Math.Max(0, cameraChunkX - maxChunkDistanceInChunks);
+    //    var maxX = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkX + maxChunkDistanceInChunks);
+    //    var minZ = Math.Max(0, cameraChunkZ - maxChunkDistanceInChunks);
+    //    var maxZ = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkZ + maxChunkDistanceInChunks);
+
+    //    List<int> batch = [];
+    //    for (var z = minZ; z <= maxZ; z++)
+    //    {
+    //        for (var x = minX; x <= maxX; x++)
+    //        {
+    //            // calculate the min and max points of the chunk
+    //            //var chunkMin = new Vector3i(x * VoxelHelper.ChunkSideSize, 0, z * VoxelHelper.ChunkSideSize);
+    //            //var chunkMax = new Vector3i((x + 1) * VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, (z + 1) * VoxelHelper.ChunkSideSize);
+
+    //            var chunkIndex = x + z * VoxelHelper.WorldChunksXZ;
+    //            surroundingChunkIndices.Add(chunkIndex);
+    //            if (!loadedChunks.ContainsKey(chunkIndex))
+    //            {
+    //                //var center = chunkMin + ChunkHalfSize;
+    //                //var distanceSquared = Vector3.DistanceSquared(center, cameraPosition);
+    //                batch.Add(chunkIndex);
+    //                //priorityWorkQueue.Enqueue(chunkIndex, (int)MathF.Round(distanceSquared));
+    //                //EnqueueChunkRequest(chunkIndex, (int)MathF.Round(distanceSquared));
+    //            }
+    //            // Check if the chunk is inside or intersects with the frustum
+    //            //if (CullingHelper.IsAABBInFrustum((chunkMin, chunkMax), frustumPlanes))
+    //            //{
+    //            //    if (!chunks.ContainsKey(chunkIndex))
+    //            //    {
+    //            //        var center = chunkMin + ChunkHalfSize;
+    //            //        var distanceSquared = Vector3.DistanceSquared(center, cameraPosition);
+    //            //        EnqueueChunkRequest(chunkIndex, (int)MathF.Round(distanceSquared));
+    //            //    }
+    //            //}
+    //        }
+    //    }
+
+    //    if (batch.Count > 0)
+    //    {
+    //        priorityWorkQueue.Enqueue(batch, 10);
+    //    }
+    //}
+
+    //public void EnqueueChunkRequest(int chunkIndex, int priority)
+    //{
+    //    Log.Debug($"EnqueueChunkRequest() enqueued item: {chunkIndex}, priority: {priority}");
+    //    priorityWorkQueue.Enqueue(chunkIndex, priority);
+    //}
+
 
     /// <summary>
     /// Selects the closest chunks to the given position, calculates visible blocks per chunk and chunks aabb.
@@ -133,20 +207,121 @@ internal class VoxelWorld
     /// <param name="centerPosition"></param>
     /// <param name="count"></param>
     /// <returns></returns>
-    public (Chunk, AABB, IEnumerable<BlockState>)[] GetImmediate(Vector3 centerPosition, int count)
-    {
-        var closest = chunks.Values
-                .Where(chunk => chunk.Position.Y + ChunkSize.Y < centerPosition.Y)                          //  chunks top must be lower then camera position
-                .OrderBy(chunk => Vector3.DistanceSquared(chunk.Position + ChunkHalfSize, centerPosition))  //  order by distance to camera
-                .Take(count)                                                                                //  take the specified number and calculate chunk data
-                .Select(chunk =>
-                {
-                    var aabb = (chunk.Position, chunk.Position + ChunkSize);
-                    var vb = chunk.GetVisibleBlocks();
-                    return (chunk, aabb, vb);
-                })
-                .ToArray();
+    //public (Chunk, AABB, IEnumerable<BlockState>)[] GetImmediate(Vector3 centerPosition, int count)
+    //{
+    //    var closest = chunks.Values
+    //            //.Where(chunk => chunk.Position.Y + ChunkSize.Y < centerPosition.Y)                          //  chunks top must be lower then camera position
+    //            .OrderBy(chunk => Vector3.DistanceSquared(chunk.Position + ChunkHalfSize, centerPosition))  //  order by distance to camera
+    //            .Take(count)                                                                                //  take the specified number and calculate chunk data
+    //            .Select(chunk =>
+    //            {
+    //                var aabb = (chunk.Position, chunk.Position + ChunkSize);
+    //                var vb = chunk.GetVisibleBlocks();
+    //                return (chunk, aabb, vb);
+    //            })
+    //            .ToArray();
 
-        return closest;
+    //    return closest;
+    //}
+
+    private Action<Chunk>? onChunkCompleteAction;
+
+    private bool InitializeChunk(int chunkIndex)
+    {
+        if (loadedChunks.ContainsKey(chunkIndex)) return false;
+        var startTime = stopwatch.ElapsedMilliseconds;
+        var x = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var z = chunkIndex / VoxelHelper.WorldChunksXZ;
+
+        var position = new Vector3i(x * VoxelHelper.ChunkSideSize, 0, z * VoxelHelper.ChunkSideSize);
+        var chunk = new Chunk()
+        {
+            Aabb = (position, position + ChunkSize)
+        };
+        chunk.Initialize(this, chunkIndex, seed);
+        if (loadedChunks.TryAdd(chunk.Index, chunk))
+        {
+            //Log.Debug($"InitializeChunk() chunk: {chunk} completed in {stopwatch.ElapsedMilliseconds - startTime} ms");
+        }
+        else
+        {
+            Log.Warn($"InitializeChunk() failed to add chunk: {chunk}");
+        }
+        return true;
+    }
+
+    private static readonly ParallelOptions parallelOptions = new()
+    {
+        MaxDegreeOfParallelism = 128
+    };
+
+    private void ChunkProcessor()
+    {
+        while (true)
+        {
+            var queueLength = priorityWorkQueue.Count;
+            if (queueLength > 0)
+            {
+                var hasWork = false;
+                var skipped = 0;
+                IReadOnlyList<int>? batch = null;
+                while (priorityWorkQueue.Count > 0)
+                {
+                    skipped++;
+                    priorityWorkQueue.TryDequeue(out batch, out _);
+                    hasWork = true;
+                }
+
+                //if (priorityWorkQueue.TryDequeue(out var batch, out _))
+                if (hasWork && batch?.Count > 0)
+                {
+                    Log.Debug($"start batch processing, skipped batches: {skipped - 1}");
+                    var start = stopwatch.ElapsedMilliseconds;
+                    var processed = 0;
+                    Parallel.For(0, batch.Count, parallelOptions, i =>
+                    {
+                        try
+                        {
+                            var index = batch[i];                            
+                            if (InitializeChunk(index))
+                            {
+                                Interlocked.Increment(ref processed);                                
+                            }
+                            //chunk.CalcVisibleBlocks();
+                            //loadedChunks[index] = chunk;
+                            //onChunkCompleteAction?.Invoke(chunk);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw;
+                        }
+
+                    });
+                    Log.Debug($"batch initialization time: {stopwatch.ElapsedMilliseconds - start} ms, chunks initialized: {processed}");
+
+                    // batch has been built, calc visible blocks
+                    processed = 0;
+                    start = stopwatch.ElapsedMilliseconds;
+                    Parallel.For(0, batch.Count, parallelOptions, i =>
+                    {
+                        var index = batch[i];
+                        var chunk = loadedChunks[index];
+                        if (!chunk.IsProcesses)
+                        {
+                            chunk.CalcVisibleBlocks();
+                            loadedChunks[index] = chunk;
+                            Interlocked.Increment(ref processed);
+                            onChunkCompleteAction?.Invoke(chunk);
+                        }
+                    });
+                    Log.Debug($"batch visibility calculation time: {stopwatch.ElapsedMilliseconds - start} ms, chunks recalculated: {processed}");
+
+                }
+            }
+            else
+            {
+                Thread.Yield();
+            }
+        }
     }
 }

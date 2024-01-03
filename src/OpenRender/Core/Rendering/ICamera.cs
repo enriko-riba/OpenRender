@@ -3,6 +3,8 @@
 namespace OpenRender.Core.Rendering;
 public interface ICamera
 {
+    public event EventHandler CameraChanged;
+
     Matrix4 ProjectionMatrix { get; }
     Matrix4 ViewMatrix { get; }
     Matrix4 ViewProjectionMatrix { get; }

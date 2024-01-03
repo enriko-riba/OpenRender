@@ -24,8 +24,6 @@ namespace SpyroGame;
 internal class MainScene(ITextRenderer textRenderer) : Scene
 {
     private readonly KeyboardActionMapper kbdActions = new();
-    private readonly VoxelWorld world = new();
-    private readonly Frustum frustum = new();
     private DayNightCycle dayNightCycle = default!;
 
     private Sprite crosshair = default!;
@@ -38,20 +36,95 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
     private const int Padding = 50;
 
-    private static readonly Vector3 textColor = new(0.3f);
+    private static readonly Vector3 textColor = new(0.752f, 0.750f, 0);
+    private static readonly Vector3 debugColorBluish = new(0.2f, 0.2f, 1f);
     private Chunk? cameraCurrentChunk;
     private Vector3i cameraCurrentChunkLocalPosition;
     private LightUniform dirLight;
+    private VoxelWorld world = default!;
+
+    //  key is material id, value is the material
+    private readonly Dictionary<int, VoxelMaterial> materials = new() {
+        { (int)BlockType.None, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.7f, 0.8f, 0.9f),
+                Shininess = 0.999f
+            }
+        },
+        { (int)BlockType.Rock, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.5f, 0.5f, 0.5f),
+                Shininess = 0.15f
+            }
+        },
+        { (int)BlockType.Dirt, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.0f, 0.0f, 0.0f),
+                Shininess = 0.0f
+            }
+        },
+        { (int)BlockType.GrassDirt, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.3f, 0.5f, 0.3f),
+                Shininess = 0.4f
+            }
+        },
+        { (int)BlockType.Grass, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.3f, 0.5f, 0.3f),
+                Shininess = 0.5f
+            }
+        },
+        { (int)BlockType.Sand, new VoxelMaterial() {
+                Diffuse = new Vector3(1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(1),
+                Shininess = 0.3f
+            }
+        },
+        { (int)BlockType.Snow, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
+                Specular = new Vector3(1),
+                Shininess = 0.65f
+            }
+        },
+        { (int)BlockType.Water, new VoxelMaterial() {
+                Diffuse = new Vector3(1, 1, 1),
+                Emissive = new Vector3(0),
+                Specular = new Vector3(0.7f, 0.7f, 0.8f),
+                Shininess = 0.3f
+            }
+        }
+    };
+
+    //  key is texture name, value texture handle index 
+    private readonly Dictionary<BlockType, string> textures = new() {
+        { BlockType.None, "Resources/voxel/box-unwrap.png" },
+        { BlockType.Rock, "Resources/voxel/rock.png" },
+        { BlockType.Dirt, "Resources/voxel/dirt.png" },
+        { BlockType.GrassDirt, "Resources/voxel/grass-dirt.png" },
+        { BlockType.Grass, "Resources/voxel/grass.png" },
+        { BlockType.Sand, "Resources/voxel/sand.png" },
+        { BlockType.Snow, "Resources/voxel/snow.png" },
+        { BlockType.Water, "Resources/voxel/water.png" },
+    };
 
     public override void Load()
     {
         base.Load();
         BackgroundColor = Color4.DarkSlateBlue;
 
-        camera = new CameraFps(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f), Width / (float)Height, 0.1f, VoxelHelper.ChunkSideSize * 8);
-        //camera = new  Camera3D(new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f, yPosition, VoxelHelper.ChunkSideSize * VoxelHelper.WorldSize / 2f), Width / (float)Height, 0.01f, 320);
-        camera.MaxFov = 60;
-
+        var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
+        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
+        {
+            MaxFov = 60
+        };
         dirLight = new LightUniform()
         {
             Direction = new Vector3(0, -1, 0),
@@ -64,7 +137,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
             new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
-            new KeyboardAction("forward", [Keys.W], ()=> camera!.MoveForward(movementPerSecond), false),
+            new KeyboardAction("forward", [Keys.W], ()=> camera!.MoveForward(movementPerSecond * 10), false),
             new KeyboardAction("left", [Keys.A], ()=> camera!.Position -= camera.Right * movementPerSecond, false),
             new KeyboardAction("right", [Keys.D], ()=> camera!.Position += camera.Right * movementPerSecond, false),
             new KeyboardAction("back", [Keys.S], ()=> camera!.MoveForward(-movementPerSecond), false),
@@ -102,39 +175,51 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
+
+        var lineY = 4;
+        void writeLine(string text, in Vector3 color)
+        {
+            textRenderer.Render(text.PadRight(70, ' '), 20, 5, lineY, color);
+            lineY += 20;
+        }
+        writeLine("", textColor);
+
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
-        textRenderer.Render(fpsText, 20, 5, 4, textColor);
-        var text = $"World size: {VoxelHelper.WorldChunksXZ:N0}, total chunks: {VoxelHelper.TotalChunks:N0}";
-        textRenderer.Render(text, 20, 5, 20, textColor);
-        text = $"Chunks in frustum: {cr.ChunksInFrustum:N0} culled: {VoxelHelper.TotalChunks - cr.ChunksInFrustum:N0} hidden: {cr.HiddenChunks:N0}";
-        textRenderer.Render(text, 20, 5, 36, textColor);
+        writeLine(fpsText, textColor);
+
+        var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, total chunks {VoxelHelper.TotalChunks:N0}";
+        writeLine(text, textColor);
+       
+        var surroundingChunks = world.SurroundingChunkIndices.Count;
+        text = $"Chunks: streamed {surroundingChunks}, in frustum {cr.ChunksInFrustum:N0}/{surroundingChunks - cr.ChunksInFrustum:N0}";
+        writeLine(text, textColor);
+
         text = $"Blocks rendered: {cr.RenderedBlocks:N0}";
-        textRenderer.Render(text, 20, 5, 52, textColor);
+        writeLine(text, textColor);
 
         text = $"position: {camera?.Position}";
-        textRenderer.Render(text, 20, 5, 68, Vector3.UnitZ);
+        writeLine(text, debugColorBluish);
 
         //  show chunk index and position
         if (cameraCurrentChunk is not null)
         {
             text = $"in chunk: {cameraCurrentChunk.Value} at {cameraCurrentChunk.Value.GetBlockAtLocalXZ(cameraCurrentChunkLocalPosition)}";
-            textRenderer.Render(text, 20, 5, 84, Vector3.UnitZ);
+            writeLine(text, debugColorBluish);
         }
 
         text = $"time: {dayNightCycle.TimeOfDay}";
-        textRenderer.Render(text, 20, 5, 104, new(0.5f));
-        text = $"sun direction: {dayNightCycle.DirLight.Direction}, ambient: {dayNightCycle.DirLight.Ambient}";
-        textRenderer.Render(text, 20, 5, 120, new(0.5f));
+        writeLine(text, Vector3.UnitY);
+        writeLine("", textColor);
+        //text = $"sun direction: {dayNightCycle.DirLight.Direction}, ambient: {dayNightCycle.DirLight.Ambient}";
+        //textRenderer.Render(text, 20, 5, 120, new(0.5f));
 
-        text = $"camera direction: {camera!.Front}";
-        textRenderer.Render(text, 20, 5, 140, new(0.5f));
+        //text = $"camera direction: {camera!.Front}";
+        //textRenderer.Render(text, 20, 5, 140, new(0.5f));
     }
 
     public override void UpdateFrame(double elapsedSeconds)
     {
         base.UpdateFrame(elapsedSeconds);
-
-        frustum.Update(camera!);
 
         var pos = camera!.Position;
         if (world.GetChunkByGlobalPosition(pos, out var chunk))
@@ -172,7 +257,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             isMouseMoving = true;
         }
 
-        dayNightCycle.Update();        
+        dayNightCycle.Update();
     }
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
@@ -197,8 +282,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
     private void SetupScene()
     {
+        world = new(this, 1338);
         dayNightCycle = new(this);
-        
 
         var paths = new string[] {
             "Resources/skybox/right.png",
@@ -221,70 +306,30 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         cube.SetPosition(new(0, 0, 0));
         AddNode(cube);
 
-        Log.Highlight($"initializing voxel world...");
-        var seed = 1338;
-        world.Initialize(seed);
 
         //  create voxel world
         Log.Highlight($"preparing voxel textures and materials...");
         world.stopwatch.Restart();
 
         //  prepare all textures and all materials
-        var textureHandles = GetTextureHandles(world);
-        var materials = GetMaterials(world);
+        var textureHandles = GetTextureHandles();
+        var materials = GetMaterials();
 
         //  create dummy material. Only the shader is important, the voxel materials and textures are passed in SSBOs
         var shader = new Shader("Shaders/instancedChunk.vert", "Shaders/instancedChunk.frag");
         var dummyMaterial = Material.Default;    //  TODO: implement CreateNew() or CreateDefault() in Material
         dummyMaterial.Shader = shader;
         var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
-        cr = new ChunkRenderer(mesh, dummyMaterial, textureHandles, materials);
+        cr = new ChunkRenderer(world, mesh, dummyMaterial, textureHandles, materials);
         AddNode(cr);
         Log.Highlight($"textures and materials prepared in {world.stopwatch.ElapsedMilliseconds:D4} ms");
         world.stopwatch.Restart();
 
-        //  find chunks nearest to camera to display them first
-        //var chunksData = world.GetImmediate(camera!.Position, 12);
-        //foreach (var (chunk, aabb, bs) in chunksData)
-        //{
-        //    cr.AddChunkData(chunk, bs.ToArray());
-        //}
-        //camera!.Update();
-        //frustum.Update(camera);
-        //cr.OnUpdate(this, 1);
-        //Log.Highlight($"initial chunks calculated in {world.stopwatch.ElapsedMilliseconds:D4} ms");
-        //world.stopwatch.Restart();
-
-        var sortedChunks = world.chunks.Values
-            //.Except(chunksData.Select(x => x.Item1))
-            .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, camera!.Position))
-            .ToArray();
-
-        Log.Info("calculating visible blocks...");
-        world.stopwatch.Restart();
-
-        var task = Task.Run(() =>
-        {
-            var options = new ParallelOptions() { MaxDegreeOfParallelism = VoxelHelper.WorldChunksXZ * 2 };
-            Parallel.ForEach(sortedChunks, options, (chunk) =>
-            {
-                try
-                {
-                    if (!cr.IsChunkAdded(chunk.Position))
-                    {
-                        var blockData = chunk.GetVisibleBlocks().ToArray();
-                        cr.blockDataPriorityWorkQueue.Enqueue((chunk, blockData));
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"{ex.Message} chunk {chunk.Index}");
-                }
-            });
-            Log.Highlight($"visible blocks calculated in {world.stopwatch.Elapsed}!");
-            world.stopwatch.Restart();
+        Log.Highlight($"initializing voxel world...");
+        world.Initialize(chunk =>
+        {           
+            cr.initializedChunksQueue.Enqueue(chunk);
         });
-
 
         dayNightCycle.Update();
     }
@@ -367,10 +412,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     /// </summary>
     /// <param name="world"></param>
     /// <returns></returns>
-    private static ulong[] GetTextureHandles(VoxelWorld world)
+    private ulong[] GetTextureHandles()
     {
-        var textureNames = Enumerable.Range(0, world.textures.Keys.Cast<int>().Max() + 1)
-            .Select(index => world.textures.ContainsKey((BlockType)index) ? world.textures[(BlockType)index] : null)
+        var textureNames = Enumerable.Range(0, textures.Keys.Cast<int>().Max() + 1)
+            .Select(index => textures.ContainsKey((BlockType)index) ? textures[(BlockType)index] : null)
             .ToArray();
         var sampler = Sampler.Create(TextureMinFilter.NearestMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
         var handles = textureNames.Where(x => !string.IsNullOrEmpty(x))
@@ -385,11 +430,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     /// </summary>
     /// <param name="world"></param>
     /// <returns></returns>
-    private static VoxelMaterial[] GetMaterials(VoxelWorld world)
+    private VoxelMaterial[] GetMaterials()
     {
-        var materials = Enumerable.Range(0, world.materials.Keys.Max() + 1)
-            .Select(index => world.materials.TryGetValue(index, out var value) ? value : default)
+        return Enumerable.Range(0, materials.Keys.Max() + 1)
+            .Select(index => materials.TryGetValue(index, out var value) ? value : default)
             .ToArray();
-        return materials;
     }
 }

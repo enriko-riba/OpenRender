@@ -1,5 +1,4 @@
 ﻿using OpenTK.Mathematics;
-using System.Numerics;
 using System.Runtime.InteropServices;
 
 namespace SpyroGame.World;
@@ -16,15 +15,21 @@ internal struct BlockState
     /// </summary>
     public BlockDirection FrontDirection { get; set; }
 
+    public bool IsVisible { get; set; }
+    public byte Reserved1;
+    public byte Reserved2;
+    public byte Reserved3;
+
     public readonly bool IsAir => BlockType == BlockType.None;
-    
+
     public readonly bool IsTransparent => BlockType is BlockType.Water or BlockType.None;
 
     public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize / VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
-    public override readonly string ToString() => $"{Index}:{BlockType}";
+
+    public override readonly string ToString() => $"{Index}:{BlockType}@{LocalPosition}";
 }
 
-public enum BlockType 
+public enum BlockType
 {
     None,
     Rock,

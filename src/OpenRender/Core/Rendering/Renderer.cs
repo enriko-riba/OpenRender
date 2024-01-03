@@ -48,8 +48,13 @@ public class Renderer
         }
     }
 
+    /// <summary>
+    /// Resets the tracked last material used for rendering, this will force the material to be updated on the next draw call.
+    /// Note: this is needed if material related properties like textures or lights are updated directly via OpenGL functions instead of the material class.
+    /// </summary>
     public void ResetMaterial() => lastMaterial = 0;
 
+    public Frustum Frustum => frustum;
 
     /// <summary>
     /// Renders visible nodes in the list.

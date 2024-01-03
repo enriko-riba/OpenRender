@@ -14,6 +14,7 @@ struct BlockState {
     uint index;
     uint blockType;
     uint blockDirection;
+    uint reserved;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];

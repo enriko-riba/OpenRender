@@ -4,6 +4,8 @@ namespace OpenRender.Core.Rendering;
 
 public abstract class CameraBase : ICamera
 {
+    public event EventHandler? CameraChanged;
+
     protected Quaternion orientation = Quaternion.Identity;
     protected Matrix4 projection;
     protected Matrix4 view;
@@ -178,6 +180,9 @@ public abstract class CameraBase : ICamera
 
         UpdateMatrices();
         isDirty = false;
+        RaiseCameraChangedEvent();
         return true;
     }
+
+    protected virtual void RaiseCameraChangedEvent() => CameraChanged?.Invoke(this, EventArgs.Empty);
 }

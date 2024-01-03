@@ -58,7 +58,7 @@ public class Button : NineSlicePlane
             var x = (size.X - rect.Width) / 2;
             var y = (size.Y - rect.Height) / 2;
             TextRenderer.Render(Caption, transform.Position.X + x, transform.Position.Y + y, new(CaptionColor.R, CaptionColor.G, CaptionColor.B));
-            Scene?.ResetMaterial();
+            Scene?.Renderer.ResetMaterial();
         }
     }
 

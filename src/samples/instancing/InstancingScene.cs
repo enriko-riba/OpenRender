@@ -85,7 +85,7 @@ internal class InstancingScene : Scene
 
         // currently the text renderer changes GL state directly so the rendering pipeline must 
         // be notified that material state needs to be re-bound before rendering the next node
-        ResetMaterial();
+        renderer.ResetMaterial();
     }
 
     public override void UpdateFrame(double elapsedSeconds)

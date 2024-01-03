@@ -27,7 +27,7 @@ var nativeWindowSettings = new NativeWindowSettings()
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
 
 //  create a font atlas and a text renderer
-var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new(0f, 0f, 0f, 0f));
+var fontAtlas = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new(0.2f, 0f, 0.2f, 0.8f));
 var tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas);
 
 // start app with menu scene

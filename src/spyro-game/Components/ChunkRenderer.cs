@@ -15,19 +15,36 @@ namespace SpyroGame.Components;
 
 internal class ChunkRenderer : SceneNode
 {
+    private static readonly Vector3 ChunkPositionOffset = new(
+        (VoxelHelper.ChunkSideSize / 2f) - 0.5f,
+        (VoxelHelper.ChunkYSize / 2f) - 0.5f,
+        (VoxelHelper.ChunkSideSize / 2f) - 0.5f
+    );
+
+    /// <summary>
+    /// Default number <cref>BlockState</cref> instance structure for which SSBO buffer memory is allocated.
+    /// </summary>
+    private static readonly int DefaultMaxInstances = (VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize) / 8;
+
     private readonly uint texturesSSBO;
     private readonly uint materialsSSBO;
+    //private readonly uint sharedBlocksSSBO;
+
     private readonly List<ChunkRenderData> renderDataList = [];
-    private readonly Mesh _mesh;
-    private readonly Frustum frustum = new();
+    private readonly VoxelWorld world;
 
-    private IEnumerable<ChunkRenderData> sortedChunkList = [];
+    private IEnumerable<ChunkRenderData> sortedVisibleChunkList = [];
 
-    internal ConcurrentQueue<(Chunk, BlockState[])> blockDataPriorityWorkQueue = [];
+    internal ConcurrentQueue<Chunk> initializedChunksQueue = [];
 
-    public ChunkRenderer(Mesh mesh, Material material, ulong[] textureHandles, VoxelMaterial[] materials) : base(mesh, material)
+    //private IndexBuffer indexBuffer;
+    //private Buffer<float> vertexBuffer;
+    //private VertexArrayObject vao;
+
+    public ChunkRenderer(VoxelWorld world, Mesh mesh, Material material, ulong[] textureHandles, VoxelMaterial[] materials) : base(mesh, material)
     {
-        _mesh = mesh;
+        this.world = world;
+
         foreach (var handle in textureHandles)
         {
             Texture.MakeResident(handle);
@@ -41,86 +58,69 @@ internal class ChunkRenderer : SceneNode
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, materialsSSBO, -1, "voxelMaterials_SSBO");
         GL.NamedBufferStorage(materialsSSBO, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
 
-        //  upload texture handles and materials to GPU
-        //GL.NamedBufferSubData(texturesSSBO, 0, textureHandles.Length * Unsafe.SizeOf<ulong>(), textureHandles);
-        //GL.NamedBufferSubData(materialsSSBO, 0, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials);
+        ////  index & vertex buffer are shared between all VAOs
+        //vertexBuffer = new Buffer<float>(Mesh.Vertices);
+        //indexBuffer = new IndexBuffer(Mesh.Indices);
+        //vao = new VertexArrayObject();
+        //vao.AddBuffer(Mesh.VertexDeclaration, vertexBuffer);
+        //vao.AddIndexBuffer(indexBuffer);
+
         Log.CheckGlError();
 
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
     }
 
-    public void AddChunkData(Chunk chunk, BlockState[] blockData)
-    {
-        lock(renderDataList)
-        {
-            renderDataList.Add(CreateChunkRenderData(chunk, blockData));
-            //Log.Debug($"added chunk {chunk.Index}@{chunk.Position} with visible blocks {blockData.Length}, total chunks {renderDataList.Count}");
-        }
-    }
-
-    public bool IsChunkAdded(Vector3i position)
-    {
-        lock(renderDataList)
-            return renderDataList.Any(x => x.Position == position);
-    }
-
+    /// <summary>
+    /// Total number of chunks passing the culling test.
+    /// </summary>
     public int ChunksInFrustum { get; private set; }
-    public int HiddenChunks { get; private set; }
+        
+    /// <summary>
+    /// Total number of blocks rendered.
+    /// </summary>
     public int RenderedBlocks { get; private set; }
-
-    private static readonly Vector3 chunkPositionOffset = new(
-        (VoxelHelper.ChunkSideSize / 2f) - 0.5f,
-        (VoxelHelper.ChunkYSize / 2f) - 0.5f,
-        (VoxelHelper.ChunkSideSize / 2f) - 0.5f
-    );
-    //private static readonly Vector3 chunkPositionOffset = new(
-    //    VoxelHelper.ChunkSideSize / 2f,
-    //    VoxelHelper.ChunkYSize / 2f,
-    //    VoxelHelper.ChunkSideSize / 2f
-    //);
 
     public override void OnDraw(double elapsed)
     {
+        GL.BindVertexArray(Vao!);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, materialsSSBO);
         Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
 
-        HiddenChunks = 0;
         RenderedBlocks = 0;
-        foreach (var chunkData in sortedChunkList)
+        foreach (var chunkData in sortedVisibleChunkList)
         {
-            if (chunkData.Count == 0)
-            {
-                HiddenChunks++;
-                continue;
-            }
+            RenderedBlocks += chunkData.SolidCount;
 
-            RenderedBlocks += chunkData.Count;
-
-            GL.BindVertexArray(chunkData.Vao!);
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkData.BlocksSSBO);
             if (!ShowBoundingSphere)
             {
                 transform.worldMatrix.Row3.Xyz = chunkData.Position;
                 Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
-                GL.DrawElementsInstanced(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
+                GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.SolidCount);
+
+                if(chunkData.TransparentCount > 0)
+                { 
+                    GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkData.TransparentBlocksSSBO);
+                    GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.TransparentCount);
+                }
             }
             else
             {
                 GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
                 transform.worldMatrix.Row3.Xyz = chunkData.Position;
                 Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
-                GL.DrawElementsInstanced(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
+                //GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
 
                 GL.Disable(EnableCap.CullFace);
-                transform.worldMatrix.Row3.Xyz = chunkData.Position + chunkPositionOffset;
+                transform.worldMatrix.Row3.Xyz = chunkData.Position + ChunkPositionOffset;
                 Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
                 var worldMatrix = scaleMatrix * transform.worldMatrix;
                 Scene!.DefaultShader.Use();
                 Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
 
-                GL.DrawElements(PrimitiveType.Triangles, chunkData.Vao.DataLength, DrawElementsType.UnsignedInt, 0);
+                GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
             }
             GL.Enable(EnableCap.CullFace);
         }
@@ -129,55 +129,81 @@ internal class ChunkRenderer : SceneNode
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
-        if (blockDataPriorityWorkQueue.TryDequeue(out var cbd))
+        if (initializedChunksQueue.TryDequeue(out var chunk))
         {
-            AddChunkData(cbd.Item1, cbd.Item2);
-            Scene?.Camera?.Invalidate();
+            var old = renderDataList.Find(x => x.Index == chunk.Index);
+            if (old != null)
+            {
+                renderDataList.Remove(old);
+                GL.DeleteBuffer(old.BlocksSSBO);
+                GL.DeleteBuffer(old.TransparentBlocksSSBO);
+                Log.CheckGlError();
+            }
+            renderDataList.Add(CreateChunkRenderData(chunk));
+            if(!initializedChunksQueue.IsEmpty)
+            {
+                Log.Debug($"initializedChunksQueue items: {initializedChunksQueue.Count}");
+            }
+            Scene!.Camera?.Invalidate();
         }
 
-        if (Scene?.Camera?.IsDirty ?? false)
+        if (Scene!.Camera?.IsDirty ?? false)
         {
-            frustum.Update(Scene.Camera);
-            foreach (var chunkRenderData in renderDataList)
+            var cullCandidates = renderDataList.Where(x => world.SurroundingChunkIndices.Contains(x.Index)).ToArray();
+            foreach (var chunkRenderData in cullCandidates)
             {
-                var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, frustum.Planes);
+                var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, Scene.Renderer.Frustum.Planes);
                 chunkRenderData.Visible = visible;
             }
-            sortedChunkList = renderDataList
+            sortedVisibleChunkList = cullCandidates
                 .Where(x => x.Visible)
                 .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene.Camera.Position))
                 .ToArray();
-            ChunksInFrustum = sortedChunkList.Count();
+            ChunksInFrustum = sortedVisibleChunkList.Count();
         }
-
     }
 
-    private ChunkRenderData CreateChunkRenderData(Chunk chunk, BlockState[] blockData)
+    private ChunkRenderData CreateChunkRenderData(Chunk chunk)
     {
-        var vao = new VertexArrayObject();
-        vao.AddBuffer(_mesh.VertexDeclaration, new Buffer<float>(_mesh.Vertices));
-        vao.AddIndexBuffer(new IndexBuffer(_mesh.Indices));
-
-        var maxInstances = (VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize) / 8;
-        maxInstances = maxInstances > blockData.Length ? maxInstances : blockData.Length;
-
+        //  solid blocks
+        var blockData = chunk.VisibleBlocks.ToArray();
+        var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         //  prepare block data SSBOs
         GL.CreateBuffers(1, out uint blocksSSBO);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blocksSSBO, -1, "blockdata_SSBO");
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blocksSSBO, -1, $"blocks_Chunk_{chunk}_SSBO");
         GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<BlockState>(), blockData);
+
+        //  transparent blocks
+        var transparentBlockData = chunk.TransparentBlocks.ToArray();
+        maxInstances = DefaultMaxInstances > transparentBlockData.Length ? DefaultMaxInstances : transparentBlockData.Length;
+        //  prepare block data SSBOs
+        GL.CreateBuffers(1, out uint transparentBlocksSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, transparentBlocksSSBO, -1, $"transparentBlocks_Chunk_{chunk}_SSBO");
+        GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<BlockState>(), transparentBlockData);
         Log.CheckGlError();
 
         ChunkRenderData chunkData = new(
-           vao,
            blocksSSBO,
            blockData.Length,
-           chunk.Aabb);
+           transparentBlocksSSBO,
+           transparentBlockData.Length,
+           chunk.Aabb,
+           chunk.Index);
         return chunkData;
     }
 }
 
-internal record ChunkRenderData(VertexArrayObject Vao, uint BlocksSSBO, int Count, AABB Aabb)
+/// <summary>
+/// Holds data for rendering a chunk.
+/// </summary>
+/// <param name="BlocksSSBO">Handle to SSBO buffer</param>
+/// <param name="SolidCount">Number of BlockData structures in the BlocksSSBO buffer</param>
+/// <param name="TransparentBlocksSSBO">Handle to SSBO buffer</param>
+/// <param name="TransparentCount">Number of BlockData structures in the BlocksSSBO buffer</param>
+/// <param name="Aabb">Axis aligned bounding box of the chunk</param>
+internal record ChunkRenderData(uint BlocksSSBO, int SolidCount, uint TransparentBlocksSSBO, int TransparentCount, AABB Aabb, int Index)
 {
     public bool Visible { get; set; }
     public Vector3i Position => Aabb.min;
