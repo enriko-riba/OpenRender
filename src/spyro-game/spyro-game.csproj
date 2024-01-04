@@ -13,6 +13,7 @@
     <None Remove="Resources\voxel\grass-dirt.png" />
     <None Remove="Resources\voxel\sand.png" />
     <None Remove="Resources\voxel\snow.png" />
+    <None Remove="Resources\voxel\under-water.png" />
     <None Remove="Resources\voxel\water.png" />
   </ItemGroup>
 
@@ -63,6 +64,9 @@
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
 	<Content Include="Resources\voxel\snow.png">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</Content>
+	<Content Include="Resources\voxel\under-water.png">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
 	<Content Include="Resources\voxel\water.png">

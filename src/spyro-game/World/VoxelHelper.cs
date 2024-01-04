@@ -9,14 +9,15 @@ namespace SpyroGame.World;
 public static class VoxelHelper
 {
     public const float FarPlane = 450f;
+    public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize) + 1;
 
     public const int WorldChunksXZ = 250;
-    public const int ChunkSideSize = 40;
-    public const int ChunkYSize = 100;
+    public const int ChunkSideSize = 28;
+    public const int ChunkYSize = 300;
 
     public const float HeightAmplitude = 30f;
     public const float WaterLevel = ChunkYSize - HeightAmplitude;
-    private const float NoiseFrequency = 0.0205f;
+    private const float NoiseFrequency = 0.014f;
 
     public const int WorldSizeXZSquared = WorldChunksXZ * WorldChunksXZ;
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;
@@ -50,6 +51,13 @@ public static class VoxelHelper
         var x = position.X / ChunkSideSize;
         var z = position.Z / ChunkSideSize;
         return x + z * WorldChunksXZ;
+    }
+
+    public static Vector3i GetChunkPositionGlobal(int chunkIndex)
+    {
+        var x = (chunkIndex % WorldChunksXZ) * ChunkSideSize;        
+        var z = (chunkIndex / (WorldChunksXZ) * ChunkSideSize);
+        return new Vector3i(x, 0, z);
     }
 
     public static int GetChunkIndexFromGlobalPosition(in Vector3 position)

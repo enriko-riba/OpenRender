@@ -1,6 +1,5 @@
 ﻿using OpenRender;
 using OpenRender.Core;
-using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -57,14 +56,6 @@ internal class ChunkRenderer : SceneNode
         GL.CreateBuffers(1, out materialsSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, materialsSSBO, -1, "voxelMaterials_SSBO");
         GL.NamedBufferStorage(materialsSSBO, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
-
-        ////  index & vertex buffer are shared between all VAOs
-        //vertexBuffer = new Buffer<float>(Mesh.Vertices);
-        //indexBuffer = new IndexBuffer(Mesh.Indices);
-        //vao = new VertexArrayObject();
-        //vao.AddBuffer(Mesh.VertexDeclaration, vertexBuffer);
-        //vao.AddIndexBuffer(indexBuffer);
-
         Log.CheckGlError();
 
         RenderGroup = RenderGroup.SkyBox;
@@ -75,7 +66,7 @@ internal class ChunkRenderer : SceneNode
     /// Total number of chunks passing the culling test.
     /// </summary>
     public int ChunksInFrustum { get; private set; }
-        
+
     /// <summary>
     /// Total number of blocks rendered.
     /// </summary>
@@ -92,43 +83,24 @@ internal class ChunkRenderer : SceneNode
         foreach (var chunkData in sortedVisibleChunkList)
         {
             RenderedBlocks += chunkData.SolidCount;
-
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkData.BlocksSSBO);
-            if (!ShowBoundingSphere)
-            {
-                transform.worldMatrix.Row3.Xyz = chunkData.Position;
-                Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
-                GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.SolidCount);
-
-                if(chunkData.TransparentCount > 0)
-                { 
-                    GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkData.TransparentBlocksSSBO);
-                    GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.TransparentCount);
-                }
-            }
-            else
-            {
-                GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
-                transform.worldMatrix.Row3.Xyz = chunkData.Position;
-                Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
-                //GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
-
-                GL.Disable(EnableCap.CullFace);
-                transform.worldMatrix.Row3.Xyz = chunkData.Position + ChunkPositionOffset;
-                Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
-                var worldMatrix = scaleMatrix * transform.worldMatrix;
-                Scene!.DefaultShader.Use();
-                Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
-
-                GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
-            }
-            GL.Enable(EnableCap.CullFace);
+            RenderSingleChunk(chunkData.Position, chunkData.BlocksSSBO, chunkData.SolidCount);
         }
+
+        foreach (var chunkData in sortedVisibleChunkList)
+        {
+            if (chunkData.TransparentCount > 0)
+            {
+                RenderedBlocks += chunkData.TransparentCount;
+                RenderSingleChunk(chunkData.Position, chunkData.TransparentBlocksSSBO, chunkData.TransparentCount);
+            }
+        }
+
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
+        var isChunkDataUpdated = false;
         if (initializedChunksQueue.TryDequeue(out var chunk))
         {
             var old = renderDataList.Find(x => x.Index == chunk.Index);
@@ -140,44 +112,46 @@ internal class ChunkRenderer : SceneNode
                 Log.CheckGlError();
             }
             renderDataList.Add(CreateChunkRenderData(chunk));
-            if(!initializedChunksQueue.IsEmpty)
-            {
-                Log.Debug($"initializedChunksQueue items: {initializedChunksQueue.Count}");
-            }
-            Scene!.Camera?.Invalidate();
+            //if (!initializedChunksQueue.IsEmpty)
+            //{
+            //    Log.Debug($"initializedChunksQueue items: {initializedChunksQueue.Count}");
+            //}
+            //Scene!.Camera?.Invalidate();
+            isChunkDataUpdated = true;
         }
 
-        if (Scene!.Camera?.IsDirty ?? false)
+        if (isChunkDataUpdated || (Scene!.Camera?.IsDirty ?? false))
         {
+            Scene!.Renderer.Frustum.Update(Scene!.Camera!);
             var cullCandidates = renderDataList.Where(x => world.SurroundingChunkIndices.Contains(x.Index)).ToArray();
             foreach (var chunkRenderData in cullCandidates)
             {
-                var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, Scene.Renderer.Frustum.Planes);
+                var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, Scene!.Renderer.Frustum.Planes);
                 chunkRenderData.Visible = visible;
             }
             sortedVisibleChunkList = cullCandidates
                 .Where(x => x.Visible)
-                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene.Camera.Position))
+                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene!.Camera!.Position))
                 .ToArray();
             ChunksInFrustum = sortedVisibleChunkList.Count();
         }
     }
 
-    private ChunkRenderData CreateChunkRenderData(Chunk chunk)
+    private static ChunkRenderData CreateChunkRenderData(Chunk chunk)
     {
-        //  solid blocks
-        var blockData = chunk.VisibleBlocks.ToArray();
-        var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         //  prepare block data SSBOs
+        //  for solid blocks
+        var blockData = chunk.VisibleBlocks;
+        var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         GL.CreateBuffers(1, out uint blocksSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blocksSSBO, -1, $"blocks_Chunk_{chunk}_SSBO");
         GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<BlockState>(), blockData);
 
-        //  transparent blocks
-        var transparentBlockData = chunk.TransparentBlocks.ToArray();
-        maxInstances = DefaultMaxInstances > transparentBlockData.Length ? DefaultMaxInstances : transparentBlockData.Length;
         //  prepare block data SSBOs
+        //  for transparent blocks
+        var transparentBlockData = chunk.TransparentBlocks;
+        maxInstances = DefaultMaxInstances > transparentBlockData.Length ? DefaultMaxInstances : transparentBlockData.Length;
         GL.CreateBuffers(1, out uint transparentBlocksSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, transparentBlocksSSBO, -1, $"transparentBlocks_Chunk_{chunk}_SSBO");
         GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
@@ -192,6 +166,35 @@ internal class ChunkRenderer : SceneNode
            chunk.Aabb,
            chunk.Index);
         return chunkData;
+    }
+
+    private void RenderSingleChunk(Vector3i position, uint ssbo, int instanceCount)
+    {
+        RenderedBlocks += instanceCount;
+
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, ssbo);
+        transform.worldMatrix.Row3.Xyz = position;
+        Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
+
+        if (!ShowBoundingSphere)
+        {
+            GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, instanceCount);
+        }
+        else
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+            //GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, chunkData.Count);
+
+            GL.Disable(EnableCap.CullFace);
+            transform.worldMatrix.Row3.Xyz = position + ChunkPositionOffset;
+            Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
+            var worldMatrix = scaleMatrix * transform.worldMatrix;
+            Scene!.DefaultShader.Use();
+            Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
+
+            GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
+            GL.Enable(EnableCap.CullFace);
+        }
     }
 }
 

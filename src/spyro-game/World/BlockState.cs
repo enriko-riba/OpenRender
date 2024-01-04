@@ -20,9 +20,9 @@ internal struct BlockState
     public byte Reserved2;
     public byte Reserved3;
 
-    public readonly bool IsAir => BlockType == BlockType.None;
+    public readonly bool IsAir => BlockType is BlockType.None;
 
-    public readonly bool IsTransparent => BlockType is BlockType.Water or BlockType.None;
+    public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 
     public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize / VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
 
@@ -32,13 +32,13 @@ internal struct BlockState
 public enum BlockType
 {
     None,
+    WaterLevel,
     Rock,
+    Sand,
     Dirt,
     GrassDirt,
     Grass,
-    Sand,
     Snow,
-    Water,
 }
 
 public enum BlockDirection

@@ -31,7 +31,7 @@ internal class DayNightCycle(Scene scene)
         var sunriseTime = new TimeSpan(6, 0, 0);
         var sunsetTime = new TimeSpan(19, 0, 0);
 
-        var ambientDayValue = new Vector3(0.02f);
+        var ambientDayValue = new Vector3(0.1f);
 
         var ambientNightMinValue = new Vector3(0.025f);
         var ambientNightMaxValue = new Vector3(0.25f);
