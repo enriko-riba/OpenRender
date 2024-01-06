@@ -8,6 +8,7 @@
 #define POINT_LIGHT			1
 #define SPOT_LIGHT			2
 #define NO_COLOR			vec4(0);			// for no light we must return 0 in alpha channel otherwise the transparent pixels would loose its transparency
+
 uniform int uTotalLights;
 
 layout (std140, binding = 0) uniform camera {    
@@ -50,6 +51,18 @@ flat in uint textureIndex;
 
 out vec4 outputColor;
 
+float getFogFactor(float d)
+{
+    //  FarPlane = 450f;
+    const float FogMax = 460.0;
+    const float FogMin = 400.0;
+
+    if (d>=FogMax) return 1;
+    if (d<=FogMin) return 0;
+
+    return 1 - (FogMax - d) / (FogMax - FogMin);
+}
+
 void main()
 { 
     Material mat = mat[materialIndex];
@@ -75,5 +88,13 @@ void main()
         float exponent = pow(2, mat.shininess * 2.0) + 2;       
         Sc = clamp(pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular, 0, 1);
     }
+
     outputColor = clamp(vec4(mat.emissive.rgb + (Sc + Ac + Dc), 1) * texColor, 0, 1);
+    
+    // fog
+    vec4 fog = vec4(0.10f, 0.10f, 0.15f, 1.0f);
+    float d = distance(fragPos, cameraPos);
+    float alpha = getFogFactor(d);
+
+    outputColor = mix(outputColor, fog, alpha);
 }

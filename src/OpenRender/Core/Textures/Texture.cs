@@ -67,13 +67,20 @@ public class Texture : IDisposable
         string name,
         bool generateMipMap = false,
         TextureTarget textureTarget = TextureTarget.Texture2D,
-        SizedInternalFormat internalFormat = SizedInternalFormat.Srgb8Alpha8)
+        SizedInternalFormat internalFormat = SizedInternalFormat.Srgb8Alpha8,
+        bool ignoreCache = false)
     {
-        var key = $"{name}|{textureTarget}";
-        if (textureCache.TryGetValue(key, out var cachedTexture))
+
+        if (!ignoreCache)
         {
-            return cachedTexture;
+            var key = $"{name}|{textureTarget}";
+            if (textureCache.TryGetValue(key, out var cachedTexture))
+            {
+                return cachedTexture;
+            }
         }
+
+
         var mipmapLevels = 1;
         if (generateMipMap)
         {
@@ -93,7 +100,13 @@ public class Texture : IDisposable
             Height = height,
             TextureTarget = textureTarget,
         };
-        textureCache[key] = texture;
+
+        if (!ignoreCache)
+        {
+            var key = $"{name}|{textureTarget}";
+            textureCache[key] = texture;
+        }
+
         GL.ObjectLabel(ObjectLabelIdentifier.Texture, handle, -1, texture.ToString());
         Log.CheckGlError();
 

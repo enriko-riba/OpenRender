@@ -61,7 +61,6 @@ internal class SnakeScene : Scene
             Tint = new Color4(1, 0.4f, 0.4f, 1)
         };
         btnExit.SetPosition(new(btnX, btnY + BtnHeight * 1.25f));
-        btnExit.SetPosition(new(btnX, btnY + BtnHeight * 1.25f));
         AddNode(btnExit);
     }
 

@@ -10,6 +10,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Resources\btnAtlas.png" />
+    <None Remove="Resources\mcr.otf" />
+    <None Remove="Resources\mcr.ttf" />
     <None Remove="Resources\voxel\grass-dirt.png" />
     <None Remove="Resources\voxel\sand.png" />
     <None Remove="Resources\voxel\snow.png" />
@@ -22,6 +25,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\crosshair.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\mcr.ttf">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\skybox\back.png">
@@ -78,6 +84,9 @@
 	<Content Include="Shaders\instancedChunk.frag">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
+	  <Content Include="Resources\btnAtlas.png">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
   </ItemGroup>
 
   <ItemGroup>

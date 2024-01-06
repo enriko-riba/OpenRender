@@ -92,7 +92,8 @@ public sealed class FontAtlasGenerator
         fontAtlas.Texture = Texture.FromByteArray(buffer,
             sizeW,
             sizeH,
-            "fontAtlasSampler"
+            "fontAtlasSampler",
+            ignoreCache: true
             //minFilter: TextureMinFilter.Nearest, magFilter: TextureMagFilter.Nearest);
             );
         return fontAtlas;

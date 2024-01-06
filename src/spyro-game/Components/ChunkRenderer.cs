@@ -1,5 +1,6 @@
 ﻿using OpenRender;
 using OpenRender.Core;
+using OpenRender.Core.Buffers;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -9,6 +10,7 @@ using OpenTK.Mathematics;
 using SpyroGame.World;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 
 namespace SpyroGame.Components;
 
@@ -29,16 +31,21 @@ internal class ChunkRenderer : SceneNode
     private readonly uint materialsSSBO;
     //private readonly uint sharedBlocksSSBO;
 
-    private readonly List<ChunkRenderData> renderDataList = [];
+    private readonly List<ChunkRenderData> loadedChunkRenderDataList = [];
     private readonly VoxelWorld world;
 
     private IEnumerable<ChunkRenderData> sortedVisibleChunkList = [];
-
     internal ConcurrentQueue<Chunk> initializedChunksQueue = [];
 
-    //private IndexBuffer indexBuffer;
-    //private Buffer<float> vertexBuffer;
-    //private VertexArrayObject vao;
+    public static ChunkRenderer Create(VoxelWorld world, ulong[] textureHandles, VoxelMaterial[] materials)
+    {
+        var (vertices, indices) = VoxelHelper.CreateVoxelCube();
+        var shader = new Shader("Shaders/instancedChunk.vert", "Shaders/instancedChunk.frag");
+        var dummyMaterial = Material.Default;    //  TODO: implement CreateNew() or CreateDefault() in Material
+        dummyMaterial.Shader = shader;
+        var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
+        return new ChunkRenderer(world, mesh, dummyMaterial, textureHandles, materials);
+    }
 
     public ChunkRenderer(VoxelWorld world, Mesh mesh, Material material, ulong[] textureHandles, VoxelMaterial[] materials) : base(mesh, material)
     {
@@ -72,6 +79,10 @@ internal class ChunkRenderer : SceneNode
     /// </summary>
     public int RenderedBlocks { get; private set; }
 
+    public int ChunksQueueLength => initializedChunksQueue.Count;
+
+    public int ChunkRenderDataLength => loadedChunkRenderDataList.Count;
+
     public override void OnDraw(double elapsed)
     {
         GL.BindVertexArray(Vao!);
@@ -98,32 +109,54 @@ internal class ChunkRenderer : SceneNode
         GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }
 
+    /// <summary>
+    /// Immediately adds a chunk to the renderer. This method is intended to be used only during initialization.
+    /// Note: this method must be only called from the main thread (where GL context is created).
+    /// </summary>
+    /// <param name="chunk"></param>
+    internal void AddChunkDirect(Chunk chunk)
+    {
+        var newChunkRenderData = CreateChunkRenderData(chunk);
+        loadedChunkRenderDataList.Add(newChunkRenderData);
+    }
+
     public override void OnUpdate(Scene scene, double elapsed)
     {
         var isChunkDataUpdated = false;
-        if (initializedChunksQueue.TryDequeue(out var chunk))
+        var counter = 0;
+        while (counter < 4 && initializedChunksQueue.TryDequeue(out var chunk))
         {
-            var old = renderDataList.Find(x => x.Index == chunk.Index);
-            if (old != null)
+            var existingChunkRenderData = loadedChunkRenderDataList.Find(x => x.Index == chunk.Index);
+            if (existingChunkRenderData == null && chunk.State == ChunkState.Loaded)
             {
-                renderDataList.Remove(old);
-                GL.DeleteBuffer(old.BlocksSSBO);
-                GL.DeleteBuffer(old.TransparentBlocksSSBO);
-                Log.CheckGlError();
+                var newChunkRenderData = CreateChunkRenderData(chunk);
+                loadedChunkRenderDataList.Add(newChunkRenderData);
+                chunk.State = ChunkState.Added;
+                isChunkDataUpdated = true;
+                counter++;
             }
-            renderDataList.Add(CreateChunkRenderData(chunk));
+            else if (existingChunkRenderData != null && chunk.State == ChunkState.ToBeRemoved)
+            {
+                loadedChunkRenderDataList.Remove(existingChunkRenderData);
+                GL.DeleteBuffer(existingChunkRenderData.BlocksSSBO);
+                GL.DeleteBuffer(existingChunkRenderData.TransparentBlocksSSBO);
+                Log.CheckGlError();
+                chunk.State = ChunkState.SafeToRemove;
+                isChunkDataUpdated = true;
+                counter++;
+            }
+
             //if (!initializedChunksQueue.IsEmpty)
             //{
             //    Log.Debug($"initializedChunksQueue items: {initializedChunksQueue.Count}");
             //}
             //Scene!.Camera?.Invalidate();
-            isChunkDataUpdated = true;
         }
 
         if (isChunkDataUpdated || (Scene!.Camera?.IsDirty ?? false))
         {
             Scene!.Renderer.Frustum.Update(Scene!.Camera!);
-            var cullCandidates = renderDataList.Where(x => world.SurroundingChunkIndices.Contains(x.Index)).ToArray();
+            var cullCandidates = loadedChunkRenderDataList.Where(x => world.SurroundingChunkIndices.Contains(x.Index));
             foreach (var chunkRenderData in cullCandidates)
             {
                 var visible = CullingHelper.IsAABBInFrustum(chunkRenderData.Aabb, Scene!.Renderer.Frustum.Planes);
@@ -132,8 +165,20 @@ internal class ChunkRenderer : SceneNode
             sortedVisibleChunkList = cullCandidates
                 .Where(x => x.Visible)
                 .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene!.Camera!.Position))
-                .ToArray();
+                .ToArray(); //  NOTE: create array to avoid multiple enumerations per render frame
             ChunksInFrustum = sortedVisibleChunkList.Count();
+        }
+    }
+
+    private void UnloadChunkRenderData(Chunk chunk)
+    {
+        var old = loadedChunkRenderDataList.Find(x => x.Index == chunk.Index);
+        if (old != null)
+        {
+            loadedChunkRenderDataList.Remove(old);
+            GL.DeleteBuffer(old.BlocksSSBO);
+            GL.DeleteBuffer(old.TransparentBlocksSSBO);
+            Log.CheckGlError();
         }
     }
 

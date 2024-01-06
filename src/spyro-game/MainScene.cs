@@ -1,10 +1,7 @@
 ﻿global using AABB = (OpenTK.Mathematics.Vector3i min, OpenTK.Mathematics.Vector3i max);
-
-using OpenRender;
 using OpenRender.Components;
 using OpenRender.Core;
 using OpenRender.Core.Buffers;
-using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Rendering.Text;
@@ -15,7 +12,6 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using SpyroGame.Components;
 using SpyroGame.Input;
 using SpyroGame.World;
 
@@ -23,107 +19,47 @@ namespace SpyroGame;
 
 internal class MainScene(ITextRenderer textRenderer) : Scene
 {
+    private const int Padding = 70;
+    
+    private static readonly Vector3 textColor = new(0.752f, 0.750f, 0);
+    private static readonly Vector3 debugColorBluish = new(0.2f, 0.2f, 1f);
+
     private readonly KeyboardActionMapper kbdActions = new();
     private DayNightCycle dayNightCycle = default!;
-
     private Sprite crosshair = default!;
-    private ChunkRenderer cr = default!;
+
     private const float MovementSpeed = 4;
     private const float RotationSpeed = 20;
     private float movementPerSecond = MovementSpeed;
     private float rotationPerSecond = RotationSpeed;
-    private bool isMouseMoving;
 
-    private const int Padding = 50;
+    private Vector2 mouseCenter;
+    private Vector2 lastMousePosition;
 
-    private static readonly Vector3 textColor = new(0.752f, 0.750f, 0);
-    private static readonly Vector3 debugColorBluish = new(0.2f, 0.2f, 1f);
     private Chunk? cameraCurrentChunk;
     private Vector3i cameraCurrentChunkLocalPosition;
     private LightUniform dirLight;
     private VoxelWorld world = default!;
 
-    //  key is material id, value is the material
-    private readonly Dictionary<int, VoxelMaterial> materials = new() {
-        { (int)BlockType.None, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.7f, 0.8f, 0.9f),
-                Shininess = 0.999f
-            }
-        },
-        { (int)BlockType.Rock, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.5f, 0.5f, 0.5f),
-                Shininess = 0.15f
-            }
-        },
-        { (int)BlockType.Dirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.0f, 0.0f, 0.0f),
-                Shininess = 0.0f
-            }
-        },
-        { (int)BlockType.GrassDirt, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.3f, 0.5f, 0.3f),
-                Shininess = 0.4f
-            }
-        },
-        { (int)BlockType.Grass, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.3f, 0.5f, 0.3f),
-                Shininess = 0.5f
-            }
-        },
-        { (int)BlockType.Sand, new VoxelMaterial() {
-                Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(1),
-                Shininess = 0.3f
-            }
-        },
-        { (int)BlockType.Snow, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0.01f, 0.01f, 0.01f),
-                Specular = new Vector3(1),
-                Shininess = 0.65f
-            }
-        },
-        { (int)BlockType.WaterLevel, new VoxelMaterial() {
-                Diffuse = new Vector3(1, 1, 1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.7f, 0.7f, 0.8f),
-                Shininess = 0.3f
-            }
-        }
-    };
+    private bool dbgIsFlyMode;
 
-    //  key is texture name, value texture handle index 
-    private readonly Dictionary<BlockType, string> textures = new() {
-        { BlockType.None, "Resources/voxel/box-unwrap.png" },
-        //{ BlockType.UnderWater, "Resources/voxel/under-water.png" },
-        { BlockType.WaterLevel, "Resources/voxel/water.png" },
-        { BlockType.Rock, "Resources/voxel/rock.png" },
-        { BlockType.Sand, "Resources/voxel/sand.png" },
-        { BlockType.Dirt, "Resources/voxel/dirt.png" },
-        { BlockType.GrassDirt, "Resources/voxel/grass-dirt.png" },
-        { BlockType.Grass, "Resources/voxel/grass.png" },
-        { BlockType.Snow, "Resources/voxel/snow.png" },
-    };
+    public VoxelWorld World
+    {
+        set => world = value;
+    }
 
     public override void Load()
     {
         base.Load();
         BackgroundColor = Color4.DarkSlateBlue;
 
-        var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
-        //var startPosition = new Vector3(9050, 100, 3015);
-        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
+        SceneManager.CursorState = CursorState.Hidden;
+        mouseCenter = new Vector2(Width, Height) / 2;
+        SceneManager.MousePosition = mouseCenter;
+
+        var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 10, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
+        //var startPosition = new Vector3(10, 10, 10);
+        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane * 10) // TODO: x 10 is for debugging loading/unloading chunks
         {
             MaxFov = 60
         };
@@ -139,6 +75,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
             new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
+            new KeyboardAction("fly mode", [Keys.F], ()=> dbgIsFlyMode = !dbgIsFlyMode),
             new KeyboardAction("forward", [Keys.W], ()=> camera!.MoveForward(movementPerSecond), false),
             new KeyboardAction("left", [Keys.A], ()=> camera!.Position -= camera.Right * movementPerSecond, false),
             new KeyboardAction("right", [Keys.D], ()=> camera!.Position += camera.Right * movementPerSecond, false),
@@ -181,7 +118,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var lineY = 4;
         void writeLine(string text, in Vector3 color)
         {
-            textRenderer.Render(text.PadRight(70, ' '), 20, 5, lineY, color);
+            textRenderer.Render(text.PadRight(Padding, ' '), 20, 5, lineY, color);
             lineY += 20;
         }
         writeLine("", textColor);
@@ -191,12 +128,12 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
         var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, chunks {VoxelHelper.TotalChunks:N0}, chunk size: {VoxelHelper.ChunkSideSize}, max chunk dist.: {VoxelHelper.MaxDistanceInChunks}";
         writeLine(text, textColor);
-       
+
         var surroundingChunks = world.SurroundingChunkIndices.Count;
-        text = $"Chunks: streamed {surroundingChunks}, in frustum {cr.ChunksInFrustum:N0}/{surroundingChunks - cr.ChunksInFrustum:N0}";
+        text = $"Chunks: loaded {world.LoadedChunks.Count}, surrounding {surroundingChunks}, in frustum {world.ChunkRenderer.ChunksInFrustum:N0}/{surroundingChunks - world.ChunkRenderer.ChunksInFrustum:N0}";
         writeLine(text, textColor);
 
-        text = $"Blocks rendered: {cr.RenderedBlocks:N0}";
+        text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
 
         text = $"position: {camera?.Position}";
@@ -205,7 +142,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         //  show chunk index and position
         if (cameraCurrentChunk is not null)
         {
-            text = $"in chunk: {cameraCurrentChunk.Value} at {cameraCurrentChunk.Value.GetTopBlockAtLocalXZ(cameraCurrentChunkLocalPosition)}";
+            text = $"in chunk: {cameraCurrentChunk} at {cameraCurrentChunk.GetTopBlockAtLocalXZ(cameraCurrentChunkLocalPosition)}";
             writeLine(text, debugColorBluish);
         }
 
@@ -227,36 +164,39 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         if (world.GetChunkByGlobalPosition(pos, out var chunk))
         {
             cameraCurrentChunk = chunk;
-            cameraCurrentChunkLocalPosition = VoxelHelper.GetBlockCoordinatesGlobal(pos) - chunk!.Value.Position;
-            var height = chunk.Value.GetHeightNormalized(cameraCurrentChunkLocalPosition.X, cameraCurrentChunkLocalPosition.Z);
-            pos.Y = MathF.Floor(height) + 3f;
-            camera.Position = pos;
+            cameraCurrentChunkLocalPosition = VoxelHelper.GetBlockCoordinatesGlobal(pos) - chunk!.Position;
+            if (!dbgIsFlyMode)
+            {
+                var height = world.GetHeightNormalizedGlobal((int)MathF.Floor(pos.X), (int)MathF.Floor(pos.Z));
+                pos.Y = MathF.Floor(height) + 3f;
+                camera.Position = pos;
+            }
         }
         else
         {
             cameraCurrentChunk = null;
         }
 
-        movementPerSecond = (float)elapsedSeconds * MovementSpeed;
         rotationPerSecond = (float)(elapsedSeconds * RotationSpeed);
+        movementPerSecond = (float)elapsedSeconds * MovementSpeed;
         kbdActions.Update(SceneManager.KeyboardState);
 
-        var mouseState = SceneManager.MouseState;
-        if (isMouseMoving && mouseState.IsButtonDown(MouseButton.Left))
+        //  mouse movement
+        var mousePos = SceneManager.MouseState.Position;
+        var delta = lastMousePosition - mousePos;
+        lastMousePosition = mousePos;
+        if (delta.LengthSquared > 0)
         {
-            if (SceneManager.MouseState.Delta.LengthSquared > 0)
-            {
-                camera!.AddRotation(mouseState.Delta.X * rotationPerSecond, mouseState.Delta.Y * rotationPerSecond, 0);
-            }
-        }
-        else
-        {
-            isMouseMoving = false;
-        }
+            camera!.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
 
-        if (!isMouseMoving && mouseState.IsButtonPressed(MouseButton.Left))
-        {
-            isMouseMoving = true;
+            if (mousePos.X < 100 ||
+                mousePos.Y < 100 ||
+                mousePos.X > Width - 100 ||
+                mousePos.Y > Height - 100)
+            {
+                SceneManager.MousePosition = mouseCenter;
+                lastMousePosition = mouseCenter;
+            }
         }
 
         dayNightCycle.Update();
@@ -276,6 +216,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         crosshair.SetScale(1);
         crosshair.SetPosition((clientSize - crosshair.Size) / 2);
         crosshair.Pivot = new(0.0f, 1.0f);
+
+        mouseCenter = clientSize / 2;
     }
 
     private void FullScreenToggle() => SceneManager.WindowState = SceneManager.WindowState == WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
@@ -284,9 +226,6 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
     private void SetupScene()
     {
-        world = new(this, 1338);
-        
-
         dayNightCycle = new(this);
 
         var paths = new string[] {
@@ -300,7 +239,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var skyBox = SkyBox.Create(paths);
         AddNode(skyBox);
 
-        var (vertices, indices) = CreateVoxelCube();
+        var (vertices, indices) = VoxelHelper.CreateVoxelCube();
         var cubeMaterial = Material.Create(defaultShader,
             [new("Resources/voxel/box-unwrap.png", TextureType: TextureType.Diffuse)],
             //[new("Resources/Corey.png", TextureType: TextureType.Diffuse)],
@@ -310,132 +249,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         cube.SetPosition(new(0, 0, 0));
         AddNode(cube);
 
-
-        //  create voxel world
-        Log.Highlight($"preparing voxel textures and materials...");
-        world.stopwatch.Restart();
-
-        //  prepare all textures and all materials
-        var textureHandles = GetTextureHandles();
-        var materials = GetMaterials();
-
-        //  create dummy material. Only the shader is important, the voxel materials and textures are passed in SSBOs
-        var shader = new Shader("Shaders/instancedChunk.vert", "Shaders/instancedChunk.frag");
-        var dummyMaterial = Material.Default;    //  TODO: implement CreateNew() or CreateDefault() in Material
-        dummyMaterial.Shader = shader;
-        var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
-        cr = new ChunkRenderer(world, mesh, dummyMaterial, textureHandles, materials);
-        AddNode(cr);
-        Log.Highlight($"textures and materials prepared in {world.stopwatch.ElapsedMilliseconds:D4} ms");
-        world.stopwatch.Restart();
-
-        Log.Highlight($"initializing voxel world...");
-        world.AddStartingChunks(camera.Position, cr.initializedChunksQueue.Enqueue);
+        AddNode(world.ChunkRenderer);
+        world.Camera = camera!;        
+        camera!.Invalidate();
 
         dayNightCycle.Update();
-    }
-
-    private static (Vertex[], uint[]) CreateVoxelCube()
-    {
-        const float HALF = 0.5f;
-
-        Vertex[] vertices =
-        [
-            // Position                 Normal      Texture
-            //  FRONT SIDE (z = +)
-            new (-HALF, -HALF,  HALF,   0,  0,  1,   0.666f, 0.5f),     // lower left - 0
-            new (-HALF,  HALF,  HALF,   0,  0,  1,   0.666f, 1f),       // upper left - 1
-            new ( HALF, -HALF,  HALF,   0,  0,  1,   1f, 0.5f),         // lower right - 2
-            new ( HALF,  HALF,  HALF,   0,  0,  1,   1f, 1f),           // upper right - 3
-                                           
-            //  BACK SIDE (z = -)
-            new (-HALF, -HALF, -HALF,   0,  0, -1,   1, 0),             // lower left
-            new (-HALF,  HALF, -HALF,   0,  0, -1,   1, 0.5f),          // upper left
-            new ( HALF, -HALF, -HALF,   0,  0, -1,   0.666f, 0),        // lower right
-            new ( HALF,  HALF, -HALF,   0,  0, -1,   0.666f, 0.5f),     // upper right
-                                                               
-            //  LEFT SIDE (X = -)
-            new (-HALF, -HALF, -HALF,  -1,  0,  0,   0, 0),             // lower left  - 8
-            new (-HALF,  HALF, -HALF,  -1,  0,  0,   0, 0.5f),          // upper left - 9
-            new (-HALF, -HALF,  HALF,  -1,  0,  0,   0.333f, 0),        // lower right - 10
-            new (-HALF,  HALF,  HALF,  -1,  0,  0,   0.333f, 0.5f),     // upper right - 11
-
-            //  RIGHT SIDE (X = +)
-            new (HALF, -HALF,  HALF,   1,  0,  0,   0.333f, 0),         // lower left  - 12
-            new (HALF,  HALF,  HALF,   1,  0,  0,   0.333f, 0.5f),      // upper left - 13
-            new (HALF, -HALF, -HALF,   1,  0,  0,   0.666f, 0),         // lower right - 14
-            new (HALF,  HALF, -HALF,   1,  0,  0,   0.666f, 0.5f),      // upper right - 15            
-            
-            //  TOP SIDE (Y = +)
-            new (-HALF,  HALF,  HALF,   0,  1,  0,   0, 0.5f),          // lower left - 16
-            new (-HALF,  HALF, -HALF,   0,  1,  0,   0, 1),             // upper left - 17
-            new ( HALF,  HALF,  HALF,   0,  1,  0,   0.333f, 0.5f),     // lower right - 18
-            new ( HALF,  HALF, -HALF,   0,  1,  0,   0.333f, 1),        // upper right - 19
-
-            //  BOTTOM SIDE (Y = -)
-            new (-HALF, -HALF, -HALF,   0, -1,  0,   0.333f, 0.5f),     // lower left - 20
-            new (-HALF, -HALF,  HALF,   0, -1,  0,   0.333f, 1),        // upper left - 21
-            new ( HALF, -HALF, -HALF,   0, -1,  0,   0.666f, 0.5f),     // lower right - 22
-            new ( HALF, -HALF,  HALF,   0, -1,  0,   0.666f, 1),        // upper right - 23             
-        ];
-        uint[] indices =
-        [
-            // front quad
-            2, 1, 0,
-            2, 3, 1,
-
-            // back quad
-            4, 7, 6,
-            4, 5, 7,
-
-            // left quad
-            10, 9, 8,
-            10, 11, 9,
-
-            // right quad
-            14, 13, 12,
-            14, 15, 13,
-            
-            // up quad            
-            18, 17, 16,
-            18, 19, 17,
-
-            // down quad                                
-            22, 21, 20,
-            22, 23, 21
-        ];
-
-        return (vertices, indices);
-    }
-
-    /// <summary>
-    /// Prepares all textures for the voxel world.
-    /// </summary>
-    /// <param name="world"></param>
-    /// <returns></returns>
-    private ulong[] GetTextureHandles()
-    {
-        var textureNames = Enumerable.Range(0, textures.Keys.Cast<int>().Max() + 1)
-            .Select(index => textures.ContainsKey((BlockType)index) ? textures[(BlockType)index] : null)
-            .ToArray();
-        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapNearest, TextureMagFilter.Linear, TextureWrapMode.ClampToEdge, TextureWrapMode.ClampToEdge);
-        var handles = textureNames
-                        .Select(x => string.IsNullOrEmpty(x) ? null : Texture.FromFile([x!]))
-                        .Select(x => x?.GetBindlessHandle(sampler) ?? 0)
-                        .ToArray();
-
-        return handles;
-    }
-
-    /// <summary>
-    /// Prepares all materials for the voxel world.
-    /// </summary>
-    /// <param name="world"></param>
-    /// <returns></returns>
-    private VoxelMaterial[] GetMaterials()
-    {
-        return Enumerable.Range(0, materials.Keys.Max() + 1)
-            .Select(index => materials.TryGetValue(index, out var value) ? value : default)
-            .ToArray();
     }
 }

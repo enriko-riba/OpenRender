@@ -40,6 +40,8 @@ public class SceneManager : GameWindow
         sceneList.Add(scene);
     }
 
+    public Scene GetScene(string sceneName) => sceneList.First(s => s.Name == sceneName);
+
     public void ActivateScene(Scene scene) => ActivateScene(scene.Name);
 
     public void ActivateScene(string sceneName)

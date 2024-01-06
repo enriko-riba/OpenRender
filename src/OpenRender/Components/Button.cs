@@ -71,6 +71,8 @@ public class Button : NineSlicePlane
 
     public bool IsPressed => isPressed;
 
+    public bool IsEnabled { get; set; }
+
     public ITextRenderer? TextRenderer { get; set; }
 
     private void HandleMouseState(MouseState mouseState)
@@ -97,7 +99,7 @@ public class Button : NineSlicePlane
             {
                 isPressed = false;
                 if (OnClick != null)
-                    Scene?.AddAction(OnClick);
+                    if(IsEnabled) Scene?.AddAction(OnClick);
                 else
                     Log.Warn("OnClick handler is null, did you forget to assign a click handler?");
             }
