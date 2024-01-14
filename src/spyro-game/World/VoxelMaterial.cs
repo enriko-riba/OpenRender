@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace SpyroGame.World;
 
 [StructLayout(LayoutKind.Explicit)]
-internal struct VoxelMaterial
+public struct VoxelMaterial
 {
     [FieldOffset(0)]
     public Vector3 Diffuse;

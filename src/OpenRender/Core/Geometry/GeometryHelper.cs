@@ -191,7 +191,7 @@ public static class GeometryHelper
     {
         Vertex[] vertices =
         [
-            // Position                       Normal      Texture
+            // Position                 Normal       Texture
             //  FRONT SIDE (z = +)
             new (-HALF, -HALF,  HALF,   0,  0,  1,   0, 1),   // lower left - 0
             new (-HALF,  HALF,  HALF,   0,  0,  1,   0, 0),   // upper left - 1

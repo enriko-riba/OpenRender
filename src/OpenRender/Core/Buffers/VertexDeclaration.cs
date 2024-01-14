@@ -68,7 +68,6 @@ public class VertexDeclaration
         newAttributes.Add(attributeLayout);
         var vdx = new VertexDeclaration(newAttributes);
         return vdx;
-        //Stride += (int)size;
     }
 
     /// <summary>

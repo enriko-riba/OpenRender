@@ -11,19 +11,11 @@
   <ItemGroup>
     <None Remove="Shaders\instanced.vert" />
     <None Remove="Shaders\nine-slice.frag" />
-    <None Remove="Shaders\skybox-sun.frag" />
-    <None Remove="Shaders\skybox-sun.vert" />
     <None Remove="Shaders\standard-batching.frag" />
     <None Remove="Shaders\standard-batching.vert" />
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="Shaders\skybox-sun.frag">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="Shaders\skybox-sun.vert">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="Shaders\skybox.frag">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

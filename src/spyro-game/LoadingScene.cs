@@ -66,8 +66,8 @@ internal class LoadingScene : Scene
         {
             totalInitializationTime = totalTime;
             hasCompleteChunksStarted = true;
-            var unprocessedChunks = world.SurroundingChunks.Where(x => !x.IsProcessed).ToList();
-            Debug.Assert(unprocessedChunks.Count == 0, "unprocessed chunk");
+            var unprocessedChunks = world.SurroundingChunks.Where(x => !x.IsProcessed).Count();
+            Debug.Assert(unprocessedChunks == 0, "unprocessed chunk");
             completedChunks = [.. world.SurroundingChunks];
         }
 
@@ -91,7 +91,7 @@ internal class LoadingScene : Scene
                 totalTime += elapsedSeconds;
                 RenderUiAddingChunks();
                 var counter = 0;
-                while(++counter < 5 && completedChunks.Count > 0)
+                while(counter++ < 5 && completedChunks.Count > 0)
                 {
                     var chunk = completedChunks[0];
                     chunk.State = ChunkState.Loaded;

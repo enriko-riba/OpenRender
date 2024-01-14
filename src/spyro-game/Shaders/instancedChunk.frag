@@ -10,6 +10,7 @@
 #define NO_COLOR			vec4(0);			// for no light we must return 0 in alpha channel otherwise the transparent pixels would loose its transparency
 
 uniform int uTotalLights;
+uniform int outlinedBlockId;
 
 layout (std140, binding = 0) uniform camera {    
     mat4 view;
@@ -42,12 +43,22 @@ layout(std430, binding = 0) readonly buffer ssbo_textures {
 layout(std430, binding = 1) readonly buffer ssbo_materials {
     Material mat[];
 };
+struct BlockState {   
+    uint index;
+    uint blockDirection;
+    uint blockType;
+    uint reserved;
+};
+layout(std430, binding = 2) readonly buffer ssbo_blocks {
+    BlockState blocks[];
+};
 
 in vec3 vertexNormal;                   //  interpolated normal
 in vec2 texCoord;                       //  uv texture coordinates
 in vec3 fragPos;
 flat in uint materialIndex;
 flat in uint textureIndex;
+flat in uint blockId;
 
 out vec4 outputColor;
 
@@ -67,8 +78,8 @@ void main()
 { 
     Material mat = mat[materialIndex];
     sampler2D tex = bindlessTextures[textureIndex];
-    //vec3 N = -normalize(cross(dFdy(fragPos), dFdx(fragPos)));
-    vec3 N = normalize(vertexNormal);
+    //vec3 N = -normalize(cross(dFdyFine(fragPos), dFdxFine(fragPos)));
+    vec3 N = vertexNormal;
     vec3 L = -normalize(dirLight.position);
 
     vec4 texDiffuse = vec4(texture(tex, texCoord));    
@@ -91,6 +102,26 @@ void main()
 
     outputColor = clamp(vec4(mat.emissive.rgb + (Sc + Ac + Dc), 1) * texColor, 0, 1);
     
+    BlockState block = blocks[blockId];
+    if(uint(outlinedBlockId) == block.index)
+	{
+		//outputColor = vec4(1, 0, 0, 1);
+        sampler2D outlineSampler = bindlessTextures[0];
+        vec4 texOutline = texture(outlineSampler, texCoord);
+        outputColor = mix(outputColor, texOutline, texOutline.a);
+    }
+    
+    // b1 is first byte, b2 is second byte, b3 is third byte, b4 is fourth byte
+//    uint b1 = (block.reserved & 0xff);
+//    uint b2 = (block.reserved & 0xff00) >> 8;
+//    uint b3 = (block.reserved & 0xff0000) >> 16;
+//    uint b4 = (block.reserved & (0xff << 24)) >> 24;
+//    if(b2 != 0)
+//    {
+//        outputColor = vec4(1, 0, 0, 1);
+//    }
+
+
     // fog
     vec4 fog = vec4(0.10f, 0.10f, 0.15f, 1.0f);
     float d = distance(fragPos, cameraPos);

@@ -1,100 +1,59 @@
-﻿
+﻿using OpenRender;
 using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
 
-internal class Chunk
+public class Chunk(VoxelWorld world, int index)
 {
-    private int index;
-    private VoxelWorld world = default!;
-
     private bool isInitialized;
     private bool isProcessed;
     private Vector2i chunkPosition;
+    private readonly int[,] maxHeights = new int[VoxelHelper.ChunkSideSize, VoxelHelper.ChunkSideSize];
 
-    public bool IsProcessed => isProcessed;
-    public bool IsInitialized => isInitialized;
-
-    public AABB Aabb { get; internal set; }
-
-    public BlockState[] Blocks { get; private set; } = default!;
-
-    public int Index => index;
-
-    /// <summary>
-    /// Bottom left chunk corner position in the world.
-    /// </summary>
-    public Vector3i Position => Aabb.min;
-    public BlockState[] VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent).ToArray();
-    public BlockState[] TransparentBlocks => Blocks.Where(x => x.IsVisible && x.IsTransparent).ToArray();
-
-    public void Initialize(VoxelWorld world, int index, int seed)
+    #region Initialization
+    public void Initialize(TerrainBuilder terrainBuilder)
     {
         if (isInitialized) return;
-        this.world = world;
-        this.index = index;
+
         chunkPosition = new(index % VoxelHelper.WorldChunksXZ, index / VoxelHelper.WorldChunksXZ);
 
-        //HeightData = VoxelHelper.CalcTerrainData(index, seed);
-
         Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
+        
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            {
+                maxHeights[x, z] = terrainBuilder.GetHeightNormalizedChunkLocal(index, x, z);                
+            }
+        }
 
-        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+        for (var y = VoxelHelper.MaxBlockPositionY; y >= 0; y--)
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
                 for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    CreateBlock(x, y, z);
+                    var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    var block = new BlockState
+                    {
+                        Index = blockIdx,
+                        BlockType = terrainBuilder.GenerateChunkBlockType(maxHeights[x, z], x, y, z)
+                    };                    
+                    Blocks[block.Index] = block;
                 }
             }
         }
         isInitialized = true;
     }
 
-
-    public BlockState GetBlockAtGlobalXZ(Vector3 position)
-    {
-        //  convert to chunk local position
-        var localPosition = position - Position;
-
-        var startY = world.GetHeightNormalizedGlobal((int)localPosition.X, (int)localPosition.Z);
-        var index = (int)position.X + (int)position.Z * VoxelHelper.ChunkSideSize + (int)Math.Ceiling(startY) * VoxelHelper.ChunkSideSizeSquare;
-        do
-        {
-            var block = Blocks[index];
-            if (!block.IsAir)
-                return block;
-            index -= VoxelHelper.ChunkSideSizeSquare;
-        } while (index >= 0);
-        return default;
-    }
-
-    public BlockState GetTopBlockAtLocalXZ(Vector3 localPosition)
-    {
-        if (!isProcessed) return default;
-        var x = (int)MathF.Round(localPosition.X);
-        var z = (int)MathF.Round(localPosition.Z);
-        //var startY = world.GetHeightNormalized(x, z) + 1;
-        var startY = world.GetHeightNormalizedChunkLocal(Index, x, z) + 1;
-        var index = x + z * VoxelHelper.ChunkSideSize + (int)Math.Ceiling(startY) * VoxelHelper.ChunkSideSizeSquare;
-        do
-        {
-            var block = Blocks[index];
-            if (!block.IsAir)
-                return block;
-            index -= VoxelHelper.ChunkSideSizeSquare;
-        } while (index >= 0);
-        return default;
-    }
-
     /// <summary>
     /// Calculates visible blocks in the chunk and sets the <see cref="BlockState.IsVisible"/> property for each block.
     /// </summary>
-    public void CalcVisibleBlocks()
+    public void CalcVisibleBlocks(bool force = false)
     {
-        if (isProcessed) return;
-        for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+        if (!force && isProcessed) return;
+
+        for (var y = VoxelHelper.MaxBlockPositionY; y >= 0; y--)
         {
             for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
@@ -107,6 +66,11 @@ internal class Chunk
                     {
                         var visibleFormOutside = IsExternallyVisible(x, y, z);
                         block.IsVisible = visibleFormOutside;
+                        if (block.IsVisible && y > MaxHeight)
+                        {
+                            MaxHeight = y;
+                        }
+
                     }
                     Blocks[idx] = block;
                 }
@@ -115,23 +79,154 @@ internal class Chunk
         isProcessed = true;
     }
 
-    public override string ToString() => $"{Index}@{chunkPosition}";
+    /// <summary>
+    /// Calculates ambient occlusion.
+    /// </summary>
+    public void CalcAO()
+    {
+        for (var y = VoxelHelper.MaxBlockPositionY; y >= 0; y--)
+        {
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            {
+                for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+                {
+                    var idx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    var block = Blocks[idx];
+
+                    //  no AO for transparent or top most or underwater blocks
+                    if (!block.IsTransparent && block.LocalPosition.Y > VoxelHelper.WaterLevel && block.LocalPosition.Y < MaxHeight)    
+                    {
+                        var worldPosition = Position + block.LocalPosition;
+
+                        //  neighbor blocks one layer above
+                        var factor = 0;
+                        var west = world.GetBlockByGlobalPositionSafe(worldPosition.X - 1, worldPosition.Y + 1, worldPosition.Z);
+                        var northWest = world.GetBlockByGlobalPositionSafe(worldPosition.X - 1, worldPosition.Y + 1, worldPosition.Z-1);
+                        var north = world.GetBlockByGlobalPositionSafe(worldPosition.X, worldPosition.Y + 1, worldPosition.Z - 1);
+                        var northEast = world.GetBlockByGlobalPositionSafe(worldPosition.X + 1, worldPosition.Y + 1, worldPosition.Z - 1);
+                        var east = world.GetBlockByGlobalPositionSafe(worldPosition.X + 1, worldPosition.Y + 1, worldPosition.Z);
+                        var southEast = world.GetBlockByGlobalPositionSafe(worldPosition.X + 1, worldPosition.Y + 1, worldPosition.Z + 1);
+                        var south = world.GetBlockByGlobalPositionSafe(worldPosition.X, worldPosition.Y + 1, worldPosition.Z + 1);
+                        var southWest = world.GetBlockByGlobalPositionSafe(worldPosition.X - 1, worldPosition.Y + 1, worldPosition.Z + 1);
+
+                        //  TODO: this was one of the stupidest ideas ever, it's not working, it's not even close to working
+                        //        - it's not taking into account blocks from neighboring chunks
+                        //        - it's applied per block instead per vertex or at least per face
+                        factor += west != null ? 5 : 0;
+                        factor += northWest != null ? 1 : 0;
+                        factor += north != null ? 5 : 0;
+                        factor += northEast != null ? 1 : 0;
+                        factor += east != null ? 5 : 0;
+                        factor += southEast != null ? 1 : 0;
+                        factor += south != null ? 5 : 0;
+                        factor += southWest != null ? 1 : 0;
+                        var r = (byte)(factor);
+                        block.Reserved1 = r;
+                        //Log.Debug($"{block}, reserved {r}, b2:{(r & 0xff00) >> 8}, ao: {(r / 8.0) * 0.02}");
+                        Blocks[idx] = block;
+                    }
+                }
+            }
+        }
+    }
+    #endregion
+
+   
+    /// <summary>
+    /// Returns the height of the top face of the highest block.
+    /// </summary>
+    /// <param name="x"></param>
+    /// <param name="z"></param>
+    /// <returns></returns>
+    public int GetTerrainHeightAt(int x, int z) => maxHeights[x, z] + 1;
+
+    public Vector2i ChunkPosition => chunkPosition;
+
+    public bool IsProcessed => isProcessed;
+
+    public bool IsInitialized => isInitialized;
+
+    public AABB Aabb { get; internal set; }
+
+    public BlockState[] Blocks { get; private set; } = default!;
+
+    public int Index => index;
+
+    /// <summary>
+    /// Max height is in number of blocks from the bottom of the chunk.
+    /// Note that the height in world units is MaxHeight + 1
+    /// </summary>
+    public int MaxHeight { get; internal set; }
+
+    /// <summary>
+    /// Bottom left chunk corner position in the world.
+    /// </summary>
+    public Vector3i Position => Aabb.Min;
+
+    #region Rendering
+    public uint BlocksSSBO;
+    public int SolidCount;
+    public uint TransparentBlocksSSBO;
+    public int TransparentCount;
+    public bool Visible;
+
+    public IEnumerable<BlockState> VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent);
+
+    public IEnumerable<BlockState> TransparentBlocks => Blocks.Where(x => x.IsVisible && x.IsTransparent);
 
     internal ChunkState State { get; set; }
+    #endregion
 
-    private void CreateBlock(int x, int y, int z)
+
+    //public BlockState GetBlockAtGlobalXZ(Vector3 position)
+    //{
+    //    //  convert to chunk local position
+    //    var localPosition = position - Position;
+
+    //    var startY = world.terrainBuilder.GetHeightNormalizedGlobal((int)localPosition.X, (int)localPosition.Z);
+    //    var index = (int)position.X + (int)position.Z * VoxelHelper.ChunkSideSize + (int)Math.Ceiling(startY) * VoxelHelper.ChunkSideSizeSquare;
+    //    do
+    //    {
+    //        var block = Blocks[index];
+    //        if (!block.IsAir)
+    //            return block;
+    //        index -= VoxelHelper.ChunkSideSizeSquare;
+    //    } while (index >= 0);
+    //    return default;
+    //}
+
+    public BlockState GetTopBlockAtLocalXZ(Vector3 localPosition)
     {
-        var block = world.GenerateBlockChunkLocal(index, x, y, z);
-        Blocks[block.Index] = block;
+        if (!isProcessed) return default;
+        var x = (int)MathF.Round(localPosition.X);
+        var z = (int)MathF.Round(localPosition.Z);
+        var y = maxHeights[x, z];
+        var index = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+        var b = Blocks[index];
+        return b;
     }
+
+    public override string ToString() => $"{Index}@{chunkPosition} ({State})";
 
     private bool IsExternallyVisible(int x, int y, int z)
     {
+        // Check if any neighboring block is destroyed, transparent or air
+        if ((x > 0) && IsBlockTransparent(x - 1, y, z)) return true;
+        if ((x < VoxelHelper.ChunkSizeXZMinusOne) && IsBlockTransparent(x + 1, y, z)) return true;
+        if ((z > 0) && IsBlockTransparent(x, y, z - 1)) return true;
+        if ((z < VoxelHelper.ChunkSizeXZMinusOne) && IsBlockTransparent(x, y, z + 1)) return true;
+        if ((y > 0) && IsBlockTransparent(x, y - 1, z)) return true;
+        if ((y < VoxelHelper.MaxBlockPositionY) && IsBlockTransparent(x, y + 1, z)) return true;
+
         // Check if the block is at the chunk boundary
-        if (x == 0 || y == 0 || z == 0 || x == VoxelHelper.ChunkSizeXZMinusOne || y == VoxelHelper.ChunkYSize - 1 || z == VoxelHelper.ChunkSizeXZMinusOne)
+        if (x == 0 || y == 0 || z == 0 || x == VoxelHelper.ChunkSizeXZMinusOne || y == VoxelHelper.MaxBlockPositionY || z == VoxelHelper.ChunkSizeXZMinusOne)
         {
+            // make blocks on world edge visible except the bottom block layer
+            // TODO: fix this logic, it introduces more visible blocks then needed. Only top most, non air, world edge blocks should be visible.
             var worldPosition = Position + new Vector3i(x, y, z);
-            if (VoxelHelper.IsGlobalPositionOnWorldBoundary(worldPosition.X, worldPosition.Y, worldPosition.Z)) return false;
+            var isWorldEdge = VoxelHelper.IsGlobalPositionOnWorldBoundary(worldPosition.X, worldPosition.Y, worldPosition.Z);
+            if (isWorldEdge)
+                return worldPosition.Y > 0;
 
             var isAdjacentBlockTransparent =
                 (IsAdjacentChunkBlockTransparent(worldPosition.X - 1, worldPosition.Y, worldPosition.Z)) ||
@@ -143,11 +238,7 @@ internal class Chunk
             return isAdjacentBlockTransparent;
         }
 
-        // Check if any neighboring block is destroyed
-        return
-            IsBlockTransparent(x - 1, y, z) || IsBlockTransparent(x + 1, y, z) ||
-            IsBlockTransparent(x, y - 1, z) || IsBlockTransparent(x, y + 1, z) ||
-            IsBlockTransparent(x, y, z - 1) || IsBlockTransparent(x, y, z + 1);
+        return false;
     }
 
     /// <summary>
@@ -174,22 +265,6 @@ internal class Chunk
         {
             // Retrieve the adjacent chunk using the index
             var adjacentChunk = world[adjacentChunkIndex];
-            /*
-            //  workaround for chunk not loaded
-            if (adjacentChunk == null)
-            {
-                //adjacentChunk = new Chunk()
-                //{
-                //    index = adjacentChunkIndex,
-                //    chunkPosition = new(adjacentChunkIndex % VoxelHelper.WorldChunksXZ, adjacentChunkIndex / VoxelHelper.WorldChunksXZ),
-                //    Aabb = (chunkWorldPosition, chunkWorldPosition + VoxelWorld.ChunkSize),
-                //    //HeightData = VoxelHelper.CalcTerrainData(adjacentChunkIndex, world.Seed),
-                //};
-                //world.AddChunk(adjacentChunkIndex, adjacentChunk);
-
-                //return false;   //  chunk not loaded yet, pretend there will be a solid block, therefore the return false
-            }
-            */
 
             //  if the chunk has been added above the Blocks is null
             if (adjacentChunk?.Blocks is not null)
@@ -198,11 +273,8 @@ internal class Chunk
             }
             else
             {
-                //  TODO: fix with proper world.GenerateBlock reference
-                //return false;
-                //  generate block on the fly
-                var block = world.GenerateBlockChunkLocal(adjacentChunkIndex, cx, cy, cz);
-                return block.IsTransparent;
+                var blockType = world.terrainBuilder.GenerateChunkBlockLocal(adjacentChunkIndex, cx, cy, cz);
+                return blockType is BlockType.WaterLevel or BlockType.None;
             }
         }
 
@@ -213,7 +285,6 @@ internal class Chunk
     private bool IsBlockAir(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsAir;
 
     private bool IsBlockTransparent(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsTransparent;
-
 }
 
 public enum ChunkState
@@ -234,7 +305,7 @@ public enum ChunkState
     ToBeRemoved,
 
     /// <summary>
-    /// The chunk has been removed from the chunk renderer, OpenGL resources are freed and can be safely removed from the world.
+    /// The chunk has been removed from the chunk renderer, OpenGL resources are freed and the chunk can be safely destroyed.
     /// </summary>
     SafeToRemove,
 }

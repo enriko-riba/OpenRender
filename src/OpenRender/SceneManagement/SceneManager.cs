@@ -57,6 +57,7 @@ public class SceneManager : GameWindow
         scene.OnResize(new ResizeEventArgs(ClientSize.X, ClientSize.Y));
         scene.OnActivate();
         sw.Restart();
+        lastFpsTime = sw.ElapsedMilliseconds;
     }
 
     private void Render(FrameEventArgs e)

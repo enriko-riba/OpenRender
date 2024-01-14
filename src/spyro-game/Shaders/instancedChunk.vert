@@ -12,8 +12,8 @@ layout (std140, binding = 0) uniform camera {
 
 struct BlockState {   
     uint index;
-    uint blockType;
     uint blockDirection;
+    uint blockType;
     uint reserved;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {
@@ -30,8 +30,8 @@ out vec2 texCoord;
 
 flat out uint materialIndex;
 flat out uint textureIndex;
+flat out uint blockId;
 
-const float spacing = 1.0;
 
 mat3 getRotationMatrix(uint blockDirection) {
     mat3 rotationMatrix;
@@ -78,28 +78,29 @@ mat3 getRotationMatrix(uint blockDirection) {
     return rotationMatrix;
 }
 
-
 void main(void)
 {   
+    blockId = gl_InstanceID;
     BlockState block = blocks[gl_InstanceID];    
 
     materialIndex = block.blockType;
     textureIndex = block.blockType;
-
-    // Apply rotation to both position and normal
-    mat3 rotationMatrix = getRotationMatrix(block.blockDirection);
-    vec3 rotatedPosition = rotationMatrix * aPosition;
-    vec3 rotatedNormal = rotationMatrix * aNormal;
-
+    
     // Calculate block position based on block index
     uint x = block.index % chunkSize;
     uint z = (block.index / chunkSize) % chunkSize;
     uint y = block.index / (chunkSize * chunkSize);
-    vec3 translatedPosition = rotatedPosition + vec3(x * spacing, y * spacing, z * spacing);
+        
+    // Apply rotation to both position and normal
+    mat3 rotationMatrix = getRotationMatrix(block.blockDirection);
+    vec3 rotatedPosition = rotationMatrix * aPosition;
+    vec3 rotatedNormal = rotationMatrix * aNormal;
+   
+    vec3 translatedPosition = rotatedPosition + vec3(x, y, z);
     vec4 worldPosition = model * vec4(translatedPosition, 1.0);
-    
-    fragPos = worldPosition.xyz;    
-    vertexNormal = (model * vec4(rotatedNormal, 0)).xyz;
+
+    vertexNormal = normalize((model * vec4(rotatedNormal, 0))).xyz;   
+    fragPos = worldPosition.xyz;  
     texCoord = aTexCoord;
     gl_Position = projection * view * worldPosition;
 }

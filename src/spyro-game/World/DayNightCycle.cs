@@ -48,7 +48,7 @@ internal class DayNightCycle(Scene scene)
             var x = -1 + 2 * t;
             var y = -MathF.Sqrt(1 - x * x);
 
-            dirLight.Direction = new Vector3(x, y, 0).Normalized();
+            dirLight.Direction = new Vector3(x, y, -0.25f);
 
             //  ambient intensity
 

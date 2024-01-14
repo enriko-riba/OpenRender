@@ -42,7 +42,7 @@ public sealed class CullingHelper
 
     private static readonly Vector3[] corners = new Vector3[8];
 
-    public static bool IsAABBInFrustum(in AABB aabb, in Vector4[] frustumPlanes)
+    public static bool IsAabbInFrustum(in AABB aabb, in Vector4[] frustumPlanes)
     {
         //var corners = new Vector3[8];
         var min = aabb.min;
@@ -81,15 +81,6 @@ public sealed class CullingHelper
         corners[7].Y = max.Y;
         corners[7].Z = max.Z;
 
-        //corners[0] = new Vector3(min.X, min.Y, min.Z);
-        //corners[1] = new Vector3(max.X, min.Y, min.Z);
-        //corners[2] = new Vector3(min.X, max.Y, min.Z);
-        //corners[3] = new Vector3(max.X, max.Y, min.Z);
-        //corners[4] = new Vector3(min.X, min.Y, max.Z);
-        //corners[5] = new Vector3(max.X, min.Y, max.Z);
-        //corners[6] = new Vector3(min.X, max.Y, max.Z);
-        //corners[7] = new Vector3(max.X, max.Y, max.Z);
-
         // Check each frustum plane
         for (var i = 0; i < 6; i++)
         {
@@ -117,6 +108,78 @@ public sealed class CullingHelper
 
         // If the AABB is not outside any frustum plane, it is inside the frustum
         return true;
+    }
+
+    public static ContainmentType GetAabbFrustumContainment(in AABB aabb, in Vector4[] frustumPlanes)
+    {
+        var min = aabb.min;
+        var max = aabb.max;
+
+        // Calculate the eight corners of the AABB
+        corners[0].X = min.X;
+        corners[0].Y = min.Y;
+        corners[0].Z = min.Z;
+
+        corners[1].X = max.X;
+        corners[1].Y = min.Y;
+        corners[1].Z = min.Z;
+
+        corners[2].X = min.X;
+        corners[2].Y = max.Y;
+        corners[2].Z = min.Z;
+
+        corners[3].X = max.X;
+        corners[3].Y = max.Y;
+        corners[3].Z = min.Z;
+
+        corners[4].X = min.X;
+        corners[4].Y = min.Y;
+        corners[4].Z = max.Z;
+
+        corners[5].X = max.X;
+        corners[5].Y = min.Y;
+        corners[5].Z = max.Z;
+
+        corners[6].X = min.X;
+        corners[6].Y = max.Y;
+        corners[6].Z = max.Z;
+
+        corners[7].X = max.X;
+        corners[7].Y = max.Y;
+        corners[7].Z = max.Z;
+
+        var totalInsideCount = 0;
+
+        // Check each frustum plane
+        for (var i = 0; i < 6; i++)
+        {
+            var insideCount = 0;
+
+            for (var j = 0; j < 8; j++)
+            {
+                // Check the distance from the point to the plane
+                var distance = Vector4.Dot(frustumPlanes[i], new Vector4(corners[j], 1.0f));
+
+                // If the distance is positive, the point is in front of the plane
+                if (distance >= 0.0f)
+                {
+                    insideCount++;
+                }
+            }
+
+            // If all points are in front of the plane, the AABB is inside the frustum
+            if (insideCount == 8)
+            {
+                totalInsideCount++;
+            }
+            else if (insideCount > 0)
+            {
+                return ContainmentType.Intersects;
+            }
+        }
+
+        // If the AABB is inside all frustum planes, it is contained by the frustum
+        return totalInsideCount == 6 ? ContainmentType.Contains : ContainmentType.Disjoint;
     }
 
     /// <summary>
@@ -182,4 +245,22 @@ public sealed class CullingHelper
 
         return (min, max);
     }
+}
+
+public enum ContainmentType
+{
+    /// <summary>
+    /// The two bounding volumes don't intersect at all.
+    /// </summary>
+    Disjoint,
+
+    /// <summary>
+    /// One bounding volume completely contains the other.
+    /// </summary>
+    Contains,
+
+    /// <summary>
+    /// The two bounding volumes overlap.
+    /// </summary>
+    Intersects
 }

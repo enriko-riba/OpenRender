@@ -165,15 +165,15 @@ public class Texture : IDisposable
         {
             GL.TextureParameterI(handle, TextureParameterName.TextureWrapS, new[] { (int)TextureWrapMode.ClampToEdge });
             GL.TextureParameterI(handle, TextureParameterName.TextureWrapT, new[] { (int)TextureWrapMode.ClampToEdge });
+            GL.TextureParameterI(handle, TextureParameterName.TextureWrapR, new[] { (int)TextureWrapMode.ClampToEdge });
             GL.TextureParameterI(handle, TextureParameterName.TextureMinFilter, new[] { (int)TextureMinFilter.Linear });
             GL.TextureParameterI(handle, TextureParameterName.TextureMagFilter, new[] { (int)TextureMagFilter.Linear });
-
             StbImage.stbi_set_flip_vertically_on_load(0);
             for (var face = 0; face < paths.Length; face++)
             {
                 using var stream = File.OpenRead(paths[face]);
                 image = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
-                if (face == 0) GL.TextureStorage2D(handle, 1, SizedInternalFormat.Srgb8, image.Width, image.Height);
+                if (face == 0) GL.TextureStorage2D(handle, 1, SizedInternalFormat.Rgb8, image.Width, image.Height);
                 GL.TextureSubImage3D(handle, 0, 0, 0, face, image.Width, image.Height, 1, PixelFormat.Rgba, PixelType.UnsignedByte, image.Data);
             }
         }

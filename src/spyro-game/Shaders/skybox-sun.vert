@@ -17,12 +17,12 @@ layout(std140, binding = 1) uniform light {
     Light dirLight;
 };
 
-
+layout (location = 0) in vec3 aPosition;
 out vec3 texCoordCube;  //  skybox cube map texture coordinates
-out vec2 sunCoord;      //  sun coordinates
 
 void main(void)
 {
+    /*
     mat4 invPV = inverse(projection * mat4(mat3(view)));    
 
     //----------------------------------------------
@@ -47,5 +47,10 @@ void main(void)
     vec4 back = invPV * vec4(pos,  1.0, 1.0);
 
     texCoordCube = back.xyz / back.w - front.xyz / front.w;
-    gl_Position = vec4(pos, 1.0, 1.0);    
+    gl_Position = vec4(pos, 1.0, 1.0);
+    */
+
+    texCoordCube = aPosition;
+    vec4 pos = projection * mat4(mat3(view)) * vec4(aPosition, 1.0);
+    gl_Position = pos.xyww;
 }

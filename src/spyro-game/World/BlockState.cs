@@ -4,16 +4,16 @@ using System.Runtime.InteropServices;
 namespace SpyroGame.World;
 
 [StructLayout(LayoutKind.Sequential)]
-internal struct BlockState
+public struct BlockState
 {
     public int Index { get; set; }
-
-    public BlockType BlockType { get; set; }
 
     /// <summary>
     /// 0 = South, 1 = East, 2 = North, 3 = West, 4 = Top, 5 = Bottom
     /// </summary>
     public BlockDirection FrontDirection { get; set; }
+
+    public BlockType BlockType { get; set; }
 
     public bool IsVisible { get; set; }
     public byte Reserved1;
@@ -24,7 +24,9 @@ internal struct BlockState
 
     public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 
-    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize / VoxelHelper.ChunkSideSize, Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
+    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, 
+                                                  Index / VoxelHelper.ChunkSideSizeSquare, 
+                                                  Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
 
     public override readonly string ToString() => $"{Index}:{BlockType}@{LocalPosition}";
 }
@@ -41,7 +43,7 @@ public enum BlockType
     Snow,
 }
 
-public enum BlockDirection
+public enum BlockDirection : byte
 {
     South,
     East,

@@ -61,7 +61,5 @@ public class VertexArrayObject
 
     public Buffer<uint>? IndexBuffer { get; set; }
 
-    //public List<BufferDescriptor> Buffers => buffers;
-
     public static implicit operator uint(VertexArrayObject vao) => vao.vao;  //  allow using the vertex array instead of the handle
 }

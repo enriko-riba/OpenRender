@@ -1,4 +1,4 @@
-﻿global using AABB = (OpenTK.Mathematics.Vector3i min, OpenTK.Mathematics.Vector3i max);
+﻿global using AABB = (OpenTK.Mathematics.Vector3i Min, OpenTK.Mathematics.Vector3i Max);
 using OpenRender.Components;
 using OpenRender.Core;
 using OpenRender.Core.Buffers;
@@ -20,7 +20,7 @@ namespace SpyroGame;
 internal class MainScene(ITextRenderer textRenderer) : Scene
 {
     private const int Padding = 70;
-    
+
     private static readonly Vector3 textColor = new(0.752f, 0.750f, 0);
     private static readonly Vector3 debugColorBluish = new(0.2f, 0.2f, 1f);
 
@@ -29,19 +29,16 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private Sprite crosshair = default!;
 
     private const float MovementSpeed = 4;
-    private const float RotationSpeed = 20;
+    private const float RotationSpeed = 10;
     private float movementPerSecond = MovementSpeed;
     private float rotationPerSecond = RotationSpeed;
 
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
 
-    private Chunk? cameraCurrentChunk;
-    private Vector3i cameraCurrentChunkLocalPosition;
     private LightUniform dirLight;
     private VoxelWorld world = default!;
-
-    private bool dbgIsFlyMode;
+    private Player player = default!;
 
     public VoxelWorld World
     {
@@ -58,11 +55,14 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         SceneManager.MousePosition = mouseCenter;
 
         var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 10, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
-        //var startPosition = new Vector3(10, 10, 10);
+        //var startPosition = new Vector3(0, -1, 0);
         camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane * 10) // TODO: x 10 is for debugging loading/unloading chunks
         {
-            MaxFov = 60
+            MaxFov = 40
         };
+
+        player = new Player(camera, startPosition);
+
         dirLight = new LightUniform()
         {
             Direction = new Vector3(0, -1, 0),
@@ -75,16 +75,17 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
             new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
-            new KeyboardAction("fly mode", [Keys.F], ()=> dbgIsFlyMode = !dbgIsFlyMode),
-            new KeyboardAction("forward", [Keys.W], ()=> camera!.MoveForward(movementPerSecond), false),
-            new KeyboardAction("left", [Keys.A], ()=> camera!.Position -= camera.Right * movementPerSecond, false),
-            new KeyboardAction("right", [Keys.D], ()=> camera!.Position += camera.Right * movementPerSecond, false),
-            new KeyboardAction("back", [Keys.S], ()=> camera!.MoveForward(-movementPerSecond), false),
-            new KeyboardAction("rot CCW", [Keys.Q], ()=> camera!.AddRotation(0, 0, -rotationPerSecond), false),
-            new KeyboardAction("rot CW", [Keys.E], ()=> camera!.AddRotation(0, 0, rotationPerSecond), false),
-            new KeyboardAction("up", [Keys.LeftShift], ()=> camera!.Position += Vector3.UnitY * movementPerSecond, false),
-            new KeyboardAction("down", [Keys.LeftControl], ()=> camera!.Position -= Vector3.UnitY * movementPerSecond, false),
+            new KeyboardAction("fly mode", [Keys.F], ()=> player.IsGhostMode = !player.IsGhostMode),
+            new KeyboardAction("forward", [Keys.W], ()=> player.MoveForward(movementPerSecond), false),
+            new KeyboardAction("left", [Keys.A], ()=> player.MoveLeft(movementPerSecond), false),
+            new KeyboardAction("right", [Keys.D], ()=> player.MoveRight(movementPerSecond), false),
+            new KeyboardAction("back", [Keys.S], ()=> player.MoveForward(-movementPerSecond), false),
+            new KeyboardAction("rot CCW", [Keys.Q], ()=> player.AddRotation(0, 0, -rotationPerSecond), false),
+            new KeyboardAction("rot CW", [Keys.E], ()=> player.AddRotation(0, 0, rotationPerSecond), false),
+            new KeyboardAction("up", [Keys.LeftShift], ()=> player.Position += Vector3.UnitY * movementPerSecond, false),
+            new KeyboardAction("down", [Keys.LeftControl], ()=> player.Position -= Vector3.UnitY * movementPerSecond, false),
             new KeyboardAction("wireframe", [Keys.F1], WireframeToggle),
+            new KeyboardAction("pick block", [Keys.P], CalcBlockPicking),
         ]);
 
         //  create 2D crosshair
@@ -109,6 +110,14 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         AddNode(crosshair);
 
         SetupScene();
+    }
+
+    private PickedBlock? pickedBlock = null;
+
+    private void CalcBlockPicking()
+    {
+        pickedBlock = world.PickBlock();
+        world.ChunkRenderer.PickedBlock = pickedBlock;
     }
 
     public override void RenderFrame(double elapsedSeconds)
@@ -136,13 +145,13 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
 
-        text = $"position: {camera?.Position}";
+        text = $"position {camera?.Position.ToString("N2")}, picked block {pickedBlock?.blockIndex}{(player.IsGhostMode?", ghost mode":"")}";
         writeLine(text, debugColorBluish);
 
         //  show chunk index and position
-        if (cameraCurrentChunk is not null)
+        if (player.CurrentChunk is not null)
         {
-            text = $"in chunk: {cameraCurrentChunk} at {cameraCurrentChunk.GetTopBlockAtLocalXZ(cameraCurrentChunkLocalPosition)}";
+            text = $"in chunk: {player.CurrentChunk} at {player.CurrentChunk.GetTopBlockAtLocalXZ(player.ChunkLocalPosition)}";
             writeLine(text, debugColorBluish);
         }
 
@@ -160,21 +169,22 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     {
         base.UpdateFrame(elapsedSeconds);
 
-        var pos = camera!.Position;
+        var pos = player.Position;
         if (world.GetChunkByGlobalPosition(pos, out var chunk))
-        {
-            cameraCurrentChunk = chunk;
-            cameraCurrentChunkLocalPosition = VoxelHelper.GetBlockCoordinatesGlobal(pos) - chunk!.Position;
-            if (!dbgIsFlyMode)
+        {            
+            player.CurrentChunk = chunk;
+            player.ChunkLocalPosition = (Vector3i)pos - chunk!.Position;
+            if (!player.IsGhostMode)
             {
-                var height = world.GetHeightNormalizedGlobal((int)MathF.Floor(pos.X), (int)MathF.Floor(pos.Z));
-                pos.Y = MathF.Floor(height) + 3f;
-                camera.Position = pos;
+                var height = chunk!.GetTerrainHeightAt((int)player.ChunkLocalPosition.X, (int)player.ChunkLocalPosition.Z);
+                pos.Y = height;
+                player.Position = pos;
+                //camera.Position = pos;
             }
         }
         else
         {
-            cameraCurrentChunk = null;
+            player.CurrentChunk = null;
         }
 
         rotationPerSecond = (float)(elapsedSeconds * RotationSpeed);
@@ -187,7 +197,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         lastMousePosition = mousePos;
         if (delta.LengthSquared > 0)
         {
-            camera!.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
+            //camera!.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
+            player.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
 
             if (mousePos.X < 100 ||
                 mousePos.Y < 100 ||
@@ -238,7 +249,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         };
         var skyBox = SkyBox.Create(paths);
         AddNode(skyBox);
-
+        
         var (vertices, indices) = VoxelHelper.CreateVoxelCube();
         var cubeMaterial = Material.Create(defaultShader,
             [new("Resources/voxel/box-unwrap.png", TextureType: TextureType.Diffuse)],
@@ -250,7 +261,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         AddNode(cube);
 
         AddNode(world.ChunkRenderer);
-        world.Camera = camera!;        
+        world.Camera = camera!;
         camera!.Invalidate();
 
         dayNightCycle.Update();

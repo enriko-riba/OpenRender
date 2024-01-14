@@ -1,4 +1,6 @@
-﻿using OpenRender;
+﻿global using PickedBlock = (int chunkIndex, int blockIndex, float distance);
+
+using OpenRender;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -6,22 +8,22 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.Components;
 using SpyroGame.Noise;
-using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 
+
 namespace SpyroGame.World;
 
-internal class VoxelWorld
+public class VoxelWorld
 {
     #region Textures and materials
     //  key is material id, value is the material
     public static readonly Dictionary<int, VoxelMaterial> materials = new() {
         { (int)BlockType.None, new VoxelMaterial() {
                 Diffuse = new Vector3(1),
-                Emissive = new Vector3(0),
-                Specular = new Vector3(0.7f, 0.8f, 0.9f),
-                Shininess = 0.999f
+                Emissive = new Vector3(0.3f),
+                Specular = new Vector3(1),
+                Shininess = 5f
             }
         },
         { (int)BlockType.Rock, new VoxelMaterial() {
@@ -77,7 +79,7 @@ internal class VoxelWorld
 
     //  key is texture name, value texture handle index 
     public static readonly Dictionary<BlockType, string> textures = new() {
-        { BlockType.None, "Resources/voxel/box-unwrap.png" },
+        { BlockType.None, "Resources/voxel/outline.png" },  //  we misuse the air block type that never gets rendered to hold the outline texture 
         //{ BlockType.UnderWater, "Resources/voxel/under-water.png" },
         { BlockType.WaterLevel, "Resources/voxel/water.png" },
         { BlockType.Rock, "Resources/voxel/rock.png" },
@@ -129,14 +131,14 @@ internal class VoxelWorld
 
     //  key is chunk index, value is the chunk   
     private readonly ConcurrentDictionary<int, Chunk> loadedChunks = [];
+    private readonly ConcurrentDictionary<int, Chunk> cachedChunks = [];
 
     internal Stopwatch stopwatch = Stopwatch.StartNew();
 
     private readonly int seed;
     private readonly List<int> surroundingChunkIndices = [];
-    private readonly float[] heightData;
+    internal readonly TerrainBuilder terrainBuilder;
     private readonly Frustum frustum;
-    private readonly Action<Chunk> onChunkCompleteAction = default!;
 
     private ICamera camera = default!;
     private int lastCameraChunkIndex = -1;
@@ -153,11 +155,10 @@ internal class VoxelWorld
         this.frustum = frustum;
         this.seed = seed;
 
-        heightData = NoiseData.CreateFromEncoding("BwA=", 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out var minmax);
+        terrainBuilder = new TerrainBuilder(seed);
         ChunkRenderer = ChunkRenderer.Create(this, GetTextureHandles(), GetMaterials());
-        onChunkCompleteAction = ChunkRenderer.initializedChunksQueue.Enqueue;
 
-        var thread = new Thread(ChunkProcessor)
+        var thread = new Thread(WorkQueueProcessor)
         {
             IsBackground = true
         };
@@ -189,36 +190,17 @@ internal class VoxelWorld
         }
     }
 
-    public float GetHeightNormalizedGlobal(int globalX, int globalZ)
-    {
-        var noiseIndex = globalX + globalZ * VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize;
-        var height = heightData[noiseIndex];
-        height = height * VoxelHelper.HeightAmplitude + VoxelHelper.WaterLevel;
-        return height;
-    }
-
-    public float GetHeightNormalizedChunkLocal(int chunkIndex, int x, int z)
-    {
-        //  get chunks world position
-        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
-        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        var cx = worldX * VoxelHelper.ChunkSideSize;
-        var cz = worldZ * VoxelHelper.ChunkSideSize;
-
-        //  get height data from global position
-        return GetHeightNormalizedGlobal(x + cx, z + cz);
-    }
 
     /// <summary>
-    /// Gets a loaded chunk containing the given global position.
+    /// Gets a loaded chunk containing the given global XZ position.
     /// </summary>
     /// <param name="globalPosition"></param>
     /// <param name="chunk"></param>
     /// <returns>True if chunk is loaded else false</returns>
-    public bool GetChunkByGlobalPosition(in Vector3 globalPosition, out Chunk? chunk)
+    public bool GetChunkByGlobalPosition(Vector3 globalPosition, out Chunk? chunk)
     {
         chunk = null;
-
+        if (globalPosition.Y >= VoxelHelper.MaxBlockPositionY) globalPosition.Y = VoxelHelper.MaxBlockPositionY;
         if (!VoxelHelper.IsGlobalPositionInWorld(globalPosition)) return false;
 
         var idx = VoxelHelper.GetChunkIndexFromGlobalPosition(globalPosition);
@@ -228,76 +210,7 @@ internal class VoxelWorld
 
     public Chunk? this[int index] => loadedChunks.TryGetValue(index, out var chunk) ? chunk : null;
 
-    /// <summary>
-    /// Generates a block from chunk local coordinates.
-    /// </summary>
-    /// <param name="index"></param>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
-    /// <param name="z"></param>
-    /// <returns></returns>
-    public BlockState GenerateBlockChunkLocal(int index, int x, int y, int z)
-    {        
-        var height = GetHeightNormalizedChunkLocal(index, x, z);
-        var blockAltitude = y;
 
-        BlockType bt;
-        if (blockAltitude >= height && blockAltitude <= height + 1)
-        {
-            bt = BlockType.GrassDirt;
-        }
-        else if (blockAltitude < height && blockAltitude >= height - 1)
-        {
-            bt = BlockType.Dirt;
-        }
-        else if (blockAltitude < height - 1)
-        {
-            bt = BlockType.Rock;
-        }
-        else
-        {
-            bt = BlockType.None;
-        }
-
-        //  special cases
-        if (blockAltitude <= VoxelHelper.WaterLevel)
-        {
-            if ((bt != BlockType.None) && (bt != BlockType.WaterLevel) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
-            {
-                bt = BlockType.Sand;
-            }
-            else if ((bt != BlockType.None) && (bt != BlockType.WaterLevel) && (blockAltitude < VoxelHelper.WaterLevel - 1))
-            {
-                //  replace top layer underwater solid blocks with bedrock
-                bt = BlockType.Rock;
-            }
-            else if ((bt == BlockType.None) && blockAltitude == VoxelHelper.WaterLevel)
-            {
-                bt = BlockType.WaterLevel;
-            }
-            else
-            {
-                bt = BlockType.None;
-            }
-        }
-
-        /*
-        // for debugging        
-        bt = blockAltitude <= height + 1 && blockAltitude >= height ? x == 0 ? BlockType.Sand :
-            x == VoxelHelper.ChunkSizeXZMinusOne ? BlockType.Dirt :
-            z == 0 ? BlockType.Rock :
-            z == VoxelHelper.ChunkSizeXZMinusOne ? BlockType.Snow :
-            BlockType.Grass : BlockType.None;
-        */
-
-        var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-        var block = new BlockState
-        {
-            Index = blockIdx,
-            BlockType = bt,
-        };
-        return block;
-    }
 
     /// <summary>
     /// Calculates surrounding chunks, initializes them and adds to the world.
@@ -315,6 +228,7 @@ internal class VoxelWorld
         };
         var processed = 0;
         var start = stopwatch.ElapsedMilliseconds;
+        //for (var i = 0; i < surroundingChunkIndices.Count; i++)
         Parallel.For(0, surroundingChunkIndices.Count, parallelOptions, i =>
         {
             var index = surroundingChunkIndices[i];
@@ -333,11 +247,69 @@ internal class VoxelWorld
             {
                 chunk.CalcVisibleBlocks();
             }
+
+            //chunk.CalcAO();
             Interlocked.Increment(ref ProcessedStartingChunks);
         });
         Log.Debug($"{processed} chunks initialized in: {stopwatch.ElapsedMilliseconds - start} ms");
     }
 
+    public PickedBlock? PickBlock()
+    {
+        const int MaxPickingDistance = 8;
+
+        //  create the ray
+        var origin = camera.Position;
+        var direction = camera.Front;
+
+        var start = stopwatch.ElapsedTicks;
+        //  first get the chunks intersecting with the ray
+        var chunks = ChunkRenderer.VisibleChunks;
+        var intersections = chunks.Select(x => (distance: VoxelHelper.RayIntersect(origin, direction, x.Aabb), chunk: x))
+            .Where(x => x.distance.HasValue && x.distance < MaxPickingDistance)
+            .OrderBy(x => x.distance)
+            .ToArray();
+
+        var chunkIntersectionTime = stopwatch.ElapsedTicks - start;
+        //Log.Debug($"found {intersections.Length} chunks intersecting in {chunkIntersectionTime:N0} ticks");
+        start = stopwatch.ElapsedTicks;
+
+        var minDistance = float.MaxValue;
+        var nearestBlockIndex = -1;
+        var nearestBlockChunkIndex = -1;
+        var totalBlocks = 0;
+        var totalChunks = 0;
+        foreach (var (distance, c) in intersections)
+        {
+            totalChunks++;
+            var chunk = loadedChunks[c.Index];
+            var chunkPosition = chunk.Position;
+            var visibleBlocks = chunk.Blocks.Where(x => x.IsVisible && x.BlockType != BlockType.WaterLevel && x.BlockType != BlockType.None)
+                .Select(x => (block: x, blockBB: new AABB(x.LocalPosition + chunkPosition, x.LocalPosition + Vector3i.One + chunkPosition)));
+
+            //Log.Debug($"testing block intersections for chunk: {chunk}, visible blocks; {visibleBlocks.Count()}");
+            foreach (var (block, blockBB) in visibleBlocks)
+            {
+                totalBlocks++;
+                var blockDistance = VoxelHelper.RayIntersect(origin, direction, blockBB);
+                if (blockDistance.HasValue && blockDistance < MaxPickingDistance)
+                {
+                    //Log.Debug($"block intersection: {block.LocalPosition} {block.BlockType}, world position: {blockBB}");
+                    if (blockDistance.Value < minDistance)
+                    {
+                        minDistance = blockDistance.Value;
+                        nearestBlockIndex = block.Index;
+                        nearestBlockChunkIndex = chunk.Index;
+                        //Log.Debug($"nearest block: {nearestBlockIndex} in chunk: {nearestBlockChunkIndex} at distance: {minDistance}");
+                    }
+                }
+            }
+        }
+        var resultString = nearestBlockIndex >= 0 ? $"block: {nearestBlockIndex} in chunk: {nearestBlockChunkIndex} at distance: {minDistance:N2}" : "no intersection found";
+        Log.Debug($"{resultString}, chunks ({totalChunks}) intersection time {chunkIntersectionTime:N0} ticks, blocks ({totalBlocks}) picking time {stopwatch.ElapsedTicks - start:N0} ticks");
+
+        return nearestBlockIndex >= 0 ? (nearestBlockChunkIndex, nearestBlockIndex, minDistance) : null;
+    }
 
     private void Camera_CameraChanged(object? sender, EventArgs e)
     {
@@ -417,14 +389,20 @@ internal class VoxelWorld
     /// </summary>
     /// <param name="chunkIndex"></param>
     /// <returns></returns>
-    private bool CreateChunkInitializeAndAddToLoaded(int chunkIndex, out Chunk? chunk)
+    private bool CreateChunkInitializeAndAddToLoaded(int chunkIndex, out Chunk chunk)
     {
+        if(cachedChunks.TryRemove(chunkIndex, out chunk))
+        {            
+            loadedChunks[chunkIndex] = chunk;
+        }
+
         //  if not loaded create new chunk
         if (!loadedChunks.TryGetValue(chunkIndex, out chunk))
         {
             var position = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
-            chunk = new Chunk()
+            chunk = new Chunk(this, chunkIndex)
             {
+
                 Aabb = (position, position + ChunkSize),
                 State = ChunkState.Loaded,
             };
@@ -434,11 +412,11 @@ internal class VoxelWorld
         //  chunk must be either already loaded or newly created, if loaded and initialized bail out
         if (chunk.IsInitialized) return false;
 
-        chunk.Initialize(this, chunkIndex, seed);
+        chunk.Initialize(terrainBuilder);
         return true;
     }
 
-    private void ChunkProcessor()
+    private void WorkQueueProcessor()
     {
         while (true)
         {
@@ -446,26 +424,55 @@ internal class VoxelWorld
             if (queueLength > 0)
             {
                 Parallel.For(0, queueLength, i => ProcessWorkItem());
-            }            
+            }
             else
             {
-                var toUnload = loadedChunks.Values.Where(x => x.State == ChunkState.SafeToRemove).ToArray();
-                var count = toUnload.Length;
-                if (count > 0)
+                MoveChunksToCache();
+                //var toUnload = loadedChunks.Values.Where(x => x.State == ChunkState.SafeToRemove).ToArray();
+                //var count = toUnload.Length;
+                //if (count > 0)
+                //{
+                //    //Log.Debug($"unloading: {count} / {loadedChunks.Count} chunks");
+                //    var counter = 0;
+                //    foreach (var chunk in toUnload)
+                //    {
+                //        if (chunk.State == ChunkState.SafeToRemove)
+                //        {
+                //            loadedChunks.TryRemove(chunk.Index, out _);
+                //            counter++;
+                //        }
+                //    }
+                //    //Log.Debug($"chunks unloaded {counter}");
+                //}
+            }
+        }
+    }
+
+    private void MoveChunksToCache()
+    {
+        if(camera is null) return;
+        // calculate the camera chunk indices based on its position
+        var centerPosition = camera.Position; 
+        var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+        var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
+        var toUnload = loadedChunks.Values.Where(x => (x.ChunkPosition - cameraXZ).EuclideanLength > VoxelHelper.MaxDistanceInChunks);      
+        if (toUnload.Any())
+        {
+            //Log.Debug($"unloading: {count} / {loadedChunks.Count} chunks");
+            var counter = 0;
+            foreach (var chunk in toUnload)
+            {
+                //if (chunk.State == ChunkState.SafeToRemove)
                 {
-                    //Log.Debug($"unloading: {count} / {loadedChunks.Count} chunks");
-                    var counter = 0;
-                    foreach (var chunk in toUnload)
+                    if(loadedChunks.TryRemove(chunk.Index, out var loadedChunk))
                     {
-                        if (chunk.State == ChunkState.SafeToRemove)
-                        {
-                            loadedChunks.TryRemove(chunk.Index, out _);
-                            counter++;
-                        }
+                        cachedChunks[chunk.Index] = loadedChunk;
+                        counter++;
                     }
-                    Log.Debug($"chunks unloaded {counter}");
                 }
             }
+            if(counter > 0) Log.Debug($"chunks moved to cache: {counter}");
         }
     }
 
@@ -473,8 +480,6 @@ internal class VoxelWorld
     {
         if (workQueue.TryDequeue(out var index))
         {
-            var initialized = 0L;
-            var processed = 0L;
             var start = stopwatch.ElapsedMilliseconds;
 
             if (loadedChunks.TryGetValue(index, out var chunk))
@@ -483,20 +488,41 @@ internal class VoxelWorld
                 if (chunk.State == ChunkState.ToBeRemoved)
                 {
                     //Log.Debug($"chunk: {index} flagged for removal");
-                    onChunkCompleteAction?.Invoke(chunk);
+                    ChunkRenderer.initializedChunksQueue.Enqueue(chunk);
                     return;
                 }
             }
 
+            if (chunk is not null)
+            {
+                Log.Debug($"ProcessWorkItem() chunk: {chunk}");
+            }
+
             if (CreateChunkInitializeAndAddToLoaded(index, out chunk))
             {
-                initialized = stopwatch.ElapsedMilliseconds - start;
+                var initialized = stopwatch.ElapsedMilliseconds - start;
                 var processingStart = stopwatch.ElapsedMilliseconds;
-                chunk?.CalcVisibleBlocks();
-                processed = stopwatch.ElapsedMilliseconds - processingStart;
+                chunk.CalcVisibleBlocks();
+                var processed = stopwatch.ElapsedMilliseconds - processingStart;
+                ChunkRenderer.initializedChunksQueue.Enqueue(chunk);
+                Log.Debug($"ProcessWorkItem() chunk: {chunk}, init time:{initialized} ms, process time:{processed} ms");
             }
-            Debug.Assert((chunk?.IsInitialized ?? false) && (chunk?.IsProcessed ?? false), "loaded chunk not initialized!");
-            onChunkCompleteAction?.Invoke(chunk);
+            Debug.Assert((chunk.IsInitialized) && (chunk.IsProcessed), "loaded chunk not initialized!");
         }
+    }
+
+    public BlockState? GetBlockByGlobalPositionSafe(int x, int y, int z)
+    {
+        var blockWorldPosition = new Vector3i(x, y, z);
+        if (!VoxelHelper.IsGlobalPositionInWorld(blockWorldPosition)) return null;
+
+        var chunkIndex = VoxelHelper.GetChunkIndexFromGlobalPosition(blockWorldPosition);
+        var chunk = this[chunkIndex];
+        if (chunk is null) return null;
+
+        var chunkWorldPosition = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+        var (cx, cy, cz) = blockWorldPosition - chunkWorldPosition;
+        var block = chunk.Blocks[cx + cz * VoxelHelper.ChunkSideSize + cy * VoxelHelper.ChunkSideSizeSquare];
+        return block;
     }
 }
