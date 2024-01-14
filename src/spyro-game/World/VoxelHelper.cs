@@ -12,7 +12,7 @@ public static class VoxelHelper
     public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize);
 
     public const int WorldChunksXZ = 250;
-    public const int ChunkSideSize = 16;
+    public const int ChunkSideSize = 32;
     public const int ChunkYSize = 100;
 
     public const float WaterLevel = ChunkYSize * 0.75f;

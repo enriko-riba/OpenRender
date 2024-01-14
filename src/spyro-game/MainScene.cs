@@ -135,11 +135,14 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
         writeLine(fpsText, textColor);
 
-        var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, chunks {VoxelHelper.TotalChunks:N0}, chunk size: {VoxelHelper.ChunkSideSize}, max chunk dist.: {VoxelHelper.MaxDistanceInChunks}";
+        var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, chunk size: {VoxelHelper.ChunkSideSize}, max chunk dist.: {VoxelHelper.MaxDistanceInChunks}";
         writeLine(text, textColor);
 
         var surroundingChunks = world.SurroundingChunkIndices.Count;
-        text = $"Chunks: loaded {world.LoadedChunks.Count}, surrounding {surroundingChunks}, in frustum {world.ChunkRenderer.ChunksInFrustum:N0}/{surroundingChunks - world.ChunkRenderer.ChunksInFrustum:N0}";
+        text = $"Chunks: chunks {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunks}, cached {world.CachedChunks}";
+        writeLine(text, textColor);
+
+        text = $"in frustum {world.ChunkRenderer.ChunksInFrustum:N0}/{surroundingChunks - world.ChunkRenderer.ChunksInFrustum:N0}";
         writeLine(text, textColor);
 
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
@@ -179,7 +182,6 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
                 var height = chunk!.GetTerrainHeightAt((int)player.ChunkLocalPosition.X, (int)player.ChunkLocalPosition.Z);
                 pos.Y = height;
                 player.Position = pos;
-                //camera.Position = pos;
             }
         }
         else

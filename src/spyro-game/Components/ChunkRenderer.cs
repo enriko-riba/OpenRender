@@ -26,7 +26,7 @@ public class ChunkRenderer : SceneNode
     private readonly List<Chunk> loadedChunkRenderDataList = [];
     private readonly VoxelWorld world;
     private IEnumerable<Chunk> sortedVisibleChunkList = [];
-    internal ConcurrentQueue<Chunk> initializedChunksQueue = [];
+    internal ConcurrentQueue<Chunk> chunksStreamingQueue = [];
 
     public static ChunkRenderer Create(VoxelWorld world, ulong[] textureHandles, VoxelMaterial[] materials)
     {
@@ -70,7 +70,7 @@ public class ChunkRenderer : SceneNode
     /// </summary>
     public int RenderedBlocks { get; private set; }
 
-    public int ChunksQueueLength => initializedChunksQueue.Count;
+    public int ChunksQueueLength => chunksStreamingQueue.Count;
 
     public int ChunkRenderDataLength => loadedChunkRenderDataList.Count;
 
@@ -141,16 +141,14 @@ public class ChunkRenderer : SceneNode
 
         if (isChunkDataUpdated || (Scene!.Camera?.IsDirty ?? false))
         {
+            var notInSurrounding = loadedChunkRenderDataList.Where(x => !world.SurroundingChunkIndices.Contains(x.Index));
+            if(notInSurrounding.Any())            
+                loadedChunkRenderDataList.Remove(notInSurrounding.First());            
+
             Scene!.Renderer.Frustum.Update(Scene!.Camera!);
             var cullCandidates = loadedChunkRenderDataList.Where(x => world.SurroundingChunkIndices.Contains(x.Index));
             foreach (var chunkRenderData in cullCandidates)
             {
-                //var containment = CullingHelper.GetAabbFrustumContainment(chunkRenderData.Aabb, Scene!.Renderer.Frustum.Planes);
-                //chunkRenderData.Visible = containment != ContainmentType.Disjoint;
-                //if ((containment == ContainmentType.Intersects))
-                //{
-                //    ;
-                //}
                 var visible = CullingHelper.IsAabbInFrustum(chunkRenderData.Aabb, Scene!.Renderer.Frustum.Planes);
                 chunkRenderData.Visible = visible;
             }
@@ -168,57 +166,46 @@ public class ChunkRenderer : SceneNode
     /// <returns></returns>
     private bool ProcessChunksQueue()
     {
-        const int MaxUpdatesPerFrame = 2;
+        const int MaxUpdatesPerFrame = 3;
 
         //  update chunk render data, needs to be done on the main thread so we limit the number of chunks to be updated per frame
         var isChunkDataUpdated = false;
         var counter = 0;
-        while (counter < MaxUpdatesPerFrame && initializedChunksQueue.TryDequeue(out var chunk))
+        while (counter < MaxUpdatesPerFrame && chunksStreamingQueue.TryDequeue(out var chunk))
         {
-            var existingChunkRenderData = loadedChunkRenderDataList.Find(x => x.Index == chunk.Index);
-            if (existingChunkRenderData == null && chunk.State == ChunkState.Loaded)
-            {
-                //  add new chunk render data
-                //var newChunkRenderData = CreateChunkRenderData(chunk);
-                //loadedChunkRenderDataList.Add(newChunkRenderData);
-                CreateChunkRenderData(chunk);
-                loadedChunkRenderDataList.Add(chunk);
-                chunk.State = ChunkState.Added;
-                isChunkDataUpdated = true;
-                counter++;
-            }
-            else if (existingChunkRenderData != null && chunk.State == ChunkState.ToBeRemoved)
-            {
-                //  destroy chunk render data and free GL objects
-                loadedChunkRenderDataList.Remove(existingChunkRenderData);
-                GL.DeleteBuffer(existingChunkRenderData.BlocksSSBO);
-                GL.DeleteBuffer(existingChunkRenderData.TransparentBlocksSSBO);
-                Log.CheckGlError();
-                chunk.State = ChunkState.SafeToRemove;
-                isChunkDataUpdated = true;
-                counter++;
-            }
-            else if (existingChunkRenderData != null && (chunk.State == ChunkState.Loaded || chunk.State == ChunkState.Added))
-            {
-                if(chunk.State == ChunkState.Loaded)
-                {
-                    //  chunk was loaded from disk, we need to update the chunk render data
+            loadedChunkRenderDataList.Remove(chunk);
+            switch (chunk.State)
+            {               
+                case ChunkState.ToBeRemoved:
+                    GL.DeleteBuffer(chunk.BlocksSSBO);
+                    GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
+                    //Log.CheckGlError();
+                    chunk.State = ChunkState.SafeToRemove;
+                    isChunkDataUpdated = true;
+                    break;
+
+                case ChunkState.Loaded:
                     CreateChunkRenderData(chunk);
-                }
-                else
-                {
-                    //  chunk was already added, we just need to update the chunk render data
+                    chunk.State = ChunkState.Added;
+                    loadedChunkRenderDataList.Add(chunk);
+                    isChunkDataUpdated = true;
+                    counter++;
+                    break;
+
+                case ChunkState.Added:
                     UpdateChunkRenderData(chunk);
-                }
-                //  update existing chunk render data
-                //var newChunkRenderData = UpdateChunkRenderData(chunk, existingChunkRenderData);
-                //loadedChunkRenderDataList.Remove(existingChunkRenderData);
-                //loadedChunkRenderDataList.Add(newChunkRenderData);
-                //UpdateChunkRenderData(chunk);
-                chunk.State = ChunkState.Added;
-                isChunkDataUpdated = true;
-                counter++;
-            }
+                    loadedChunkRenderDataList.Add(chunk);
+                    isChunkDataUpdated = true;
+                    counter++;
+                    break;
+
+                case ChunkState.SafeToRemove:
+                    Log.Debug($"chunk {chunk.Index} safe to remove");
+                    break;
+
+                default:
+                    break;
+            }           
         }
 
         return isChunkDataUpdated;
@@ -308,14 +295,6 @@ public class ChunkRenderer : SceneNode
         chunk.TransparentCount = transparentBlockData.Length;
         chunk.BlocksSSBO = blocksSSBO;
         chunk.TransparentBlocksSSBO = transparentBlocksSSBO;
-        //ChunkRenderData chunkData = new(
-        //   blocksSSBO,
-        //   blockData.Length,
-        //   transparentBlocksSSBO,
-        //   transparentBlockData.Length,
-        //   chunk.Aabb,
-        //   chunk.Index);
-        //return chunkData;
     }
 
     private static void UpdateChunkRenderData(Chunk chunk)
@@ -344,30 +323,5 @@ public class ChunkRenderer : SceneNode
         chunk.TransparentCount = transparentBlockData.Length;
         chunk.BlocksSSBO = blocksSSBO;
         chunk.TransparentBlocksSSBO = transparentBlocksSSBO;
-
-        //ChunkRenderData chunkData = new(
-        //   blocksSSBO,
-        //   blockData.Length,
-        //   transparentBlocksSSBO,
-        //   transparentBlockData.Length,
-        //   chunk.Aabb,
-        //   chunk.Index);
-        //return chunkData;
     }
 }
-
-/*
-/// <summary>
-/// Holds data for rendering a chunk.
-/// </summary>
-/// <param name="BlocksSSBO">Handle to SSBO buffer</param>
-/// <param name="SolidCount">Number of BlockData structures in the BlocksSSBO buffer</param>
-/// <param name="TransparentBlocksSSBO">Handle to SSBO buffer</param>
-/// <param name="TransparentCount">Number of BlockData structures in the BlocksSSBO buffer</param>
-/// <param name="Aabb">Axis aligned bounding box of the chunk</param>
-internal record ChunkRenderData(uint BlocksSSBO, int SolidCount, uint TransparentBlocksSSBO, int TransparentCount, AABB Aabb, int Index)
-{
-    public bool Visible { get; set; }
-    public Vector3i Position => Aabb.Min;
-}
-*/
