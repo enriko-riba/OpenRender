@@ -3,6 +3,7 @@
 using OpenRender.Core.Geometry;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
+using System.Drawing;
 
 namespace OpenRender.Core.Culling;
 
@@ -10,7 +11,7 @@ public sealed class CullingHelper
 {
     public static void FrustumCull(Frustum frustum, IEnumerable<SceneNode> allNodes)
     {
-        var planes = frustum.Planes;
+        //var planes = frustum.Planes;
         foreach (var node in allNodes)
         {
             if (node.IsVisible && !node.DisableCulling)
@@ -39,6 +40,15 @@ public sealed class CullingHelper
         // If the sphere passed all frustum plane tests, it is inside the frustum
         return true;
     }
+
+    public static bool IsPointInsideAabb(Vector3 point, AABB box) => (
+          point.X >= box.min.X &&
+          point.X <= box.max.X &&
+          point.Y >= box.min.Y &&
+          point.Y <= box.max.Y &&
+          point.Z >= box.min.Z &&
+          point.Z <= box.max.Z
+    );
 
     private static readonly Vector3[] corners = new Vector3[8];
 
@@ -221,7 +231,7 @@ public sealed class CullingHelper
         return radius;
     }
 
-    public static AABB CalculateAABB(int strideInFloats, float[] vertices, Matrix4 transformationMatrix)
+    public static AABB CalculateAabb(int strideInFloats, float[] vertices, Matrix4 transformationMatrix)
     {
         var min = new Vector3(float.MaxValue);
         var max = new Vector3(float.MinValue);

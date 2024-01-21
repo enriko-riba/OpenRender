@@ -12,9 +12,9 @@ layout (std140, binding = 0) uniform camera {
 
 struct BlockState {   
     uint index;
-    uint blockDirection;
-    uint blockType;
-    uint reserved;
+//    uint blockDirection;
+//    uint blockType;
+    uint packedBytes;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];
@@ -81,10 +81,12 @@ mat3 getRotationMatrix(uint blockDirection) {
 void main(void)
 {   
     blockId = gl_InstanceID;
-    BlockState block = blocks[gl_InstanceID];    
+    BlockState block = blocks[gl_InstanceID];
+    uint blockDirection = (block.packedBytes & 0xff);
+    uint blockType = (block.packedBytes & 0xff00) >> 8;
 
-    materialIndex = block.blockType;
-    textureIndex = block.blockType;
+    materialIndex = blockType;
+    textureIndex = blockType;
     
     // Calculate block position based on block index
     uint x = block.index % chunkSize;
@@ -92,7 +94,7 @@ void main(void)
     uint y = block.index / (chunkSize * chunkSize);
         
     // Apply rotation to both position and normal
-    mat3 rotationMatrix = getRotationMatrix(block.blockDirection);
+    mat3 rotationMatrix = getRotationMatrix(blockDirection);
     vec3 rotatedPosition = rotationMatrix * aPosition;
     vec3 rotatedNormal = rotationMatrix * aNormal;
    

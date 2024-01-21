@@ -74,9 +74,10 @@ public class ChunkRenderer : SceneNode
 
     public int ChunkRenderDataLength => loadedChunkRenderDataList.Count;
 
-    public IEnumerable<(int Index, AABB Aabb)> VisibleChunks => sortedVisibleChunkList.Select(x => (x.Index, x.Aabb));
+    //public IEnumerable<(int Index, AABB Aabb)> VisibleChunks => sortedVisibleChunkList.Select(x => (x.Index, x.Aabb));
+    public IEnumerable<Chunk> VisibleChunks => sortedVisibleChunkList;
 
-    public PickedBlock? PickedBlock { get; set; }
+    public BlockState? PickedBlock { get; set; }
 
     public override void OnDraw(double elapsed)
     {
@@ -110,14 +111,23 @@ public class ChunkRenderer : SceneNode
         foreach (var chunkData in sortedVisibleChunkList)
         {
             RenderedBlocks += chunkData.SolidCount;
-            if (PickedBlock != null && PickedBlock.Value.chunkIndex == chunkData.Index)
+            if (PickedBlock != null && VoxelHelper.GetChunkIndexFromPositionGlobal(PickedBlock.Value.GlobalPosition) == chunkData.Index)
             {
-                Material.Shader.SetInt("outlinedBlockId", PickedBlock.Value.blockIndex);
+                Material.Shader.SetInt("outlinedBlockId", PickedBlock.Value.Index);
             }
             else
             {
                 Material.Shader.SetInt("outlinedBlockId", -1);
             }
+
+            //  TODO: investigate why on ver rare occasions the SSBO is reported as invalid, the bellow is a workaround
+            if(!GL.IsBuffer(chunkData.BlocksSSBO))
+            {
+                GL.DeleteBuffer(chunkData.BlocksSSBO);
+                GL.DeleteBuffer(chunkData.TransparentBlocksSSBO);
+                CreateChunkRenderData(chunkData);
+            }
+
             RenderChunk(chunkData.Position, chunkData.BlocksSSBO, chunkData.SolidCount);
         }
 
@@ -152,10 +162,10 @@ public class ChunkRenderer : SceneNode
                 var visible = CullingHelper.IsAabbInFrustum(chunkRenderData.Aabb, Scene!.Renderer.Frustum.Planes);
                 chunkRenderData.Visible = visible;
             }
-            sortedVisibleChunkList = cullCandidates
-                .Where(x => x.Visible)
-                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene!.Camera!.Position))
-                .ToArray(); //  NOTE: create array to avoid multiple enumerations per render frame
+
+            //  NOTE: create array to avoid multiple enumerations per render frame
+            sortedVisibleChunkList = [.. cullCandidates.Where(x => x.Visible)
+                .OrderBy(x => Vector3.DistanceSquared(x.Position + VoxelWorld.ChunkHalfSize, Scene!.Camera!.Position))]; 
             ChunksInFrustum = sortedVisibleChunkList.Count();
         }
     }
@@ -166,7 +176,7 @@ public class ChunkRenderer : SceneNode
     /// <returns></returns>
     private bool ProcessChunksQueue()
     {
-        const int MaxUpdatesPerFrame = 3;
+        const int MaxUpdatesPerFrame = 2;
 
         //  update chunk render data, needs to be done on the main thread so we limit the number of chunks to be updated per frame
         var isChunkDataUpdated = false;
@@ -218,8 +228,6 @@ public class ChunkRenderer : SceneNode
     /// <param name="chunk"></param>
     internal void AddChunkDirect(Chunk chunk)
     {
-        //var newChunkRenderData = CreateChunkRenderData(chunk);
-        //loadedChunkRenderDataList.Add(newChunkRenderData);
         CreateChunkRenderData(chunk);
         loadedChunkRenderDataList.Add(chunk);
     }
@@ -257,38 +265,25 @@ public class ChunkRenderer : SceneNode
         }
     }
 
-    private void RenderHighlightedBlock(Vector3i position)
-    {
-        transform.worldMatrix.Row3.Xyz = position;
-        var worldMatrix = transform.worldMatrix;
-        Scene!.DefaultShader.Use();
-        Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
-        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
-        GL.Disable(EnableCap.DepthTest);
-        GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
-        GL.Enable(EnableCap.DepthTest);
-        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
-    }
-
     private static void CreateChunkRenderData(Chunk chunk)
     {
         //  prepare block data SSBOs
         //  for solid blocks
-        var blockData = chunk.VisibleBlocks.ToArray();
+        var blockData = chunk.VisibleBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
         var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         GL.CreateBuffers(1, out uint blocksSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blocksSSBO, -1, $"blocks_Chunk_{chunk}_SSBO");
-        GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
-        GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<BlockState>(), blockData);
+        GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<GpuBlockState>(), blockData);
 
         //  prepare block data SSBOs
         //  for transparent blocks
-        var transparentBlockData = chunk.TransparentBlocks.ToArray();
+        var transparentBlockData = chunk.TransparentBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
         maxInstances = DefaultMaxInstances > transparentBlockData.Length ? DefaultMaxInstances : transparentBlockData.Length;
         GL.CreateBuffers(1, out uint transparentBlocksSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, transparentBlocksSSBO, -1, $"transparentBlocks_Chunk_{chunk}_SSBO");
-        GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
-        GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<BlockState>(), transparentBlockData);
+        GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<GpuBlockState>(), transparentBlockData);
         Log.CheckGlError();
 
         chunk.SolidCount = blockData.Length;
@@ -302,26 +297,28 @@ public class ChunkRenderer : SceneNode
         var blocksSSBO = chunk.BlocksSSBO;
         var transparentBlocksSSBO = chunk.TransparentBlocksSSBO;
 
-        var blockData = chunk.VisibleBlocks.ToArray();
+        var blockData = chunk.VisibleBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
         var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         //  has the allocated gpu buffer enough space for the new block data?
         if (maxInstances > chunk.SolidCount && maxInstances > DefaultMaxInstances)
         {
-            GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+            GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         }
-        GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<BlockState>(), blockData);
+        GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<GpuBlockState>(), blockData);
 
-        var transparentBlockData = chunk.TransparentBlocks.ToArray();
+        var transparentBlockData = chunk.TransparentBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
         maxInstances = DefaultMaxInstances > transparentBlockData.Length ? DefaultMaxInstances : transparentBlockData.Length;
         //  has the allocated gpu buffer enough space for the new block data?
         if (maxInstances > chunk.SolidCount && maxInstances > DefaultMaxInstances)
         {
-            GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<BlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+            GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         }
-        GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<BlockState>(), transparentBlockData);
+        GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<GpuBlockState>(), transparentBlockData);
         chunk.SolidCount = blockData.Length;
         chunk.TransparentCount = transparentBlockData.Length;
         chunk.BlocksSSBO = blocksSSBO;
         chunk.TransparentBlocksSSBO = transparentBlocksSSBO;
     }
+
+    private record struct GpuBlockState(int Index, byte FrontDirection, byte BlockType);
 }

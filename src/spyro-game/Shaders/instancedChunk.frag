@@ -45,9 +45,9 @@ layout(std430, binding = 1) readonly buffer ssbo_materials {
 };
 struct BlockState {   
     uint index;
-    uint blockDirection;
-    uint blockType;
-    uint reserved;
+//    uint blockDirection;
+//    uint blockType;
+    uint packedBytes;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];
@@ -78,7 +78,7 @@ void main()
 { 
     Material mat = mat[materialIndex];
     sampler2D tex = bindlessTextures[textureIndex];
-    //vec3 N = -normalize(cross(dFdyFine(fragPos), dFdxFine(fragPos)));
+    //vec3 N = normalize(cross(dFdx(fragPos), dFdy(fragPos)));
     vec3 N = vertexNormal;
     vec3 L = -normalize(dirLight.position);
 
@@ -108,7 +108,7 @@ void main()
 		//outputColor = vec4(1, 0, 0, 1);
         sampler2D outlineSampler = bindlessTextures[0];
         vec4 texOutline = texture(outlineSampler, texCoord);
-        outputColor = mix(outputColor, texOutline, texOutline.a);
+        outputColor = vec4(mix(outputColor, texOutline, texOutline.a).rgb, outputColor.a);
     }
     
     // b1 is first byte, b2 is second byte, b3 is third byte, b4 is fourth byte
@@ -123,7 +123,7 @@ void main()
 
 
     // fog
-    vec4 fog = vec4(0.10f, 0.10f, 0.15f, 1.0f);
+    vec4 fog = vec4(0.40f, 0.40f, 0.42f, 1.0f);
     float d = distance(fragPos, cameraPos);
     float alpha = getFogFactor(d);
 

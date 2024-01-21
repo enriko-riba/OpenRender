@@ -27,15 +27,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private readonly KeyboardActionMapper kbdActions = new();
     private DayNightCycle dayNightCycle = default!;
     private Sprite crosshair = default!;
-
-    private const float MovementSpeed = 4;
-    private const float RotationSpeed = 10;
-    private float movementPerSecond = MovementSpeed;
-    private float rotationPerSecond = RotationSpeed;
-
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
-
     private LightUniform dirLight;
     private VoxelWorld world = default!;
     private Player player = default!;
@@ -61,7 +54,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             MaxFov = 40
         };
 
-        player = new Player(camera, startPosition);
+        player = new Player(camera, startPosition, world);
 
         dirLight = new LightUniform()
         {
@@ -74,18 +67,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
-            new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
-            new KeyboardAction("fly mode", [Keys.F], ()=> player.IsGhostMode = !player.IsGhostMode),
-            new KeyboardAction("forward", [Keys.W], ()=> player.MoveForward(movementPerSecond), false),
-            new KeyboardAction("left", [Keys.A], ()=> player.MoveLeft(movementPerSecond), false),
-            new KeyboardAction("right", [Keys.D], ()=> player.MoveRight(movementPerSecond), false),
-            new KeyboardAction("back", [Keys.S], ()=> player.MoveForward(-movementPerSecond), false),
-            new KeyboardAction("rot CCW", [Keys.Q], ()=> player.AddRotation(0, 0, -rotationPerSecond), false),
-            new KeyboardAction("rot CW", [Keys.E], ()=> player.AddRotation(0, 0, rotationPerSecond), false),
-            new KeyboardAction("up", [Keys.LeftShift], ()=> player.Position += Vector3.UnitY * movementPerSecond, false),
-            new KeyboardAction("down", [Keys.LeftControl], ()=> player.Position -= Vector3.UnitY * movementPerSecond, false),
+            new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),            
+            new KeyboardAction("up", [Keys.LeftShift], ()=> player.Position += Vector3.UnitY, false),
+            new KeyboardAction("down", [Keys.LeftControl], ()=> player.Position -= Vector3.UnitY, false),
             new KeyboardAction("wireframe", [Keys.F1], WireframeToggle),
-            new KeyboardAction("pick block", [Keys.P], CalcBlockPicking),
         ]);
 
         //  create 2D crosshair
@@ -112,14 +97,6 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         SetupScene();
     }
 
-    private PickedBlock? pickedBlock = null;
-
-    private void CalcBlockPicking()
-    {
-        pickedBlock = world.PickBlock();
-        world.ChunkRenderer.PickedBlock = pickedBlock;
-    }
-
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
@@ -139,7 +116,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         writeLine(text, textColor);
 
         var surroundingChunks = world.SurroundingChunkIndices.Count;
-        text = $"Chunks: chunks {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunks}, cached {world.CachedChunks}";
+        text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunks}, cached {world.CachedChunks}";
         writeLine(text, textColor);
 
         text = $"in frustum {world.ChunkRenderer.ChunksInFrustum:N0}/{surroundingChunks - world.ChunkRenderer.ChunksInFrustum:N0}";
@@ -148,18 +125,29 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
 
-        text = $"position {camera?.Position.ToString("N2")}, picked block {pickedBlock?.blockIndex}{(player.IsGhostMode?", ghost mode":"")}";
+        text = $"position {camera?.Position.ToString("N2")}{(player.IsGhostMode?", ghost mode":"")}";
         writeLine(text, debugColorBluish);
+        if(player.PickedBlock is not null)
+        {
+            text = $"picked block: {player.PickedBlock}";
+            writeLine(text, debugColorBluish);
+        }
 
         //  show chunk index and position
-        if (player.CurrentChunk is not null)
+        if (player.CurrentBlockBellow is not null)
         {
-            text = $"in chunk: {player.CurrentChunk} at {player.CurrentChunk.GetTopBlockAtLocalXZ(player.ChunkLocalPosition)}";
+            text = $"block bellow: {player.CurrentBlockBellow}";
             writeLine(text, debugColorBluish);
         }
 
         text = $"time: {dayNightCycle.TimeOfDay}";
         writeLine(text, Vector3.UnitY);
+        writeLine("", textColor);
+
+        text = $"isJumping: {player.IsJumping}, isGrounded: {player.IsGrounded}, velocity: {player.VelocityY}";
+        writeLine(text, Vector3.UnitY);
+
+
         writeLine("", textColor);
         //text = $"sun direction: {dayNightCycle.DirLight.Direction}, ambient: {dayNightCycle.DirLight.Ambient}";
         //textRenderer.Render(text, 20, 5, 120, new(0.5f));
@@ -171,26 +159,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     public override void UpdateFrame(double elapsedSeconds)
     {
         base.UpdateFrame(elapsedSeconds);
-
-        var pos = player.Position;
-        if (world.GetChunkByGlobalPosition(pos, out var chunk))
-        {            
-            player.CurrentChunk = chunk;
-            player.ChunkLocalPosition = (Vector3i)pos - chunk!.Position;
-            if (!player.IsGhostMode)
-            {
-                var height = chunk!.GetTerrainHeightAt((int)player.ChunkLocalPosition.X, (int)player.ChunkLocalPosition.Z);
-                pos.Y = height;
-                player.Position = pos;
-            }
-        }
-        else
-        {
-            player.CurrentChunk = null;
-        }
-
-        rotationPerSecond = (float)(elapsedSeconds * RotationSpeed);
-        movementPerSecond = (float)elapsedSeconds * MovementSpeed;
+        
+        player.Update(elapsedSeconds, SceneManager.KeyboardState);       
+               
         kbdActions.Update(SceneManager.KeyboardState);
 
         //  mouse movement
@@ -199,8 +170,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         lastMousePosition = mousePos;
         if (delta.LengthSquared > 0)
         {
-            //camera!.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
-            player.AddRotation(delta.X * rotationPerSecond, delta.Y * rotationPerSecond, 0);
+            player.AddRotation(delta.X, delta.Y, 0);
 
             if (mousePos.X < 100 ||
                 mousePos.Y < 100 ||
@@ -212,6 +182,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             }
         }
 
+        if(SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+        {
+            player.BreakBlock();
+        }
         dayNightCycle.Update();
     }
 
@@ -233,6 +207,11 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         mouseCenter = clientSize / 2;
     }
 
+    public override void Close()
+    {
+        world.Close();
+    }
+
     private void FullScreenToggle() => SceneManager.WindowState = SceneManager.WindowState == WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
 
     private void WireframeToggle() => ShowBoundingSphere = !ShowBoundingSphere;
@@ -240,6 +219,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private void SetupScene()
     {
         dayNightCycle = new(this);
+        dayNightCycle.Update();
 
         var paths = new string[] {
             "Resources/skybox/right.png",
@@ -266,6 +246,5 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         world.Camera = camera!;
         camera!.Invalidate();
 
-        dayNightCycle.Update();
     }
 }

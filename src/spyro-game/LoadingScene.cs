@@ -36,8 +36,7 @@ internal class LoadingScene : Scene
         };
 
         Log.Highlight($"initializing voxel world...");
-        world = new VoxelWorld(Renderer!.Frustum, 1338);
-        
+        world = new VoxelWorld(1338);        
     }
 
     public override void Load()

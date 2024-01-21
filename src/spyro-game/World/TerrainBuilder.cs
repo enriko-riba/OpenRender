@@ -6,7 +6,7 @@ public class TerrainBuilder(int seed)
 {
     private readonly float[] heightData = NoiseData.CreateFromEncoding("BwA=", 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out var minmax);
 
-    private int GetHeightNormalizedGlobal(int globalX, int globalZ)
+    public int GetHeightNormalizedGlobal(int globalX, int globalZ)
     {
         var noiseIndex = globalX + globalZ * VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize;
         var height = heightData[noiseIndex];
@@ -78,22 +78,18 @@ public class TerrainBuilder(int seed)
         //  special cases
         if (blockAltitude <= (int)VoxelHelper.WaterLevel)
         {
-            if ((bt != BlockType.None) && (bt != BlockType.WaterLevel) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
-            {
-                bt = BlockType.Sand;
-            }
-            else if ((bt != BlockType.None) && (bt != BlockType.WaterLevel) && (blockAltitude < VoxelHelper.WaterLevel - 1))
-            {
-                //  replace top layer underwater solid blocks with bedrock
-                bt = BlockType.Rock;
-            }
-            else if ((bt == BlockType.None) && blockAltitude == (int)VoxelHelper.WaterLevel)
+            if ((bt == BlockType.None) && blockAltitude == (int)VoxelHelper.WaterLevel)
             {
                 bt = BlockType.WaterLevel;
             }
-            else
+            else if ((bt != BlockType.None) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
             {
-                bt = BlockType.None;
+                bt = BlockType.Sand;
+            }
+            else if ((bt != BlockType.None) && (blockAltitude < VoxelHelper.WaterLevel - 1))
+            {
+                //  replace top layer underwater solid blocks with bedrock
+                bt = BlockType.Rock;
             }
         }
 

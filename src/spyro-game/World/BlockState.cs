@@ -1,12 +1,24 @@
 ﻿using OpenTK.Mathematics;
-using System.Runtime.InteropServices;
 
 namespace SpyroGame.World;
 
-[StructLayout(LayoutKind.Sequential)]
+
 public struct BlockState
 {
-    public int Index { get; set; }
+    public BlockState(int index, Chunk chunk)
+    {
+        Index = index;
+        ChunkIndex = chunk.Index;
+        GlobalPosition = chunk.Position + LocalPosition;
+        Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
+    }
+
+    public int Index { get; private set; }
+
+    public int ChunkIndex { get; private set; }
+
+    //public Chunk Chunk { get; private set; }
+    public AABB Aabb { get; private set; }
 
     /// <summary>
     /// 0 = South, 1 = East, 2 = North, 3 = West, 4 = Top, 5 = Bottom
@@ -22,13 +34,17 @@ public struct BlockState
 
     public readonly bool IsAir => BlockType is BlockType.None;
 
+    /// <summary>
+    /// Returns true if the block is none or waterlevel.
+    /// </summary>
     public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 
-    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize, 
-                                                  Index / VoxelHelper.ChunkSideSizeSquare, 
+    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize,
+                                                  Index / VoxelHelper.ChunkSideSizeSquare,
                                                   Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
+    public Vector3i GlobalPosition { get; private set; } 
 
-    public override readonly string ToString() => $"{Index}:{BlockType}@{LocalPosition}";
+    public override readonly string ToString() => $"{BlockType}@{LocalPosition}/{ChunkIndex}";
 }
 
 public enum BlockType

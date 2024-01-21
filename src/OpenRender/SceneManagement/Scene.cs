@@ -212,4 +212,10 @@ public class Scene
             node.OnResize(this, e);
         }
     }
+
+    /// <summary>
+    /// Override to handle close event.
+    /// The base Scene implementation does nothing.
+    /// </summary>
+    public virtual void Close() { }
 }

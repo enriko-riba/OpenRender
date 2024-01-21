@@ -8,16 +8,18 @@ namespace SpyroGame.World;
 /// </summary>
 public static class VoxelHelper
 {
-    public const float FarPlane = 450f;
+    public const float FarPlane = 500f;
     public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize);
 
+    public const int MaxPickingDistance = 5;
+
     public const int WorldChunksXZ = 250;
-    public const int ChunkSideSize = 32;
+    public const int ChunkSideSize = 20;
     public const int ChunkYSize = 100;
 
     public const float WaterLevel = ChunkYSize * 0.75f;
     public const float HeightAmplitude = ChunkYSize - WaterLevel - 1;
-    public const float NoiseFrequency = 0.014f;
+    public const float NoiseFrequency = 0.012f;
 
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;
     public const int ChunkSizeXZMinusOne = ChunkSideSize - 1;
@@ -173,10 +175,17 @@ public static class VoxelHelper
        y == MaxBlockPositionY ||
        z == MaxBlockPositionXZ;
 
-    public static int GetChunkIndexFromGlobalPosition(in Vector3i position)
+    public static int GetChunkIndexFromPositionGlobal(in Vector3i position)
     {
         var x = position.X / ChunkSideSize;
         var z = position.Z / ChunkSideSize;
+        return x + z * WorldChunksXZ;
+    }
+
+    public static int GetChunkIndexFromPositionGlobal(in Vector3 position)
+    {
+        var x = (int)position.X / ChunkSideSize;
+        var z = (int)position.Z / ChunkSideSize;
         return x + z * WorldChunksXZ;
     }
 
@@ -187,12 +196,6 @@ public static class VoxelHelper
         return new Vector3i(x, 0, z);
     }
 
-    public static int GetChunkIndexFromGlobalPosition(in Vector3 position)
-    {
-        var x = (int)position.X / ChunkSideSize;
-        var z = (int)position.Z / ChunkSideSize;
-        return x + z * WorldChunksXZ;
-    }
 
     public static int[] GetNeighboringChunks(int chunkIndex)
     {

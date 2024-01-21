@@ -60,6 +60,12 @@ public class SceneManager : GameWindow
         lastFpsTime = sw.ElapsedMilliseconds;
     }
 
+    public override void Close()
+    {
+        activeScene?.Close();
+        base.Close();
+    }
+
     private void Render(FrameEventArgs e)
     {
         activeScene?.RenderFrame(e.Time);
