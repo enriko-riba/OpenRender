@@ -1,5 +1,4 @@
-﻿using OpenRender;
-using OpenTK.Mathematics;
+﻿using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
 
@@ -38,8 +37,8 @@ public class Chunk(VoxelWorld world, int index)
                     var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
                     var block = new BlockState(blockIdx, this)
                     {
-                        BlockType = terrainBuilder.GenerateChunkBlockType(maxHeights[x, z], x, y, z),
-                    };
+                        BlockType = TerrainBuilder.GenerateChunkBlockType(maxHeights[x, z], x, y, z),
+                    };                    
                     Blocks[block.Index] = block;
                 }
             }
@@ -164,11 +163,14 @@ public class Chunk(VoxelWorld world, int index)
 
     public BlockState[] Blocks { get; private set; } = default!;
 
-    internal void UpdateBlock(ref BlockState block)
+    internal void UpdateBlock(ref BlockState block, bool addToChangedBlocks = false)
     {
         Blocks[block.Index] = block;
-        changedBlocks[block.Index] = block;
-        IsDirty = true;
+        if ((addToChangedBlocks))
+        {
+            changedBlocks[block.Index] = block;
+            IsDirty = true;
+        }
     }
 
     /// <summary>

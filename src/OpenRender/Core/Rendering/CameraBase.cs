@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender.Core.Culling;
+using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 
@@ -18,10 +19,10 @@ public abstract class CameraBase : ICamera
 
     private Vector3 position;
     private float aspectRatio;
-
     protected bool isDirty;
     protected readonly float nearPlane;
     protected readonly float farPlane;
+    protected readonly Frustum frustum = new();
 
     /// <summary>
     /// Initializes a new instance of the Camera class.
@@ -38,6 +39,8 @@ public abstract class CameraBase : ICamera
         this.farPlane = farPlane;
         UpdateMatrices();
     }
+
+    public Frustum Frustum => frustum;
 
     /// <summary>
     /// Gets the orientation of the camera.
@@ -180,6 +183,7 @@ public abstract class CameraBase : ICamera
 
         UpdateMatrices();
         isDirty = false;
+        frustum.Update(this);
         RaiseCameraChangedEvent();
         return true;
     }

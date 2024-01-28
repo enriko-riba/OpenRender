@@ -47,9 +47,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         mouseCenter = new Vector2(Width, Height) / 2;
         SceneManager.MousePosition = mouseCenter;
 
-        var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 10, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
+        var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 100, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
         //var startPosition = new Vector3(0, -1, 0);
-        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane * 10) // TODO: x 10 is for debugging loading/unloading chunks
+        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)// * 1.5f) // TODO: x 1.5 is for debugging loading/unloading chunks
         {
             MaxFov = 40
         };
@@ -67,7 +67,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
         kbdActions.AddActions([
             new KeyboardAction("exit", [Keys.Escape], SceneManager.Close),
-            new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),            
+            new KeyboardAction("full screen toggle", [Keys.F11], FullScreenToggle),
             new KeyboardAction("up", [Keys.LeftShift], ()=> player.Position += Vector3.UnitY, false),
             new KeyboardAction("down", [Keys.LeftControl], ()=> player.Position -= Vector3.UnitY, false),
             new KeyboardAction("wireframe", [Keys.F1], WireframeToggle),
@@ -119,22 +119,22 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunks}, cached {world.CachedChunks}";
         writeLine(text, textColor);
 
-        text = $"in frustum {world.ChunkRenderer.ChunksInFrustum:N0}/{surroundingChunks - world.ChunkRenderer.ChunksInFrustum:N0}";
+        text = $"in frustum {world.ChunksInFrustum:N0}/{surroundingChunks - world.ChunksInFrustum:N0}";
         writeLine(text, textColor);
 
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
 
-        text = $"position {camera?.Position.ToString("N2")}{(player.IsGhostMode?", ghost mode":"")}";
+        text = $"player position {player?.Position.ToString("N2")}{(player?.IsGhostMode ?? false ? ", ghost mode" : "")}";
         writeLine(text, debugColorBluish);
-        if(player.PickedBlock is not null)
+        if (player?.PickedBlock is not null)
         {
             text = $"picked block: {player.PickedBlock}";
             writeLine(text, debugColorBluish);
         }
 
         //  show chunk index and position
-        if (player.CurrentBlockBellow is not null)
+        if (player?.CurrentBlockBellow is not null)
         {
             text = $"block bellow: {player.CurrentBlockBellow}";
             writeLine(text, debugColorBluish);
@@ -159,9 +159,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     public override void UpdateFrame(double elapsedSeconds)
     {
         base.UpdateFrame(elapsedSeconds);
-        
-        player.Update(elapsedSeconds, SceneManager.KeyboardState);       
-               
+
+        player.Update(elapsedSeconds, SceneManager.KeyboardState);
+
         kbdActions.Update(SceneManager.KeyboardState);
 
         //  mouse movement
@@ -182,7 +182,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             }
         }
 
-        if(SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
         {
             player.BreakBlock();
         }
@@ -207,10 +207,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         mouseCenter = clientSize / 2;
     }
 
-    public override void Close()
-    {
-        world.Close();
-    }
+    public override void Close() => world.Close();
 
     private void FullScreenToggle() => SceneManager.WindowState = SceneManager.WindowState == WindowState.Fullscreen ? WindowState.Normal : WindowState.Fullscreen;
 
@@ -231,7 +228,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         };
         var skyBox = SkyBox.Create(paths);
         AddNode(skyBox);
-        
+
         var (vertices, indices) = VoxelHelper.CreateVoxelCube();
         var cubeMaterial = Material.Create(defaultShader,
             [new("Resources/voxel/box-unwrap.png", TextureType: TextureType.Diffuse)],

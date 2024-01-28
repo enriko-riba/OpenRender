@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using OpenRender.Core.Culling;
+using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
 public interface ICamera
@@ -22,6 +23,9 @@ public interface ICamera
     void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees);
     void MoveForward(float distance);
     void Invalidate();
+
+    Frustum Frustum { get; }
+
     /// <summary>
     /// If dirty, updates camera matrices.
     /// </summary>

@@ -32,6 +32,9 @@ public struct BlockState
     public byte Reserved2;
     public byte Reserved3;
 
+    /// <summary>
+    /// Returns true if the block type is none.
+    /// </summary>
     public readonly bool IsAir => BlockType is BlockType.None;
 
     /// <summary>
@@ -57,6 +60,7 @@ public enum BlockType
     GrassDirt,
     Grass,
     Snow,
+    BedRock
 }
 
 public enum BlockDirection : byte

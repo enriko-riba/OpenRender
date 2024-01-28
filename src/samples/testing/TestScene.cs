@@ -6,6 +6,7 @@ using OpenRender.Core.Rendering.Text;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenRender.Text;
+using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
@@ -45,6 +46,20 @@ internal class TestScene : Scene
         AddLight(dirLight);
         camera = new Camera3D(Vector3.Zero, SceneManager.Size.X / (float)SceneManager.Size.Y, farPlane: 2000);
         AddMetallicBoxes();
+
+        var csSrc =
+               "#version 430\n" +
+               "uniform float roll; " +
+               "uniform writeonly image2D destTex; " +
+               "layout (local_size_x = 32, local_size_y = 32) in; " +
+               "void main() { " +
+               "ivec2 storePos = ivec2(gl_GlobalInvocationID.xy); " +
+               "float localCoef = length(vec2(ivec2(gl_LocalInvocationID.xy)-8)/8.0); " +
+               "float globalCoef = sin(float(gl_WorkGroupID.x+gl_WorkGroupID.y)*0.1 + roll)*0.5; " +
+               "imageStore(destTex, storePos, vec4(1.0-globalCoef*localCoef, 0.0, 0.0, 0.0)); " +
+               "} ";
+        cs = new Shader(csSrc);
+        csTextureHandle = GenerateDestTex();
     }
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
@@ -71,16 +86,24 @@ internal class TestScene : Scene
 
         HandleMovement(elapsedSeconds);
         HandleRotation(elapsedSeconds);
+
+        roll += (float)elapsedSeconds;
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture2D, csTextureHandle);
+        cs.Use();
+        cs.SetFloat("roll", roll);
+        var size = new Vector2i(1024, 1024); ;
+        GL.DispatchCompute(size.X / 32, size.Y / 32, 1); // width * height threads in blocks of 16^2
     }
 
     public override void RenderFrame(double elapsedSeconds)
     {
+        GL.MemoryBarrier(MemoryBarrierFlags.AllBarrierBits);
         base.RenderFrame(elapsedSeconds);
         const int LineHeight = 18;
         const int TextStartY = 0;
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
         tr.Render(fpsText, 5, TextStartY + LineHeight * 1, textColor1);
-
         //ImGuiTest(elapsedSeconds);
     }
 
@@ -166,10 +189,33 @@ internal class TestScene : Scene
             var box = new TestNode(new Mesh(Vertex.VertexDeclaration, vertices, indices), mat);
             box.SetPosition(new(-250 + i * 10, 0, -50));
             AddNode(box);
-            box.IsBatchingAllowed = true;
         }
     }
 
+    private int GenerateDestTex()
+    {
+        // We create a single float channel 512^2 texture
+        int texHandle;
+        texHandle = GL.GenTexture();
+
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture2D, texHandle);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)All.Linear);
+        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)All.Linear);
+        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f, 1024, 1024, 0, PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+
+        // Because we're also using this tex as an image (in order to write to it),
+        // we bind it to an image unit as well
+        GL.BindImageTexture(0, texHandle, 0, false, 0, TextureAccess.WriteOnly, SizedInternalFormat.R32f);
+        //checkErrors("Gen texture");	
+        return texHandle;
+    }
+
+    //  compute shader
+    private Shader cs;
+    private float roll;
+    internal int csTextureHandle;
+    //---------------------------------------------------------------
 
     private float _f;
     private bool _showImGuiDemoWindow;
@@ -211,10 +257,13 @@ internal class TestNode : SceneNode
 
     public TestNode(Mesh mesh, Material material) : base(mesh, material)
     {
-        IsBatchingAllowed = true;
+        IsBatchingAllowed = false;
         rotationAxis = Random.Shared.Next(0, 2);
-    }
 
+        var shader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
+        material.Shader = shader;
+    }
+    
     public override void OnUpdate(Scene scene, double elapsedSeconds)
     {
         var rot = AngleRotation;
@@ -223,5 +272,14 @@ internal class TestNode : SceneNode
         if (rotationAxis == 2) rot.Z += (float)(Random.Shared.NextDouble() * elapsedSeconds * 2);
         SetRotation(rot);
         base.OnUpdate(scene, elapsedSeconds);
+    }
+
+    public override void OnDraw(double elapsed)
+    {
+        var ts = Scene as TestScene;
+        GL.BindTextureUnit(0, ts!.csTextureHandle);
+        GL.BindImageTexture(0, ts.csTextureHandle, 0, false, 0, TextureAccess.WriteOnly, SizedInternalFormat.R32f);        
+        Material.Shader.SetInt("texdiffuse", 0);
+        base.OnDraw(elapsed);
     }
 }

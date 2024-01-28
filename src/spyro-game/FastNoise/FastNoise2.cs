@@ -54,13 +54,7 @@ public partial class FastNoise
     public static FastNoise FromEncodedNodeTree(string encodedNodeTree)
     {
         var nodeHandle = fnNewFromEncodedNodeTree(encodedNodeTree);
-
-        if (nodeHandle == IntPtr.Zero)
-        {
-            return null;
-        }
-
-        return new FastNoise(nodeHandle);
+        return nodeHandle == IntPtr.Zero ? throw new Exception("Failed to create node from encoded node tree") : new FastNoise(nodeHandle);
     }
 
     public uint GetSIMDLevel()
@@ -249,8 +243,8 @@ public partial class FastNoise
         return fnGenSingle4D(mNodeHandle, x, y, z, w, seed);
     }
 
-    private IntPtr mNodeHandle = IntPtr.Zero;
-    private int mMetadataId = -1;
+    private readonly IntPtr mNodeHandle = IntPtr.Zero;
+    private readonly int mMetadataId = -1;
     public class Metadata
     {
         public struct Member

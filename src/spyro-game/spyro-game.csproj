@@ -13,6 +13,7 @@
     <None Remove="Resources\btnAtlas.png" />
     <None Remove="Resources\mcr.otf" />
     <None Remove="Resources\mcr.ttf" />
+    <None Remove="Resources\voxel\bedrock.png" />
     <None Remove="Resources\voxel\grass-dirt.png" />
     <None Remove="Resources\voxel\outline.png" />
     <None Remove="Resources\voxel\sand.png" />
@@ -21,6 +22,7 @@
     <None Remove="Resources\voxel\water.png" />
     <None Remove="Shaders\instancedChunk-Zpass.frag" />
     <None Remove="Shaders\instancedChunk-Zpass.vert" />
+    <None Remove="Shaders\skybox-sun 2.frag" />
     <None Remove="Shaders\skybox-sun.frag" />
     <None Remove="Shaders\skybox-sun.vert" />
   </ItemGroup>
@@ -51,6 +53,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\skybox\top.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\voxel\bedrock.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\voxel\dirt.png">
@@ -100,6 +105,9 @@
 	</Content>
 	  <Content Include="Resources\btnAtlas.png">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="Shaders\skybox-sun 2.frag">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="Shaders\skybox-sun.frag">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

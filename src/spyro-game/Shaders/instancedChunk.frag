@@ -65,7 +65,7 @@ out vec4 outputColor;
 float getFogFactor(float d)
 {
     //  FarPlane = 450f;
-    const float FogMax = 460.0;
+    const float FogMax = 447.0;
     const float FogMin = 400.0;
 
     if (d>=FogMax) return 1;
@@ -104,8 +104,7 @@ void main()
     
     BlockState block = blocks[blockId];
     if(uint(outlinedBlockId) == block.index)
-	{
-		//outputColor = vec4(1, 0, 0, 1);
+	{		
         sampler2D outlineSampler = bindlessTextures[0];
         vec4 texOutline = texture(outlineSampler, texCoord);
         outputColor = vec4(mix(outputColor, texOutline, texOutline.a).rgb, outputColor.a);
@@ -125,7 +124,6 @@ void main()
     // fog
     vec4 fog = vec4(0.40f, 0.40f, 0.42f, 1.0f);
     float d = distance(fragPos, cameraPos);
-    float alpha = getFogFactor(d);
-
-    outputColor = mix(outputColor, fog, alpha);
+    float factor = getFogFactor(d);
+    outputColor = mix(outputColor, fog, factor);
 }

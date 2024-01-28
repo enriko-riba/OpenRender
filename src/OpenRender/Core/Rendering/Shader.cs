@@ -89,6 +89,56 @@ public class Shader
         shaderCache.Add(cacheKey, this);
     }
 
+    public Shader(string computeSource)
+    {
+        var cacheKey = $"compute:{computeSource}";
+        if (shaderCache.TryGetValue(cacheKey, out var cachedShader))
+        {
+            Handle = cachedShader.Handle;
+            uniformLocations = cachedShader.uniformLocations;
+            uniformBlockIndices = cachedShader.uniformBlockIndices;
+            DebugName = cachedShader.DebugName;
+            return;
+        }
+
+        var computeShader = GL.CreateShader(ShaderType.ComputeShader);
+        GL.ShaderSource(computeShader, computeSource);
+        CompileShader(computeShader, computeSource);
+        Log.CheckGlError();
+
+        // create the program
+        Handle = GL.CreateProgram();
+        GL.AttachShader(Handle, computeShader);
+        LinkProgram(Handle);
+        Log.CheckGlError();
+
+        // cache all uniform locations, querying them is slow
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniforms, out var numberOfUniforms);
+        for (var i = 0; i < numberOfUniforms; i++)
+        {
+            var key = GL.GetActiveUniform(Handle, i, out _, out _);
+            var location = GL.GetUniformLocation(Handle, key);
+            uniformLocations.Add(key, location);
+        }
+        Log.Debug("active uniforms: {0} -> {1}", numberOfUniforms, string.Join(", ", uniformLocations.Keys));
+
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniformBlocks, out var numberOfUniformBlocks);
+        for (var i = 0; i < numberOfUniformBlocks; i++)
+        {
+            GL.GetActiveUniformBlockName(Handle, i, 256, out _, out var key);
+            var idx = GL.GetUniformBlockIndex(Handle, key);
+            uniformBlockIndices.Add(key, idx);
+        }
+        Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, uniformBlockIndices.Count > 0 ? string.Join(", ", uniformBlockIndices.Keys) : "n/a");
+
+        DebugName = $"{Handle}: '{computeShader}'";
+
+        Log.Info("created program {0}", DebugName);
+        Log.CheckGlError();
+
+        shaderCache.Add(cacheKey, this);
+    }
+
     public override string ToString() => DebugName;
 
     /// <summary>

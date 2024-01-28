@@ -22,9 +22,7 @@ public class Renderer
     /// </summary>
     private readonly Dictionary<string, BatchData> batchDataDictionary = [];
 
-    private readonly Frustum frustum = new();
     protected readonly Dictionary<RenderGroup, List<SceneNode>> renderLayers = [];
-
     protected internal readonly UniformBlockBuffer<CameraUniform> uboCamera;
     protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
     protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
@@ -53,8 +51,6 @@ public class Renderer
     /// Note: this is needed if material related properties like textures or lights are updated directly via OpenGL functions instead of the material class.
     /// </summary>
     public void ResetMaterial() => lastMaterial = 0;
-
-    public Frustum Frustum => frustum;
 
     /// <summary>
     /// Renders visible nodes in the list.
@@ -343,8 +339,7 @@ public class Renderer
         hasCameraChanged = (camera?.Update() ?? false);
         if (hasCameraChanged)
         {
-            frustum.Update(camera!);
-            CullingHelper.FrustumCull(frustum, nodes);
+            CullingHelper.FrustumCull(camera!.Frustum, nodes);
         }
     }
 
