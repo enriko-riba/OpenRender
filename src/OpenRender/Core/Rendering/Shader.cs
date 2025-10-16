@@ -34,14 +34,14 @@ public class Shader
 
         Log.Info("creating program '{0}', '{1}'", vertPath, fragPath);
         Log.Debug("creating vertex shader...");
-        var shaderSource = File.ReadAllText(vertPath);
+        var shaderSource = ReadShaderText(vertPath);
         var vertexShader = GL.CreateShader(ShaderType.VertexShader);
         GL.ShaderSource(vertexShader, shaderSource);
         CompileShader(vertexShader, vertPath);
         Log.CheckGlError();
 
         Log.Debug("creating fragment shader...");
-        shaderSource = File.ReadAllText(fragPath);
+        shaderSource = ReadShaderText(fragPath);
         var fragmentShader = GL.CreateShader(ShaderType.FragmentShader);
         GL.ShaderSource(fragmentShader, shaderSource);
         CompileShader(fragmentShader, fragPath);
@@ -82,6 +82,57 @@ public class Shader
             uniformBlockIndices.Add(key, idx);
         }
         Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, uniformBlockIndices.Count > 0 ? string.Join(", ", uniformBlockIndices.Keys) : "n/a");
+
+        Log.Info("created program {0}", DebugName);
+        Log.CheckGlError();
+
+        shaderCache.Add(cacheKey, this);
+    }
+
+    public Shader(string path, ShaderType shaderType)
+    {
+        var cacheKey = $"{path}";
+        if (shaderCache.TryGetValue(cacheKey, out var cachedShader))
+        {
+            Handle = cachedShader.Handle;
+            uniformLocations = cachedShader.uniformLocations;
+            uniformBlockIndices = cachedShader.uniformBlockIndices;
+            DebugName = cachedShader.DebugName;
+            return;
+        }
+
+        var shaderObject = GL.CreateShader(shaderType);
+        var shaderSource = ReadShaderText(path);
+        GL.ShaderSource(shaderObject, shaderSource);
+        CompileShader(shaderObject, path);
+        Log.CheckGlError();
+        
+        // create the program
+        Handle = GL.CreateProgram();
+        GL.AttachShader(Handle, shaderObject);
+        LinkProgram(Handle);
+        Log.CheckGlError();
+
+        // cache all uniform locations, querying them is slow
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniforms, out var numberOfUniforms);
+        for (var i = 0; i < numberOfUniforms; i++)
+        {
+            var key = GL.GetActiveUniform(Handle, i, out _, out _);
+            var location = GL.GetUniformLocation(Handle, key);
+            uniformLocations.Add(key, location);
+        }
+        Log.Debug("active uniforms: {0} -> {1}", numberOfUniforms, string.Join(", ", uniformLocations.Keys));
+
+        GL.GetProgram(Handle, GetProgramParameterName.ActiveUniformBlocks, out var numberOfUniformBlocks);
+        for (var i = 0; i < numberOfUniformBlocks; i++)
+        {
+            GL.GetActiveUniformBlockName(Handle, i, 256, out _, out var key);
+            var idx = GL.GetUniformBlockIndex(Handle, key);
+            uniformBlockIndices.Add(key, idx);
+        }
+        Log.Debug("active uniform blocks: {0} -> {1}", numberOfUniformBlocks, uniformBlockIndices.Count > 0 ? string.Join(", ", uniformBlockIndices.Keys) : "n/a");
+
+        DebugName = $"{Handle}: '{path}'";
 
         Log.Info("created program {0}", DebugName);
         Log.CheckGlError();
@@ -179,7 +230,7 @@ public class Shader
     public void SetInt(string name, int data)
     {
         GL.UseProgram(Handle);
-        if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);
+        if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);        
     }
 
     /// <summary>
@@ -311,4 +362,12 @@ public class Shader
         }
     }
 
+    private static string ReadShaderText(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            bytes = bytes[3..];
+        var src = System.Text.Encoding.UTF8.GetString(bytes);
+        return src.TrimStart('\uFEFF'); // also remove accidental zero-width NBSP
+    }
 }

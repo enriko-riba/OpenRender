@@ -12,8 +12,6 @@ layout (std140, binding = 0) uniform camera {
 
 struct BlockState {   
     uint index;
-//    uint blockDirection;
-//    uint blockType;
     uint packedBytes;
 };
 layout(std430, binding = 2) readonly buffer ssbo_blocks {

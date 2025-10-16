@@ -8,7 +8,6 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.World;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
 namespace SpyroGame.Components;
@@ -22,10 +21,13 @@ public class ChunkRenderer : SceneNode
 
     private readonly uint texturesSSBO;
     private readonly uint materialsSSBO;
-
     private readonly List<Chunk> loadedChunksList = [];
     private readonly VoxelWorld world;
-    //private IEnumerable<Chunk> sortedVisibleChunkList = [];
+    private readonly ulong foamHandle;
+    private readonly Shader waterShader;
+    private readonly VertexArrayObject waterVao;
+    private double uTime;
+
     internal ConcurrentQueue<Chunk> chunksStreamingQueue = [];
 
     public static ChunkRenderer Create(VoxelWorld world, ulong[] textureHandles, VoxelMaterial[] materials)
@@ -42,10 +44,16 @@ public class ChunkRenderer : SceneNode
     {
         this.world = world;
 
+        var foam = Texture.FromFile(["resources/foam.png"]);
+        var sampler = Sampler.Create(TextureMinFilter.LinearMipmapLinear, TextureMagFilter.Linear, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
+        foamHandle = foam.GetBindlessHandle(sampler);
+        textureHandles = [.. textureHandles, foamHandle];
         foreach (var handle in textureHandles)
         {
-            Texture.MakeResident(handle);
+            if (handle != 0) Texture.MakeResident(handle);
         }
+
+        waterShader = new Shader("Shaders/water.vert", "Shaders/water.frag");
 
         //  prepare textures and materials SSBOs
         GL.CreateBuffers(1, out texturesSSBO);
@@ -56,14 +64,19 @@ public class ChunkRenderer : SceneNode
         GL.NamedBufferStorage(materialsSSBO, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials, BufferStorageFlags.MapWriteBit /*| BufferStorageFlags.DynamicStorageBit*/);
         Log.CheckGlError();
 
+        waterVao = new VertexArrayObject();
+        waterVao.AddBuffer(VertexDeclarations.VertexPositionTexture, [
+            -1f, 0,  1,  0, 1,   // left near
+             1f, 0, -1,  1, 0,   // right far
+            -1f, 0, -1,  0, 0,   // left far
+             1f, 0,  1,  1, 1    // right near
+        ], "eboWaterPlane");
+        waterVao.AddIndexBuffer(new IndexBuffer([0, 1, 2, 0, 3, 1]), "iboWaterPlane");
+
         RenderGroup = RenderGroup.SkyBox;
         DisableCulling = true;
     }
 
-    /// <summary>
-    /// Total number of chunks passing the culling test.
-    /// </summary>
-    //public int ChunksInFrustum { get; private set; }
 
     /// <summary>
     /// Total number of blocks rendered.
@@ -80,6 +93,9 @@ public class ChunkRenderer : SceneNode
 
     public override void OnDraw(double elapsed)
     {
+        uTime += elapsed;
+        //if(uTime > 1) uTime -= 1;
+
         GL.BindVertexArray(Vao!);
 
         /*
@@ -105,7 +121,7 @@ public class ChunkRenderer : SceneNode
 
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, materialsSSBO);
-        Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+
         RenderedBlocks = 0;
         foreach (var chunkData in loadedChunksList)
         {
@@ -121,30 +137,22 @@ public class ChunkRenderer : SceneNode
                     Material.Shader.SetInt("outlinedBlockId", -1);
                 }
 
-                //  TODO: investigate why on ver rare occasions the SSBO is reported as invalid, the bellow is a workaround
-                if (!GL.IsBuffer(chunkData.BlocksSSBO))
-                {
-                    GL.DeleteBuffer(chunkData.BlocksSSBO);
-                    GL.DeleteBuffer(chunkData.TransparentBlocksSSBO);
-                    CreateChunkRenderData(chunkData);
-                }
-
+                _ = AreChunkSSBOsRecreated(chunkData);
                 RenderChunk(chunkData.Position, chunkData.BlocksSSBO, chunkData.SolidCount);
             }
         }
+        //GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
 
-        //GL.DepthMask(true);
-        //GL.DepthFunc(DepthFunction.Less);
-        foreach (var chunkData in loadedChunksList)
-        {
-            if (chunkData.Visible && chunkData.TransparentCount > 0)
-            {
-                RenderedBlocks += chunkData.TransparentCount;
-                RenderChunk(chunkData.Position, chunkData.TransparentBlocksSSBO, chunkData.TransparentCount);
-            }
-        }
+        RenderWater();
+        //foreach (var chunkData in loadedChunksList)
+        //{
+        //    if (chunkData.Visible && chunkData.TransparentCount > 0)
+        //    {
+        //        RenderedBlocks += chunkData.TransparentCount;
+        //        RenderChunk(chunkData.Position, chunkData.TransparentBlocksSSBO, chunkData.TransparentCount, true);
+        //    }
+        //}
 
-        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
     }
 
     public override void OnUpdate(Scene scene, double elapsed)
@@ -180,39 +188,37 @@ public class ChunkRenderer : SceneNode
         while (counter < MaxQueueItems && chunksStreamingQueue.TryDequeue(out var chunk))
         {
             loadedChunksList.Remove(chunk);
-            lock (chunk)
+
+            switch (chunk.State)
             {
-                switch (chunk.State)
-                {
-                    case ChunkState.ToBeRemoved:
-                        GL.DeleteBuffer(chunk.BlocksSSBO);
-                        GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
-                        chunk.State = ChunkState.SafeToRemove;
-                        isChunkDataUpdated = true;
-                        break;
+                case ChunkState.ToBeRemoved:
+                    GL.DeleteBuffer(chunk.BlocksSSBO);
+                    GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
+                    chunk.State = ChunkState.SafeToRemove;
+                    isChunkDataUpdated = true;
+                    break;
 
-                    case ChunkState.Loaded:
-                        CreateChunkRenderData(chunk);
-                        chunk.State = ChunkState.Added;
-                        loadedChunksList.Add(chunk);
-                        isChunkDataUpdated = true;
-                        counter++;
-                        break;
+                case ChunkState.Loaded:
+                    CreateChunkRenderData(chunk);
+                    chunk.State = ChunkState.Added;
+                    loadedChunksList.Add(chunk);
+                    isChunkDataUpdated = true;
+                    counter++;
+                    break;
 
-                    case ChunkState.Added:
-                        UpdateChunkRenderData(chunk);
-                        loadedChunksList.Add(chunk);
-                        isChunkDataUpdated = true;
-                        counter++;
-                        break;
+                case ChunkState.Added:
+                    UpdateChunkRenderData(chunk);
+                    loadedChunksList.Add(chunk);
+                    isChunkDataUpdated = true;
+                    counter++;
+                    break;
 
-                    case ChunkState.SafeToRemove:
-                        Log.Debug($"chunk {chunk.Index} safe to remove");
-                        break;
+                case ChunkState.SafeToRemove:
+                    Log.Debug($"chunk {chunk.Index} safe to remove");
+                    break;
 
-                    default:
-                        break;
-                }
+                default:
+                    break;
             }
         }
         return isChunkDataUpdated;
@@ -235,13 +241,16 @@ public class ChunkRenderer : SceneNode
     /// <param name="position"></param>
     /// <param name="ssbo"></param>
     /// <param name="instanceCount"></param>
-    private void RenderChunk(Vector3i position, uint ssbo, int instanceCount)
+    /// <param name="isWater"></param>
+    private void RenderChunk(Vector3i position, uint ssbo, int instanceCount, bool isWater = false)
     {
-        RenderedBlocks += instanceCount;
-
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, ssbo);
+
         transform.worldMatrix.Row3.Xyz = position;
-        Material.Shader.SetMatrix4("model", ref transform.worldMatrix);
+        var shader = isWater ? waterShader : Material.Shader;
+        shader.SetMatrix4("model", ref transform.worldMatrix);
+        shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        if (shader.UniformExists("uTime")) shader.SetFloat("uTime", (float)uTime * 0.2f);
 
         if (!ShowBoundingSphere)
         {
@@ -249,8 +258,8 @@ public class ChunkRenderer : SceneNode
         }
         else
         {
-            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
-            GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, instanceCount);
+            //GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+            //GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, instanceCount);
 
             GL.Disable(EnableCap.CullFace);
             Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
@@ -260,6 +269,39 @@ public class ChunkRenderer : SceneNode
             GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
             GL.Enable(EnableCap.CullFace);
         }
+    }
+
+    private void RenderWater()
+    {
+        GL.BindVertexArray(waterVao);
+        waterShader.Use();
+        GL.Disable(EnableCap.CullFace);
+        Matrix4.CreateScale(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, 1, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, out var scaleMatrix);
+        var worldMatrix = scaleMatrix * transform.worldMatrix;
+        worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel, 0);
+        waterShader.SetMatrix4("model", ref worldMatrix);
+        waterShader.SetFloat("uTime", (float)uTime * 0.2f);
+        var sz = Scene!.SceneManager.ClientSize;
+        waterShader.SetVector2("iResolution", ref sz);
+        GL.DrawElements(PrimitiveType.Triangles, waterVao.DataLength, DrawElementsType.UnsignedInt, 0);
+    }
+
+    /// <summary>
+    /// Verifies if the GL SSBOs are valid, when invalid new buffers are allocated.
+    /// </summary>
+    /// <param name="chunk"></param>
+    /// <returns>true if new buffers where allocated</returns>
+    private static bool AreChunkSSBOsRecreated(Chunk chunk)
+    {
+        //  TODO: investigate why on very rare occasions the SSBO is reported as invalid, the bellow is a workaround
+        if (!GL.IsBuffer(chunk.BlocksSSBO) || !GL.IsBuffer(chunk.TransparentBlocksSSBO))
+        {
+            GL.DeleteBuffer(chunk.BlocksSSBO);
+            GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
+            CreateChunkRenderData(chunk);
+            return true;
+        }
+        return false;
     }
 
     private static void CreateChunkRenderData(Chunk chunk)
@@ -272,7 +314,7 @@ public class ChunkRenderer : SceneNode
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blocksSSBO, -1, $"blocks_Chunk_{chunk}_SSBO");
         GL.NamedBufferStorage(blocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         GL.NamedBufferSubData(blocksSSBO, 0, blockData.Length * Unsafe.SizeOf<GpuBlockState>(), blockData);
-        
+
         //  prepare block data SSBOs
         //  for transparent blocks
         var transparentBlockData = chunk.TransparentBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
@@ -282,7 +324,7 @@ public class ChunkRenderer : SceneNode
         GL.NamedBufferStorage(transparentBlocksSSBO, maxInstances * Unsafe.SizeOf<GpuBlockState>(), 0, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
         GL.NamedBufferSubData(transparentBlocksSSBO, 0, transparentBlockData.Length * Unsafe.SizeOf<GpuBlockState>(), transparentBlockData);
         Log.CheckGlError();
-                
+
         chunk.SolidCount = blockData.Length;
         chunk.TransparentCount = transparentBlockData.Length;
         chunk.BlocksSSBO = blocksSSBO;
@@ -291,11 +333,10 @@ public class ChunkRenderer : SceneNode
 
     private static void UpdateChunkRenderData(Chunk chunk)
     {
-        Debug.Assert(chunk.BlocksSSBO > 0);
-        Debug.Assert(chunk.TransparentBlocksSSBO > 0);
+        if (AreChunkSSBOsRecreated(chunk)) return;
+
         var blocksSSBO = chunk.BlocksSSBO;
         var transparentBlocksSSBO = chunk.TransparentBlocksSSBO;
-
         var blockData = chunk.VisibleBlocks.Select(x => new GpuBlockState(x.Index, (byte)x.FrontDirection, (byte)x.BlockType)).ToArray();
         var maxInstances = DefaultMaxInstances > blockData.Length ? DefaultMaxInstances : blockData.Length;
         //  has the allocated gpu buffer enough space for the new block data?

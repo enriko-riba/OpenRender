@@ -3,7 +3,6 @@
 using OpenRender.Core.Geometry;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
-using System.Drawing;
 
 namespace OpenRender.Core.Culling;
 
@@ -66,27 +65,27 @@ public sealed class CullingHelper
         corners[1].X = max.X;
         corners[1].Y = min.Y;
         corners[1].Z = min.Z;
-        
+
         corners[2].X = min.X;
         corners[2].Y = max.Y;
         corners[2].Z = min.Z;
-        
+
         corners[3].X = max.X;
         corners[3].Y = max.Y;
         corners[3].Z = min.Z;
-        
+
         corners[4].X = min.X;
         corners[4].Y = min.Y;
         corners[4].Z = max.Z;
-        
+
         corners[5].X = max.X;
         corners[5].Y = min.Y;
         corners[5].Z = max.Z;
-        
+
         corners[6].X = min.X;
         corners[6].Y = max.Y;
         corners[6].Z = max.Z;
-        
+
         corners[7].X = max.X;
         corners[7].Y = max.Y;
         corners[7].Z = max.Z;

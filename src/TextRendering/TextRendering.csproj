@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Library</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>OpenRender.Text</RootNamespace>
@@ -23,9 +23,9 @@
     </Content>
   </ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="SixLabors.Fonts" Version="2.0.1" />
-		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.0" />
-		<PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.0.1" />
+		<PackageReference Include="SixLabors.Fonts" Version="2.1.3" />
+		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
+		<PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
 	</ItemGroup>
 	<ItemGroup>
 	  <ProjectReference Include="..\OpenRender\OpenRender.csproj" />

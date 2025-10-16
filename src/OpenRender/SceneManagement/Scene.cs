@@ -154,10 +154,7 @@ public class Scene
     /// Fired when the scene gets loaded.
     /// Note: if overridden, the base <see cref="Load()"/> method must be called.
     /// </summary>
-    public virtual void OnLoaded()
-    {
-        renderer.PrepareBatching();
-    }
+    public virtual void OnLoaded() => renderer.PrepareBatching();
 
     /// <summary>
     /// Fired when the scene gets activated.

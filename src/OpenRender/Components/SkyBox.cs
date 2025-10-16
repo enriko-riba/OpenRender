@@ -38,10 +38,7 @@ public sealed class SkyBox : SceneNode
         DisableCulling = true;
     }
 
-    public override void OnResize(Scene scene, ResizeEventArgs e)
-    {
-        projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
-    }     
+    public override void OnResize(Scene scene, ResizeEventArgs e) => projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
 
     public override void OnDraw(double elapsed)
     {

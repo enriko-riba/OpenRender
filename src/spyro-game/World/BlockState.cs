@@ -2,7 +2,6 @@
 
 namespace SpyroGame.World;
 
-
 public struct BlockState
 {
     public BlockState(int index, Chunk chunk)
@@ -17,28 +16,24 @@ public struct BlockState
 
     public int ChunkIndex { get; private set; }
 
-    //public Chunk Chunk { get; private set; }
     public AABB Aabb { get; private set; }
+    
+    public BlockType BlockType { get; set; }
 
     /// <summary>
     /// 0 = South, 1 = East, 2 = North, 3 = West, 4 = Top, 5 = Bottom
     /// </summary>
     public BlockDirection FrontDirection { get; set; }
 
-    public BlockType BlockType { get; set; }
-
-    public bool IsVisible { get; set; }
-    public byte Reserved1;
-    public byte Reserved2;
-    public byte Reserved3;
 
     /// <summary>
-    /// Returns true if the block type is none.
+    /// Gets or sets the blocks visibility.
+    /// Note that only visible blocks are being rendered.
     /// </summary>
-    public readonly bool IsAir => BlockType is BlockType.None;
+    public bool IsVisible { get; internal set; }
 
     /// <summary>
-    /// Returns true if the block is none or waterlevel.
+    /// Returns true if the block is None or WaterLevel.
     /// </summary>
     public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 

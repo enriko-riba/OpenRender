@@ -38,6 +38,11 @@ public class TerrainBuilder
             chunkBiomes[i] = new ChunkBiome(landType, 0, Climate.Temperate);
         }
     }
+    
+    /// <summary>
+    /// Raw height data in range [-1, 1].
+    /// </summary>
+    public float[] HeightData => heightData;
 
     public int GetHeightNormalizedGlobal(int globalX, int globalZ)
     {
@@ -108,6 +113,14 @@ public class TerrainBuilder
         return height;
     }
 
+    public float[] GetChunkHeightMap(int chunkIndex)
+    {
+        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+        var heightMap = NoiseData.CreateFromEncoding(heightDataEncoding, worldX * VoxelHelper.ChunkSideSize, worldZ * VoxelHelper.ChunkSideSize, VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out _);
+        return heightMap;
+    }
+
     /// <summary>
     /// Generates a block from chunk local coordinates.
     /// </summary>
@@ -140,7 +153,7 @@ public class TerrainBuilder
         {
             bt = BlockType.None;
         }
-        else if (blockAltitude >= maxHeight && blockAltitude <= maxHeight + 1)
+        else if (blockAltitude == maxHeight)
         {
             bt = BlockType.GrassDirt;
         }

@@ -10,7 +10,7 @@ using System.Diagnostics;
 
 namespace SpyroGame;
 
-internal class LoadingScene : Scene
+internal class LoadingScene2 : Scene
 {
     private readonly BigButton btnStart;
     private readonly ITextRenderer textRenderer;
@@ -24,12 +24,12 @@ internal class LoadingScene : Scene
     private bool hasCompleteChunksStarted;
     private int lineY;
     private List<Chunk> completedChunks = [];
-    private Task worldStartTask = default!;
+    private ChunkInitializer chunkInitializer = null!;
 
-    private int uploadTotalChunks;
-    private double uploadStartTime;
+    private int[] indices = [];
+    private bool computeDone;
 
-    public LoadingScene(ITextRenderer textRenderer)
+    public LoadingScene2(ITextRenderer textRenderer)
     {
         this.textRenderer = textRenderer;
         btnStart = new BigButton("Start")
@@ -55,26 +55,20 @@ internal class LoadingScene : Scene
         AddNode(btnStart);
 
         var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
-        worldStartTask = Task.Run(() => world.AddStartingChunks(startPosition));
+
+        chunkInitializer = new ChunkInitializer(world);
+        world.PrepareStartingChunks(startPosition);
+        Log.CheckGlError(nameof(Load) + " after PrepareStartingChunks");
+        indices = [.. world.SurroundingChunkIndices];
     }
+
+
+
 
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);
         lineY = 150;
-
-        //  prepare for next state
-        if (worldStartTask.IsCompleted && !hasCompleteChunksStarted)
-        {
-            totalInitializationTime = totalTime;
-            hasCompleteChunksStarted = true;
-            var surroundingChunks = world.SurroundingChunks.ToList();
-            Debug.Assert(surroundingChunks.All(x => x.IsProcessed), "unprocessed chunk");
-
-            completedChunks = surroundingChunks;
-            uploadTotalChunks = completedChunks.Count;   // <- capture upload target separately
-            uploadStartTime = totalTime;                 // <- measure upload phase time
-        }
 
         //  we have 3 states:
         //  1. world is still initializing
@@ -84,28 +78,45 @@ internal class LoadingScene : Scene
         const int StateAddingChunks = 1;
         const int StateCompleted = 2;
 
-        var state = !worldStartTask.IsCompleted ? StateInitializing : (hasCompleteChunksStarted && completedChunks.Count > 0) ? StateAddingChunks : StateCompleted;
+        var state = !computeDone ? StateInitializing : (completedChunks.Count > 0 ? StateAddingChunks : StateCompleted);
+
         switch (state)
         {
             case StateInitializing:
+                // 1) GPU compute ON GL THREAD
+                if (!computeDone)
+                {
+                    Log.CheckGlError(nameof(RenderFrame) + " before compute");
+                    chunkInitializer.ProcessChunkData(indices);     // GL calls here are safe
+                    Log.CheckGlError(nameof(RenderFrame) + " after compute");
+                    computeDone = true;
+                }
+                // show progress until visibility finishes
                 totalTime += elapsedSeconds;
                 RenderUiInitializing();
+
+                if (computeDone)
+                {
+                    totalInitializationTime = totalTime;
+                    hasCompleteChunksStarted = true;
+                    var surroundingChunks = world.SurroundingChunks;
+                    Debug.Assert(surroundingChunks.All(x => x.IsProcessed), "unprocessed chunk");
+                    completedChunks = [.. surroundingChunks];
+                    state = StateAddingChunks;
+                }
                 break;
 
             case StateAddingChunks:
                 totalTime += elapsedSeconds;
                 RenderUiAddingChunks();
 
-                //var sw = Stopwatch.StartNew();
-                //const double budgetMs = 12.0; // tweak: 6–12ms depending on target FPS
-                //while (completedChunks.Count > 0 && sw.Elapsed.TotalMilliseconds < budgetMs)
                 var counter = 0;
                 while (counter++ < 150 && completedChunks.Count > 0)
                 {
                     var chunk = completedChunks[0];
                     chunk.State = ChunkState.Loaded;
                     Debug.Assert(chunk.IsProcessed, "not initialized!");
-                    completedChunks.Remove(chunk);
+                    completedChunks.RemoveAt(0);
                     world.ChunkRenderer.AddChunkDirect(chunk);
                 }
                 break;
@@ -120,35 +131,46 @@ internal class LoadingScene : Scene
     private void RenderUiCompleted()
     {
         textColor = Vector3.One;
-        var uploadTime = totalTime - uploadStartTime;
-        WriteLine("World loaded!", Vector3.One);
-        WriteLine($"total time: {totalTime:N2} s", Vector3.UnitY);
+        var text = "World loaded!";
+        WriteLine(text, textColor);
+        text = $"elapsed time: {totalTime:N2} seconds";
+        WriteLine(text, Vector3.UnitY);
         WriteLine("", textColor);
 
-        WriteLine($"terrain generated: {world.TotalStartingChunks} chunks in {totalInitializationTime:N2} s", doneColor);
-        WriteLine($"uploaded: {uploadTotalChunks} chunks in {uploadTime:N2} s", doneColor);
+        text = $"initialized {world.TotalStartingChunks} chunks in {totalInitializationTime:N2} seconds";
+        WriteLine(text, doneColor);
+
+        text = $"added {world.TotalStartingChunks} chunks in {totalTime - totalInitializationTime:N2} seconds";
+        WriteLine(text, doneColor);
     }
 
     private void RenderUiAddingChunks()
     {
-        var uploaded = uploadTotalChunks - completedChunks.Count;
-        WriteLine("Uploading chunks to GPU...", textColor);
-        WriteLine($"elapsed time: {totalTime - uploadStartTime:N2} s", textColor);
+        var text = $"LOADING WORLD...";
+        WriteLine(text, textColor);
+
+        text = $"elapsed time: {totalTime:N2} seconds";
+        WriteLine(text, textColor);
         WriteLine("", textColor);
 
-        // init phase summary (already done)
-        WriteLine($"terrain generated: {world.TotalStartingChunks} chunks in {totalInitializationTime:N2} s", doneColor);
+        text = $"initialized {world.TotalStartingChunks} chunks in {totalInitializationTime:N2} seconds";
+        WriteLine(text, doneColor);
 
-        // upload progress (separate denominator)
-        WriteLine($"uploaded {uploaded} / {uploadTotalChunks}", textColor);
+        text = $"adding completed chunks {world.TotalStartingChunks - completedChunks.Count} / {world.TotalStartingChunks}";
+        WriteLine(text, textColor);
     }
 
     private void RenderUiInitializing()
     {
-        WriteLine("Generating terrain...", textColor);
-        WriteLine($"elapsed time: {totalTime:N2} s", textColor);
+        var text = $"LOADING WORLD...";
+        WriteLine(text, textColor);
+
+        text = $"elapsed time: {totalTime:N2} seconds";
+        WriteLine(text, textColor);
         WriteLine("", textColor);
-        WriteLine($"chunks initialized: {world.ProcessedStartingChunks} / {world.TotalStartingChunks}", textColor);
+
+        text = $"initializing chunk {world.ProcessedStartingChunks} / {world.TotalStartingChunks}";
+        WriteLine(text, textColor);
     }
 
     private void WriteLine(string text, in Vector3 color, int size = 22, float lineStart = 150)
@@ -156,7 +178,6 @@ internal class LoadingScene : Scene
         textRenderer.Render(text, size, lineStart, lineY, color);
         lineY += 45;
     }
-
 
     public class BigButton : Button
     {

@@ -11,48 +11,48 @@ public readonly struct VertexDeclarations
         new VertexAttribLayout(VertexAttribLocation.Position, 3, VertexAttribType.Float)
     );
 
-    public static readonly VertexDeclaration VertexPositionTexture = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionTexture = new([
         new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
         new(VertexAttribLocation.TextureCoord, 2, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPosition2DTexture = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPosition2DTexture = new([
         new(VertexAttribLocation.Position, 2, VertexAttribType.Float),
         new(VertexAttribLocation.TextureCoord, 2, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPositionNormal = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionNormal = new([
         new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
         new(VertexAttribLocation.Normal, 3, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPositionNormalTexture = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionNormalTexture = new([
         new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
         new(VertexAttribLocation.Normal, 3, VertexAttribType.Float),
         new(VertexAttribLocation.TextureCoord, 2, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPositionColorTexture = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionColorTexture = new([
         new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
         new(VertexAttribLocation.Color, 3, VertexAttribType.Float),
         new(VertexAttribLocation.TextureCoord, 2, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPositionColor = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionColor = new([
         new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
         new(VertexAttribLocation.Color, 3, VertexAttribType.Float),
-    });
+    ]);
 
-    public static readonly VertexDeclaration VertexPositionNormalColor = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionNormalColor = new([
          new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
          new(VertexAttribLocation.Normal, 3, VertexAttribType.Float),
          new(VertexAttribLocation.Color, 3, VertexAttribType.Float),
-     });
+     ]);
 
-    public static readonly VertexDeclaration VertexPositionNormalColorTexture = new(new VertexAttribLayout[] {
+    public static readonly VertexDeclaration VertexPositionNormalColorTexture = new([
          new(VertexAttribLocation.Position, 3, VertexAttribType.Float),
          new(VertexAttribLocation.Normal, 3, VertexAttribType.Float),
          new(VertexAttribLocation.Color, 3, VertexAttribType.Float),
          new(VertexAttribLocation.TextureCoord, 2, VertexAttribType.Float),
-     });
+     ]);
 }

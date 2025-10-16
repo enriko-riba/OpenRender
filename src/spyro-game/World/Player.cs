@@ -47,7 +47,7 @@ public class Player
             CurrentChunk = chunk;
             ChunkLocalPosition = (Vector3i)Position - chunk!.Position;
             var height = chunk!.GetTerrainHeightAt((int)ChunkLocalPosition.X, (int)ChunkLocalPosition.Z);
-            Position = new(Position.X, height + 1.1f, Position.Z);
+            Position = new(Position.X, height + 3.1f, Position.Z);
             isGrounded = true;
         }
         else
@@ -182,12 +182,13 @@ public class Player
             isGrounded = false;
             isJumping = true;
 
-            //  initial velocity for the character to jump H high is the square root of 2 * H * g.
-            //  H = 1.2f (that's a bit higher then a voxel block), g = 9.8f
+            //  initial velocity for the character to jump H high is: sqrt(2 * H * g).
+            //  H = 1.2f (that's a bit higher then a voxel block), g = 9.8f -> sqrt(2 * 1.2f * 9.8)
             const float JumpVelocity = 4.85f;
             velocityY = JumpVelocity;
         }
     }
+
     public void ClimbingJump()
     {
         if (isGrounded && !isJumping && !IsUpBlocked())
@@ -277,7 +278,7 @@ public class Player
         {
             var pos = Position;
             requestedMovement.Normalize();
-            var dir = requestedMovement * (float)elapsedSeconds * MovementSpeed * 10;
+            var dir = requestedMovement * (float)elapsedSeconds * MovementSpeed * 25;
 
             pos.X += dir.X;
             pos.Z += dir.Z;
@@ -328,7 +329,7 @@ public class Player
                             // check if we can jump, must not be bellow a block nor a front block in eye level may exist
                             // the following picks a block in "front" of the players movement direction
                             var angle = (MathHelper.RadiansToDegrees((float)Math.Atan2(direction.X, direction.Z)) + 360) % 360;
-                            Log.Debug($"direction: {angle}");
+                            //Log.Debug($"direction: {angle}");
                             var eyeLevelFrontBlock = angle switch
                             {
                                 > 315f or <= 45f => neighbors[4],   //  front (south)

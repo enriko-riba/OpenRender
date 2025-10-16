@@ -8,16 +8,16 @@ namespace SpyroGame.World;
 /// </summary>
 public static class VoxelHelper
 {
-    public const float FarPlane = 450f;
+    public const float FarPlane = 430f;
     public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize)+1;
 
     public const int MaxPickingDistance = 5;
 
     public const int WorldChunksXZ = 300;
-    public const int ChunkSideSize = 48;
+    public const int ChunkSideSize = 32;
     public const int ChunkYSize = 128;
 
-    public const float WaterLevel = 35;
+    public const int WaterLevel = 35;
     public const float NoiseFrequency = 0.0009f;
 
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;

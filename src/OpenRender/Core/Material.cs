@@ -137,7 +137,7 @@ public class Material
         }
     }
 
-    public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? Enumerable.Empty<string>())}";
+    public override string ToString() => $"{Id} {string.Join(',', TextureDescriptors?.SelectMany(td => td.Paths) ?? [])}";
 
     public static Material Create(Shader shader, TextureDescriptor[]? textureDescriptors, Vector3 diffuseColor, Vector3 emissiveColor, Vector3 specularColor, float shininess = 0, float detailTextureScaleFactor = 0f, float detailTextureBlendFactor = 0.2f)
     {

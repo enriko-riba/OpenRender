@@ -38,6 +38,20 @@ public class Renderer
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
         Log.Info($"MaxTextureImageUnits: {textureUnitsCount}");
+        var work_grp_cnt = new int[3];
+        var work_grp_size = new int[3];
+
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupCount, 0, out work_grp_cnt[0]);
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupCount, 1, out work_grp_cnt[1]);
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupCount, 2, out work_grp_cnt[2]);
+
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupSize, 0, out work_grp_size[0]);
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupSize, 1, out work_grp_size[1]);
+        GL.GetInteger((GetIndexedPName)All.MaxComputeWorkGroupSize, 2, out work_grp_size[2]);
+        GL.GetInteger((GetPName)All.MaxComputeWorkGroupInvocations, out var maxComputeWorkGroupInvocations);
+        Log.Info($"MaxComputeWorkGroupCount: {string.Join(',', work_grp_cnt)}");
+        Log.Info($"MaxComputeWorkGroupSize: {string.Join(',', work_grp_size)}");
+        Log.Info($"MaxComputeWorkGroupInvocations: {maxComputeWorkGroupInvocations}");
 
         // Create the default render layers
         foreach (var renderGroup in Enum.GetValues<RenderGroup>())
@@ -102,20 +116,20 @@ public class Renderer
                 DetailTextureBlendFactor = material.DetailTextureBlendFactor,
             };
             uboMaterial.UpdateSettings(ref settings);
-            
+
             //  TODO: the bindless texture needs to be resident in order to be used, do we need a explicit check for that?
             ResidentTextureData textureData = new()
-            { 
+            {
                 Diffuse = material.BindlessTextureHandles[0],
                 Detail = material.BindlessTextureHandles[1],
                 Normal = material.BindlessTextureHandles[2],
-                Specular  = material.BindlessTextureHandles[3],
+                Specular = material.BindlessTextureHandles[3],
                 Bump = material.BindlessTextureHandles[4],
                 T6 = material.BindlessTextureHandles[5],
                 T7 = material.BindlessTextureHandles[6],
                 T8 = material.BindlessTextureHandles[7]
             };
-            uboTextures.UpdateSettings(ref textureData);                        
+            uboTextures.UpdateSettings(ref textureData);
         }
         node.OnDraw(elapsed);
     }
@@ -177,7 +191,7 @@ public class Renderer
         {
             var buffer = new Buffer<float>([.. batch.Vertices], BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
             batch.Vao.AddBuffer(batch.VertexDeclaration, buffer, name: "Batch VBO");
-            batch.Vao.AddIndexBuffer(new IndexBuffer([.. batch.Indices]), "Batch IBO");           
+            batch.Vao.AddIndexBuffer(new IndexBuffer([.. batch.Indices]), "Batch IBO");
 
             batch.Vertices.Clear();
             batch.Indices.Clear();
@@ -282,7 +296,7 @@ public class Renderer
         return key;
     }
 
-    private static BatchData CreateNewBatch( Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
+    private static BatchData CreateNewBatch(Shader shader, VertexDeclaration vertexDeclaration, int maxBatchSize)
     {
         var data = new BatchData(shader, vertexDeclaration, maxBatchSize);
 

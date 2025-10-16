@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>SpyroGame</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <None Remove="Resources\btnAtlas.png" />
+    <None Remove="Resources\foam.png" />
     <None Remove="Resources\mcr.otf" />
     <None Remove="Resources\mcr.ttf" />
     <None Remove="Resources\voxel\bedrock.png" />
@@ -20,11 +21,14 @@
     <None Remove="Resources\voxel\snow.png" />
     <None Remove="Resources\voxel\under-water.png" />
     <None Remove="Resources\voxel\water.png" />
+    <None Remove="Shaders\compute-chunk.comp" />
     <None Remove="Shaders\instancedChunk-Zpass.frag" />
     <None Remove="Shaders\instancedChunk-Zpass.vert" />
     <None Remove="Shaders\skybox-sun 2.frag" />
     <None Remove="Shaders\skybox-sun.frag" />
     <None Remove="Shaders\skybox-sun.vert" />
+    <None Remove="Shaders\water.frag" />
+    <None Remove="Shaders\water.vert" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +36,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\crosshair.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Resources\foam.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Resources\mcr.ttf">
@@ -91,6 +98,12 @@
 	<Content Include="Resources\voxel\water.png">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
+	<Content Include="Shaders\water.vert">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</Content>
+	<Content Include="Shaders\water.frag">
+	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	</Content>
 	<Content Include="Shaders\instancedChunk-Zpass.frag">
 	  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	</Content>
@@ -105,6 +118,9 @@
 	</Content>
 	  <Content Include="Resources\btnAtlas.png">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </Content>
+	  <Content Include="Shaders\compute-chunk.comp">
+	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </Content>
 	  <Content Include="Shaders\skybox-sun 2.frag">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

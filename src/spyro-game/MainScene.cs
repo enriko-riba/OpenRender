@@ -112,11 +112,11 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var fpsText = $"avg frame duration: {SceneManager.AvgFrameDuration:G3} ms, fps: {SceneManager.Fps:N0}";
         writeLine(fpsText, textColor);
 
-        var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, chunk size: {VoxelHelper.ChunkSideSize}, max chunk dist.: {VoxelHelper.MaxDistanceInChunks}";
+        var text = $"World: size {VoxelHelper.WorldChunksXZ:N0}, chunk size {VoxelHelper.ChunkSideSize}, max chunk distance {VoxelHelper.MaxDistanceInChunks}";
         writeLine(text, textColor);
 
         var surroundingChunks = world.SurroundingChunkIndices.Count;
-        text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunks}, cached {world.CachedChunks}";
+        text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunksCount}, cached {world.CachedChunksCount}";
         writeLine(text, textColor);
 
         text = $"in frustum {world.ChunksInFrustum:N0}/{surroundingChunks - world.ChunksInFrustum:N0}";
@@ -144,7 +144,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         writeLine(text, Vector3.UnitY);
         writeLine("", textColor);
 
-        text = $"isJumping: {player.IsJumping}, isGrounded: {player.IsGrounded}, velocity: {player.VelocityY}";
+        text = $"isJumping: {player?.IsJumping}, isGrounded: {player?.IsGrounded}, velocity: {player?.VelocityY}";
         writeLine(text, Vector3.UnitY);
 
 
