@@ -265,7 +265,7 @@ public class VoxelWorld
         Log.Debug($"{indices.Length} chunks visibility calculated in: {stopwatch.ElapsedMilliseconds - start} ms");
     }
 
-    public Chunk CreateChunk(int chunkIndex)
+    public Chunk CreateChunk(int chunkIndex, bool calculateBlockType = true)
     {
         var position = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var chunk = new Chunk(this, chunkIndex)
@@ -275,7 +275,7 @@ public class VoxelWorld
             State = ChunkState.Loaded,
         };
         loadedChunks[chunkIndex] = chunk;
-        chunk.Initialize(terrainBuilder);
+        chunk.Initialize(terrainBuilder, calculateBlockType);
         return chunk;
     }
 
@@ -659,7 +659,7 @@ public class VoxelWorld
         //  chunk must be either previously loaded or newly created, if loaded and initialized bail out
         if (chunk.IsInitialized) return false;
 
-        chunk.Initialize(terrainBuilder);
+        chunk.Initialize(terrainBuilder, true);
         return true;
     }
 

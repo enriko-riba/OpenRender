@@ -12,39 +12,7 @@ public class Chunk(VoxelWorld world, int index)
     private readonly Dictionary<int, BlockState> changedBlocks = [];
 
     #region Initialization
-    public void Initialize2(TerrainBuilder terrainBuilder)
-    {
-        if (isInitialized) return;
-
-        Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
-
-        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-        {
-            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
-            {
-                maxHeights[x, z] = terrainBuilder.GetHeightNormalizedChunkLocal(index, x, z);
-            }
-        }
-
-        for (var y = VoxelHelper.MaxBlockPositionY; y >= 0; y--)
-        {
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-            {
-                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
-                {
-                    var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-                    var block = new BlockState(blockIdx, this)
-                    {
-                        BlockType = BlockType.Snow
-                    };
-                    Blocks[block.Index] = block;
-                }
-            }
-        }
-        isInitialized = true;
-    }
-
-    public void Initialize(TerrainBuilder terrainBuilder)
+    public void Initialize(TerrainBuilder terrainBuilder, bool calculateBlockType)
     {
         if (isInitialized) return;
 
@@ -65,9 +33,10 @@ public class Chunk(VoxelWorld world, int index)
                 for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
                 {
                     var i = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-                    var block = new BlockState(i, this)
+                    var block = new BlockState(i, this);
+                    if(calculateBlockType)
                     {
-                        BlockType = TerrainBuilder.GenerateChunkBlockType(h, x, y, z)
+                        block.BlockType = TerrainBuilder.GenerateChunkBlockType(h, x, y, z);
                     };
                     Blocks[i] = block;
                 }

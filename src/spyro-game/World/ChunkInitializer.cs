@@ -170,18 +170,16 @@ namespace SpyroGame
                     var basePtr = (byte*)blockTypePtr;
 
                     Parallel.For(0, count, i =>
-                    //for (var i = 0; i < count; i++)
                     {
                         // map this chunk’s source
                         var srcU32 = (uint*)(basePtr + i * bytesPerChunk);
                         var worldChunkIndex = chunkIndices[start + i];
-                        var chunk = world.CreateChunk(worldChunkIndex);
+                        var chunk = world.CreateChunk(worldChunkIndex, false);
                         // write block types into chunk
                         for (var v = 0; v < VoxelsCount; v++)
                         {
                             ref var b = ref chunk.Blocks[v];     // no array element copy
                             b.BlockType = (BlockType)srcU32[v];  // direct read from mapped buffer
-                            //chunk.Blocks[v] = b;
                         }
                     });
                 }
@@ -189,11 +187,10 @@ namespace SpyroGame
             Log.Info($"DispatchAndReadback memcopy time: {sw.ElapsedMilliseconds:N2} ms");
             sw.Restart();
             Parallel.For(0, count, i =>
-            //for (var i = 0; i < count; i++)
             {
                 var worldChunkIndex = chunkIndices[start + i];
                 var chunk = world[worldChunkIndex];
-                chunk?.CalcVisibleBlocks(true);
+                chunk?.CalcVisibleBlocks();
             });
             Log.CheckGlError(nameof(DispatchAndReadback) + " after readback");
             Log.Info($"DispatchAndReadback CalcVisibleBlocks time: {sw.ElapsedMilliseconds:N2} ms");
