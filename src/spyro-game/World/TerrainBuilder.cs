@@ -4,6 +4,9 @@ namespace SpyroGame.World;
 
 public class TerrainBuilder
 {
+    /// <summary>
+    /// Normalized height data in range [0..1]
+    /// </summary>
     private readonly float[] heightData;
     private readonly float[] landData;
     private readonly ChunkBiome[] chunkBiomes;
@@ -17,7 +20,11 @@ public class TerrainBuilder
     {
         this.seed = seed;
         
-        heightData = NoiseData.CreateFromEncoding(heightDataEncoding, 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out _);
+        heightData = NoiseData.CreateFromEncoding(heightDataEncoding, 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out var minmax);
+        
+        //  normallize the range to 0 .. 1
+        MapRange(heightData, minmax.min, minmax.max, 0f, 1f);
+
         landData = NoiseData.CreateFromEncoding(landDataEncoding, 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, 0.005f, seed, out _);
         chunkBiomes = new ChunkBiome[landData.Length];
         for (var i = 0; i < heightData.Length; i++)
@@ -38,17 +45,33 @@ public class TerrainBuilder
             chunkBiomes[i] = new ChunkBiome(landType, 0, Climate.Temperate);
         }
     }
-    
+
+    private static void MapRange(float[] input, float min, float max, float newMin, float newMax)
+    {
+        var diff = newMax - newMin;
+        var divisor = max - min;
+        var koeficient = diff / divisor;
+        for (var i = 0; i < input.Length; i++)
+        {
+            input[i] = (input[i] - min) * koeficient + newMin;
+        }
+    }
+
     /// <summary>
-    /// Raw height data in range [-1, 1].
+    /// Raw height data in range [0, 1].
     /// </summary>
     public float[] HeightData => heightData;
 
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="globalX"></param>
+    /// <param name="globalZ"></param>
+    /// <returns></returns>
     public int GetHeightNormalizedGlobal(int globalX, int globalZ)
     {
         var noiseIndex = globalX + globalZ * VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize;
-        var height = heightData[noiseIndex];        
-        height = (height + 1) * 0.5f;   //  translate to range 0..1
+        var height = heightData[noiseIndex];
         return (int)Math.Round(height * (VoxelHelper.ChunkYSize-1));
 
         switch (chunkBiomes[noiseIndex].LandType)
@@ -106,10 +129,7 @@ public class TerrainBuilder
 
         //  get height data from global position
         var height = GetHeightNormalizedGlobal(x + cx, z + cz);
-        //var hdbg = NoiseData.CreateFromEncoding(heightDataEncoding, worldX * VoxelHelper.ChunkSideSize, worldZ * VoxelHelper.ChunkSideSize, VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out _);
-        //var hdbg2 = hdbg[x + z * VoxelHelper.ChunkSideSize];
-        //var hdbg3 = (hdbg2 + 1f) * 0.5f;
-        //var hdbg4 = (int)Math.Round(hdbg3 * (VoxelHelper.ChunkYSize - 1));
+        
         return height;
     }
 
@@ -145,7 +165,6 @@ public class TerrainBuilder
     /// <returns></returns>
     public static BlockType GenerateChunkBlockType(int maxHeight, int x, int y, int z)
     {
-        //var maxHeight = GetHeightNormalizedChunkLocal(index, x, z);
         var blockAltitude = y;
 
         BlockType bt;
@@ -184,30 +203,13 @@ public class TerrainBuilder
             else if ((bt != BlockType.None) && (blockAltitude < VoxelHelper.WaterLevel - 1))
             {
                 //  replace top layer underwater solid blocks with bedrock
-                bt = BlockType.Rock;
+                bt = BlockType.BedRock;
             }
             else if (blockAltitude < 3)
             {
                 bt = BlockType.BedRock;
             }
         }
-
-        /*
-        // for debugging        
-        bt = blockAltitude <= height + 1 && blockAltitude >= height ? x == 0 ? BlockType.Sand :
-            x == VoxelHelper.ChunkSizeXZMinusOne ? BlockType.Dirt :
-            z == 0 ? BlockType.Rock :
-            z == VoxelHelper.ChunkSizeXZMinusOne ? BlockType.Snow :
-            BlockType.Grass : BlockType.None;
-        */
-
-        //var blockIdx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-        //var block = new BlockState
-        //{
-        //    Index = blockIdx,
-        //    BlockType = bt,
-        //};
-        //return block;
 
         return bt;
     }

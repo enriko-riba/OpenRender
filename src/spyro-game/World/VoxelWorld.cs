@@ -376,28 +376,6 @@ public class VoxelWorld
         {
             ChunkRenderer.chunksStreamingQueue.Enqueue(updatedChunk);
         }
-
-        //BlockState? neighborBlock;
-        //var worldPosition = block.GlobalPosition;
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X - 1, worldPosition.Y, worldPosition.Z);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X + 1, worldPosition.Y, worldPosition.Z);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X, worldPosition.Y - 1, worldPosition.Z);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X, worldPosition.Y + 1, worldPosition.Z);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X, worldPosition.Y, worldPosition.Z - 1);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //neighborBlock = GetBlockByPositionGlobalSafe(worldPosition.X, worldPosition.Y, worldPosition.Z + 1);
-        //MakeNeighborBlockVisible(neighborBlock);
-
-        //ChunkRenderer.chunksStreamingQueue.Enqueue(chunk);
     }
 
     public static bool IsSphereBlockCollision(in AABB aabb, in Vector3 spherePosition, float sphereRadius)
@@ -433,32 +411,10 @@ public class VoxelWorld
 
     #region Block neighbors
     private readonly Vector3i[] neighboringOffsets = [
-        //new(0, 1, 0),       //  above
-        //new (1, 1, 0),      //  above right
-        //new (-1, 1, 0),     //  above left
-        //new (-1, 1, 1),     //  above back left
-        //new (1, 1, 1),      //  above front right
-        //new (1, 1, -1),     //  above back right
-        //new (-1, 1, -1),    //  above back left
-        //new (0, 1, 1),      //  above front
-        //new (0, 1, -1),     //  above back
         new (0, 0, 1),      //  front
         new (0, 0, -1),     //  back
         new (1, 0, 0),      //  right
         new (-1, 0, 0),     //  left
-        //new (-1, 0, 1),     //  front left
-        //new (1, 0, 1),      //  front right
-        //new (1, 0, -1),     //  back right
-        //new (-1, 0, -1),    //  back left
-        //new (0, -1, 0),     //  below
-        //new (1, -1, 0),     //  below right
-        //new (-1, -1, 0),    //  below left
-        //new (-1, -1, 1),    //  below back left
-        //new (1, -1, 1),     //  below front right
-        //new (1, -1, -1),    //  below back right
-        //new (-1, -1, -1),   //  below back left
-        //new (0, -1, 1),     //  below front
-        //new (0, -1, -1),    //  below back        
     ];
 
     /// <summary>

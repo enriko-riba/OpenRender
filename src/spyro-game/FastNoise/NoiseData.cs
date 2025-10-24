@@ -6,7 +6,7 @@ internal static class NoiseData
     {
         var noiseData = new float[size * size];
         var nodeTree = FastNoise.FromEncodedNodeTree(encoding);
-        minMax = nodeTree.GenUniformGrid2D(noiseData, xOffset, yOffset, size, size, frequency, seed);        
+        minMax = nodeTree.GenUniformGrid2D(noiseData, xOffset, yOffset, size, size, frequency, seed);
         return noiseData;
     }
 }

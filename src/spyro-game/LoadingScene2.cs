@@ -62,9 +62,6 @@ internal class LoadingScene2 : Scene
         indices = [.. world.SurroundingChunkIndices];
     }
 
-
-
-
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);

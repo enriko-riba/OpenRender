@@ -3,7 +3,7 @@
 uniform mat4 model;
 uniform int chunkSize;
 
-layout (std140, binding = 0) uniform camera {    
+layout (std140, binding = 0) uniform camera {
     mat4 view;
     mat4 projection;
     vec3 cameraPos;
@@ -14,7 +14,7 @@ struct BlockState {
     uint index;
     uint packedBytes;
 };
-layout(std430, binding = 2) readonly buffer ssbo_blocks {
+layout(std430, binding = 2) buffer ssbo_blocks {
     BlockState blocks[];
 };
 
@@ -99,7 +99,7 @@ void main(void)
     vec3 translatedPosition = rotatedPosition + vec3(x, y, z);
     vec4 worldPosition = model * vec4(translatedPosition, 1.0);
 
-    vertexNormal = normalize((model * vec4(rotatedNormal, 0))).xyz;   
+    vertexNormal = normalize((model * vec4(rotatedNormal, 0))).xyz;
     fragPos = worldPosition.xyz;  
     texCoord = aTexCoord;
     gl_Position = projection * view * worldPosition;

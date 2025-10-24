@@ -12,15 +12,15 @@
 uniform int uTotalLights;
 uniform int outlinedBlockId;
 
-layout (std140, binding = 0) uniform camera {    
+layout (std140, binding = 0) uniform camera {
     mat4 view;
     mat4 projection;
     vec3 cameraPos;
     vec3 cameraDir;
 };
 
-struct Light {    
-    vec3 position;    
+struct Light {
+    vec3 position;
     vec3 ambient;
     vec3 diffuse;
     vec3 specular;

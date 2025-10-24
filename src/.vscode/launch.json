@@ -10,9 +10,9 @@
             "request": "launch",
             "preLaunchTask": "build",
             // If you have changed target frameworks, make sure to update the program path.
-            "program": "${workspaceFolder}/playground/bin/Debug/net7.0/playground.dll",
+            "program": "${workspaceFolder}/spyro-game/bin/Debug/net10.0/spyro-game.dll",
             "args": [],
-            "cwd": "${workspaceFolder}/playground",
+            "cwd": "${workspaceFolder}/spyro-game",
             // For more information about the 'console' field, see https://aka.ms/VSCode-CS-LaunchJson-Console
             "console": "internalConsole",
             "stopAtEntry": false

@@ -12,19 +12,22 @@ public class Chunk(VoxelWorld world, int index)
     private readonly Dictionary<int, BlockState> changedBlocks = [];
 
     #region Initialization
-    public void Initialize(TerrainBuilder terrainBuilder, bool calculateBlockType)
+    
+
+    public void Initialize(TerrainBuilder terrainBuilder)
     {
         if (isInitialized) return;
 
         Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
 
-        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        Parallel.For(0, VoxelHelper.ChunkSideSize, z =>
         {
             for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
                 maxHeights[x, z] = terrainBuilder.GetHeightNormalizedChunkLocal(index, x, z);
             }
-        }
+        });
+
         Parallel.For(0, VoxelHelper.ChunkSideSize, x =>
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
@@ -57,7 +60,7 @@ public class Chunk(VoxelWorld world, int index)
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
                 var h = maxHeights[x, z];
-                var yMin = Math.Max(0, h - 4);
+                var yMin = 0;// Math.Max(0, h - 4);
                 var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, h + 1);
 
                 for (var y = yMin; y <= yMax; y++)

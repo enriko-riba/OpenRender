@@ -3,11 +3,11 @@
 layout (local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
 // local chunk height map
-layout(std430, binding = 0) readonly buffer ssbo_height { float height[]; };
-layout(std430, binding = 1) writeonly buffer ssbo_blocktypes { uint blocktype[]; };
+layout(std430, binding = 0) buffer ssbo_height { float height[]; };
+layout(std430, binding = 1) buffer ssbo_blocktypes { uint blocktype[]; };
 
 // the actual world chunk indices for each work group
-layout(std430, binding = 2) readonly buffer ssbo_chunk_indices { uint chunkIndices[]; };
+layout(std430, binding = 2) buffer ssbo_chunk_indices { uint chunkIndices[]; };
 
 
 uniform int worldSize;
@@ -39,27 +39,28 @@ float GetHeight(uint gx, uint gz) {
 uint CalcBlockType(int maxHeight, uint x, uint y, uint z) {
     uint blockAltitude = y;
     uint bt;
-    if (blockAltitude > uint(maxHeight))               bt = BlockTypeNone;
-    else if (blockAltitude == uint(maxHeight))         bt = BlockTypeGrassDirt;
-    else if (blockAltitude + 2u >= uint(maxHeight))    bt = BlockTypeDirt;
-    else                                               bt = BlockTypeRock;
+    if (blockAltitude > uint(maxHeight))                                       bt = BlockTypeNone;
+    else if (blockAltitude == uint(maxHeight))                                 bt = BlockTypeGrassDirt;
+    else if (blockAltitude < maxHeight && blockAltitude >= uint(maxHeight) - 2)bt = BlockTypeDirt;
+    else if (blockAltitude < uint(maxHeight) - 2)                              bt = BlockTypeRock;
 
     if (blockAltitude <= uint(waterLevel)) {
         if (bt == BlockTypeNone && blockAltitude == uint(waterLevel))           bt = BlockTypeWaterLevel;
         else if (bt != BlockTypeNone && blockAltitude + 1u >= uint(waterLevel)) bt = BlockTypeSand;
-        else if (bt != BlockTypeNone && blockAltitude + 1u <  uint(waterLevel)) bt = BlockTypeRock;
+        else if (bt != BlockTypeNone && blockAltitude + 1u <  uint(waterLevel)) bt = BlockTypeBedRock;
         else if (blockAltitude < 3u)                                            bt = BlockTypeBedRock;
     }
+
     return bt;
 }
 
 void main() { 
     
-    uint lx = gl_LocalInvocationID.x;
-    uint lz = gl_LocalInvocationID.y;
+    uint lx = gl_LocalInvocationID.x;   // chunk local X
+    uint lz = gl_LocalInvocationID.y;   // chunk local Z
 
-    uint group = gl_WorkGroupID.x;              // 0..N-1 of this dispatch
-    uint worldChunkIndex = chunkIndices[group]; // map to actual world chunk index
+    uint group = gl_WorkGroupID.x;                      // 0..N-1 of this dispatch
+    uint worldChunkIndex = uint(chunkIndices[group]);   // map to actual world chunk index
 
     uint chunkX = worldChunkIndex % uint(worldSize);
     uint chunkZ = worldChunkIndex / uint(worldSize);
@@ -68,14 +69,15 @@ void main() {
     uint gz = chunkZ * uint(chunkSize) + lz;
 
     float h = GetHeight(gx, gz);
-    int normalizedHeight = int(round((h + 1.0) * 0.5 * float(chunkYSize - 1)));
+    int normalizedHeight = int(round( h * float(chunkYSize - 1) ));
     uint voxelCount = uint(chunkSize) * uint(chunkSize) * uint(chunkYSize);
+    uint base = gl_WorkGroupID.x * voxelCount;  //  packed per-dispatch
 
-    
     // SIGNED y loop (avoid uint underflow) and 0..chunkYSize-1 range
     for (int y = chunkYSize - 1; y >= 0; --y) {
         uint blockIdx = lx + lz * uint(chunkSize) + uint(y) * uint(chunkSize * chunkSize);
         uint bt = CalcBlockType(normalizedHeight, lx, uint(y), lz);
-        blocktype[group * voxelCount + blockIdx] = bt;
+
+        blocktype[base + blockIdx] = bt; 
     }
 } 

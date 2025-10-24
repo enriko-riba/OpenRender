@@ -242,6 +242,5 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         AddNode(world.ChunkRenderer);
         world.Camera = camera!;
         camera!.Invalidate();
-
     }
 }

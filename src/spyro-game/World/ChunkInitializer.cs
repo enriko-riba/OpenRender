@@ -51,31 +51,13 @@ namespace SpyroGame
 
             EnsureChunkIndicesCapacity(chunkIndices.Length);
             GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, chunkIndices.Length * sizeof(int), chunkIndices);
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
+            //GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
 
             var bytesPerChunk = VoxelsCount * Unsafe.SizeOf<uint>();
             EnsureBlockTypeCapacity(bytesPerChunk * chunkIndices.Length);
 
             DispatchAndReadback(chunkIndices, 0, chunkIndices.Length);
         }
-
-        // Batched; returns processed count for this call. Runs on GL thread.
-        public int ProcessChunkBatch(int[] chunkIndices, int start, int maxCount)
-        {
-            if (chunkIndices == null || chunkIndices.Length == 0 || start >= chunkIndices.Length) return 0;
-            var count = Math.Min(maxCount, chunkIndices.Length - start);
-
-            EnsureChunkIndicesCapacity(count);
-            GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, count * sizeof(int), chunkIndices.AsSpan(start, count).ToArray());
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
-
-            var bytesPerChunk = VoxelsCount * Unsafe.SizeOf<uint>();
-            EnsureBlockTypeCapacity(bytesPerChunk * count);
-
-            DispatchAndReadback(chunkIndices, start, count);
-            return count;
-        }
-
 
         // ---- internals ----
 
@@ -89,7 +71,7 @@ namespace SpyroGame
             if (count > chunkIndicesCapacity)
             {
                 // immutable storage; update via SubData
-                GL.NamedBufferStorage(chunkIndicesSSBO, count * sizeof(int), 0, BufferStorageFlags.DynamicStorageBit);
+                GL.NamedBufferStorage(chunkIndicesSSBO, count * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
                 chunkIndicesCapacity = count;
             }
         }
@@ -111,12 +93,12 @@ namespace SpyroGame
             GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blockTypeSSBO, -1, "blockTypeSSBO");
 
             var storageFlags =
-                BufferStorageFlags.DynamicStorageBit |
+                //BufferStorageFlags.DynamicStorageBit |
                 BufferStorageFlags.MapReadBit |
                 BufferStorageFlags.MapPersistentBit |
                 BufferStorageFlags.MapCoherentBit;
 
-            GL.NamedBufferStorage(blockTypeSSBO, requiredBytes, 0, storageFlags);
+            GL.NamedBufferStorage(blockTypeSSBO, requiredBytes, IntPtr.Zero, storageFlags);
 
             blockTypePtr = GL.MapNamedBufferRange(
                 blockTypeSSBO,
@@ -133,10 +115,11 @@ namespace SpyroGame
         private void DispatchAndReadback(int[] chunkIndices, int start, int count)
         {
             var sw = Stopwatch.StartNew();
-            
+
             // bind common SSBOs
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, heightmapSSBO);
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, blockTypeSSBO);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
 
             // uniforms
             shader.Use();
@@ -157,34 +140,26 @@ namespace SpyroGame
             Log.Info($"DispatchAndReadback compute time: {sw.ElapsedMilliseconds:N2} ms");
             sw.Restart();
 
-            // readback from persistent map (no driver copy)
-            var bytesPerChunk = VoxelsCount * Unsafe.SizeOf<uint>();
-
-            // temp managed buffer to interpret block types
-            var blockTypes = new uint[VoxelsCount];
-
             unsafe
             {
-                fixed (uint* dstFixed = blockTypes)
-                {
-                    var basePtr = (byte*)blockTypePtr;
+                // readback from persistent map (no driver copy)
+                var bytesPerChunk = VoxelsCount * Unsafe.SizeOf<uint>();
+                var basePtr = (byte*)blockTypePtr;
 
-                    Parallel.For(0, count, i =>
+                Parallel.For(0, count, i =>
+                {
+                    var srcU32 = (uint*)(basePtr + i * bytesPerChunk);
+                    var worldChunkIndex = chunkIndices[start + i];
+                    var chunk = world.CreateChunk(worldChunkIndex);
+                    for (var v = 0; v < VoxelsCount; v++)
                     {
-                        // map this chunk’s source
-                        var srcU32 = (uint*)(basePtr + i * bytesPerChunk);
-                        var worldChunkIndex = chunkIndices[start + i];
-                        var chunk = world.CreateChunk(worldChunkIndex, false);
-                        // write block types into chunk
-                        for (var v = 0; v < VoxelsCount; v++)
-                        {
-                            ref var b = ref chunk.Blocks[v];     // no array element copy
-                            b.BlockType = (BlockType)srcU32[v];  // direct read from mapped buffer
-                        }
-                    });
-                }
+                        ref var b = ref chunk.Blocks[v];
+                        b.BlockType = (BlockType)srcU32[v];
+                    }
+                });
             }
             Log.Info($"DispatchAndReadback memcopy time: {sw.ElapsedMilliseconds:N2} ms");
+            
             sw.Restart();
             Parallel.For(0, count, i =>
             {
