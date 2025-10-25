@@ -33,6 +33,8 @@ public class SceneManager : GameWindow
     public float Fps { get; private set; }
     public float AvgFrameDuration { get; private set; }
 
+    public double Time => sw.Elapsed.TotalSeconds;
+
     public void AddScene(Scene scene)
     {
         var existing = sceneList.FirstOrDefault(s => s.Name == scene.Name);

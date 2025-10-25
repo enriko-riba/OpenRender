@@ -14,19 +14,10 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
 {
     private Matrix4 projectionMatrix = Matrix4.Identity;
 
-    public static SkyBoxSun Create(string[] texturePaths)
+    public static SkyBoxSun Create()
     {
-        var desc = new TextureDescriptor(texturePaths,
-            TextureType: TextureType.CubeMap,
-            TextureTarget: TextureTarget.TextureCubeMap,
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge);
         var shader = new Shader("Shaders/skybox-sun.vert", "Shaders/skybox-sun.frag");
-        var mat = Material.Create(shader, desc);
-        //var mat = new Material
-        //{
-        //    Shader = shader
-        //};
+        var mat = new Material { Shader = shader };
         var (vertices, indices) = GeometryHelper.CreateCube();
         var skyBoxMesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
         var skybox = new SkyBoxSun(skyBoxMesh, mat)
@@ -58,11 +49,9 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
         }
 
         var view = Scene!.Camera!.ViewMatrix;
+        view.Row3.Xyz = Vector3.Zero;
         Material.Shader.SetMatrix4("view", ref view);
         Material.Shader.SetMatrix4("projection", ref projectionMatrix);
-
-        GL.BindTextureUnit(0, Material.Textures[0].Handle);
-        Material.Shader.SetInt("texture_cubemap", 0);
 
         base.OnDraw(elapsed);
 

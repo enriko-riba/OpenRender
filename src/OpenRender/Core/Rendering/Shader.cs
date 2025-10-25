@@ -362,12 +362,40 @@ public class Shader
         }
     }
 
+    //private static string ReadShaderText(string path)
+    //{
+    //    var bytes = File.ReadAllBytes(path);
+    //    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+    //        bytes = bytes[3..];
+    //    var src = System.Text.Encoding.UTF8.GetString(bytes);
+    //    return src.TrimStart('\uFEFF'); // also remove accidental zero-width NBSP
+    //}
+
     private static string ReadShaderText(string path)
     {
+        // Read raw bytes
         var bytes = File.ReadAllBytes(path);
+
+        // Strip UTF-8 BOM if present
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
             bytes = bytes[3..];
+
+        // Decode as UTF-8 (don’t throw on invalid bytes)
         var src = System.Text.Encoding.UTF8.GetString(bytes);
-        return src.TrimStart('\uFEFF'); // also remove accidental zero-width NBSP
+
+        // Remove any zero-width BOMs anywhere in the file, not just start
+        src = src.Replace("\uFEFF", string.Empty);
+
+        // Normalize Windows line endings to Unix
+        src = src.Replace("\r\n", "\n").Replace("\r", "\n");
+
+        // Remove any embedded NULs (can happen with copy/paste or toolchains)
+        src = src.Replace("\0", string.Empty);
+
+        // Ensure the shader ends with a newline; some drivers misparse the last line otherwise
+        if (!src.EndsWith("\n"))
+            src += "\n";
+
+        return src;
     }
 }

@@ -3,11 +3,10 @@
 
 #define MAX_LIGHTS 4
 
-//	light types
-#define DIR_LIGHT			0
-#define POINT_LIGHT			1
-#define SPOT_LIGHT			2
-#define NO_COLOR			vec4(0);			// for no light we must return 0 in alpha channel otherwise the transparent pixels would loose its transparency
+// light types (kept for reference)
+#define DIR_LIGHT   0
+#define POINT_LIGHT 1
+#define SPOT_LIGHT  2
 
 uniform int uTotalLights;
 uniform int outlinedBlockId;
@@ -20,110 +19,109 @@ layout (std140, binding = 0) uniform camera {
 };
 
 struct Light {
-    vec3 position;
+    vec3 position;   // CONVENTION: this is the *light RAY direction* (from sun toward world)
     vec3 ambient;
     vec3 diffuse;
     vec3 specular;
     float falloff;
 };
-layout(std140, binding = 1) uniform light {
+layout (std140, binding = 1) uniform light {
     Light dirLight;
 };
 
-layout(std430, binding = 0) readonly buffer ssbo_textures {
+layout (std430, binding = 0) readonly buffer ssbo_textures {
     sampler2D bindlessTextures[];
 };
 
- struct Material {   
-    vec3 diffuse;
-    vec3 emissive;
-    vec3 specular;
+struct Material {
+    vec3  diffuse;
+    vec3  emissive;
+    vec3  specular;
     float shininess;
 };
-layout(std430, binding = 1) readonly buffer ssbo_materials {
-    Material mat[];
+layout (std430, binding = 1) readonly buffer ssbo_materials {
+    Material materials[];
 };
-struct BlockState {   
+
+struct BlockState {
     uint index;
-//    uint blockDirection;
-//    uint blockType;
-    uint packedBytes;
+    uint packedBytes;  // low: direction (0..5), next: blockType, etc.
 };
-layout(std430, binding = 2) readonly buffer ssbo_blocks {
+layout (std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];
 };
 
-in vec3 vertexNormal;                   //  interpolated normal
-in vec2 texCoord;                       //  uv texture coordinates
-in vec3 fragPos;
-flat in uint materialIndex;
-flat in uint textureIndex;
-flat in uint blockId;
+in vec3 vertexNormal;       // interpolated normal (already transformed in VS)
+in vec2 texCoord;           // uv
+in vec3 fragPos;            // world position
+flat in uint materialIndex; // per-instance material index
+flat in uint textureIndex;  // per-instance texture index
+flat in uint blockId;       // per-instance block ID (instance ID)
 
 out vec4 outputColor;
 
+// Simple linear fog between FogMin and FogMax
 float getFogFactor(float d)
 {
-    //  FarPlane = 450f;
     const float FogMax = 447.0;
     const float FogMin = 400.0;
 
-    if (d>=FogMax) return 1;
-    if (d<=FogMin) return 0;
-
-    return 1 - (FogMax - d) / (FogMax - FogMin);
+    if (d >= FogMax) return 1.0;
+    if (d <= FogMin) return 0.0;
+    return 1.0 - (FogMax - d) / (FogMax - FogMin);
 }
 
 void main()
-{ 
-    Material mat = mat[materialIndex];
+{
+    // Fetch material/texture
+    Material m = materials[materialIndex];
     sampler2D tex = bindlessTextures[textureIndex];
-    //vec3 N = normalize(cross(dFdx(fragPos), dFdy(fragPos)));
-    vec3 N = vertexNormal;
-    vec3 L = -normalize(dirLight.position);
 
-    vec4 texDiffuse = vec4(texture(tex, texCoord));    
-    vec4 texColor = texDiffuse * vec4(mat.diffuse, 1);
+    // Normalized inputs
+    vec3 N = normalize(vertexNormal);
 
-    float lambert = clamp(dot(N, L), 0, 1);
+    // Our convention: dirLight.position is the LIGHT RAY direction (sun -> world).
+    // For lighting, we need the vector from the fragment *toward the light* (toward sun).
+    vec3 L = normalize(-dirLight.position);
+
+    // Base texture & diffuse color
+    vec4 texDiffuse = texture(tex, texCoord);
+    vec4 texColor   = texDiffuse * vec4(m.diffuse, 1.0);
+
+    // Lambert
+    float lambert = max(dot(N, L), 0.0);
     vec3 Ac = dirLight.ambient;
     vec3 Dc = dirLight.diffuse * lambert;
-    vec3 Sc = vec3(0);
+    vec3 Sc = vec3(0.0);
 
-    if(lambert > 0)
+    // Blinn-Phong specular
+    if (lambert > 0.0)
     {
-        // blinn-phong
         vec3 V = normalize(cameraPos - fragPos);
         vec3 H = normalize(L + V);
-        float specular = clamp(dot(H, N), 0, 1);
-        float exponent = pow(2, mat.shininess * 2.0) + 2;       
-        Sc = clamp(pow(specular, exponent) * mat.shininess * dirLight.specular * mat.specular, 0, 1);
+        float spec = max(dot(H, N), 0.0);
+
+        // A slightly snappier exponent mapping (feel free to tune)
+        float exponent = pow(2.0, m.shininess * 2.0) + 2.0;
+        Sc = pow(spec, exponent) * m.shininess * dirLight.specular * m.specular;
     }
 
-    outputColor = clamp(vec4(mat.emissive.rgb + (Sc + Ac + Dc), 1) * texColor, 0, 1);
-    
-    BlockState block = blocks[blockId];
-    if(uint(outlinedBlockId) == block.index)
-	{		
+    // Compose lighting
+    vec3 lit = m.emissive + (Ac + Dc + Sc);
+    vec4 base = vec4(clamp(lit, 0.0, 1.0), 1.0) * texColor;
+
+    // Optional block outline overlay (bindlessTextures[0] assumed to be outline atlas)
+    BlockState blk = blocks[blockId];
+    if (uint(outlinedBlockId) == blk.index)
+    {
         sampler2D outlineSampler = bindlessTextures[0];
         vec4 texOutline = texture(outlineSampler, texCoord);
-        outputColor = vec4(mix(outputColor, texOutline, texOutline.a).rgb, outputColor.a);
+        base = vec4(mix(base.rgb, texOutline.rgb, texOutline.a), base.a);
     }
-    
-    // b1 is first byte, b2 is second byte, b3 is third byte, b4 is fourth byte
-//    uint b1 = (block.reserved & 0xff);
-//    uint b2 = (block.reserved & 0xff00) >> 8;
-//    uint b3 = (block.reserved & 0xff0000) >> 16;
-//    uint b4 = (block.reserved & (0xff << 24)) >> 24;
-//    if(b2 != 0)
-//    {
-//        outputColor = vec4(1, 0, 0, 1);
-//    }
 
-
-    // fog
-    vec4 fog = vec4(0.40f, 0.40f, 0.42f, 1.0f);
+    // Fog
+    vec4 fogColor = vec4(0.40, 0.40, 0.42, 1.0);
     float d = distance(fragPos, cameraPos);
-    float factor = getFogFactor(d);
-    outputColor = mix(outputColor, fog, factor);
+    float f = getFogFactor(d);
+    outputColor = mix(base, fogColor, f);
 }

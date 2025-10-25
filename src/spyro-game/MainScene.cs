@@ -32,6 +32,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private LightUniform dirLight;
     private VoxelWorld world = default!;
     private Player player = default!;
+    private SkyBoxSun skyBox = default!;
 
     public VoxelWorld World
     {
@@ -160,8 +161,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     {
         base.UpdateFrame(elapsedSeconds);
 
+        dayNightCycle.Tick(elapsedSeconds);
         player.Update(elapsedSeconds, SceneManager.KeyboardState);
-
         kbdActions.Update(SceneManager.KeyboardState);
 
         //  mouse movement
@@ -186,7 +187,12 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         {
             player.BreakBlock();
         }
-        dayNightCycle.Update();
+       
+        if (skyBox != null)
+        {
+            skyBox.Material.Shader.Use();
+            skyBox.Material.Shader.SetFloat("uTime", (float)base.SceneManager.Time);
+        }
     }
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
@@ -216,28 +222,16 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private void SetupScene()
     {
         dayNightCycle = new(this);
-        dayNightCycle.Update();
+        dayNightCycle.Tick(0);
 
-        var paths = new string[] {
-            "Resources/skybox/right.png",
-            "Resources/skybox/left.png",
-            "Resources/skybox/top.png",
-            "Resources/skybox/bottom.png",
-            "Resources/skybox/back.png",
-            "Resources/skybox/front.png",
-        };
-        var skyBox = SkyBox.Create(paths);
+        skyBox = SkyBoxSun.Create();
         AddNode(skyBox);
+        skyBox.Material.Shader.Use();
+        //skyBox.Material.Shader.SetFloat("uSunAngularRadius", 0.0093f); // ~0.53°
+        skyBox.Material.Shader.SetFloat("uSunHaloRadius", 0.05f);
+        skyBox.Material.Shader.SetFloat("uSunIntensity", 1.75f);
+        skyBox.Material.Shader.SetFloat("uCosSunAngularRadius", MathF.Cos(0.0499f));
 
-        var (vertices, indices) = VoxelHelper.CreateVoxelCube();
-        var cubeMaterial = Material.Create(defaultShader,
-            [new("Resources/voxel/box-unwrap.png", TextureType: TextureType.Diffuse)],
-            //[new("Resources/Corey.png", TextureType: TextureType.Diffuse)],
-            0.10f);
-        cubeMaterial.EmissiveColor = new(0.05f, 0.07f, 0.005f);
-        var cube = new SceneNode(new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices), cubeMaterial);
-        cube.SetPosition(new(0, 0, 0));
-        AddNode(cube);
 
         AddNode(world.ChunkRenderer);
         world.Camera = camera!;
