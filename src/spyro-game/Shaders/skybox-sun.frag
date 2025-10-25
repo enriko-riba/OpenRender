@@ -23,10 +23,8 @@ uniform float uSunHaloRadius;
 uniform float uSunIntensity;
 uniform float uCosSunAngularRadius;
 uniform float uTime;
-
-// TWO VECTORS from vertex shader
- in vec3 vRayWS;
-in vec3 vRayVS;
+uniform vec2 uViewportSize;
+uniform mat4 uInvProjection;
 
 out vec4 FragColor;
 
@@ -55,12 +53,12 @@ float stars(vec3 rayWS) {
 
     const float CELL_COUNT_U = 1400.0;
     const float CELL_COUNT_V = 700.0;
-    const float STAR_DENSITY = 0.0016;
-    const float MIN_RADIUS = 0.045;
-    const float MAX_RADIUS = 0.110;
+    const float STAR_DENSITY = 0.0116;
+    const float MIN_RADIUS = 0.145;
+    const float MAX_RADIUS = 0.310;
     const float MIN_BRIGHTNESS = 0.55;
     const float MAX_BRIGHTNESS = 1.75;
-    const float TWINKLE_AMOUNT = 0.35;
+    const float TWINKLE_AMOUNT = 0.25;
 
     vec2 coord = vec2(lon * (CELL_COUNT_U * INV_TWO_PI),
                       lat * (CELL_COUNT_V * INV_PI));
@@ -110,9 +108,11 @@ float stars(vec3 rayWS) {
 
 void main()
 {
-    // Use the two incoming vectors
-    vec3 rayVS = normalize(vRayVS); // View-space ray for sun/sky
-    vec3 rayWS = normalize(vRayWS); // World-space ray for stars
+    vec2 ndc = (gl_FragCoord.xy / uViewportSize) * 2.0 - 1.0;
+    vec4 clip = vec4(ndc, -1.0, 1.0);
+    vec3 rayVS = normalize((uInvProjection * clip).xyz);
+    mat3 invViewRot = transpose(mat3(view));
+    vec3 rayWS = normalize(invViewRot * rayVS);
 
     vec3 sunDirWS = normalize(-dirLight.position);
     float elevation = sunDirWS.y;

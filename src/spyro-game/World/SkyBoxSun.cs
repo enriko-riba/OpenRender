@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core;
+using System;
 using OpenRender.Core.Buffers;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
@@ -13,6 +14,7 @@ namespace SpyroGame.World;
 internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
 {
     private Matrix4 projectionMatrix = Matrix4.Identity;
+    private Matrix4 invProjectionMatrix = Matrix4.Identity;
 
     public static SkyBoxSun Create()
     {
@@ -31,6 +33,7 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
     public override void OnResize(Scene scene, ResizeEventArgs e)
     {
         projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
+        Matrix4.Invert(projectionMatrix, out invProjectionMatrix);
     }
 
     public override void OnDraw(double elapsed)
@@ -47,6 +50,12 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
         {
             GL.DepthFunc(DepthFunction.Lequal);
         }
+
+        int[] viewport = new int[4];
+        GL.GetInteger(GetPName.Viewport, viewport);
+        var viewportSize = new Vector2(viewport[2], viewport[3]);
+        Material.Shader.SetVector2("uViewportSize", ref viewportSize);
+        Material.Shader.SetMatrix4("uInvProjection", ref invProjectionMatrix);
 
         var view = Scene!.Camera!.ViewMatrix;
         view.Row3.Xyz = Vector3.Zero;
