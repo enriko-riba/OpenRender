@@ -34,7 +34,7 @@ var fontAtlas2 = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new(0.2f
 var tr2 = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas2);
 
 // start app with loading scene
-var scene = new LoadingScene(tr1);
+var scene = new LoadingScene2(tr1);
 scm.AddScene(scene);
 scm.AddScene(new MainScene(tr2));
 scm.ActivateScene(scene);

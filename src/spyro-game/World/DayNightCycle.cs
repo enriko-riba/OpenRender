@@ -14,7 +14,7 @@ internal static class MathUtil
 internal class DayNightCycle(Scene scene)
 {
     private LightUniform dirLight = scene.Lights.ElementAt(0);
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(17));
+    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(19));
 
     // Call this *each frame* with elapsedSeconds
     public void Tick(double elapsedSeconds)

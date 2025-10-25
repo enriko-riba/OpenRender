@@ -36,10 +36,9 @@ public class Chunk(VoxelWorld world, int index)
                 for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
                 {
                     var i = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-                    var block = new BlockState(i, this);
-                    if(calculateBlockType)
+                    var block = new BlockState(i, this)
                     {
-                        block.BlockType = TerrainBuilder.GenerateChunkBlockType(h, x, y, z);
+                        BlockType = TerrainBuilder.GenerateChunkBlockType(h, x, y, z)
                     };
                     Blocks[i] = block;
                 }

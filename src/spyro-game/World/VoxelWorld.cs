@@ -275,7 +275,7 @@ public class VoxelWorld
             State = ChunkState.Loaded,
         };
         loadedChunks[chunkIndex] = chunk;
-        chunk.Initialize(terrainBuilder, calculateBlockType);
+        chunk.Initialize(terrainBuilder);
         return chunk;
     }
 
@@ -615,7 +615,7 @@ public class VoxelWorld
         //  chunk must be either previously loaded or newly created, if loaded and initialized bail out
         if (chunk.IsInitialized) return false;
 
-        chunk.Initialize(terrainBuilder, true);
+        chunk.Initialize(terrainBuilder);
         return true;
     }
 
