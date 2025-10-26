@@ -26,6 +26,7 @@ layout(std430, binding = 0) readonly buffer ssbo_textures {
 };
 
 uniform float uTime;
+uniform float uDayFactor;
 
 // Inputs from vertex shader
 in vec3 vertexNormal;
@@ -91,10 +92,12 @@ void main() {
     const int foamTextureIndex = 9;
     sampler2D texFoam = bindlessTextures[foamTextureIndex];
     vec2 foamTexCoord = texCoord * 0.25 + vec2(uTime * 0.05, uTime * 0.03);
-    vec3 foamColor = texture(texFoam, foamTexCoord).rgb;
+    vec3 foamTextureColor = texture(texFoam, foamTexCoord).rgb;
+    vec3 foamColor = foamTextureColor * dirLight.ambient; // Modulate foam by ambient light
 
     // --- BASE WATER COLOR ---
-    vec3 waterBaseColor = vec3(0.1, 0.2, 0.3);
+    vec3 deepWaterColor = vec3(0.1, 0.15, 0.25);
+    vec3 waterBaseColor = deepWaterColor * dirLight.ambient; // Make water color day/night aware
 
     // --- COMBINE ---
     float foamAmount = 0.2; // A constant to control how much foam is visible
@@ -102,8 +105,12 @@ void main() {
     finalColor += sunSpecular;
 
     // --- ALPHA ---
+    // Make transparency dependent on day/night cycle
+    float dayFactor = uDayFactor;
+    float minAlpha = mix(0.95, 0.6, dayFactor); // Night is more opaque, day is more transparent
+
     float fresnel = 0.02 + 0.98 * pow(1.0 - dot(V, N), 5.0);
-    float alpha = mix(0.6, 1.0, fresnel);
+    float alpha = mix(minAlpha, 1.0, fresnel);
 
     outputColor = vec4(finalColor, alpha);
 }

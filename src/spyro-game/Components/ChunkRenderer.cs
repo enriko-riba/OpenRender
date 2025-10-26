@@ -53,8 +53,6 @@ public class ChunkRenderer : SceneNode
             if (handle != 0) Texture.MakeResident(handle);
         }
 
-        waterShader = new Shader("Shaders/water.vert", "Shaders/water.frag");
-
         //  prepare textures and materials SSBOs
         GL.CreateBuffers(1, out texturesSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, texturesSSBO, -1, "voxelTextures_SSBO");
@@ -64,6 +62,7 @@ public class ChunkRenderer : SceneNode
         GL.NamedBufferStorage(materialsSSBO, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials, BufferStorageFlags.MapWriteBit /*| BufferStorageFlags.DynamicStorageBit*/);
         Log.CheckGlError();
 
+        waterShader = new Shader("Shaders/water.vert", "Shaders/water.frag");
         waterVao = new VertexArrayObject();
         waterVao.AddBuffer(VertexDeclarations.VertexPositionTexture, [
             -1f, 0,  1,  0, 1,   // left near
