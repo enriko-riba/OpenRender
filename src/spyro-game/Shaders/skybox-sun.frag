@@ -28,82 +28,73 @@ uniform mat4 uInvProjection;
 
 out vec4 FragColor;
 
-float hash21(vec2 p) {
-    p = fract(p * vec2(234.34, 435.345) + vec2(34.345, 19.45));
-    p += dot(p, p + 34.345);
-    return fract(p.x * p.y);
+float hash13(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.x + p.y) * p.z);
 }
 
-vec2 hash22(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * vec3(443.8975, 441.4234, 437.1950));
-    p3 += dot(p3, p3.yzx + 19.19);
-    return fract(vec2((p3.x + p3.y) * p3.z, (p3.x + p3.z) * p3.y));
+vec3 hash33(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.11369, 0.13787));
+    p += dot(p, p.yzx + 19.19);
+    return fract(vec3(
+        (p.x + p.y) * p.z,
+        (p.x + p.z) * p.y,
+        (p.y + p.z) * p.x
+    ));
 }
 
-// A simple procedural star field, parameterized on spherical coordinates
-float stars(vec3 rayWS) {
-    vec3 dir = normalize(rayWS);
-    const float TWO_PI = 6.28318530718;
-    const float INV_TWO_PI = 0.1591549430918;
-    const float INV_PI = 0.3183098861838;
+float starLayer(vec3 dir, float scale, float radiusScale,
+                float minBrightness, float maxBrightness,
+                float twinkleSpeed, float twinkleAmount, vec3 seedOffset)
+{
+    vec3 p = dir * scale + seedOffset;
+    vec3 baseCell = floor(p);
+    vec3 frac = fract(p);
 
-    float lon = atan(dir.z, dir.x);               // [-pi, pi]
-    lon = lon < 0.0 ? lon + TWO_PI : lon;         // [0, 2pi)
-    float lat = acos(clamp(dir.y, -1.0, 1.0));    // [0, pi]
+    float bestDist = 1e9;
+    vec3 bestCell = vec3(0.0);
 
-    const float CELL_COUNT_U = 1400.0;
-    const float CELL_COUNT_V = 700.0;
-    const float STAR_DENSITY = 0.0116;
-    const float MIN_RADIUS = 0.145;
-    const float MAX_RADIUS = 0.310;
-    const float MIN_BRIGHTNESS = 0.55;
-    const float MAX_BRIGHTNESS = 1.75;
-    const float TWINKLE_AMOUNT = 0.25;
-
-    vec2 coord = vec2(lon * (CELL_COUNT_U * INV_TWO_PI),
-                      lat * (CELL_COUNT_V * INV_PI));
-    vec2 baseCell = floor(coord);
-    vec2 frac = coord - baseCell;
-
-    float sinLat = max(sin(lat), 0.02);
-    float starAccum = 0.0;
-
-    for (int j = -1; j <= 1; ++j) {
-        for (int i = -1; i <= 1; ++i) {
-            vec2 neighborCell = baseCell + vec2(i, j);
-
-            float wrappedU = neighborCell.x - floor(neighborCell.x / CELL_COUNT_U) * CELL_COUNT_U;
-            float clampedV = clamp(neighborCell.y, 0.0, CELL_COUNT_V - 1.0);
-            vec2 cellId = vec2(wrappedU, clampedV);
-
-            float spawn = hash21(cellId + vec2(17.0, 29.0));
-            if (spawn > STAR_DENSITY * sinLat) {
-                continue;
+    for (int ix = -1; ix <= 1; ++ix) {
+        for (int iy = -1; iy <= 1; ++iy) {
+            for (int iz = -1; iz <= 1; ++iz) {
+                vec3 neighbor = vec3(ix, iy, iz);
+                vec3 cell = baseCell + neighbor;
+                vec3 point = neighbor + hash33(cell);
+                vec3 diff = point - frac;
+                float dist = dot(diff, diff);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestCell = cell;
+                }
             }
-
-            vec2 jitter = hash22(cellId + vec2(13.0, 7.0)) - 0.5;
-            vec2 starPos = cellId + vec2(0.5) + 0.45 * jitter;
-
-            vec2 diff = coord - starPos;
-            diff.x -= round(diff.x / CELL_COUNT_U) * CELL_COUNT_U;
-            diff.x *= sinLat;
-
-            float radiusSeed = hash21(cellId + vec2(41.0, 71.0));
-            float radius = mix(MIN_RADIUS, MAX_RADIUS, radiusSeed);
-            float shape = exp(-dot(diff, diff) / max(radius * radius, 1e-6));
-
-            float brightnessSeed = hash21(cellId + vec2(59.0, 83.0));
-            float brightness = mix(MIN_BRIGHTNESS, MAX_BRIGHTNESS, brightnessSeed);
-
-            float twinkleSeed = hash21(cellId + vec2(101.0, 37.0));
-            float twinkleFreq = mix(0.8, 1.9, twinkleSeed);
-            float twinkle = 1.0 + TWINKLE_AMOUNT * sin(uTime * twinkleFreq + twinkleSeed * TWO_PI);
-
-            starAccum += shape * brightness * twinkle;
         }
     }
 
-    return clamp(starAccum, 0.0, 1.0);
+    float radiusSeed = hash13(bestCell + vec3(17.0, 23.0, 29.0));
+    float radius = mix(0.6, 1.0, radiusSeed) * radiusScale;
+    float shape = exp(-bestDist * radius);
+
+    float brightnessSeed = hash13(bestCell + vec3(31.0, 37.0, 41.0));
+    float brightness = mix(minBrightness, maxBrightness, brightnessSeed);
+
+    float twinkleSeed = hash13(bestCell + vec3(43.0, 47.0, 53.0));
+    float twinkleFreq = mix(0.7, 1.9, twinkleSeed);
+    float twinkle = 1.0 + twinkleAmount * sin(uTime * twinkleSpeed * twinkleFreq + twinkleSeed * 6.2831853);
+
+    return shape * brightness * twinkle;
+}
+
+// Worley-based star field, multiple scales to break tiling
+float stars(vec3 rayWS) {
+    vec3 dir = normalize(rayWS);
+
+    float starField = 0.0;
+    starField += starLayer(dir, 220.0, 8.0, 0.45, 1.10, 1.05, 0.30, vec3(17.0, 29.0, 47.0));
+    starField += starLayer(dir, 360.0, 10.5, 0.60, 1.35, 1.45, 0.35, vec3(71.0, 11.0, 53.0));
+    starField += starLayer(dir, 520.0, 13.5, 0.78, 1.80, 2.05, 0.40, vec3(131.0, 19.0, 83.0));
+
+    return clamp(starField, 0.0, 1.0);
 }
 
 void main()
@@ -117,19 +108,15 @@ void main()
     vec3 sunDirWS = normalize(-dirLight.position);
     float elevation = sunDirWS.y;
 
-    // Sky colors are calculated using the view-space ray, as this was working for the overall sky gradient.
     vec3 daySkyColor = vec3(0.3, 0.6, 1.0) * mix(1.2, 0.7, rayVS.y);
     vec3 nightSkyColor = vec3(0.005, 0.01, 0.025) * mix(1.2, 0.7, rayVS.y);
 
-    // Day/night transition
     float dayFactor = smoothstep(-0.1, 0.1, elevation);
     vec3 sky = mix(nightSkyColor, daySkyColor, dayFactor);
 
-    // Transition to black at deep night
     float deepNightFactor = smoothstep(-0.4, -0.6, elevation);
     sky = mix(sky, vec3(0.0), deepNightFactor);
 
-    // The sun, dawn, and glow calculations are left as they were, using their mix of coordinate spaces that was empirically working.
     float dawnDuskFactor = smoothstep(-0.2, 0.0, elevation) * (1.0 - smoothstep(0.0, 0.2, elevation));
     if (dawnDuskFactor > 0.0)
     {
@@ -139,12 +126,10 @@ void main()
         sky += dawnColor * glow * dawnDuskFactor;
     }
 
-    // Use the new, clean world-space vector for the stars.
     float starValue = stars(rayWS);
     float starVisibility = smoothstep(0.0, -0.3, elevation);
     sky += vec3(starValue) * starVisibility;
 
-    // Sun disc calculation
     float cosTheta = clamp(dot(rayVS, sunDirWS), -1.0, 1.0);
 
     float rim = fwidth(cosTheta) * 0.5;
