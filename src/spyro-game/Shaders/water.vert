@@ -26,14 +26,11 @@ const float waveFrequencyX = 1.0; // Adjust the frequency of the waves
 const float waveSpeedX = .005;    // Adjust the speed of the waves
 
 void main(void)
-{      
+{
     texCoord = aTexCoord * repetitionFactor;
     vertexNormal = normalize((model * vec4(0, 1, 0, 0))).xyz;
-    
-    vec3 translatedPosition = aPosition;
-    translatedPosition.y += waveAmplitude * (sin(uTime * waveFrequencyX /*+ aPosition.x * waveSpeedX*/) + 1.5);
 
-    vec4 worldPosition = model * vec4(translatedPosition, 1.0);
-    fragPos = worldPosition.xyz;  
+    vec4 worldPosition = model * vec4(aPosition, 1.0);
+    fragPos = worldPosition.xyz;
     gl_Position = projection * view * worldPosition;
 }

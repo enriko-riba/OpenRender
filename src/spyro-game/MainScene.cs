@@ -165,29 +165,37 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         player.Update(elapsedSeconds, SceneManager.KeyboardState);
         kbdActions.Update(SceneManager.KeyboardState);
 
-        //  mouse movement
-        var mousePos = SceneManager.MouseState.Position;
-        var delta = lastMousePosition - mousePos;
-        lastMousePosition = mousePos;
-        if (delta.LengthSquared > 0)
+        if (SceneManager.IsFocused)
         {
-            player.AddRotation(delta.X, delta.Y, 0);
-
-            if (mousePos.X < 100 ||
-                mousePos.Y < 100 ||
-                mousePos.X > Width - 100 ||
-                mousePos.Y > Height - 100)
+            //  mouse movement
+            var mousePos = SceneManager.MouseState.Position;
+            var delta = lastMousePosition - mousePos;
+            lastMousePosition = mousePos;
+            if (delta.LengthSquared > 0)
             {
-                SceneManager.MousePosition = mouseCenter;
-                lastMousePosition = mouseCenter;
+                player.AddRotation(delta.X, delta.Y, 0);
+
+                if (mousePos.X < 100 ||
+                    mousePos.Y < 100 ||
+                    mousePos.X > Width - 100 ||
+                    mousePos.Y > Height - 100)
+                {
+                    SceneManager.MousePosition = mouseCenter;
+                    lastMousePosition = mouseCenter;
+                }
             }
+        }
+        else
+        {
+            // When not focused, just update the last position to prevent a jump when focus is regained.
+            lastMousePosition = SceneManager.MouseState.Position;
         }
 
         if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
         {
             player.BreakBlock();
         }
-       
+
         if (skyBox != null)
         {
             skyBox.Material.Shader.Use();

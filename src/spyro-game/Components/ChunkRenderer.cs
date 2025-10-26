@@ -250,6 +250,7 @@ public class ChunkRenderer : SceneNode
         shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
         if (shader.UniformExists("uTime")) shader.SetFloat("uTime", (float)uTime * 0.2f);
 
+        GL.Enable(EnableCap.CullFace);
         if (!ShowBoundingSphere)
         {
             GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, IntPtr.Zero, instanceCount);
@@ -259,13 +260,12 @@ public class ChunkRenderer : SceneNode
             //GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
             //GL.DrawElementsInstanced(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0, instanceCount);
 
-            GL.Disable(EnableCap.CullFace);
+            //GL.Disable(EnableCap.CullFace);
             Matrix4.CreateScale(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize, out var scaleMatrix);
             var worldMatrix = scaleMatrix * transform.worldMatrix;
             Scene!.DefaultShader.Use();
             Scene.DefaultShader.SetMatrix4("model", ref worldMatrix);
-            GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
-            GL.Enable(EnableCap.CullFace);
+            GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);        
         }
     }
 
@@ -274,14 +274,21 @@ public class ChunkRenderer : SceneNode
         GL.BindVertexArray(waterVao);
         waterShader.Use();
         GL.Disable(EnableCap.CullFace);
+
+        // Enable blending before drawing water
+        //GL.Enable(EnableCap.Blend);
+        //GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        //  note: above is enabled by default in OpenRenderer
+
         Matrix4.CreateScale(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, 1, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, out var scaleMatrix);
         var worldMatrix = scaleMatrix * transform.worldMatrix;
-        worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel, 0);
+        worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel + 0.85f, 0);
         waterShader.SetMatrix4("model", ref worldMatrix);
         waterShader.SetFloat("uTime", (float)uTime * 0.2f);
-        var sz = Scene!.SceneManager.ClientSize;
-        waterShader.SetVector2("iResolution", ref sz);
         GL.DrawElements(PrimitiveType.Triangles, waterVao.DataLength, DrawElementsType.UnsignedInt, 0);
+        
+        // Disable blending after drawing water so it doesn't affect other objects
+        //GL.Disable(EnableCap.Blend);
     }
 
     /// <summary>

@@ -538,10 +538,17 @@ public class VoxelWorld
         }
 
         var inFrustumCount = 0;
-        foreach (var chunk in loadedChunks)
+        foreach (var kv in loadedChunks)
         {
-            var visible = CullingHelper.IsAabbInFrustum(chunk.Value.Aabb, camera.Frustum.Planes);
-            chunk.Value.Visible = visible;
+            var chunk = kv.Value;
+            if (CullingHelper.BeyondFarPlane(chunk.Aabb, camera.ViewMatrix, camera.FarPlaneDistance /*, margin*/))
+            {
+                chunk.Visible = false;
+                continue;
+            }
+
+            var visible = CullingHelper.IsAabbCenterInFrustum(chunk.Aabb, camera.Frustum.Planes);
+            chunk.Visible = visible;
             if (visible) inFrustumCount++;
         }
         ChunksInFrustum = inFrustumCount;

@@ -10,6 +10,7 @@
 
 uniform int uTotalLights;
 uniform int outlinedBlockId;
+uniform int useFog = 0;
 
 layout (std140, binding = 0) uniform camera {
     mat4 view;
@@ -120,8 +121,14 @@ void main()
     }
 
     // Fog
-    vec4 fogColor = vec4(0.40, 0.40, 0.42, 1.0);
-    float d = distance(fragPos, cameraPos);
-    float f = getFogFactor(d);
-    outputColor = mix(base, fogColor, f);
+    if(useFog > 0)
+    {
+        vec4 fogColor = vec4(0.40, 0.40, 0.42, 1.0);
+        float d = distance(fragPos, cameraPos);
+        float f = getFogFactor(d);
+        outputColor = mix(base, fogColor, f);
+    }
+    else{
+        outputColor = base;
+    }
 }

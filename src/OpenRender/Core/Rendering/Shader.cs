@@ -321,7 +321,7 @@ public class Shader
 
     private bool IsUniformValid(string name)
     {
-        if (!uniformLocations.ContainsKey(name))
+        if (!UniformExists(name))
         {
             Log.Warn($"uniform: '{name}' not found in program {Handle}!");
             return false;

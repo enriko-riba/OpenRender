@@ -279,10 +279,11 @@ public partial class FastNoise
         // Collect metadata for all FastNoise node classes
         for (var id = 0; id < metadataCount; id++)
         {
-            Metadata metadata = new Metadata();
-
-            metadata.id = id;
-            metadata.name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataName(id)));
+            var metadata = new Metadata
+            {
+                id = id,
+                name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataName(id)))
+            };
             //Console.WriteLine(id + " - " + metadata.name);
             metadataNameLookup.Add(metadata.name, id);
 
@@ -294,7 +295,7 @@ public partial class FastNoise
             // Init variables
             for (var variableIdx = 0; variableIdx < variableCount; variableIdx++)
             {
-                Metadata.Member member = new Metadata.Member();
+                var member = new Metadata.Member();
 
                 member.name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataVariableName(id, variableIdx)));
                 member.type = (Metadata.Member.Type)fnGetMetadataVariableType(id, variableIdx);
@@ -318,13 +319,14 @@ public partial class FastNoise
             }
 
             // Init node lookups
-            for (int nodeLookupIdx = 0; nodeLookupIdx < nodeLookupCount; nodeLookupIdx++)
+            for (var nodeLookupIdx = 0; nodeLookupIdx < nodeLookupCount; nodeLookupIdx++)
             {
-                Metadata.Member member = new Metadata.Member();
-
-                member.name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataNodeLookupName(id, nodeLookupIdx)));
-                member.type = Metadata.Member.Type.NodeLookup;
-                member.index = nodeLookupIdx;
+                var member = new Metadata.Member
+                {
+                    name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataNodeLookupName(id, nodeLookupIdx))),
+                    type = Metadata.Member.Type.NodeLookup,
+                    index = nodeLookupIdx
+                };
 
                 member.name = FormatDimensionMember(member.name, fnGetMetadataNodeLookupDimensionIdx(id, nodeLookupIdx));
 
@@ -333,13 +335,14 @@ public partial class FastNoise
             }
 
             // Init hybrids
-            for (int hybridIdx = 0; hybridIdx < hybridCount; hybridIdx++)
+            for (var hybridIdx = 0; hybridIdx < hybridCount; hybridIdx++)
             {
-                Metadata.Member member = new Metadata.Member();
-
-                member.name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataHybridName(id, hybridIdx)));
-                member.type = Metadata.Member.Type.Hybrid;
-                member.index = hybridIdx;
+                var member = new Metadata.Member
+                {
+                    name = FormatLookup(Marshal.PtrToStringAnsi(fnGetMetadataHybridName(id, hybridIdx))),
+                    type = Metadata.Member.Type.Hybrid,
+                    index = hybridIdx
+                };
 
                 member.name = FormatDimensionMember(member.name, fnGetMetadataHybridDimensionIdx(id, hybridIdx));
 
@@ -355,20 +358,17 @@ public partial class FastNoise
     {
         if (dimIdx >= 0)
         {
-            char[] dimSuffix = new char[] { 'x', 'y', 'z', 'w' };
+            char[] dimSuffix = ['x', 'y', 'z', 'w'];
             name += dimSuffix[dimIdx];
         }
         return name;
     }
 
     // Ignores spaces and caps, harder to mistype strings
-    private static string FormatLookup(string s)
-    {
-        return s.Replace(" ", "").ToLower();
-    }
+    private static string FormatLookup(string s) => s.Replace(" ", "").ToLowerInvariant();
 
-    static private Dictionary<string, int> metadataNameLookup;
-    static private Metadata[] nodeMetadata;
+    private static readonly Dictionary<string, int> metadataNameLookup;
+    private static readonly Metadata[] nodeMetadata;
 
     private const string NATIVE_LIB = "FastNoise";
 

@@ -71,6 +71,10 @@ float starLayer(vec3 dir, float scale, float radiusScale,
         }
     }
 
+    if (hash13(bestCell) > 0.2) {
+        return 0.0;
+    }
+
     float radiusSeed = hash13(bestCell + vec3(17.0, 23.0, 29.0));
     float radius = mix(0.6, 1.0, radiusSeed) * radiusScale;
     float shape = exp(-bestDist * radius);
@@ -90,9 +94,9 @@ float stars(vec3 rayWS) {
     vec3 dir = normalize(rayWS);
 
     float starField = 0.0;
-    starField += starLayer(dir, 220.0, 8.0, 0.45, 1.10, 1.05, 0.30, vec3(17.0, 29.0, 47.0));
-    starField += starLayer(dir, 360.0, 10.5, 0.60, 1.35, 1.45, 0.35, vec3(71.0, 11.0, 53.0));
-    starField += starLayer(dir, 520.0, 13.5, 0.78, 1.80, 2.05, 0.40, vec3(131.0, 19.0, 83.0));
+    starField += starLayer(dir, 120.0, 420.0, 0.45, 1.10, 1.05, 0.010, vec3(17.0, 29.0, 47.0));
+    //starField += starLayer(dir, 360.0, 210.75, 0.60, 1.35, 0.0, 0.015, vec3(71.0, 11.0, 53.0));
+    //starField += starLayer(dir, 520.0, 412.25, 0.78, 1.80, 0.0, 0.020, vec3(131.0, 19.0, 83.0));
 
     return clamp(starField, 0.0, 1.0);
 }
@@ -121,16 +125,16 @@ void main()
     if (dawnDuskFactor > 0.0)
     {
         vec3 dawnDir = normalize(vec3(sunDirWS.x, 0.0, sunDirWS.z));
-        float glow = pow(max(0.0, dot(rayVS, dawnDir)), 10.0);
+        float glow = pow(max(0.0, dot(rayWS, dawnDir)), 10.0);
         vec3 dawnColor = vec3(1.0, 0.4, 0.1);
         sky += dawnColor * glow * dawnDuskFactor;
     }
 
     float starValue = stars(rayWS);
-    float starVisibility = smoothstep(0.0, -0.3, elevation);
+    float starVisibility = 1.0 - smoothstep(-0.3, 0.0, elevation);
     sky += vec3(starValue) * starVisibility;
 
-    float cosTheta = clamp(dot(rayVS, sunDirWS), -1.0, 1.0);
+    float cosTheta = clamp(dot(rayWS, sunDirWS), -1.0, 1.0);
 
     float rim = fwidth(cosTheta) * 0.5;
     float sunDisc = smoothstep(uCosSunAngularRadius - rim, uCosSunAngularRadius + rim, cosTheta);

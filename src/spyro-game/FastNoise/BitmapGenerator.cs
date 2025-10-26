@@ -2,7 +2,7 @@
 
 public class BitmapGenerator
 {
-    public void Generate()
+    public static void Generate()
     {
         var cellular = new FastNoise("CellularDistance");
         cellular.Set("ReturnType", "Index0Add1");

@@ -119,6 +119,52 @@ public sealed class CullingHelper
         return true;
     }
 
+    public static bool IsAabbCenterInFrustum(in AABB aabb, in Vector4[] frustumPlanes)
+    {
+        //var corners = new Vector3[8];
+        // Center/extents
+        var min = aabb.min;
+        var max = aabb.max;
+        var center = (min + max) * 0.5f;
+        var half = (max - min) * 0.5f;
+
+        // For each plane (must be normalized!)
+        for (var i = 0; i < 6; i++)
+        {
+            var p = frustumPlanes[i];
+            var n = new Vector3(p.X, p.Y, p.Z);
+            var d = p.W;
+
+            // Signed distance from AABB center to plane
+            var dist = Vector3.Dot(n, center) + d;
+
+            // Projected radius of the AABB onto the plane normal
+            var radius = MathF.Abs(half.X * n.X) + MathF.Abs(half.Y * n.Y) + MathF.Abs(half.Z * n.Z);
+
+            // If the AABB is completely behind this plane, cull it
+            if (dist + radius < 0.0f) return false;
+        }
+        return true; // not fully outside any plane
+    }
+
+    public static bool BeyondFarPlane(in AABB aabb, in Matrix4 view, float far)
+    {
+        var min = aabb.min; 
+        var max = aabb.max;
+        var c = (min + max) * 0.5f;
+        var e = (max - min) * 0.5f;
+
+        // view-space center
+        var cz = view.M13 * c.X + view.M23 * c.Y + view.M33 * c.Z + view.M43;
+
+        // project half extents onto view -Z axis (3rd row)
+        var r2 = new Vector3(view.M31, view.M32, view.M33);
+        var rz = MathF.Abs(r2.X) * e.X + MathF.Abs(r2.Y) * e.Y + MathF.Abs(r2.Z) * e.Z;
+
+        var maxZ = cz + rz;     // closest Z (remember: more positive = closer; inside if >= -far)
+        return maxZ < -far;     // entirely beyond far plane
+    }
+
     public static ContainmentType GetAabbFrustumContainment(in AABB aabb, in Vector4[] frustumPlanes)
     {
         var min = aabb.min;

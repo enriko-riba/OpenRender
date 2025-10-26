@@ -18,7 +18,7 @@ public static class VoxelHelper
     public const int ChunkYSize = 128;
 
     public const int WaterLevel = 35;
-    public const float NoiseFrequency = 0.0009f;
+    public const float NoiseFrequency = 0.0012f;
 
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;
     public const int ChunkSizeXZMinusOne = ChunkSideSize - 1;

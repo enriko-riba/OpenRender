@@ -14,7 +14,9 @@ internal static class MathUtil
 internal class DayNightCycle(Scene scene)
 {
     private LightUniform dirLight = scene.Lights.ElementAt(0);
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(19));
+    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(9));
+
+    public float SunPathTilt { get; set; } = 0.35f;
 
     // Call this *each frame* with elapsedSeconds
     public void Tick(double elapsedSeconds)
@@ -37,7 +39,7 @@ internal class DayNightCycle(Scene scene)
         float y = MathF.Sin(angle);
 
         // Tilt the sun path a bit for aesthetics
-        var sunDir = Vector3.Normalize(new Vector3(x, y, -0.25f));
+        var sunDir = Vector3.Normalize(new Vector3(x, y, SunPathTilt));
 
         dirLight.Direction = -sunDir;
 
