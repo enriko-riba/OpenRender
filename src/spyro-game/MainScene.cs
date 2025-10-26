@@ -12,6 +12,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using SpyroGame.Components;
 using SpyroGame.Input;
 using SpyroGame.World;
 
@@ -33,6 +34,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private VoxelWorld world = default!;
     private Player player = default!;
     private SkyBoxSun skyBox = default!;
+    private WaterNode waterNode = default!;
 
     public VoxelWorld World
     {
@@ -184,22 +186,28 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
                     lastMousePosition = mouseCenter;
                 }
             }
+
+            if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+            {
+                player.BreakBlock();
+            }
+
+            if (skyBox != null)
+            {
+                skyBox.Material.Shader.Use();
+                skyBox.Material.Shader.SetFloat("uTime", (float)base.SceneManager.Time);
+            }
+
+            if (waterNode != null)
+            {
+                waterNode.Material.Shader.Use();
+                waterNode.Material.Shader.SetFloat("uDayFactor", dayNightCycle.DayFactor);
+            }
         }
         else
         {
             // When not focused, just update the last position to prevent a jump when focus is regained.
             lastMousePosition = SceneManager.MouseState.Position;
-        }
-
-        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
-        {
-            player.BreakBlock();
-        }
-
-        if (skyBox != null)
-        {
-            skyBox.Material.Shader.Use();
-            skyBox.Material.Shader.SetFloat("uTime", (float)base.SceneManager.Time);
         }
     }
 
@@ -235,7 +243,6 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         skyBox = SkyBoxSun.Create();
         AddNode(skyBox);
         skyBox.Material.Shader.Use();
-        //skyBox.Material.Shader.SetFloat("uSunAngularRadius", 0.0093f); // ~0.53°
         skyBox.Material.Shader.SetFloat("uSunHaloRadius", 0.05f);
         skyBox.Material.Shader.SetFloat("uSunIntensity", 1.75f);
         skyBox.Material.Shader.SetFloat("uCosSunAngularRadius", MathF.Cos(0.0499f));
@@ -244,5 +251,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         AddNode(world.ChunkRenderer);
         world.Camera = camera!;
         camera!.Invalidate();
+
+        waterNode = WaterNode.Create();
+        AddNode(waterNode);
     }
 }

@@ -19,10 +19,9 @@ internal class DayNightCycle(Scene scene)
     public float SunPathTilt { get; set; } = 0.35f;
     public float DayFactor { get; private set; }
 
-    // Call this *each frame* with elapsedSeconds
     public void Tick(double elapsedSeconds)
     {
-        // 1 real second = 1 game minute (as you had)
+        // 1 real second = 1 game minute
         timeOfDay = timeOfDay.AddMinutes(elapsedSeconds);
 
         UpdateSunDirection(timeOfDay);
@@ -35,12 +34,11 @@ internal class DayNightCycle(Scene scene)
     {
         var t = (float)dayTime.TimeOfDay.TotalHours / 24.0f;
         var angle = (t - 0.25f) * 2.0f * MathF.PI; // -0.25 to make 6am the sunrise point
-        
+
         var x = MathF.Cos(angle);
         var y = MathF.Sin(angle);
 
-        // Tilt the sun path a bit for aesthetics
-        var sunDir = Vector3.Normalize(new Vector3(x, y, SunPathTilt));
+        var sunDir = Vector3.Normalize(new Vector3(x, y, SunPathTilt)); // Tilt the sun path a bit for aesthetics
 
         dirLight.Direction = -sunDir;
 
