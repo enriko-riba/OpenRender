@@ -265,7 +265,7 @@ public class VoxelWorld
         Log.Debug($"{indices.Length} chunks visibility calculated in: {stopwatch.ElapsedMilliseconds - start} ms");
     }
 
-    public Chunk CreateChunk(int chunkIndex, bool calculateBlockType = true)
+    public Chunk CreateChunk(int chunkIndex)
     {
         var position = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var chunk = new Chunk(this, chunkIndex)

@@ -1,9 +1,8 @@
-﻿using OpenRender.Core;
-using System;
+﻿using OpenRender.Components;
+using OpenRender.Core;
 using OpenRender.Core.Buffers;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
-using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -11,18 +10,23 @@ using OpenTK.Windowing.Common;
 
 namespace SpyroGame.World;
 
-internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
+internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
 {
     private Matrix4 projectionMatrix = Matrix4.Identity;
     private Matrix4 invProjectionMatrix = Matrix4.Identity;
 
-    public static SkyBoxSun Create()
+    public static SkyBoxSun Create(IDayNightTimeProvider dayNightTimeProvider)
     {
         var shader = new Shader("Shaders/skybox-sun.vert", "Shaders/skybox-sun.frag");
+        shader.Use();
+        shader.SetFloat("uSunHaloRadius", 0.05f);
+        shader.SetFloat("uSunIntensity", 1.75f);
+        shader.SetFloat("uCosSunAngularRadius", MathF.Cos(0.0499f));
+
         var mat = new Material { Shader = shader };
         var (vertices, indices) = GeometryHelper.CreateCube();
         var skyBoxMesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, vertices, indices);
-        var skybox = new SkyBoxSun(skyBoxMesh, mat)
+        var skybox = new SkyBoxSun(dayNightTimeProvider, skyBoxMesh, mat)
         {
             RenderGroup = RenderGroup.SkyBox,
             DisableCulling = true
@@ -51,7 +55,7 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
             GL.DepthFunc(DepthFunction.Lequal);
         }
 
-        int[] viewport = new int[4];
+        var viewport = new int[4];
         GL.GetInteger(GetPName.Viewport, viewport);
         var viewportSize = new Vector2(viewport[2], viewport[3]);
         Material.Shader.SetVector2("uViewportSize", ref viewportSize);
@@ -61,7 +65,8 @@ internal class SkyBoxSun(Mesh mesh, Material material) : SceneNode(mesh, materia
         view.Row3.Xyz = Vector3.Zero;
         Material.Shader.SetMatrix4("view", ref view);
         Material.Shader.SetMatrix4("projection", ref projectionMatrix);
-
+        Material.Shader.SetFloat("uTime", (float)dayNightTimeProvider.TimeOfDay.TotalSeconds);
+        
         base.OnDraw(elapsed);
 
         GL.DepthMask(true);

@@ -10,7 +10,7 @@
 
 uniform int uTotalLights;
 uniform int outlinedBlockId;
-uniform int useFog = 0;
+uniform int useFog = 1;
 
 layout (std140, binding = 0) uniform camera {
     mat4 view;
@@ -61,19 +61,24 @@ flat in uint blockId;       // per-instance block ID (instance ID)
 
 out vec4 outputColor;
 
+const float FAR_CUSHION = 0.5;
+const float FAR_PLANE = 430.0;
+
 // Simple linear fog between FogMin and FogMax
 float getFogFactor(float d)
 {
-    const float FogMax = 447.0;
-    const float FogMin = 400.0;
-
-    if (d >= FogMax) return 1.0;
-    if (d <= FogMin) return 0.0;
-    return 1.0 - (FogMax - d) / (FogMax - FogMin);
+    const float FogMax = FAR_PLANE - FAR_CUSHION;
+    const float FogMin = FAR_PLANE * 0.75;
+    return clamp(1.0 - (FogMax - d) / (FogMax - FogMin), 0, 1);
 }
 
 void main()
 {
+    float dCam = distance(fragPos, cameraPos);
+    if (dCam > (FAR_PLANE - FAR_CUSHION)) {
+        discard;
+    }
+
     // Fetch material/texture
     Material m = materials[materialIndex];
     sampler2D tex = bindlessTextures[textureIndex];
@@ -123,10 +128,9 @@ void main()
     // Fog
     if(useFog > 0)
     {
-        vec4 fogColor = vec4(0.40, 0.40, 0.42, 1.0);
         float d = distance(fragPos, cameraPos);
         float f = getFogFactor(d);
-        outputColor = mix(base, fogColor, f);
+        outputColor = mix(base, vec4(dirLight.ambient, 1.0), f);
     }
     else{
         outputColor = base;

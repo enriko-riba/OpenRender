@@ -10,9 +10,10 @@ namespace SpyroGame.Components;
 
 public class WaterNode : SceneNode
 {
+    private readonly IDayNightTimeProvider timeProvider;
     private double uTime;
 
-    public static WaterNode Create()
+    public static WaterNode Create(IDayNightTimeProvider timeProvider)
     {
         var waterShader = new Shader("Shaders/water.vert", "Shaders/water.frag");
         var material = new Material { Shader = waterShader };
@@ -25,7 +26,7 @@ public class WaterNode : SceneNode
         uint[] indices = [0, 1, 2, 0, 3, 1];
         var mesh = new Mesh(VertexDeclarations.VertexPositionTexture, vertices, indices);
 
-        var waterNode = new WaterNode(mesh, material)
+        var waterNode = new WaterNode(mesh, material, timeProvider)
         {
             RenderGroup = RenderGroup.Default, // Render after solid objects
             DisableCulling = true
@@ -33,7 +34,10 @@ public class WaterNode : SceneNode
         return waterNode;
     }
 
-    private WaterNode(Mesh mesh, Material material) : base(mesh, material) { }
+    private WaterNode(Mesh mesh, Material material, IDayNightTimeProvider timeProvider) : base(mesh, material)
+    {
+        this.timeProvider = timeProvider;
+    }
 
     public override void OnDraw(double elapsed)
     {
@@ -45,14 +49,21 @@ public class WaterNode : SceneNode
         // GL.Enable(EnableCap.Blend);
         // GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
-        Matrix4.CreateScale(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, 1, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, out var scaleMatrix);
-        var worldMatrix = scaleMatrix;
+        Matrix4.CreateScale(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, 1, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, out var worldMatrix);
         worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel + 0.85f, 0);
         Material.Shader.SetMatrix4("model", ref worldMatrix);
-        Material.Shader.SetFloat("uTime", (float)uTime * 0.2f);
-
+        Material.Shader.SetFloat("uTime", (float)uTime);
+        Material.Shader.SetFloat("uDayFactor", timeProvider.DayFactor);
+        var isCullFaceEnabled = GL.IsEnabled(EnableCap.CullFace);
+        if (isCullFaceEnabled)
+        {
+            GL.Disable(EnableCap.CullFace);
+        }
         GL.DrawElements(PrimitiveType.Triangles, Vao!.DataLength, DrawElementsType.UnsignedInt, 0);
-
+        if (isCullFaceEnabled)
+        {
+            GL.Enable(EnableCap.CullFace);
+        }
         // Note: Blending should be disabled after drawing
         // GL.Disable(EnableCap.Blend);
     }

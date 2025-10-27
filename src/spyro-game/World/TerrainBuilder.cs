@@ -22,7 +22,7 @@ public class TerrainBuilder
         
         heightData = NoiseData.CreateFromEncoding(heightDataEncoding, 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, VoxelHelper.NoiseFrequency, seed, out var minmax);
         
-        //  normallize the range to 0 .. 1
+        //  normalize the range to 0 .. 1
         MapRange(heightData, minmax.min, minmax.max, 0f, 1f);
 
         landData = NoiseData.CreateFromEncoding(landDataEncoding, 0, 0, VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize, 0.005f, seed, out _);
@@ -61,7 +61,6 @@ public class TerrainBuilder
     /// Raw height data in range [0, 1].
     /// </summary>
     public float[] HeightData => heightData;
-
     /// <summary>
     /// 
     /// </summary>

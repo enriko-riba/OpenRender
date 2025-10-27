@@ -191,18 +191,6 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             {
                 player.BreakBlock();
             }
-
-            if (skyBox != null)
-            {
-                skyBox.Material.Shader.Use();
-                skyBox.Material.Shader.SetFloat("uTime", (float)base.SceneManager.Time);
-            }
-
-            if (waterNode != null)
-            {
-                waterNode.Material.Shader.Use();
-                waterNode.Material.Shader.SetFloat("uDayFactor", dayNightCycle.DayFactor);
-            }
         }
         else
         {
@@ -240,19 +228,14 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         dayNightCycle = new(this);
         dayNightCycle.Tick(0);
 
-        skyBox = SkyBoxSun.Create();
+        skyBox = SkyBoxSun.Create(dayNightCycle);
         AddNode(skyBox);
-        skyBox.Material.Shader.Use();
-        skyBox.Material.Shader.SetFloat("uSunHaloRadius", 0.05f);
-        skyBox.Material.Shader.SetFloat("uSunIntensity", 1.75f);
-        skyBox.Material.Shader.SetFloat("uCosSunAngularRadius", MathF.Cos(0.0499f));
-
 
         AddNode(world.ChunkRenderer);
         world.Camera = camera!;
         camera!.Invalidate();
 
-        waterNode = WaterNode.Create();
+        waterNode = WaterNode.Create(dayNightCycle);
         AddNode(waterNode);
     }
 }

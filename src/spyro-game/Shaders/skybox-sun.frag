@@ -27,6 +27,7 @@ uniform vec2 uViewportSize;
 uniform mat4 uInvProjection;
 
 out vec4 FragColor;
+in vec3 viewDir;
 
 float hash13(vec3 p) {
     p = fract(p * vec3(0.1031, 0.1030, 0.0973));
@@ -101,6 +102,14 @@ float stars(vec3 rayWS) {
     return clamp(starField, 0.0, 1.0);
 }
 
+float getSkyFogFactor(vec3 direction)
+{
+    float verticality = 1.0 - dot(direction, vec3(0, 1, 0));
+    return clamp(verticality * 0.65, 0.0, 1.0);
+}
+float random(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
 void main()
 {
     vec2 ndc = (gl_FragCoord.xy / uViewportSize) * 2.0 - 1.0;
@@ -126,7 +135,7 @@ void main()
     {
         vec3 dawnDir = normalize(vec3(sunDirWS.x, 0.0, sunDirWS.z));
         float glow = pow(max(0.0, dot(rayWS, dawnDir)), 10.0);
-        vec3 dawnColor = vec3(1.0, 0.4, 0.1);
+        vec3 dawnColor = vec3(1.0, 0.3, 0.1);
         sky += dawnColor * glow * dawnDuskFactor;
     }
 
@@ -143,11 +152,21 @@ void main()
     float halo = smoothstep(cosHaloRadius, uCosSunAngularRadius, cosTheta);
     halo *= halo;
 
-    vec3 sunColor   = mix(vec3(1.00, 0.92, 0.70), vec3(1.00, 1.00, 0.90), clamp(elevation * 0.6 + 0.5, 0.0, 1.0));
+    vec3 sunColor   = mix(vec3(0.90, 0.82, 0.70), vec3(1.00, 1.00, 0.70), clamp(elevation * 0.6 + 0.5, 0.0, 1.0));
     vec3 haloColor  = mix(vec3(1.00, 0.60, 0.25), sunColor, smoothstep(0.0, 0.25, elevation));
 
     vec3 sunGlow = sunDisc * sunColor * 6.0 + halo * haloColor * 1.5;
     sunGlow *= uSunIntensity;
 
-    FragColor = vec4(sky + sunGlow, 1.0);
+    vec3 baseColor = sky + sunGlow;
+
+    // Calculate the fog factor for the skybox
+    vec3 viewDir = normalize(viewDir);
+    float skyFogFactor = getSkyFogFactor(viewDir);
+    vec3 finalColor = mix(baseColor, dirLight.ambient, skyFogFactor);
+    // Apply dithering: add a small random value to break up the color bands
+    finalColor += (random(gl_FragCoord.xy) - 0.5) / 255.0;
+
+    //FragColor = vec4(sky + sunGlow, 1.0);
+    FragColor = vec4(finalColor, 1.0);
 }

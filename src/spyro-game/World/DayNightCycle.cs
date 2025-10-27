@@ -1,6 +1,7 @@
 ﻿using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
+using SpyroGame.World;
 
 internal static class MathUtil
 {
@@ -11,19 +12,20 @@ internal static class MathUtil
     }
 }
 
-internal class DayNightCycle(Scene scene)
+internal class DayNightCycle(Scene scene) : IDayNightTimeProvider
 {
     private LightUniform dirLight = scene.Lights.ElementAt(0);
     private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(5));
 
     public float SunPathTilt { get; set; } = 0.35f;
     public float DayFactor { get; private set; }
+    public Vector3 SunDirection { get; private set; }
 
+    // Call this *each frame* with elapsedSeconds
     public void Tick(double elapsedSeconds)
     {
-        // 1 real second = 1 game minute
+        // 1 real second = 1 game minute (as you had)
         timeOfDay = timeOfDay.AddMinutes(elapsedSeconds);
-
         UpdateSunDirection(timeOfDay);
     }
 
@@ -38,7 +40,9 @@ internal class DayNightCycle(Scene scene)
         var x = MathF.Cos(angle);
         var y = MathF.Sin(angle);
 
-        var sunDir = Vector3.Normalize(new Vector3(x, y, SunPathTilt)); // Tilt the sun path a bit for aesthetics
+        // Tilt the sun path a bit for aesthetics
+        var sunDir = Vector3.Normalize(new Vector3(x, y, SunPathTilt));
+        SunDirection = sunDir;
 
         dirLight.Direction = -sunDir;
 
