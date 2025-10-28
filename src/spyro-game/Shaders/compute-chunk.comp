@@ -25,6 +25,7 @@ const uint BlockTypeGrassDirt = 5u;
 const uint BlockTypeGrass = 6u;
 const uint BlockTypeSnow = 7u;
 const uint BlockTypeBedRock = 8u;
+const uint BlockTypeGravel = 9u;
 
 int WorldVoxelsPerSide()
 {

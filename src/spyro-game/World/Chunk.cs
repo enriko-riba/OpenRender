@@ -1,5 +1,4 @@
 ﻿using OpenTK.Mathematics;
-using System.Diagnostics;
 
 namespace SpyroGame.World;
 

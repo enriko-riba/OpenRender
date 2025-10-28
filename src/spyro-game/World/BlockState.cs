@@ -44,26 +44,3 @@ public struct BlockState
 
     public override readonly string ToString() => $"{BlockType}@{LocalPosition}/{ChunkIndex}";
 }
-
-public enum BlockType
-{
-    None,
-    WaterLevel,
-    Rock,
-    Sand,
-    Dirt,
-    GrassDirt,
-    Grass,
-    Snow,
-    BedRock
-}
-
-public enum BlockDirection : byte
-{
-    South,
-    East,
-    North,
-    West,
-    Top,
-    Bottom
-}
