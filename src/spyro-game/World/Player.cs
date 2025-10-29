@@ -139,7 +139,7 @@ public class Player
 
     public Vector3 Direction { get; set; }
 
-    public Vector3 ChunkLocalPosition { get; set; } = new Vector3(0, 0, 0);
+    public Vector3i ChunkLocalPosition { get; set; } = new Vector3i(0, 0, 0);
 
     public Chunk? CurrentChunk { get; set; } = null;
 

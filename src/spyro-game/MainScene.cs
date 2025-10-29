@@ -23,7 +23,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
     private const int Padding = 70;
 
     private static readonly Vector3 textColor = new(0.752f, 0.750f, 0);
-    private static readonly Vector3 debugColorBluish = new(0.2f, 0.2f, 1f);
+    private static readonly Vector3 debugColorBluish = new(0.4f, 0.4f, 1f);
 
     private readonly KeyboardActionMapper kbdActions = new();
     private DayNightCycle dayNightCycle = default!;
@@ -52,9 +52,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
         var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 100, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
         //var startPosition = new Vector3(0, -1, 0);
-        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)// * 1.5f) // TODO: x 1.5 is for debugging loading/unloading chunks
+        camera = new CameraFps(startPosition, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
         {
-            MaxFov = 40
+            MaxFov = 70
         };
 
         player = new Player(camera, startPosition, world);
@@ -128,9 +128,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
 
-        text = $"player position {player?.Position.ToString("N2")}{(player?.IsGhostMode ?? false ? ", ghost mode" : "")}";
+        text = $"player position {player.Position.ToString("N2")}{(player.IsGhostMode ? ", ghost mode" : "")}";
         writeLine(text, debugColorBluish);
-        if (player?.PickedBlock is not null)
+        if (player.PickedBlock is not null)
         {
             text = $"picked block: {player.PickedBlock}";
             writeLine(text, debugColorBluish);
@@ -143,11 +143,11 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             writeLine(text, debugColorBluish);
         }
 
-        text = $"time: {dayNightCycle.TimeOfDay}";
+        text = $"time: {dayNightCycle.TimeOfDay:hh\\:mm}";
         writeLine(text, Vector3.UnitY);
         writeLine("", textColor);
 
-        text = $"isJumping: {player?.IsJumping}, isGrounded: {player?.IsGrounded}, velocity: {player?.VelocityY}";
+        text = $"isJumping: {player.IsJumping}, isGrounded: {player.IsGrounded}, velocity: {player.VelocityY}";
         writeLine(text, Vector3.UnitY);
 
 
@@ -157,6 +157,20 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
 
         //text = $"camera direction: {camera!.Front}";
         //textRenderer.Render(text, 20, 5, 140, new(0.5f));
+        var chunk = player.CurrentChunk;
+        if (chunk is not null)
+        {
+            var idx = player.ChunkLocalPosition.X + player.ChunkLocalPosition.Z * VoxelHelper.ChunkSideSize;
+            var info = chunk.Columns[idx];
+            var ciText = $"Biome: {info.Biome}";
+            writeLine(ciText, debugColorBluish);
+            ciText = $"C:{info.Continentalness:F2}  E:{info.Erosion:F2}";
+            writeLine(ciText, debugColorBluish);
+            ciText = $"T:{info.Temperature:F2}  H:{info.Humidity:F2}";
+            writeLine(ciText, debugColorBluish);
+            ciText = $"Height:{info.Height01:F3}";
+            writeLine(ciText, debugColorBluish);
+        }
     }
 
     public override void UpdateFrame(double elapsedSeconds)

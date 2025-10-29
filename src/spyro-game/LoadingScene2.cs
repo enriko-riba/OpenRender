@@ -21,7 +21,6 @@ internal class LoadingScene2 : Scene
 
     private double totalTime = 0;
     private double totalInitializationTime = 0;
-    private bool hasCompleteChunksStarted;
     private int lineY;
     private List<Chunk> completedChunks = [];
     private ChunkInitializer chunkInitializer = null!;
@@ -95,7 +94,6 @@ internal class LoadingScene2 : Scene
                 if (computeDone)
                 {
                     totalInitializationTime = totalTime;
-                    hasCompleteChunksStarted = true;
                     var surroundingChunks = world.SurroundingChunks;
                     Debug.Assert(surroundingChunks.All(x => x.IsProcessed), "unprocessed chunk");
                     completedChunks = [.. surroundingChunks];

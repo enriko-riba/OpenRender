@@ -2,34 +2,6 @@
 
 internal static class NoiseData
 {
-    public static float[] CreateFromEncoding(string encoding, int xOffset, int yOffset, int size, float frequency, int seed, out OutputMinMax minMax)
-    {
-        var noiseData = new float[size * size];
-        var nodeTree = FastNoise.FromEncodedNodeTree(encoding);
-        minMax = nodeTree.GenUniformGrid2D(noiseData, xOffset, yOffset, size, size, frequency, seed);
-        return noiseData;
-    }
-
-    public static float[] CreateFromParameters(int xOffset, int yOffset, int size, float frequency, int seed, out OutputMinMax minMax)
-    {
-        var sampleCount = size * size;
-        var xCoords = new float[sampleCount];
-        var yCoords = new float[sampleCount];
-        var index = 0;
-        for (var y = 0; y < size; ++y)
-            for (var x = 0; x < size; ++x)
-            {
-                xCoords[index] = x;
-                yCoords[index] = y;
-                index++;
-            }
-        var noiseData = new float[sampleCount];
-        NoiseDotNet.Noise.GradientNoise2D(xCoords, yCoords, noiseData, frequency * 4, frequency * 4, 1f, seed);
-        minMax.min = noiseData.Min();
-        minMax.max = noiseData.Max();
-        return noiseData;
-    }
-
     public static float[] CreateField(int xOffset, int yOffset, int size, float freq, int seed, out (float min, float max) minMax)
     {
         var n = size * size;
@@ -86,5 +58,14 @@ internal static class NoiseData
         for (var i = 0; i < n; i++) { if (outBuf[i] < lo) lo = outBuf[i]; if (outBuf[i] > hi) hi = outBuf[i]; }
         minMax = (lo, hi);
         return outBuf;
+    }
+
+    public static float SampleGradientNoise2D(float x, float y, float freq, float amp, int seed)
+    {
+        Span<float> xs = stackalloc float[1] { x };
+        Span<float> ys = stackalloc float[1] { y };
+        Span<float> outBuf = stackalloc float[1];
+        NoiseDotNet.Noise.GradientNoise2D(xs, ys, outBuf, freq, freq, amp, seed);
+        return outBuf[0];
     }
 }

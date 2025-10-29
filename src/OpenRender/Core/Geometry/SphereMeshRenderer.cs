@@ -33,8 +33,8 @@ public class SphereMeshRenderer
     {
         shader.Use();
         GL.BindVertexArray(vao);
-        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+        GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
         GL.DrawElements(PrimitiveType.Triangles, vao.DataLength, DrawElementsType.UnsignedInt, 0);
-        GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+        GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
     }
 }

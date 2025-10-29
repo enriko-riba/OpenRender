@@ -1,12 +1,5 @@
 ﻿namespace SpyroGame.World;
 
-/// <summary>
-/// Represents a biome spanning a certain world area.
-/// </summary>
-/// <param name="BaseHeight"></param>
-public record struct ChunkBiome(LandType LandType, float BaseHeight, Climate Climate) { }
-
-
 public enum LandType
 {
     DeepOcean,

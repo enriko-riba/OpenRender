@@ -7,6 +7,7 @@ public class Chunk(VoxelWorld world, int index)
     private bool isInitialized;
     private bool isProcessed;
     private readonly int[,] maxHeights = new int[VoxelHelper.ChunkSideSize, VoxelHelper.ChunkSideSize];
+    public ColumnInfo[] Columns { get; private set; } = new ColumnInfo[VoxelHelper.ChunkSideSizeSquare];
 
     private readonly Dictionary<int, BlockState> changedBlocks = [];
 
@@ -32,6 +33,17 @@ public class Chunk(VoxelWorld world, int index)
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
                 var h = maxHeights[x, z];
+
+                // determine biome and store column info for debugging
+                var worldX = (index % VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize + x;
+                var worldZ = (index / VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize + z;
+                terrainBuilder.SampleFields01(worldX, worldZ, out float C, out float E, out float T, out float H);
+                var height01 = h / (float)(VoxelHelper.ChunkYSize - 1);
+                var slope01 = terrainBuilder.EstimateSlope01(worldX, worldZ);
+                var biome = terrainBuilder.ClassifyBiome(C, E, T, H, height01, slope01);
+                Columns[x + z * VoxelHelper.ChunkSideSize] = new ColumnInfo(biome, C, E, T, H, (byte)h, height01);
+
+                // build vertical column
                 for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
                 {
                     var i = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
@@ -45,6 +57,7 @@ public class Chunk(VoxelWorld world, int index)
         });
         isInitialized = true;
     }
+    
 
     /// <summary>
     /// Calculates visible blocks in the chunk and sets the <see cref="BlockState.IsVisible"/> property for each block.
@@ -59,15 +72,16 @@ public class Chunk(VoxelWorld world, int index)
             {
                 var h = maxHeights[x, z];
                 var yMin = 0;// Math.Max(0, h - 4);
-                var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, h + 1);
+                //var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, h + 1);
+                var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, Math.Max(h + 1, VoxelHelper.WaterLevel + 2));
 
                 for (var y = yMin; y <= yMax; y++)
                 {
                     var idx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
-                    var block = Blocks[idx];
+                    ref var block = ref Blocks[idx];
                     if (block.BlockType != BlockType.None)
                         block.IsVisible = IsExternallyVisible(x, y, z);
-                    Blocks[idx] = block;
+                    //Blocks[idx] = block;
                 }
             }
         });

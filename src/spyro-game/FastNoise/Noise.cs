@@ -102,7 +102,6 @@ public static class Noise
         }
     }
 
-
     /// <summary>
     /// <para> Vectorized 3D gradient noise function. Underlying algorithm is Quadratic noise, a modified version of Perlin noise. </para>
     /// <para> Output range is approximately -1.0 to 1.0, but in rare cases may exceed this range. </para>

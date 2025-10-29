@@ -1,7 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 
 namespace SpyroGame.Noise;
-
+/*
 public struct OutputMinMax
 {
     public OutputMinMax(float minValue = float.PositiveInfinity, float maxValue = float.NegativeInfinity)
@@ -497,3 +497,4 @@ public partial class FastNoise
     [DllImport(NATIVE_LIB)]
     private static extern bool fnSetHybridFloat(IntPtr nodeHandle, int nodeLookupIndex, float value);
 }
+*/
