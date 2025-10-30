@@ -15,7 +15,7 @@ The terrain generation system creates a procedural voxel-based world made of **c
 
 * **Chunk:** 3D array of blocks representing a small part of the world.
 * **Block:** Fundamental terrain unit (e.g., Rock, Dirt, Grass, Sand).
-* **Biome:** Defines surface characteristics (e.g., Desert, Taiga, Alpine) used for texture/visual differentiation.
+* **Biome:** Defines surface characteristics (e.g., Swamp, Desert, Savanna, Rainforest, Taiga, Alpine) used for texture/visual differentiation.
 * **Height Data:** Base elevation of terrain, derived from domain-warped Perlin noise.
 * **Continentalness, Erosion, Temperature, Humidity:** Low-frequency global fields controlling terrain shape and biome assignment.
 * **Ridge Data:** Secondary noise layer emphasizing sharp cliffs and ridges.
@@ -25,6 +25,7 @@ The terrain generation system creates a procedural voxel-based world made of **c
 1. **Global Field Generation**
 
    * Compute large-scale noise fields for continentalness (C), erosion (E), temperature (T), humidity (H).
+   * Precompute additional higher-frequency domain-warped detail layers for temperature and humidity that are blended in at sample time to increase climate variety.
 2. **Base Terrain Heightmap**
 
    * Generate domain-warped base height noise.
@@ -43,8 +44,13 @@ The terrain generation system creates a procedural voxel-based world made of **c
    * Ensures oceans and mountains occupy consistent world-scale proportions.
 6. **Biome Assignment**
 
-   * Biomes selected based on continentalness, erosion, temperature, and humidity.
-   * Used later to choose appropriate block textures.
+   * Biomes selected using continentalness, erosion, temperature, humidity, local slope, and altitude relative to sea level.
+   * Classification pipeline:
+     * Below-sea samples become deep- or coastal-water biomes (`Ocean`, `Beach`, or `Swamp`) depending on moisture and temperature.
+     * Gentle lowlands blend dryness and warmth into `Desert`, `Savanna`, `Plains`, or humid `Rainforest` variants.
+     * Cold or moderately dry climates resolve to `Taiga` and `Tundra`, while steep or high-altitude areas escalate to `Highlands` or `Alpine`.
+     * When no explicit rule triggers, the system falls back to the closest biome centroid across the C/E/T/H fields for smooth transitions.
+   * Biome selection feeds into later texture/material assignment for surface blocks.
 7. **Block Type Generation**
 
    * Block material decided based on relative altitude vs. terrain height.
@@ -57,12 +63,12 @@ The terrain generation system creates a procedural voxel-based world made of **c
 Terrain uses domain-warped 2D Perlin noise for realistic variation.
 
 ```csharp
-heightData = NoiseData.CreateDomainWarped(
-    0, 0, worldSize,
+float baseNoise = NoiseData.SampleDomainWarped(
+    wx, wz,
     baseFreq: 1f / 180f,
     warpFreq: 1f / 900f,
     warpAmp: 8f,
-    seedBase: seed ^ 0x12345, out var range);
+    seedBase: seed ^ 0x12345);
 ```
 
 #### Parameters:
@@ -71,25 +77,20 @@ heightData = NoiseData.CreateDomainWarped(
 * **warpFreq:** Controls warp bending scale. Lower = broader continents.
 * **warpAmp:** Controls warp strength. Too high produces bowl artifacts.
 
-A second ridged noise (`ridgeData`) layer creates sharp mountain features:
+A second ridged noise layer, sampled with a different frequency/seed set, creates sharp mountain features:
 
 ```csharp
-ridgeData = NoiseData.CreateDomainWarped(
-    0, 0, worldSize,
+float ridgeNoise = NoiseData.SampleDomainWarped(
+    wx, wz,
     baseFreq: 1f / 220f,
     warpFreq: 1f / 550f,
     warpAmp: 14f,
-    seedBase: seed ^ 0x5A17C3, out var range);
+    seedBase: seed ^ 0x5A17C3);
 ```
 
 ### Normalization
 
-All noise fields are normalized once globally to `[-1,1]` to keep terrain math consistent.
-
-```csharp
-for (int i = 0; i < heightData.Length; i++)
-    heightData[i] = (heightData[i] - min) / (max - min) * 2f - 1f;
-```
+Each height sample is calibrated on the fly through quantile-based normalization (`CalibrateElevation`), so we avoid allocating a full world-sized height map while still maintaining consistent sea-level and mountain coverage.
 
 ## 3. Height Calculation
 
@@ -104,7 +105,7 @@ Steps:
 
    ```csharp
    var fbm = 0.5f * (baseVal + 1f);
-   var rid = 1f - MathF.Abs(ridgeData[idx]);
+   var rid = 1f - MathF.Abs(SampleRidgeNoise(wx, wz));
    var relief = Lerp(MathF.Pow(fbm, P.SmoothPow), rid, ruggedWeight);
    ```
 3. Apply mountain/sea scaling:

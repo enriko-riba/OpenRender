@@ -60,6 +60,20 @@ internal static class NoiseData
         return outBuf;
     }
 
+    public static float SampleDomainWarped(float x, float y, float baseFreq, float warpFreq, float warpAmp, int seedBase)
+    {
+        var warpSeedX = seedBase ^ unchecked((int)0x9E3779B9);
+        var warpSeedY = seedBase ^ unchecked((int)0x7F4A7C15);
+
+        var warpX = SampleGradientNoise2D(x, y, warpFreq, warpAmp, warpSeedX);
+        var warpY = SampleGradientNoise2D(x, y, warpFreq, warpAmp, warpSeedY);
+
+        var warpedX = x + warpX;
+        var warpedY = y + warpY;
+
+        return SampleGradientNoise2D(warpedX, warpedY, baseFreq, 1f, seedBase);
+    }
+
     public static float SampleGradientNoise2D(float x, float y, float freq, float amp, int seed)
     {
         Span<float> xs = stackalloc float[1] { x };

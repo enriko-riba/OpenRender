@@ -524,11 +524,13 @@ public class VoxelWorld
             if (cachedChunks.TryGetValue(chunkIndex, out var cachedChunk))
             {
                 cachedChunk.State = ChunkState.ToBeRemoved;
+                cachedChunk.Visible = false;
                 ChunkRenderer.chunksStreamingQueue.Enqueue(cachedChunk);
             }
             else if (loadedChunks.TryGetValue(chunkIndex, out var chunk))
             {
                 chunk.State = ChunkState.ToBeRemoved;
+                chunk.Visible = false;
                 ChunkRenderer.chunksStreamingQueue.Enqueue(chunk);
             }
             else

@@ -1,7 +1,8 @@
-﻿using OpenRender;
+using OpenRender;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using SpyroGame.World;
+using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
@@ -16,10 +17,11 @@ internal sealed class ChunkInitializer : IDisposable
 
     // --- deps/state ---
     private readonly VoxelWorld world;
+    private readonly TerrainBuilder terrainBuilder;
     private readonly Shader shader;
 
     // SSBOs
-    private uint heightmapSSBO;        // binding=0 (immutable, full world heightmap)
+    private uint heightSSBO;           // binding=0 (per-dispatch chunk heightmaps)
     private uint blockTypeSSBO;        // binding=1 (output; persistently mapped for readback)
     private uint chunkIndicesSSBO;     // binding=2 (input; subset of world chunk indices)
 
@@ -27,19 +29,13 @@ internal sealed class ChunkInitializer : IDisposable
     private IntPtr blockTypePtr = IntPtr.Zero;
     private int blockTypeCapacityBytes;
     private int chunkIndicesCapacity;  // ints allocated in chunkIndicesSSBO
+    private int heightCapacityFloats;
 
     public ChunkInitializer(VoxelWorld world)
     {
         this.world = world ?? throw new ArgumentNullException(nameof(world));
+        terrainBuilder = world.terrainBuilder;
         shader = new Shader("Shaders/compute-chunk.comp", ShaderType.ComputeShader);
-
-        // upload the full world heightmap once (binding=0)
-        var heightData = world.terrainBuilder.HeightData; // float[]
-        var bytes = heightData.Length * sizeof(float);
-
-        GL.CreateBuffers(1, out heightmapSSBO);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightmapSSBO, -1, "heightmapSSBO");
-        GL.NamedBufferStorage(heightmapSSBO, bytes, heightData, BufferStorageFlags.DynamicStorageBit);
     }
 
     // ---- public APIs ----
@@ -49,14 +45,18 @@ internal sealed class ChunkInitializer : IDisposable
     {
         if (chunkIndices == null || chunkIndices.Length == 0) return;
 
-        EnsureChunkIndicesCapacity(chunkIndices.Length);
-        GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, chunkIndices.Length * sizeof(int), chunkIndices);
-        //GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
+        var chunkCount = chunkIndices.Length;
+
+        EnsureChunkIndicesCapacity(chunkCount);
+        GL.NamedBufferSubData(chunkIndicesSSBO, 0, chunkCount * sizeof(int), chunkIndices);
+
+        EnsureHeightCapacity(chunkCount);
+        UploadHeights(chunkIndices);
 
         var bytesPerChunk = VoxelsCount * Unsafe.SizeOf<uint>();
-        EnsureBlockTypeCapacity(bytesPerChunk * chunkIndices.Length);
+        EnsureBlockTypeCapacity(bytesPerChunk * chunkCount);
 
-        DispatchAndReadback(chunkIndices, 0, chunkIndices.Length);
+        DispatchAndReadback(chunkIndices, 0, chunkCount);
     }
 
     // ---- internals ----
@@ -70,9 +70,49 @@ internal sealed class ChunkInitializer : IDisposable
         }
         if (count > chunkIndicesCapacity)
         {
-            // immutable storage; update via SubData
             GL.NamedBufferStorage(chunkIndicesSSBO, count * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
             chunkIndicesCapacity = count;
+        }
+    }
+
+    private void EnsureHeightCapacity(int chunkCount)
+    {
+        if (chunkCount == 0) return;
+        var requiredFloats = chunkCount * VoxelHelper.ChunkSideSizeSquare;
+
+        if (heightSSBO == 0)
+        {
+            GL.CreateBuffers(1, out heightSSBO);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightSSBO, -1, "chunkHeightSSBO");
+        }
+
+        if (requiredFloats > heightCapacityFloats)
+        {
+            GL.NamedBufferStorage(heightSSBO, requiredFloats * sizeof(float), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            heightCapacityFloats = requiredFloats;
+        }
+    }
+
+    private void UploadHeights(int[] chunkIndices)
+    {
+        var chunkArea = VoxelHelper.ChunkSideSizeSquare;
+        var totalFloats = chunkIndices.Length * chunkArea;
+        if (totalFloats == 0) return;
+
+        var buffer = ArrayPool<float>.Shared.Rent(totalFloats);
+        try
+        {
+            var span = buffer.AsSpan(0, totalFloats);
+            for (var i = 0; i < chunkIndices.Length; i++)
+            {
+                terrainBuilder.FillChunkHeight01(chunkIndices[i], span.Slice(i * chunkArea, chunkArea));
+            }
+
+            GL.NamedBufferSubData(heightSSBO, 0, totalFloats * sizeof(float), buffer);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(buffer);
         }
     }
 
@@ -93,7 +133,6 @@ internal sealed class ChunkInitializer : IDisposable
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, blockTypeSSBO, -1, "blockTypeSSBO");
 
         var storageFlags =
-            //BufferStorageFlags.DynamicStorageBit |
             BufferStorageFlags.MapReadBit |
             BufferStorageFlags.MapPersistentBit |
             BufferStorageFlags.MapCoherentBit;
@@ -117,13 +156,12 @@ internal sealed class ChunkInitializer : IDisposable
         var sw = Stopwatch.StartNew();
 
         // bind common SSBOs
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, heightmapSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, heightSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, blockTypeSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
 
         // uniforms
         shader.Use();
-        shader.SetInt("worldSize", VoxelHelper.WorldChunksXZ);
         shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
         shader.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
         shader.SetInt("waterLevel", VoxelHelper.WaterLevel);
@@ -175,8 +213,6 @@ internal sealed class ChunkInitializer : IDisposable
     {
         if (blockTypeSSBO != 0)
         {
-            // persistent maps can be left mapped until delete; explicit unmap is fine too:
-            // GL.UnmapNamedBuffer(blockTypeSSBO);
             GL.DeleteBuffer(blockTypeSSBO);
             blockTypeSSBO = 0;
             blockTypePtr = IntPtr.Zero;
@@ -188,10 +224,11 @@ internal sealed class ChunkInitializer : IDisposable
             chunkIndicesSSBO = 0;
             chunkIndicesCapacity = 0;
         }
-        if (heightmapSSBO != 0)
+        if (heightSSBO != 0)
         {
-            GL.DeleteBuffer(heightmapSSBO);
-            heightmapSSBO = 0;
+            GL.DeleteBuffer(heightSSBO);
+            heightSSBO = 0;
+            heightCapacityFloats = 0;
         }
         //  TODO: implement shader.Dispose();
     }

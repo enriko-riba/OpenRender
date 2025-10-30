@@ -138,8 +138,10 @@ public class Chunk(VoxelWorld world, int index)
     #region Rendering data
     public volatile uint BlocksSSBO;
     public int SolidCount;
+    public int SolidCapacity;
     public volatile uint TransparentBlocksSSBO;
     public int TransparentCount;
+    public int TransparentCapacity;
     public bool Visible;
 
     public IEnumerable<BlockState> VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent);

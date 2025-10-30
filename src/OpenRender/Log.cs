@@ -32,8 +32,8 @@ public static class Log
 
     public static void CheckGlError([CallerMemberName] string name = "")
     {
-        var error = GL.GetError();
-        if (error != ErrorCode.NoError)
+        ErrorCode error;
+        if ((error = GL.GetError()) != ErrorCode.NoError)
         {
             Warn($"Error: '{error}' in {name}");
         }

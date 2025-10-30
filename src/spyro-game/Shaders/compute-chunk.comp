@@ -2,15 +2,10 @@
 
 layout (local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 
-// local chunk height map
 layout(std430, binding = 0) buffer ssbo_height { float height[]; };
 layout(std430, binding = 1) buffer ssbo_blocktypes { uint blocktype[]; };
-
-// the actual world chunk indices for each work group
 layout(std430, binding = 2) buffer ssbo_chunk_indices { uint chunkIndices[]; };
 
-
-uniform int worldSize;
 uniform int chunkSize;
 uniform int chunkYSize;
 uniform int waterLevel;
@@ -27,14 +22,10 @@ const uint BlockTypeSnow = 7u;
 const uint BlockTypeBedRock = 8u;
 const uint BlockTypeGravel = 9u;
 
-int WorldVoxelsPerSide()
-{
-    return worldSize * chunkSize;
-}
-
-float GetHeight(uint gx, uint gz) {
-    int width = WorldVoxelsPerSide();
-    return height[int(gx) + int(gz) * width];
+float GetHeight(uint chunkIdx, uint lx, uint lz) {
+    uint chunkArea = uint(chunkSize * chunkSize);
+    uint baseIndex = chunkIdx * chunkArea;
+    return height[baseIndex + lx + lz * uint(chunkSize)];
 }
 
 uint CalcBlockType(int maxHeight, uint x, uint y, uint z) {
@@ -61,15 +52,7 @@ void main() {
     uint lz = gl_LocalInvocationID.y;   // chunk local Z
 
     uint group = gl_WorkGroupID.x;                      // 0..N-1 of this dispatch
-    uint worldChunkIndex = uint(chunkIndices[group]);   // map to actual world chunk index
-
-    uint chunkX = worldChunkIndex % uint(worldSize);
-    uint chunkZ = worldChunkIndex / uint(worldSize);
-
-    uint gx = chunkX * uint(chunkSize) + lx;
-    uint gz = chunkZ * uint(chunkSize) + lz;
-
-    float h = GetHeight(gx, gz);
+    float h = GetHeight(group, lx, lz);
     int normalizedHeight = int(round( h * float(chunkYSize - 1) ));
     uint voxelCount = uint(chunkSize) * uint(chunkSize) * uint(chunkYSize);
     uint base = gl_WorkGroupID.x * voxelCount;  //  packed per-dispatch
