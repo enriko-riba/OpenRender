@@ -27,6 +27,7 @@ public class Renderer
     protected internal readonly UniformBlockBuffer<LightUniform> uboLight;
     protected internal readonly UniformBlockBuffer<MaterialUniform> uboMaterial;
     protected internal readonly UniformBlockBuffer<ResidentTextureData> uboTextures;
+    protected internal readonly UniformBlockBuffer<FogUniform> uboFog;
 
     public Renderer()
     {
@@ -34,6 +35,9 @@ public class Renderer
         uboLight = new UniformBlockBuffer<LightUniform>("light", 1);
         uboMaterial = new UniformBlockBuffer<MaterialUniform>("material", 2);
         uboTextures = new UniformBlockBuffer<ResidentTextureData>("textures", 3);
+        // Fog UBO at binding=4; shaders declare:
+        // layout(std140, binding = 4) uniform fogBlock { vec4 fogColor4; vec4 fogParams; };
+        uboFog = new UniformBlockBuffer<FogUniform>("fogBlock", 4);
 
         // 16 is minimum per OpenGL standard
         GL.GetInteger(GetPName.MaxTextureImageUnits, out var textureUnitsCount);
@@ -95,6 +99,7 @@ public class Renderer
             if (uboLight.IsUniformBlockSupported(shader)) uboLight.BindToShaderProgram(shader);
             if (uboMaterial.IsUniformBlockSupported(shader)) uboMaterial.BindToShaderProgram(shader);
             if (uboTextures.IsUniformBlockSupported(shader)) uboTextures.BindToShaderProgram(shader);
+            if (uboFog.IsUniformBlockSupported(shader)) uboFog.BindToShaderProgram(shader);
         }
 
         if (shader.UniformExists("model"))
@@ -218,6 +223,16 @@ public class Renderer
             var dirLight = lights[0];
             uboLight.UpdateSettings(ref dirLight);
         }
+    }
+
+    /// <summary>
+    /// Updates the Fog UBO bound at binding=4. Recommended to call only when values change.
+    /// </summary>
+    /// <param name="fog"></param>
+    public void UpdateFog(in FogUniform fog)
+    {
+        var f = fog; // ref requires variable
+        uboFog.UpdateSettings(ref f);
     }
 
     public void RenderFrame(double elapsedSeconds)

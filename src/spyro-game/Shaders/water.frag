@@ -36,6 +36,25 @@ in vec3 fragPos;
 // Output
 out vec4 outputColor;
 
+// Fog UBO (shared across shaders)
+// fogColor4.rgb = fog color, fogParams = (near, far, enabled, unused)
+layout (std140, binding = 4) uniform fogBlock {
+    vec4 fogColor4;
+    vec4 fogParams;
+};
+
+// --- Fog params to match terrain fog ---
+const float LEGACY_FAR_CUSHION = 0.5;
+const float LEGACY_FAR_PLANE = 430.0;
+float getFogFactor(float d)
+{
+    float enabled = fogParams.z;
+    float nearD = enabled > 0.5 ? fogParams.x : (LEGACY_FAR_PLANE * 0.75);
+    float farD  = enabled > 0.5 ? fogParams.y : (LEGACY_FAR_PLANE - LEGACY_FAR_CUSHION);
+    float denom = max(farD - nearD, 0.0001);
+    return clamp((d - nearD) / denom, 0.0, 1.0);
+}
+
 // =================================================================================
 //  PROCEDURAL WATER LOGIC
 // =================================================================================
@@ -112,5 +131,10 @@ void main() {
     float fresnel = 0.02 + 0.98 * pow(1.0 - dot(V, N), 5.0);
     float alpha = mix(minAlpha, 1.0, fresnel);
 
-    outputColor = vec4(finalColor, alpha);
+    // --- FOG (match terrain fog) ---
+    float dCam = distance(fragPos, cameraPos);
+    float fog = getFogFactor(dCam);
+    vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
+    vec3 fogged = mix(finalColor, fogColor, fog);
+    outputColor = vec4(fogged, alpha);
 }

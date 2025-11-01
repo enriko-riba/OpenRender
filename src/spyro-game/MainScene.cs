@@ -96,8 +96,10 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             Tint = Color4.LightPink
         };
         AddNode(crosshair);
-
+        
         SetupScene();
+
+        //OpenRender.Log.MinimumLevel = OpenRender.Log.LevelWarn;
     }
 
     public override void RenderFrame(double elapsedSeconds)
@@ -160,7 +162,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         var chunk = player.CurrentChunk;
         if (chunk is not null)
         {
-            var idx = player.ChunkLocalPosition.X + player.ChunkLocalPosition.Z * VoxelHelper.ChunkSideSize;
+            var idx = (int)player.ChunkLocalPosition.X + (int)player.ChunkLocalPosition.Z * VoxelHelper.ChunkSideSize;
             var info = chunk.Columns[idx];
             var ciText = $"Biome: {info.Biome}";
             writeLine(ciText, debugColorBluish);
@@ -212,6 +214,7 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             lastMousePosition = SceneManager.MouseState.Position;
         }
     }
+
 
     public override void OnMouseWheel(MouseWheelEventArgs e)
     {

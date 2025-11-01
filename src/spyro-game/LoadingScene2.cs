@@ -23,7 +23,6 @@ internal class LoadingScene2 : Scene
     private double totalInitializationTime = 0;
     private int lineY;
     private List<Chunk> completedChunks = [];
-    private ChunkInitializer chunkInitializer = null!;
 
     private int[] indices = [];
     private bool computeDone;
@@ -55,7 +54,7 @@ internal class LoadingScene2 : Scene
 
         var startPosition = new Vector3(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f, 0, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f);
 
-        chunkInitializer = new ChunkInitializer(world);
+        world.EnsureChunkInitializer();
         world.PrepareStartingChunks(startPosition);
         Log.CheckGlError(nameof(Load) + " after PrepareStartingChunks");
         indices = [.. world.SurroundingChunkIndices];
@@ -83,7 +82,13 @@ internal class LoadingScene2 : Scene
                 if (!computeDone)
                 {
                     Log.CheckGlError(nameof(RenderFrame) + " before compute");
-                    chunkInitializer.ProcessChunkData(indices);     // GL calls here are safe
+                    var initializer = world.ChunkInitializer;
+                    if (initializer is null)
+                    {
+                        world.EnsureChunkInitializer();
+                        initializer = world.ChunkInitializer;
+                    }
+                    initializer?.ProcessChunkData(indices);     // GL calls here are safe
                     Log.CheckGlError(nameof(RenderFrame) + " after compute");
                     computeDone = true;
                 }

@@ -16,7 +16,7 @@ void main()
     // Pass the raw vertex position as the view direction
     viewDir = aPosition;
 
-    // Standard skybox rendering logic...
+    // Standard skybox rendering logic (remove translation)
     mat4 viewNoTranslation = mat4(mat3(view));
     vec4 pos = projection * viewNoTranslation * vec4(aPosition, 1.0);
     gl_Position = pos.xyww;

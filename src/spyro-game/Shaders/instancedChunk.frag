@@ -12,6 +12,13 @@ uniform int uTotalLights;
 uniform int outlinedBlockId;
 uniform int useFog = 1;
 
+// Fog UBO (shared across shaders)
+// fogColor4.rgb = fog color, fogParams = (near, far, enabled, unused)
+layout (std140, binding = 4) uniform fogBlock {
+    vec4 fogColor4;
+    vec4 fogParams;
+};
+
 layout (std140, binding = 0) uniform camera {
     mat4 view;
     mat4 projection;
@@ -47,6 +54,7 @@ layout (std430, binding = 1) readonly buffer ssbo_materials {
 struct BlockState {
     uint index;
     uint packedBytes;  // low: direction (0..5), next: blockType, etc.
+    uint packedAO;
 };
 layout (std430, binding = 2) readonly buffer ssbo_blocks {
     BlockState blocks[];
@@ -58,24 +66,27 @@ in vec3 fragPos;            // world position
 flat in uint materialIndex; // per-instance material index
 flat in uint textureIndex;  // per-instance texture index
 flat in uint blockId;       // per-instance block ID (instance ID)
+flat in float aoBrightness;
 
 out vec4 outputColor;
 
-const float FAR_CUSHION = 0.5;
-const float FAR_PLANE = 430.0;
-
-// Simple linear fog between FogMin and FogMax
+// Linear fog driven by UBO (falls back to legacy constants if UBO disabled)
+const float LEGACY_FAR_CUSHION = 0.5;
+const float LEGACY_FAR_PLANE = 430.0;
 float getFogFactor(float d)
 {
-    const float FogMax = FAR_PLANE - FAR_CUSHION;
-    const float FogMin = FAR_PLANE * 0.75;
-    return clamp(1.0 - (FogMax - d) / (FogMax - FogMin), 0, 1);
+    float enabled = fogParams.z;
+    float nearD = enabled > 0.5 ? fogParams.x : (LEGACY_FAR_PLANE * 0.75);
+    float farD  = enabled > 0.5 ? fogParams.y : (LEGACY_FAR_PLANE - LEGACY_FAR_CUSHION);
+    float denom = max(farD - nearD, 0.0001);
+    return clamp((d - nearD) / denom, 0.0, 1.0);
 }
 
 void main()
 {
     float dCam = distance(fragPos, cameraPos);
-    if (dCam > (FAR_PLANE - FAR_CUSHION)) {
+    float farD = (fogParams.z > 0.5) ? fogParams.y : (LEGACY_FAR_PLANE - LEGACY_FAR_CUSHION);
+    if (dCam > farD) {
         discard;
     }
 
@@ -115,6 +126,7 @@ void main()
     // Compose lighting
     vec3 lit = m.emissive + (Ac + Dc + Sc);
     vec4 base = vec4(clamp(lit, 0.0, 1.0), 1.0) * texColor;
+    base.rgb *= aoBrightness;
 
     // Optional block outline overlay (bindlessTextures[0] assumed to be outline atlas)
     BlockState blk = blocks[blockId];
@@ -130,7 +142,8 @@ void main()
     {
         float d = distance(fragPos, cameraPos);
         float f = getFogFactor(d);
-        outputColor = mix(base, vec4(dirLight.ambient, 1.0), f);
+        vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
+        outputColor = mix(base, vec4(fogColor, 1.0), f);
     }
     else{
         outputColor = base;

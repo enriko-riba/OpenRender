@@ -9,7 +9,7 @@ The terrain generation system creates a procedural voxel-based world made of **c
 **World composition:**
 
 * World size: 300x300 chunks (X and Z)
-* Chunk size: 32x32 blocks (X/Z) × 128 height (Y)
+* Chunk size: `VoxelHelper.ChunkSideSize` × `VoxelHelper.ChunkSideSize` blocks (X/Z) × `VoxelHelper.ChunkYSize` height (Y)
 
 ### Core Concepts
 
@@ -186,22 +186,45 @@ BlockType stays generic (`GrassDirt`, `Snow`, etc.), but biomes map those to bio
 * Desert + GrassDirt → DesertSand
 * Swamp + Dirt → SwampMud
 
-## 6. Rendering and Visibility
+## 6. Rendering, Visibility & Ambient Occlusion
 
-### Hidden Tile Issue Fix
+### GPU-First Chunk Initialization
 
-Invisible water-bottom blocks occur when visibility culling ignores submerged blocks. Fixed by:
+All chunk data now flows through `ChunkInitializer`, which drives the `compute-chunk.comp` shader.\
+Each dispatch processes one chunk and writes into three SSBOs:
 
-1. Recalculating transparency per `BlockType` instead of cached flags.
-2. Extending visibility check up to `max(height, WaterLevel + 2)`.
+| Binding | Buffer            | Purpose                                                     |
+| ------- | ----------------- | ----------------------------------------------------------- |
+| 0       | `heightSSBO`      | Normalized height map (input from `TerrainBuilder`)         |
+| 1       | `blockTypeSSBO`   | Block type per voxel (output)                               |
+| 3       | `columnHeightsSSBO` | Quantized column tops for gameplay / biome stats         |
+| 4       | `blockAttribSSBO` | Packed visibility bit + 6×3-bit ambient occlusion samples   |
 
-```csharp
-private bool IsBlockTransparent(int x,int y,int z)
-{
-    var t = Blocks[idx].BlockType;
-    return t == BlockType.None || t == BlockType.WaterLevel;
-}
-```
+`chunkIndicesSSBO` (binding 2) simply enumerates the world chunk indices requested for the batch.
+
+The shader performs three passes inside the same workgroup:
+
+1. **Block materialisation** – replicates the CPU `CalcBlockType` logic using the normalized column height.
+2. **Visibility test** – checks the six orthogonal neighbours and sets bit `0` when at least one face is exposed.
+3. **Ambient occlusion** – samples four diagonals around each face, clamps the sample count to `[0,3]`, then packs the six faces into the upper bits of `blockAttrib`.
+
+The CPU performs a single GPU → CPU copy per buffer (persistently mapped), wraps the raw arrays into `TerrainBuilder.ChunkGenerationData`, and pushes them to `Chunk.ApplyGenerationData`. The chunk no longer recomputes lighting when the GPU already produced the attributes.
+
+### Rendering Path
+
+* `ChunkRenderer` uploads the packed block state array to an instanced SSBO (`ssbo_blocks`).
+* `instancedChunk.vert` selects the proper face AO (`packedAO >> face * 3`) and passes a brightness scalar to the fragment shader.
+* `instancedChunk.frag` multiplies the lit color by `aoBrightness`, preserving the bindless texture / material pipeline.
+
+### CPU Fallback
+
+`Chunk.RecomputeLighting(force: true)` is still available for edge cases (runtime edits or missing GPU data).\
+`VoxelWorld.ProcessWorkItem` only invokes it on chunks that did not arrive with GPU-produced attributes.
+
+### Instrumentation
+
+`ChunkInitializer.DispatchAndReadback` logs two timings: shader dispatch and CPU post-processing.\
+These metrics should stay below ~1 ms per chunk on development hardware; use them to catch regressions.
 
 ---
 

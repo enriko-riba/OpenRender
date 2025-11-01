@@ -19,6 +19,13 @@ layout (std140, binding = 1) uniform light {
     Light dirLight;
 };
 
+// Fog UBO (shared across shaders)
+// fogColor4.rgb = fog color, fogParams = (near, far, enabled, unused)
+layout (std140, binding = 4) uniform fogBlock {
+    vec4 fogColor4;
+    vec4 fogParams;
+};
+
 uniform float uSunHaloRadius;
 uniform float uSunIntensity;
 uniform float uCosSunAngularRadius;
@@ -112,17 +119,19 @@ float random(vec2 p) {
 }
 void main()
 {
+    // Reconstruct a ray direction in world space from screen coordinates.
     vec2 ndc = (gl_FragCoord.xy / uViewportSize) * 2.0 - 1.0;
     vec4 clip = vec4(ndc, -1.0, 1.0);
     vec3 rayVS = normalize((uInvProjection * clip).xyz);
     mat3 invViewRot = transpose(mat3(view));
+
     vec3 rayWS = normalize(invViewRot * rayVS);
 
     vec3 sunDirWS = normalize(-dirLight.position);
     float elevation = sunDirWS.y;
 
-    vec3 daySkyColor = vec3(0.3, 0.6, 1.0) * mix(1.2, 0.7, rayVS.y);
-    vec3 nightSkyColor = vec3(0.005, 0.01, 0.025) * mix(1.2, 0.7, rayVS.y);
+    vec3 daySkyColor = vec3(0.3, 0.6, 1.0) * mix(1.2, 0.7, rayWS.y);
+    vec3 nightSkyColor = vec3(0.005, 0.01, 0.025) * mix(1.2, 0.7, rayWS.y);
 
     float dayFactor = smoothstep(-0.1, 0.1, elevation);
     vec3 sky = mix(nightSkyColor, daySkyColor, dayFactor);
@@ -160,10 +169,10 @@ void main()
 
     vec3 baseColor = sky + sunGlow;
 
-    // Calculate the fog factor for the skybox
-    vec3 viewDir = normalize(viewDir);
-    float skyFogFactor = getSkyFogFactor(viewDir);
-    vec3 finalColor = mix(baseColor, dirLight.ambient, skyFogFactor);
+    // Calculate the fog factor for the skybox (direction-based)
+    float skyFogFactor = getSkyFogFactor(rayWS);
+    vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
+    vec3 finalColor = mix(baseColor, fogColor, skyFogFactor);
     // Apply dithering: add a small random value to break up the color bands
     finalColor += (random(gl_FragCoord.xy) - 0.5) / 255.0;
 

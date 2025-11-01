@@ -13,7 +13,7 @@ public class Player
     private const float EyeHeight = 1.75f;
     private const float Gravity = -9.8f;
 
-    private const float MovementSpeed = 2;
+    private const float MovementSpeed = 2.0f;
     private const float RotationSpeed = 10;
 
     private static readonly Vector3[] bottomCornerOffsets = [
@@ -45,7 +45,7 @@ public class Player
         if (world.GetChunkByGlobalPosition(Position, out var chunk))
         {
             CurrentChunk = chunk;
-            ChunkLocalPosition = (Vector3i)Position - chunk!.Position;
+            ChunkLocalPosition = Position - chunk!.Position;
             var height = chunk!.GetTerrainHeightAt((int)ChunkLocalPosition.X, (int)ChunkLocalPosition.Z);
             Position = new(Position.X, height + 3.1f, Position.Z);
             isGrounded = true;
@@ -73,30 +73,39 @@ public class Player
     internal Vector3 RequestedMovement => requestedMovement;
     internal BlockState? PickedBlock => pickedBlock;
 
+    private float physicsAccumulator;
+
     public void Update(double elapsedSeconds, KeyboardState keyboardState)
     {
-        elapsedSeconds = MathF.Min((float)elapsedSeconds, 0.2f);
+        // Fixed timestep accumulator (stable collisions irrespective of FPS)
+        var frame = MathF.Min((float)elapsedSeconds, 0.25f);
+        physicsAccumulator += frame;
+        const float fixedDt = 1f / 60f;
+        const int maxStepsPerFrame = 8;
+
         kbdActions.Update(keyboardState);
 
         var pos = Position;
         if (world.GetChunkByGlobalPosition(pos, out var chunk))
         {
             CurrentChunk = chunk;
-            ChunkLocalPosition = (Vector3i)pos - chunk!.Position;
+            ChunkLocalPosition = pos - chunk!.Position;
         }
         else
         {
             CurrentChunk = null;
         }
 
+        var steps = 0;
+        while (physicsAccumulator >= fixedDt && steps < maxStepsPerFrame)
+        {
+            if (IsGhostMode)
+                HandleGhostMode(fixedDt);
+            else
+                HandleMovement(fixedDt);
 
-        if (IsGhostMode)
-        {
-            HandleGhostMode(elapsedSeconds);
-        }
-        else
-        {
-            HandleMovement(elapsedSeconds);
+            physicsAccumulator -= fixedDt;
+            steps++;
         }
 
         var hasMovement = requestedMovement.X != 0 || requestedMovement.Z != 0;
@@ -139,7 +148,7 @@ public class Player
 
     public Vector3 Direction { get; set; }
 
-    public Vector3i ChunkLocalPosition { get; set; } = new Vector3i(0, 0, 0);
+    public Vector3 ChunkLocalPosition { get; set; } = new Vector3(0, 0, 0);
 
     public Chunk? CurrentChunk { get; set; } = null;
 
@@ -182,9 +191,8 @@ public class Player
             isGrounded = false;
             isJumping = true;
 
-            //  initial velocity for the character to jump H high is: sqrt(2 * H * g).
-            //  H = 1.2f (that's a bit higher then a voxel block), g = 9.8f -> sqrt(2 * 1.2f * 9.8)
-            const float JumpVelocity = 4.85f;
+            // initial velocity to jump ~1.2 blocks high
+            const float JumpVelocity = 5;// 4.85f;
             velocityY = JumpVelocity;
         }
     }
@@ -195,7 +203,7 @@ public class Player
         {
             isGrounded = false;
             isJumping = true;
-            const float JumpVelocity = 3.50f;
+            const float JumpVelocity = 4.50f;
             velocityY = JumpVelocity;
         }
     }
@@ -204,6 +212,7 @@ public class Player
     {
         if (pickedBlock is not null)
         {
+            //Task.Run(() => world.BreakBlock(pickedBlock.Value));
             world.BreakBlock(pickedBlock.Value);
             pickedBlock = null;
             world.ChunkRenderer.PickedBlock = null;
@@ -226,12 +235,8 @@ public class Player
         float terrainHeight = 0;
         var pos = Position;
 
-        //  
-        //  * initial velocity for the character to jump H high is the square root of 2 * H * g.
-        //  * height at any time during jump is y = 0.5gt² + v't + y' here v' and y' are starting velocity and position
-
-        //  Verlet integration
-        pos.Y += velocityY * (float)elapsedSeconds + 05f * Gravity * (float)elapsedSeconds * (float)elapsedSeconds;
+        // Verlet integration
+        pos.Y += velocityY * (float)elapsedSeconds + 0.5f * Gravity * (float)elapsedSeconds * (float)elapsedSeconds;
         velocityY += (float)elapsedSeconds * Gravity;
 
         TravelXZ((float)elapsedSeconds * MovementSpeed, ref pos);
@@ -265,6 +270,7 @@ public class Player
 
         Position = pos;
 
+        // Only clear per-frame input when not jumping, so jump preserves horizontal intent
         if (!isJumping)
         {
             requestedMovement.X = 0;
@@ -323,13 +329,13 @@ public class Player
                     {
                         var normal = (Vector3)currentBlock.Value.GlobalPosition - neighbor.Value.GlobalPosition;
                         //  check if direction is colliding with near 90 degrees angle
-                        var dot = MathF.Abs(Vector3.Dot(normal, direction.Normalized()));
+                        var dirNorm = direction.LengthSquared > 1e-6f ? direction.Normalized() : Vector3.Zero;
+                        var dot = dirNorm == Vector3.Zero ? 0f : MathF.Abs(Vector3.Dot(normal, dirNorm));
                         if (dot > 0.85f)
                         {
                             // check if we can jump, must not be bellow a block nor a front block in eye level may exist
                             // the following picks a block in "front" of the players movement direction
                             var angle = (MathHelper.RadiansToDegrees((float)Math.Atan2(direction.X, direction.Z)) + 360) % 360;
-                            //Log.Debug($"direction: {angle}");
                             var eyeLevelFrontBlock = angle switch
                             {
                                 > 315f or <= 45f => neighbors[4],   //  front (south)
@@ -341,18 +347,51 @@ public class Player
                             {
                                 pos.Y += 0.05f;
                                 ClimbingJump();
-                                break;
+                                // preserve horizontal intent; do not break to allow separation below
                             }
                         }
 
-                        // if here we can not climb, so we need to bounce back
-                        var newDir = ReflectVector(direction, normal) * 0.2f;   //  0.2f is a small bounce
-                        newDir += normal * direction.Length;                    //  move out of colliding block in the normal direction
-                        pos.X += newDir.X;
-                        pos.Z += newDir.Z;
-                        pos.X -= direction.X * 0.15f;                           //  compensate movement slightly backwards for XZ, 
-                        pos.Z -= direction.Z * 0.15f;                           //  needs to be a small amount otherwise it feel jerky
-                        break;
+                        // Robust sphere-AABB side resolution in XZ to prevent penetration
+                        var aabb = neighbor.Value.Aabb;
+                        var closestX = Math.Clamp(collidingSphereCenter.X, aabb.Min.X, aabb.Max.X);
+                        var closestZ = Math.Clamp(collidingSphereCenter.Z, aabb.Min.Z, aabb.Max.Z);
+                        var nx = collidingSphereCenter.X - closestX;
+                        var nz = collidingSphereCenter.Z - closestZ;
+                        var len = MathF.Sqrt(nx * nx + nz * nz);
+                        const float epsSep = 0.001f;
+                        Vector2 nXZ;
+                        if (len < 1e-4f)
+                        {
+                            // Fallback: choose nearest face outward normal
+                            var dLeft  = MathF.Abs(collidingSphereCenter.X - aabb.Min.X);
+                            var dRight = MathF.Abs(aabb.Max.X - collidingSphereCenter.X);
+                            var dFront = MathF.Abs(collidingSphereCenter.Z - aabb.Min.Z);
+                            var dBack  = MathF.Abs(aabb.Max.Z - collidingSphereCenter.Z);
+                            var minD = MathF.Min(MathF.Min(dLeft, dRight), MathF.Min(dFront, dBack));
+                            if (minD == dLeft)      nXZ = new Vector2(-1, 0);
+                            else if (minD == dRight)nXZ = new Vector2( 1, 0);
+                            else if (minD == dFront)nXZ = new Vector2( 0,-1);
+                            else                    nXZ = new Vector2( 0, 1);
+                            len = 1f;
+                        }
+                        else
+                        {
+                            nXZ = new Vector2(nx / len, nz / len);
+                        }
+                        var penetration = r - len;
+                        if (penetration > 0)
+                        {
+                            pos.X += nXZ.X * (penetration + epsSep);
+                            pos.Z += nXZ.Y * (penetration + epsSep);
+                        }
+                        // Remove into-normal component of this frame's horizontal move (sliding)
+                        var moveDot = direction.X * nXZ.X + direction.Z * nXZ.Y;
+                        if (moveDot > 0)
+                        {
+                            pos.X -= nXZ.X * moveDot;
+                            pos.Z -= nXZ.Y * moveDot;
+                        }
+                        // do not break; allow resolving multiple contacts
                     }
                 }
             }
@@ -418,4 +457,6 @@ public class Player
         var block = chunk.GetBlockAtLocalPosition(localPosition);
         return block.BlockType is not BlockType.None and not BlockType.WaterLevel;
     }
+
+    // helper removed
 }

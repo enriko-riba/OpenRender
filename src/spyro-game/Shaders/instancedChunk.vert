@@ -13,6 +13,7 @@ layout (std140, binding = 0) uniform camera {
 struct BlockState {
     uint index;
     uint packedBytes;
+    uint packedAO;
 };
 layout(std430, binding = 2) buffer ssbo_blocks {
     BlockState blocks[];
@@ -29,6 +30,7 @@ out vec2 texCoord;
 flat out uint materialIndex;
 flat out uint textureIndex;
 flat out uint blockId;
+flat out float aoBrightness;
 
 
 mat3 getRotationMatrix(uint blockDirection) {
@@ -80,8 +82,9 @@ void main(void)
 {   
     blockId = gl_InstanceID;
     BlockState block = blocks[gl_InstanceID];
-    uint blockDirection = (block.packedBytes & 0xff);
-    uint blockType = (block.packedBytes & 0xff00) >> 8;
+    uint blockDirection = (block.packedBytes & 0xffu);
+    uint blockType = (block.packedBytes & 0xff00u) >> 8;
+    uint packedAO = block.packedAO;
 
     materialIndex = blockType;
     textureIndex = blockType;
@@ -102,5 +105,17 @@ void main(void)
     vertexNormal = normalize((model * vec4(rotatedNormal, 0))).xyz;
     fragPos = worldPosition.xyz;  
     texCoord = aTexCoord;
+
+    int faceIndex = 0;
+    if (abs(rotatedNormal.x) > 0.5)
+        faceIndex = rotatedNormal.x > 0.0 ? 0 : 1;
+    else if (abs(rotatedNormal.y) > 0.5)
+        faceIndex = rotatedNormal.y > 0.0 ? 2 : 3;
+    else
+        faceIndex = rotatedNormal.z > 0.0 ? 4 : 5;
+
+    float ao = float((packedAO >> (faceIndex * 4)) & 0xFu);
+    aoBrightness = max(0.0, (15.0 - ao) / 15.0);
+
     gl_Position = projection * view * worldPosition;
 }

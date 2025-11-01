@@ -50,6 +50,19 @@ public class Scene
     public bool ShowBoundingSphere { get; set; }
 
     /// <summary>
+    /// Scene-level fog settings. The renderer copies these values into the Fog UBO (binding=4).
+    /// fogColor4.rgb = fog tint; fogParams = (near, far, enabled, unused).
+    /// </summary>
+    public FogUniform Fog { get; set; } = new FogUniform
+    {
+        FogColor = new Vector4(0.45f, 0.55f, 0.65f, 1.0f),
+        FogParams = new Vector4(FogUniform.LEGACY_FAR_PLANE * 0.75f,
+                                FogUniform.LEGACY_FAR_PLANE - FogUniform.LEGACY_FAR_CUSHION,
+                                1.0f,
+                                0.0f)
+    };
+
+    /// <summary>
     /// Returns the width of the scene viewport.
     /// </summary>
     public int Width => SceneManager.ClientSize.X;
@@ -169,6 +182,9 @@ public class Scene
     {
         ArgumentNullException.ThrowIfNull(camera);
         renderer.BeforeRenderFrame(camera!, lights);
+        // Update Fog UBO from scene-level fog settings.
+        // This is cheap; to micro-opt, call only when Fog changes.
+        renderer.UpdateFog(Fog);
         renderer.RenderFrame(elapsedSeconds);
     }
 

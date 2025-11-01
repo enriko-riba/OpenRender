@@ -50,7 +50,7 @@ public class WaterNode : SceneNode
         // GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
         Matrix4.CreateScale(VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, 1, VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ, out var worldMatrix);
-        worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel + 0.85f, 0);
+        worldMatrix.Row3.Xyz = new Vector3(0, VoxelHelper.WaterLevel + 0.55f, 0);
         Material.Shader.SetMatrix4("model", ref worldMatrix);
         Material.Shader.SetFloat("uTime", (float)uTime);
         Material.Shader.SetFloat("uDayFactor", timeProvider.DayFactor);

@@ -8,6 +8,10 @@ public struct BlockState
     {
         Index = index;
         ChunkIndex = chunk.Index;
+        var lx = index % VoxelHelper.ChunkSideSize;
+        var ly = index / VoxelHelper.ChunkSideSizeSquare;
+        var lz = (index / VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+        LocalPosition = new Vector3i(lx, ly, lz);
         GlobalPosition = chunk.Position + LocalPosition;
         Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
     }
@@ -33,13 +37,16 @@ public struct BlockState
     public bool IsVisible { get; internal set; }
 
     /// <summary>
+    /// Packed ambient occlusion values per face (3 bits per face).
+    /// </summary>
+    public uint PackedAO { get; internal set; }
+
+    /// <summary>
     /// Returns true if the block is None or WaterLevel.
     /// </summary>
     public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 
-    public readonly Vector3i LocalPosition => new(Index % VoxelHelper.ChunkSideSize,
-                                                  Index / VoxelHelper.ChunkSideSizeSquare,
-                                                  Index / VoxelHelper.ChunkSideSize % VoxelHelper.ChunkSideSize);
+    public Vector3i LocalPosition { get; private set; }
     public Vector3i GlobalPosition { get; private set; } 
 
     public override readonly string ToString() => $"{BlockType}@{LocalPosition}/{ChunkIndex}";

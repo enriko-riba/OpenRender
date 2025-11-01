@@ -232,6 +232,46 @@ public class TerrainBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float SampleHeight01Global(int gx, int gz) => Height01At(gx, gz);
 
+    public readonly record struct ChunkGenerationData(BlockType[] BlockTypes, int[] ColumnHeights, ColumnInfo[] Columns, uint[] BlockAttributes);
+
+    public ChunkGenerationData BuildChunkData(int chunkIndex)
+    {
+        var blockTypes = new BlockType[VoxelHelper.ChunkSideSizeSquare * VoxelHelper.ChunkYSize];
+        var columnHeights = new int[VoxelHelper.ChunkSideSizeSquare];
+        var columns = new ColumnInfo[VoxelHelper.ChunkSideSizeSquare];
+
+        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+        var baseX = worldX * VoxelHelper.ChunkSideSize;
+        var baseZ = worldZ * VoxelHelper.ChunkSideSize;
+
+        var columnIndex = 0;
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            var gz = baseZ + z;
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++, columnIndex++)
+            {
+                var gx = baseX + x;
+                var height = GetHeightNormalizedGlobal(gx, gz);
+                columnHeights[columnIndex] = height;
+
+                SampleFields01(gx, gz, out float C, out float E, out float T, out float H);
+                var height01 = height / (float)(VoxelHelper.ChunkYSize - 1);
+                var slope01 = EstimateSlope01(gx, gz);
+                var biome = ClassifyBiome(C, E, T, H, height01, slope01);
+                columns[columnIndex] = new ColumnInfo(biome, C, E, T, H, (byte)height, height01);
+
+                for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
+                {
+                    var blockIndex = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    blockTypes[blockIndex] = GenerateChunkBlockType(height, x, y, z);
+                }
+            }
+        }
+
+        return new ChunkGenerationData(blockTypes, columnHeights, columns, new uint[blockTypes.Length]);
+    }
+
     public void FillChunkHeight01(int chunkIndex, Span<float> destination)
     {
         if (destination.Length < VoxelHelper.ChunkSideSizeSquare)
@@ -249,6 +289,35 @@ public class TerrainBuilder
             for (var x = 0; x < VoxelHelper.ChunkSideSize; x++, index++)
             {
                 destination[index] = Height01At(baseX + x, gz);
+            }
+        }
+    }
+
+    public void FillChunkColumnInfo(int chunkIndex, ReadOnlySpan<int> columnHeights, Span<ColumnInfo> destination)
+    {
+        if (columnHeights.Length < VoxelHelper.ChunkSideSizeSquare)
+            throw new ArgumentException("columnHeights span is too small.", nameof(columnHeights));
+        if (destination.Length < VoxelHelper.ChunkSideSizeSquare)
+            throw new ArgumentException("destination span is too small.", nameof(destination));
+
+        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+        var baseX = worldX * VoxelHelper.ChunkSideSize;
+        var baseZ = worldZ * VoxelHelper.ChunkSideSize;
+
+        var index = 0;
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            var gz = baseZ + z;
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++, index++)
+            {
+                var gx = baseX + x;
+                var height = columnHeights[index];
+                SampleFields01(gx, gz, out float C, out float E, out float T, out float H);
+                var height01 = height / (float)(VoxelHelper.ChunkYSize - 1);
+                var slope01 = EstimateSlope01(gx, gz);
+                var biome = ClassifyBiome(C, E, T, H, height01, slope01);
+                destination[index] = new ColumnInfo(biome, C, E, T, H, (byte)height, height01);
             }
         }
     }

@@ -12,82 +12,252 @@ public class Chunk(VoxelWorld world, int index)
     private readonly Dictionary<int, BlockState> changedBlocks = [];
 
     #region Initialization
-    
+   
 
-    public void Initialize(TerrainBuilder terrainBuilder)
+    public void ApplyGenerationData(TerrainBuilder terrainBuilder, TerrainBuilder.ChunkGenerationData generationData)
     {
         if (isInitialized) return;
 
+        var blockTypes = generationData.BlockTypes;
+        var columnHeights = generationData.ColumnHeights;
+        var columnInfos = generationData.Columns;
+        var blockAttributes = generationData.BlockAttributes;
+        if (blockTypes.Length != VoxelHelper.ChunkSideSizeSquare * VoxelHelper.ChunkYSize)
+            throw new ArgumentException("BlockTypes length mismatch", nameof(generationData));
+        if (columnHeights.Length != VoxelHelper.ChunkSideSizeSquare)
+            throw new ArgumentException("ColumnHeights length mismatch", nameof(generationData));
+        if (columnInfos.Length != VoxelHelper.ChunkSideSizeSquare)
+            throw new ArgumentException("ColumnInfos length mismatch", nameof(generationData));
+        if (blockAttributes.Length != blockTypes.Length)
+            throw new ArgumentException("BlockAttributes length mismatch", nameof(generationData));
+
         Blocks = new BlockState[VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize];
+        var size = VoxelHelper.ChunkSideSize;
+        var sizeSquare = VoxelHelper.ChunkSideSizeSquare;
 
-        Parallel.For(0, VoxelHelper.ChunkSideSize, z =>
+        isProcessed = false;
+        Columns = columnInfos;
+
+        for (var z = 0; z < size; z++)
         {
-            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            for (var x = 0; x < size; x++)
             {
-                maxHeights[x, z] = terrainBuilder.GetHeightNormalizedChunkLocal(index, x, z);
-            }
-        });
+                var columnIndex = x + z * size;
+                var h = columnHeights[columnIndex];
+                maxHeights[x, z] = h;
 
-        Parallel.For(0, VoxelHelper.ChunkSideSize, x =>
-        {
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-            {
-                var h = maxHeights[x, z];
-
-                // determine biome and store column info for debugging
-                var worldX = (index % VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize + x;
-                var worldZ = (index / VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize + z;
-                terrainBuilder.SampleFields01(worldX, worldZ, out float C, out float E, out float T, out float H);
-                var height01 = h / (float)(VoxelHelper.ChunkYSize - 1);
-                var slope01 = terrainBuilder.EstimateSlope01(worldX, worldZ);
-                var biome = terrainBuilder.ClassifyBiome(C, E, T, H, height01, slope01);
-                Columns[x + z * VoxelHelper.ChunkSideSize] = new ColumnInfo(biome, C, E, T, H, (byte)h, height01);
-
-                // build vertical column
                 for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
                 {
-                    var i = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    var i = x + z * size + y * sizeSquare;
                     var block = new BlockState(i, this)
                     {
-                        BlockType = TerrainBuilder.GenerateChunkBlockType(h, x, y, z)
+                        BlockType = blockTypes[i],
+                        IsVisible = false,
+                        PackedAO = 0
                     };
                     Blocks[i] = block;
                 }
             }
-        });
+        }
         isInitialized = true;
     }
     
 
     /// <summary>
-    /// Calculates visible blocks in the chunk and sets the <see cref="BlockState.IsVisible"/> property for each block.
+    /// Recomputes visibility and ambient occlusion for all blocks in the chunk.
     /// </summary>
-    public void CalcVisibleBlocks(bool force = false)
+    public void RecomputeLighting(bool force = false, bool includeNeighborData = false, bool bordersOnly = false)
     {
         if (!force && isProcessed) return;
 
-        Parallel.For(0, VoxelHelper.ChunkSideSize, x =>
-        {
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-            {
-                var h = maxHeights[x, z];
-                var yMin = 0;// Math.Max(0, h - 4);
-                //var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, h + 1);
-                var yMax = Math.Min(VoxelHelper.MaxBlockPositionY, Math.Max(h + 1, VoxelHelper.WaterLevel + 2));
+        var size = VoxelHelper.ChunkSideSize;
+        var area = VoxelHelper.ChunkSideSizeSquare;
 
-                for (var y = yMin; y <= yMax; y++)
+        bool IsRenderable(BlockType type) => type != BlockType.None;
+        bool Occludes(BlockType type) => type != BlockType.None && type != BlockType.WaterLevel;
+        bool IsTransparentNeighbor(int x, int y, int z) => !Occludes(GetBlockType(x, y, z));
+        BlockType GetBlockType(int x, int y, int z)
+        {
+            if (!includeNeighborData)
+            {
+                if (x < 0 || x >= size || z < 0 || z >= size)
+                    return BlockType.Rock;
+                if (y < 0)
+                    return BlockType.Rock;
+                if (y >= VoxelHelper.ChunkYSize)
+                    return BlockType.None;
+                return Blocks[x + z * size + y * area].BlockType;
+            }
+            return SampleBlockTypeWithNeighbors(x, y, z);
+        }
+
+        uint PackAo(uint east, uint west, uint up, uint down, uint south, uint north) =>
+            (east & 0xFu)
+            | ((west & 0xFu) << 4)
+            | ((up & 0xFu) << 8)
+            | ((down & 0xFu) << 12)
+            | ((south & 0xFu) << 16)
+            | ((north & 0xFu) << 20);
+
+        uint FaceAoEast(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x + 1, y, z + 1))) count++;
+            if (Occludes(GetBlockType(x + 1, y, z - 1))) count++;
+            if (Occludes(GetBlockType(x + 1, y - 1, z))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        uint FaceAoWest(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x - 1, y, z + 1))) count++;
+            if (Occludes(GetBlockType(x - 1, y, z - 1))) count++;
+            if (Occludes(GetBlockType(x - 1, y - 1, z))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        uint FaceAoUp(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x + 1, y + 1, z)) || Occludes(GetBlockType(x + 1, y + 2, z))) count++;
+            if (Occludes(GetBlockType(x - 1, y + 1, z)) || Occludes(GetBlockType(x - 1, y + 2, z))) count++;
+            if (Occludes(GetBlockType(x, y + 1, z + 1)) || Occludes(GetBlockType(x, y + 2, z + 1))) count++;
+            if (Occludes(GetBlockType(x, y + 1, z - 1)) || Occludes(GetBlockType(x, y + 2, z - 1))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        uint FaceAoDown(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x + 1, y - 1, z)) || Occludes(GetBlockType(x + 1, y - 2, z))) count++;
+            if (Occludes(GetBlockType(x - 1, y - 1, z)) || Occludes(GetBlockType(x - 1, y - 2, z))) count++;
+            if (Occludes(GetBlockType(x, y - 1, z + 1)) || Occludes(GetBlockType(x, y - 2, z + 1))) count++;
+            if (Occludes(GetBlockType(x, y - 1, z - 1)) || Occludes(GetBlockType(x, y - 2, z - 1))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        uint FaceAoSouth(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x + 1, y, z + 1))) count++;
+            if (Occludes(GetBlockType(x - 1, y, z + 1))) count++;
+            if (Occludes(GetBlockType(x, y - 1, z + 1))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        uint FaceAoNorth(int x, int y, int z)
+        {
+            uint count = 0;
+            if (Occludes(GetBlockType(x + 1, y, z - 1))) count++;
+            if (Occludes(GetBlockType(x - 1, y, z - 1))) count++;
+            if (Occludes(GetBlockType(x, y - 1, z - 1))) count++;
+            return Math.Min(count * 4u, 15u);
+        }
+
+        for (var z = 0; z < size; z++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                if (bordersOnly && x > 0 && x < size - 1 && z > 0 && z < size - 1)
                 {
-                    var idx = x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare;
+                    continue;
+                }
+
+                for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+                {
+                    var idx = x + z * size + y * area;
                     ref var block = ref Blocks[idx];
-                    if (block.BlockType != BlockType.None)
-                        block.IsVisible = IsExternallyVisible(x, y, z);
-                    //Blocks[idx] = block;
+                    if (!IsRenderable(block.BlockType))
+                    {
+                        block.IsVisible = false;
+                        block.PackedAO = 0;
+                        continue;
+                    }
+
+                    var eastTrans = IsTransparentNeighbor(x + 1, y, z);
+                    var westTrans = IsTransparentNeighbor(x - 1, y, z);
+                    var upTrans = IsTransparentNeighbor(x, y + 1, z);
+                    var downTrans = IsTransparentNeighbor(x, y - 1, z);
+                    var southTrans = IsTransparentNeighbor(x, y, z + 1);
+                    var northTrans = IsTransparentNeighbor(x, y, z - 1);
+
+                    var visible = eastTrans || westTrans || upTrans || downTrans || southTrans || northTrans;
+
+                    if (y == 0 && block.BlockType == BlockType.BedRock)
+                    {
+                        visible = false;
+                    }
+
+                    uint packedAo = 0;
+                    if (visible)
+                    {
+                        packedAo = PackAo(
+                            FaceAoEast(x, y, z),
+                            FaceAoWest(x, y, z),
+                            FaceAoUp(x, y, z),
+                            FaceAoDown(x, y, z),
+                            FaceAoSouth(x, y, z),
+                            FaceAoNorth(x, y, z));
+                    }
+
+                    block.IsVisible = visible;
+                    block.PackedAO = packedAo;
                 }
             }
-        });
+        }
+
         isProcessed = true;
     }
     #endregion
+
+    internal void ApplyBlockAttributes(uint[] blockAttributes)
+    {
+        if (Blocks is null || blockAttributes.Length == 0) return;
+
+        var length = Math.Min(Blocks.Length, blockAttributes.Length);
+        for (var i = 0; i < length; i++)
+        {
+            ref var block = ref Blocks[i];
+            var attrib = blockAttributes[i];
+            block.IsVisible = (attrib & 1u) != 0;
+            block.PackedAO = attrib >> 1;
+        }
+        isProcessed = true;
+    }
+
+    private BlockType SampleBlockTypeWithNeighbors(int x, int y, int z)
+    {
+        var size = VoxelHelper.ChunkSideSize;
+        var area = VoxelHelper.ChunkSideSizeSquare;
+
+        if (y < 0)
+        {
+            return BlockType.BedRock;
+        }
+        if (y >= VoxelHelper.ChunkYSize)
+        {
+            return BlockType.None;
+        }
+
+        if (x >= 0 && x < size && z >= 0 && z < size)
+        {
+            return Blocks[x + z * size + y * area].BlockType;
+        }
+
+        var global = Position + new Vector3i(x, y, z);
+        return world.GetBlockTypeGlobal(global);
+    }
+
+    public void RefreshBorderLighting()
+    {
+        if (!isInitialized || Blocks is null)
+            return;
+
+        // Only recompute borders using neighbor data to fix edge seams
+        // without reprocessing the full chunk.
+        RecomputeLighting(force: true, includeNeighborData: true, bordersOnly: true);
+    }
 
     /// <summary>
     /// Returns the changed blocks since the chunk generation.
@@ -116,6 +286,7 @@ public class Chunk(VoxelWorld world, int index)
     internal void UpdateBlock(ref BlockState block, bool addToChangedBlocks = false)
     {
         Blocks[block.Index] = block;
+        isProcessed = false;
         if ((addToChangedBlocks))
         {
             changedBlocks[block.Index] = block;
@@ -143,6 +314,8 @@ public class Chunk(VoxelWorld world, int index)
     public int TransparentCount;
     public int TransparentCapacity;
     public bool Visible;
+    internal byte VisibleLinger;
+    internal volatile bool PendingUpload;
 
     public IEnumerable<BlockState> VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent);
 

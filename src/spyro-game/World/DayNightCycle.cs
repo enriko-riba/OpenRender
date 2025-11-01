@@ -15,7 +15,7 @@ internal static class MathUtil
 internal class DayNightCycle(Scene scene) : IDayNightTimeProvider
 {
     private LightUniform dirLight = scene.Lights.ElementAt(0);
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(5));
+    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(6));
 
     public float SunPathTilt { get; set; } = 0.35f;
     public float DayFactor { get; private set; }
