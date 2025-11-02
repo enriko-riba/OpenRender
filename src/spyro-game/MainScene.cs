@@ -121,10 +121,11 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         writeLine(text, textColor);
 
         var surroundingChunks = world.SurroundingChunkIndices.Count;
-        text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunksCount}, cached {world.CachedChunksCount}";
+        text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunksCount}";
         writeLine(text, textColor);
 
-        text = $"in frustum {world.ChunksInFrustum:N0}/{surroundingChunks - world.ChunksInFrustum:N0}";
+        var culled = surroundingChunks - world.ChunksInFrustum;
+        text = $"In frustum: {world.ChunksInFrustum:N0}  Culled: {culled:N0}  (of {surroundingChunks:N0})";
         writeLine(text, textColor);
 
         text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
@@ -180,6 +181,8 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         base.UpdateFrame(elapsedSeconds);
 
         dayNightCycle.Tick(elapsedSeconds);
+        // Per-frame visibility update using the current camera frustum (authoritative culling)
+        world.UpdateVisibilityFromCamera(camera!);
         player.Update(elapsedSeconds, SceneManager.KeyboardState);
         kbdActions.Update(SceneManager.KeyboardState);
 

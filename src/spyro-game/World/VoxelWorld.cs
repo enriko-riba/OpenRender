@@ -136,21 +136,31 @@ public class VoxelWorld
     private readonly ConcurrentQueue<int> workQueue = new();
 
     //  key is chunk index, value is the chunk   
+    // Unified active chunk set: holds both visible-near and cached-far chunks.
+    // Eviction trims this set when it grows too large.
     private readonly ConcurrentDictionary<int, Chunk> loadedChunks = [];
-    private readonly ConcurrentDictionary<int, Chunk> cachedChunks = [];
 
     internal Stopwatch stopwatch = Stopwatch.StartNew();
 
     private readonly int seed;
     private readonly HashSet<int> surroundingChunkSet = [];
-    private readonly Thread workerThread;
+    // Multi-worker CPU generation
+    private readonly List<Thread> workerThreads = new();
+    private readonly int workerCount;
     private long lastStreamingUpdateMs;
+    private long lastWatchdogMs;
     private long lastCacheMaintenanceMs;
-    private const int CacheCapacity = 2048;
+    private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
     internal readonly TerrainBuilder terrainBuilder;
     internal ChunkInitializer? ChunkInitializer { get; private set; }
+    private readonly ConcurrentDictionary<int, long> pendingUploadSince = new();
+    private readonly ConcurrentDictionary<int, long> pendingComputeSince = new();
+    private Vector3 lastCameraPosition;
+    private Quaternion lastCameraOrientation;
+    private int lastCameraChunkX = int.MinValue;
+    private int lastCameraChunkZ = int.MinValue;
 
     internal void EnsureChunkInitializer()
     {
@@ -186,12 +196,20 @@ public class VoxelWorld
         terrainBuilder = new TerrainBuilder(seed);
         ChunkRenderer = ChunkRenderer.Create(this, GetTextureHandles(), GetMaterials());
 
+        // Start a small pool of background workers to increase chunk generation throughput.
+        // Use up to 4 workers or (CPU count - 1), whichever is lower.
+        workerCount = Math.Clamp(Environment.ProcessorCount - 1, 1, 4);
         isRunning = true;
-        workerThread = new Thread(WorkQueueProcessor)
+        for (var i = 0; i < workerCount; i++)
         {
-            IsBackground = true
-        };
-        workerThread.Start();
+            var t = new Thread(WorkQueueProcessor)
+            {
+                IsBackground = true,
+                Name = $"VoxelWorker-{i+1}"
+            };
+            workerThreads.Add(t);
+            t.Start();
+        }
     }
 
     /// <summary>
@@ -204,8 +222,21 @@ public class VoxelWorld
         get => camera;
         set
         {
+            // Unhook any previous camera to avoid duplicate events
+            if (camera is not null)
+            {
+                camera.CameraChanged -= Camera_CameraChanged;
+            }
             camera = value;
             camera.CameraChanged += Camera_CameraChanged;
+
+            // Initialize camera pose tracking and compute initial visibility/culling
+            lastCameraPosition = camera.Position;
+            lastCameraOrientation = camera.Orientation;
+            lastCameraChunkX = (int)((camera.Position.X + 0.5f) / VoxelHelper.ChunkSideSize);
+            lastCameraChunkZ = (int)((camera.Position.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+            CalculateTerrainStreamingChanges();
+            lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
         }
     }
 
@@ -214,7 +245,17 @@ public class VoxelWorld
     public IReadOnlyCollection<int> SurroundingChunkIndices => surroundingChunkSet;
 
     public int LoadedChunksCount => loadedChunks.Count;
-    public int CachedChunksCount => cachedChunks.Count;
+    // Number of chunks currently in active set but outside the surrounding area.
+    public int CachedChunksCount
+    {
+        get
+        {
+            lock (surroundingChunkSet)
+            {
+                return loadedChunks.Count - surroundingChunkSet.Count;
+            }
+        }
+    }
 
     public IEnumerable<Chunk> SurroundingChunks
     {
@@ -248,7 +289,14 @@ public class VoxelWorld
 
     public void PrepareStartingChunks(Vector3 position)
     {
-        UpdateSurroundingChunkIndices(position);
+        var cameraChunkX = (int)((position.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)((position.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+        var set = BuildSurroundingSet(cameraChunkX, cameraChunkZ);
+        lock (surroundingChunkSet)
+        {
+            surroundingChunkSet.Clear();
+            foreach (var i in set) surroundingChunkSet.Add(i);
+        }
         TotalStartingChunks = surroundingChunkSet.Count;
     }
 
@@ -259,7 +307,14 @@ public class VoxelWorld
     /// <param name="position"></param>
     public void AddStartingChunks(Vector3 position)
     {
-        UpdateSurroundingChunkIndices(position);
+        var cameraChunkX = (int)((position.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)((position.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+        var set = BuildSurroundingSet(cameraChunkX, cameraChunkZ);
+        lock (surroundingChunkSet)
+        {
+            surroundingChunkSet.Clear();
+            foreach (var i in set) surroundingChunkSet.Add(i);
+        }
 
         //  note: this is split into two steps to avoid the case where visibility calculation
         //        needs to reference neighboring chunk having not yet initialized blocks 
@@ -302,12 +357,7 @@ public class VoxelWorld
         if (loadedChunks.TryGetValue(chunkIndex, out var loaded))
             return loaded;
 
-        if (cachedChunks.TryRemove(chunkIndex, out var cached))
-        {
-            cached.State = ChunkState.Loaded;
-            loadedChunks[chunkIndex] = cached;
-            return cached;
-        }
+        // unified active set: no separate cached collection
 
         var position = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var chunk = new Chunk(this, chunkIndex)
@@ -317,6 +367,7 @@ public class VoxelWorld
             State = ChunkState.Loaded,
         };
         loadedChunks[chunkIndex] = chunk;
+        lock (cacheLock) { cacheFifo.Enqueue(chunkIndex); }
         return chunk;
     }
 
@@ -380,11 +431,7 @@ public class VoxelWorld
             return loaded.Blocks[local.X + local.Z * VoxelHelper.ChunkSideSize + local.Y * VoxelHelper.ChunkSideSizeSquare].BlockType;
         }
 
-        if (cachedChunks.TryGetValue(chunkIndex, out var cached) && cached.Blocks is not null)
-        {
-            var local = globalPosition - cached.Position;
-            return cached.Blocks[local.X + local.Z * VoxelHelper.ChunkSideSize + local.Y * VoxelHelper.ChunkSideSizeSquare].BlockType;
-        }
+        // unified: no separate cached collection
 
         var chunkOrigin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var lx = globalPosition.X - chunkOrigin.X;
@@ -521,6 +568,7 @@ public class VoxelWorld
         var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(blockWorldPosition);
         var chunk = this[chunkIndex];
         if (chunk is null) return null;
+        if (!chunk.IsInitialized || chunk.Blocks is null) return null;
 
         var chunkWorldPosition = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var (cx, cy, cz) = blockWorldPosition - chunkWorldPosition;
@@ -602,18 +650,18 @@ public class VoxelWorld
 
     public void Close()
     {
-        Log.Info("VoxelWorld.Close() stopping background worker...");
+        Log.Info("VoxelWorld.Close() stopping background workers...");
         isRunning = false;
-        workerThread.Join();
+        foreach (var t in workerThreads)
+        {
+            try { t.Join(); } catch { /* ignore */ }
+        }
         Log.Info("VoxelWorld.Close() saving chunk changes...");
         foreach (var chunk in loadedChunks.Values)
         {
             SaveChangedChunkBlocks(chunk);
         }
-        foreach (var chunk in cachedChunks.Values)
-        {
-            SaveChangedChunkBlocks(chunk);
-        }
+        // unified: nothing else to do
         ChunkInitializer?.Dispose();
         ChunkInitializer = null;
         Log.Info("VoxelWorld.Close() all done!");
@@ -627,62 +675,107 @@ public class VoxelWorld
     {
         if (camera is null) return;
 
-        var (added, removed, cameraChunkX, cameraChunkZ) = UpdateSurroundingChunkIndices(camera.Position);
-        if (added.Length + removed.Length > 0)
+        // Determine current camera chunk tile
+        var camPos = camera.Position;
+        var cameraChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+
+        // Build desired surrounding set around current tile
+        var desired = BuildSurroundingSet(cameraChunkX, cameraChunkZ);
+        lock (surroundingChunkSet)
         {
-            Log.Debug($"CalculateTerrainStreamingChanges() adding {added.Length} removing {removed.Length} chunks, worker queue items: {workQueue.Count}");
+            surroundingChunkSet.Clear();
+            foreach (var idx in desired) surroundingChunkSet.Add(idx);
         }
 
-        Array.Sort(added, (a, b) =>
+        // Ensure generation/upload for desired set
+        int toGenerate = 0, toUpload = 0, ready = 0;
+        var nowMs = stopwatch.ElapsedMilliseconds;
+        foreach (var idx in desired)
         {
-            var ax = a % VoxelHelper.WorldChunksXZ;
-            var az = a / VoxelHelper.WorldChunksXZ;
-            var bx = b % VoxelHelper.WorldChunksXZ;
-            var bz = b / VoxelHelper.WorldChunksXZ;
-            var da = (ax - cameraChunkX) * (ax - cameraChunkX) + (az - cameraChunkZ) * (az - cameraChunkZ);
-            var db = (bx - cameraChunkX) * (bx - cameraChunkX) + (bz - cameraChunkZ) * (bz - cameraChunkZ);
-            return da.CompareTo(db);
-        });
-
-        foreach (var chunkIndex in added)
-        {
-            if (loadedChunks.TryGetValue(chunkIndex, out var chunk) && chunk.State != ChunkState.Added)
+            if (!loadedChunks.TryGetValue(idx, out var chunk))
             {
-                chunk.State = ChunkState.Loaded;
-            }
-            workQueue.Enqueue(chunkIndex);
-        }
-
-        foreach (var chunkIndex in removed)
-        {
-            if (cachedChunks.TryGetValue(chunkIndex, out var cachedChunk))
-            {
-                cachedChunk.State = ChunkState.ToBeRemoved;
-                cachedChunk.Visible = false;
-                EnqueueChunkForUpload(cachedChunk);
-            }
-            else if (loadedChunks.TryGetValue(chunkIndex, out var chunk))
-            {
-                chunk.State = ChunkState.ToBeRemoved;
-                chunk.Visible = false;
-                EnqueueChunkForUpload(chunk);
+                // Create container and schedule generation
+                var ch = CreateChunkContainer(idx);
+                if (!ch.PendingCompute)
+                {
+                    ch.PendingCompute = true;
+                    workQueue.Enqueue(idx);
+                    pendingComputeSince[idx] = nowMs;
+                }
+                toGenerate++;
             }
             else
             {
-                Log.Debug($"removed chunk: {chunkIndex} not found in loaded/cached chunks");
+                if (!chunk.IsInitialized || !chunk.IsProcessed)
+                {
+                    if (!chunk.PendingCompute)
+                    {
+                        chunk.PendingCompute = true;
+                        workQueue.Enqueue(idx);
+                        pendingComputeSince[idx] = nowMs;
+                    }
+                    toGenerate++;
+                }
+                else if (chunk.BlocksSSBO == 0u || chunk.State != ChunkState.Added)
+                {
+                    EnqueueChunkForUpload(chunk);
+                    toUpload++;
+                }
+                else ready++;
             }
         }
+        Log.Debug($"Streaming: desired={desired.Count}, gen={toGenerate}, upload={toUpload}, ready={ready}, workQ={workQueue.Count}");
 
+        // Update visibility from a frustum snapshot
+        var planes = (Vector4[])camera.Frustum.Planes.Clone();
+        UpdateChunkVisibility(planes);
+    }
+
+    /// <summary>
+    /// Updates the surrounding chunk indices based on the given center position.
+    /// </summary>
+    /// <param name="centerPosition"></param>
+    /// <returns></returns>
+    private HashSet<int> BuildSurroundingSet(int cameraChunkX, int cameraChunkZ)
+    {
+        var newChunkSetIndices = new HashSet<int>(1024);
+
+        const int GuardBandChunks = 0; // strict radius
+        var r = VoxelHelper.MaxDistanceInChunks + GuardBandChunks;
+
+        var minX = Math.Max(0, cameraChunkX - r);
+        var maxX = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkX + r);
+        var minZ = Math.Max(0, cameraChunkZ - r);
+        var maxZ = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkZ + r);
+
+        for (var z = minZ; z <= maxZ; z++)
+        {
+            for (var x = minX; x <= maxX; x++)
+            {
+                newChunkSetIndices.Add(x + z * VoxelHelper.WorldChunksXZ);
+            }
+        }
+        return newChunkSetIndices;
+    }
+
+    private void UpdateChunkVisibility(in Vector4[] planes)
+    {
         // Slight edge padding to reduce near-edge flicker during rotation.
         const float EdgeCullingMarginBlocks = 2f; // expand XZ by a couple of blocks
         var inFrustumCount = 0;
         foreach (var kv in loadedChunks)
         {
             var chunk = kv.Value;
+            if (!chunk.IsProcessed)
+            {
+                chunk.Visible = false;
+                continue;
+            }
             var (min, max) = chunk.Aabb;
             var pad = new Vector3(EdgeCullingMarginBlocks, 0f, EdgeCullingMarginBlocks);
             var padded = (min - pad, max + pad);
-            var visible = CullingHelper.IsAabbInFrustum(padded, camera.Frustum.Planes);
+            var visible = CullingHelper.IsAabbInFrustum(padded, planes);
             if (visible)
             {
                 chunk.Visible = true;
@@ -704,49 +797,6 @@ public class VoxelWorld
             }
         }
         ChunksInFrustum = inFrustumCount;
-    }
-
-    /// <summary>
-    /// Updates the surrounding chunk indices based on the given center position.
-    /// </summary>
-    /// <param name="centerPosition"></param>
-    /// <returns></returns>
-    private (int[] added, int[] removed, int cameraChunkX, int cameraChunkZ) UpdateSurroundingChunkIndices(in Vector3 centerPosition)
-    {
-        var newChunkSetIndices = new HashSet<int>(1024);
-
-        // calculate the camera chunk indices based on its position
-        var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
-        var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-
-        const int GuardBandChunks = 0; // strict radius; caching + FIFO eviction prevents thrash
-        var r = VoxelHelper.MaxDistanceInChunks + GuardBandChunks;
-
-        // calculate the range of chunks to check in X and Z directions
-        var minX = Math.Max(0, cameraChunkX - r);
-        var maxX = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkX + r);
-        var minZ = Math.Max(0, cameraChunkZ - r);
-        var maxZ = Math.Min(VoxelHelper.WorldChunksXZ - 1, cameraChunkZ + r);
-
-        for (var z = minZ; z <= maxZ; z++)
-        {
-            for (var x = minX; x <= maxX; x++)
-            {
-                newChunkSetIndices.Add(x + z * VoxelHelper.WorldChunksXZ);
-            }
-        }
-
-        int[] added;
-        int[] removed;
-        lock (surroundingChunkSet)
-        {
-            added = newChunkSetIndices.Except(surroundingChunkSet).ToArray();
-            removed = surroundingChunkSet.Except(newChunkSetIndices).ToArray();
-
-            surroundingChunkSet.Clear();
-            foreach (var i in newChunkSetIndices) surroundingChunkSet.Add(i);
-        }
-        return (added, removed, cameraChunkX, cameraChunkZ);
     }
 
     /// <summary>
@@ -778,18 +828,30 @@ public class VoxelWorld
             {
                 hadEvent = true;
             }
-            if (hadEvent)
+            if (hadEvent && camera is not null)
             {
-                CalculateTerrainStreamingChanges();
-                lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+                // Only recompute streaming if the camera chunk tile changed (simplified trigger)
+                var poseChanged = HasCameraPoseChanged(camera);
+                if (poseChanged)
+                {
+                    CalculateTerrainStreamingChanges();
+                    lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+                }
             }
 
-            // Periodic streaming update as a fallback (in case camera events coalesce)
-            var now = stopwatch.ElapsedMilliseconds;
-            if (now - lastStreamingUpdateMs > 100)
+            // Failsafe: if camera chunk tile changed but we missed the event, trigger streaming.
+            if (camera is not null)
             {
-                CalculateTerrainStreamingChanges();
-                lastStreamingUpdateMs = now;
+                var posFS = camera.Position;
+                var ccxFS = (int)((posFS.X + 0.5f) / VoxelHelper.ChunkSideSize);
+                var cczFS = (int)((posFS.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+                if (ccxFS != lastCameraChunkX || cczFS != lastCameraChunkZ)
+                {
+                    lastCameraChunkX = ccxFS;
+                    lastCameraChunkZ = cczFS;
+                    CalculateTerrainStreamingChanges();
+                    lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+                }
             }
 
             if (!workQueue.IsEmpty)
@@ -805,19 +867,23 @@ public class VoxelWorld
                     processed++;
                 }
 
-                // Perform periodic cache maintenance even while there is work
+                // Perform periodic cache maintenance and watchdog even while there is work
                 if (camera is not null)
                 {
                     var now2 = stopwatch.ElapsedMilliseconds;
-                    if (now2 - lastCacheMaintenanceMs > 200)
+                    if (now2 - lastCacheMaintenanceMs > 500)
                     {
                         var centerPosition = camera.Position;
                         var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
                         var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
                         var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
-                        MoveChunksToCache(cameraXZ);
-                        EvictChunksFromCache(cameraXZ);
+                        EvictIfOverCapacity(cameraXZ);
                         lastCacheMaintenanceMs = now2;
+                    }
+                    if (now2 - lastWatchdogMs > 1000)
+                    {
+                        WatchdogReenqueue();
+                        lastWatchdogMs = now2;
                     }
                 }
                 continue; // do not idle-wait when there is work
@@ -826,13 +892,21 @@ public class VoxelWorld
             // Idle path: maintain cache and wait briefly for camera events
             if (camera is not null)
             {
-                var centerPosition = camera.Position;
-                var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
-                var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-                var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
-
-                MoveChunksToCache(cameraXZ);
-                EvictChunksFromCache(cameraXZ);
+                var now3 = stopwatch.ElapsedMilliseconds;
+                if (now3 - lastCacheMaintenanceMs > 1000)
+                {
+                    var centerPosition = camera.Position;
+                    var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
+                    var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+                    var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
+                    EvictIfOverCapacity(cameraXZ);
+                    lastCacheMaintenanceMs = now3;
+                }
+                if (now3 - lastWatchdogMs > 1000)
+                {
+                    WatchdogReenqueue();
+                    lastWatchdogMs = now3;
+                }
             }
 
             // Short wait to avoid busy-spin when idle
@@ -840,39 +914,36 @@ public class VoxelWorld
         }
     }
 
-    private void EvictChunksFromCache(Vector2i cameraXZ)
+    // Unified eviction: trim active set if it grows past capacity. Prefer evicting far chunks not in surrounding set.
+    private void EvictIfOverCapacity(in Vector2i cameraXZ)
     {
         lock (cacheLock)
         {
-            var before = cachedChunks.Count;
-            EvictCacheIfNeeded();
-            var after = cachedChunks.Count;
-            var counter = before - after;
-            if (counter > 0) Log.Debug($"cached chunks evicted {counter}");
-        }
-    }
-
-    private void MoveChunksToCache(Vector2i cameraXZ)
-    {
-        var chunks = loadedChunks.Where(x => !surroundingChunkSet.Contains(x.Value.Index));
-
-        if (chunks.Any())
-        {
-            var counter = 0;
-            foreach (var chunk in chunks)
+            while (loadedChunks.Count > CacheCapacity && cacheFifo.Count > 0)
             {
-                if (loadedChunks.TryRemove(chunk.Value.Index, out var loadedChunk))
+                var idx = cacheFifo.Dequeue();
+                bool shouldEvict;
+                lock (surroundingChunkSet)
                 {
-                    cachedChunks[chunk.Value.Index] = loadedChunk;
-                    lock (cacheLock)
-                    {
-                        cacheFifo.Enqueue(chunk.Value.Index);
-                        EvictCacheIfNeeded();
-                    }
-                    counter++;
+                    var outside = !surroundingChunkSet.Contains(idx);
+                    if (!loadedChunks.TryGetValue(idx, out var chk)) continue;
+                    var dist = (chk.ChunkPosition - cameraXZ).ManhattanLength;
+                    shouldEvict = outside && dist > VoxelHelper.MaxDistanceInChunks + 1;
+                }
+                if (!shouldEvict)
+                {
+                    // Not a good eviction candidate; push it back to the end to try later.
+                    cacheFifo.Enqueue(idx);
+                    continue;
+                }
+                if (loadedChunks.TryRemove(idx, out var evicted))
+                {
+                    evicted.State = ChunkState.ToBeRemoved;
+                    evicted.Visible = false;
+                    ChunkRenderer.chunksStreamingQueue.Enqueue(evicted);
+                    SaveChangedChunkBlocks(evicted);
                 }
             }
-            if (counter > 0) Log.Debug($"chunks moved to cache: {counter}");
         }
     }
 
@@ -887,10 +958,22 @@ public class VoxelWorld
             }
             if (!isStillNeeded)
             {
+                // Clear pending so it can be rescheduled later when needed again
+                if (loadedChunks.TryGetValue(index, out var ch0))
+                {
+                    ch0.PendingCompute = false;
+                    pendingComputeSince.TryRemove(index, out _);
+                }
                 return;
             }
 
             var start = stopwatch.ElapsedMilliseconds;
+
+            // Mark compute in progress
+            if (loadedChunks.TryGetValue(index, out var inProgChunk))
+            {
+                inProgChunk.ComputeInProgress = true;
+            }
 
             if (CreateChunkInitializeAndAddToLoaded(index, out var chunk))
             {
@@ -919,9 +1002,21 @@ public class VoxelWorld
             {
                 EnqueueChunkForUpload(chunk);
             }
-        
+
             RefreshChunkBorders(chunk);
+
+            // Clear compute pending now that this work item has been handled
+            chunk.PendingCompute = false;
+            pendingComputeSince.TryRemove(index, out _);
+            chunk.ComputeInProgress = false;
         }
+    }
+
+    // Public per-frame visibility refresh (called from GL thread)
+    public void UpdateVisibilityFromCamera(ICamera cam)
+    {
+        var planes = (Vector4[])cam.Frustum.Planes.Clone();
+        UpdateChunkVisibility(planes);
     }
     #endregion
 
@@ -966,20 +1061,7 @@ public class VoxelWorld
             yield return chunkIndex + VoxelHelper.WorldChunksXZ;
     }
 
-    private void EvictCacheIfNeeded()
-    {
-        while (cachedChunks.Count > CacheCapacity && cacheFifo.Count > 0)
-        {
-            var idx = cacheFifo.Dequeue();
-            if (cachedChunks.TryRemove(idx, out var evicted))
-            {
-                if (evicted.State is ChunkState.SafeToRemove or ChunkState.Loaded)
-                {
-                    SaveChangedChunkBlocks(evicted);
-                }
-            }
-        }
-    }
+    // EvictCacheIfNeeded removed in unified model
 
     #region Save/load
     private static string GetSaveFileName(int seed, int chunkIndex) => $"world-{seed}_chunk-{chunkIndex}.bin";
@@ -1086,6 +1168,7 @@ public class VoxelWorld
         if (chunk is null) return;
         if (chunk.PendingUpload) return;
         chunk.PendingUpload = true;
+        pendingUploadSince[chunk.Index] = stopwatch.ElapsedMilliseconds;
         ChunkRenderer.chunksStreamingQueue.Enqueue(chunk);
     }
 
@@ -1120,4 +1203,69 @@ public class VoxelWorld
         }
     }
     #endregion
+
+    // --- Helpers & watchdog ---
+    private bool HasCameraPoseChanged(ICamera cam)
+    {
+        // Thresholds tuned to ignore micro jitter
+        const float posEpsSq = 0.01f; // ~10cm
+        const float oriEps = 0.0005f; // ~small quaternion delta
+
+        var pos = cam.Position;
+        var ori = cam.Orientation;
+        var camChunkX = (int)((pos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var camChunkZ = (int)((pos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+
+        var posChanged = (pos - lastCameraPosition).LengthSquared > posEpsSq;
+        var dot = Math.Abs(ori.X * lastCameraOrientation.X + ori.Y * lastCameraOrientation.Y + ori.Z * lastCameraOrientation.Z + ori.W * lastCameraOrientation.W);
+        var oriChanged = (1f - dot) > oriEps;
+        var tileChanged = camChunkX != lastCameraChunkX || camChunkZ != lastCameraChunkZ;
+
+        if (posChanged || oriChanged || tileChanged)
+        {
+            lastCameraPosition = pos;
+            lastCameraOrientation = ori;
+            lastCameraChunkX = camChunkX;
+            lastCameraChunkZ = camChunkZ;
+            return true;
+        }
+        return false;
+    }
+
+    private void WatchdogReenqueue()
+    {
+        // Self-heal chunks that are CPU-ready but missing GPU data or stuck PendingUpload
+        List<int> indices;
+        lock (surroundingChunkSet)
+        {
+            indices = surroundingChunkSet.ToList();
+        }
+        var now = stopwatch.ElapsedMilliseconds;
+        foreach (var idx in indices)
+        {
+            if (!loadedChunks.TryGetValue(idx, out var chunk)) continue;
+            // CPU compute watchdog (conservative): only enqueue if not already pending and not in progress
+            if (!chunk.IsProcessed)
+            {
+                if (!chunk.PendingCompute && !chunk.ComputeInProgress)
+                {
+                    chunk.PendingCompute = true;
+                    workQueue.Enqueue(idx);
+                    pendingComputeSince[idx] = now;
+                    Log.Debug($"Watchdog compute enqueue {idx}");
+                }
+                continue;
+            }
+
+            // GPU upload watchdog (only for processed chunks)
+            var missingGpu = chunk.BlocksSSBO == 0u && chunk.State != ChunkState.ToBeRemoved && chunk.State != ChunkState.SafeToRemove;
+            var stuck = chunk.PendingUpload && pendingUploadSince.TryGetValue(idx, out var since) && (now - since) > 1000;
+            if (missingGpu || stuck)
+            {
+                if (stuck) chunk.PendingUpload = false; // allow re-enqueue
+                EnqueueChunkForUpload(chunk);
+                Log.Debug($"Watchdog upload re-enqueue {idx} (missingGpu={missingGpu}, stuck={stuck})");
+            }
+        }
+    }
 }

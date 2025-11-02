@@ -20,12 +20,16 @@ public class ChunkRenderer : SceneNode
 
     private readonly uint texturesSSBO;
     private readonly uint materialsSSBO;
-    private readonly List<Chunk> loadedChunksList = [];
+    // Chunks with GPU render data ready (SSBOs). Indexed by chunk index for O(1) upserts.
+    private readonly Dictionary<int, Chunk> loadedChunksMap = new();
     private readonly VoxelWorld world;
     private double uTime;
 
     internal ConcurrentQueue<Chunk> chunksStreamingQueue = [];
-    private readonly Dictionary<int, byte> drawLinger = new();
+    // Reused buffers to reduce per-frame allocations for queue draining
+    private readonly List<Chunk> drainBuffer = new(512);
+    private readonly Dictionary<int, Chunk> latestByIndex = new(512);
+    private readonly List<(Chunk chunk, float distSq)> sortBuffer = new(512);
 
     public static ChunkRenderer Create(VoxelWorld world, ulong[] textureHandles, VoxelMaterial[] materials)
     {
@@ -64,9 +68,9 @@ public class ChunkRenderer : SceneNode
 
     public int ChunksQueueLength => chunksStreamingQueue.Count;
 
-    public int ChunkRenderDataLength => loadedChunksList.Count;
+    public int ChunkRenderDataLength => loadedChunksMap.Count;
 
-    public IEnumerable<Chunk> VisibleChunks => loadedChunksList.Where(x => x.Visible);
+    public IEnumerable<Chunk> VisibleChunks => loadedChunksMap.Values.Where(x => x.Visible);
 
     public BlockState? PickedBlock { get; set; }
 
@@ -80,25 +84,9 @@ public class ChunkRenderer : SceneNode
 
         RenderedBlocks = 0;
         var modelMatrix = Matrix4.Identity;
-        // Snapshot frustum planes once to avoid intra-frame inconsistencies
-        var planes = (Vector4[])world.Camera.Frustum.Planes.Clone();
-        foreach (var chunkData in loadedChunksList)
+        foreach (var chunkData in loadedChunksMap.Values)
         {
-            var canDraw = chunkData.SolidCount > 0 && chunkData.State == ChunkState.Added;
-            if (canDraw)
-            {
-                const float EdgeCullingMarginBlocks = 2f;
-                var (min, max) = chunkData.Aabb;
-                var pad = new Vector3(EdgeCullingMarginBlocks, 0f, EdgeCullingMarginBlocks);
-                var padded = (min - pad, max + pad);
-                var inside = OpenRender.Core.Culling.CullingHelper.IsAabbInFrustum(padded, planes);
-
-                if (!drawLinger.TryGetValue(chunkData.Index, out var linger)) linger = 0;
-                if (inside) linger = 2; else if (linger > 0) linger--;
-                drawLinger[chunkData.Index] = linger;
-
-                canDraw = linger > 0;
-            }
+            var canDraw = chunkData.SolidCount > 0 && chunkData.State == ChunkState.Added && chunkData.Visible;
 
             if (canDraw)
             {
@@ -120,33 +108,67 @@ public class ChunkRenderer : SceneNode
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
-        var isChunkDataUpdated = ProcessChunksStreamingQueue();
-
-        if (isChunkDataUpdated)
-        {
-            foreach (var loadedChunk in loadedChunksList)
-            {
-                if (!world.SurroundingChunkIndices.Contains(loadedChunk.Index))
-                {
-                    loadedChunksList.Remove(loadedChunk);
-                    break;  
-                }
-            }
-        }
+        _ = ProcessChunksStreamingQueue();
     }
 
     private bool ProcessChunksStreamingQueue()
     {
-        var MaxQueueItems = 10;
+        // Drain a bounded number of items, coalesce by chunk index (keep last),
+        // sort by distance to camera, process a fixed number for stable frame time.
         var isChunkDataUpdated = false;
-        var counter = 0;
-        while (counter < MaxQueueItems && chunksStreamingQueue.TryDequeue(out var chunk))
+        drainBuffer.Clear();
+        while (drainBuffer.Count < 512 && chunksStreamingQueue.TryDequeue(out var c))
         {
-            loadedChunksList.Remove(chunk);
+            drainBuffer.Add(c);
+        }
+        if (drainBuffer.Count == 0) return false;
+
+        latestByIndex.Clear();
+        foreach (var c in drainBuffer)
+        {
+            latestByIndex[c.Index] = c;
+        }
+
+        sortBuffer.Clear();
+        var cameraPos = world.Camera.Position;
+        foreach (var kv in latestByIndex)
+        {
+            var ch = kv.Value;
+            var center = ((Vector3)(ch.Aabb.Min + ch.Aabb.Max)) * 0.5f;
+            var distSq = (center - cameraPos).LengthSquared;
+            sortBuffer.Add((ch, distSq));
+        }
+        sortBuffer.Sort(static (a, b) => a.distSq.CompareTo(b.distSq));
+
+        const int MaxPerFrame = 256;
+        var processed = 0;
+        var iEntry = 0;
+        for (; iEntry < sortBuffer.Count && processed < MaxPerFrame; iEntry++)
+        {
+            var chunk = sortBuffer[iEntry].chunk;
 
             switch (chunk.State)
             {
                 case ChunkState.ToBeRemoved:
+                    // Guard against stale removals for interior chunks.
+                    // If this chunk is still within the active radius around the camera, treat this as stale and keep it.
+                    {
+                        var camPos = world.Camera.Position;
+                        var camChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+                        var camChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+                        var manhattan = Math.Abs(chunk.ChunkPosition.X - camChunkX) + Math.Abs(chunk.ChunkPosition.Y - camChunkZ);
+                        if (manhattan <= VoxelHelper.MaxDistanceInChunks + 1)
+                        {
+                            // Stale removal: restore state and ensure it's tracked
+                            chunk.State = ChunkState.Added;
+                            loadedChunksMap[chunk.Index] = chunk;
+                            chunk.PendingUpload = false;
+                            break;
+                        }
+                    }
+
+                    // Remove if present, then free GL buffers
+                    loadedChunksMap.Remove(chunk.Index);
                     GL.DeleteBuffer(chunk.BlocksSSBO);
                     GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
                     chunk.BlocksSSBO = 0;
@@ -163,27 +185,29 @@ public class ChunkRenderer : SceneNode
                 case ChunkState.Loaded:
                     CreateChunkRenderData(chunk);
                     chunk.State = ChunkState.Added;
-                    loadedChunksList.Add(chunk);
+                    loadedChunksMap[chunk.Index] = chunk;
                     chunk.PendingUpload = false;
                     isChunkDataUpdated = true;
-                    counter++;
+                    processed++;
                     break;
 
                 case ChunkState.Added:
                     UpdateChunkRenderData(chunk);
-                    loadedChunksList.Add(chunk);
+                    loadedChunksMap[chunk.Index] = chunk;
                     chunk.PendingUpload = false;
                     isChunkDataUpdated = true;
-                    counter++;
+                    processed++;
                     break;
 
                 case ChunkState.SafeToRemove:
-                    Log.Debug($"chunk {chunk.Index} safe to remove");
-                    break;
-
-                default:
+                    // nothing
                     break;
             }
+        }
+        // Re-enqueue any unprocessed entries to avoid dropping work
+        for (; iEntry < sortBuffer.Count; iEntry++)
+        {
+            chunksStreamingQueue.Enqueue(sortBuffer[iEntry].chunk);
         }
         return isChunkDataUpdated;
     }
@@ -193,7 +217,7 @@ public class ChunkRenderer : SceneNode
         CreateChunkRenderData(chunk);
         chunk.State = ChunkState.Added;
         chunk.Visible = true;
-        loadedChunksList.Add(chunk);
+        loadedChunksMap[chunk.Index] = chunk;
         chunk.PendingUpload = false;
     }
 

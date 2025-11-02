@@ -316,6 +316,8 @@ public class Chunk(VoxelWorld world, int index)
     public bool Visible;
     internal byte VisibleLinger;
     internal volatile bool PendingUpload;
+    internal volatile bool PendingCompute;
+    internal volatile bool ComputeInProgress;
 
     public IEnumerable<BlockState> VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent);
 

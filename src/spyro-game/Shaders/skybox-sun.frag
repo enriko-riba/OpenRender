@@ -173,9 +173,8 @@ void main()
     float skyFogFactor = getSkyFogFactor(rayWS);
     vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
     vec3 finalColor = mix(baseColor, fogColor, skyFogFactor);
+    
     // Apply dithering: add a small random value to break up the color bands
     finalColor += (random(gl_FragCoord.xy) - 0.5) / 255.0;
-
-    //FragColor = vec4(sky + sunGlow, 1.0);
     FragColor = vec4(finalColor, 1.0);
 }
