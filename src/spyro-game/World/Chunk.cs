@@ -343,6 +343,36 @@ public class Chunk(VoxelWorld world, int index)
     // Indicates that GPU column heights were read back and applied
     public bool HasGpuColumns { get; internal set; }
 
+    // GPU-provided collision spans per XZ column: up to MaxSpans pairs (yStart,yEnd) per column
+    // Flattened pairs array: length = ChunkSideSizeSquare * MaxSpans * 2
+    private int[]? columnSpanPairs;
+    private byte[]? columnSpanCounts;
+    public bool HasGpuSpans { get; private set; }
+
+    internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts)
+    {
+        columnSpanPairs = spansPairs;
+        columnSpanCounts = counts;
+        HasGpuSpans = true;
+    }
+
+    internal bool IsSolidBySpans(int lx, int ly, int lz, int maxSpans)
+    {
+        if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null) return false;
+        var size = VoxelHelper.ChunkSideSize;
+        var col = lx + lz * size;
+        var c = columnSpanCounts[col];
+        if (c == 0) return false;
+        var baseIdx = col * maxSpans * 2;
+        for (int i = 0; i < c && i < maxSpans; i++)
+        {
+            var y0 = columnSpanPairs[baseIdx + i * 2 + 0];
+            var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
+            if (ly >= y0 && ly < y1) return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// Initializes CPU Blocks[] from GPU-provided column heights so CPU-side systems (picking/edit) have a coherent view.
     /// Uses the same material classification as the CPU generator.

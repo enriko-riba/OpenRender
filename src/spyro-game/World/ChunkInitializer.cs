@@ -32,6 +32,13 @@ internal sealed class ChunkInitializer : IDisposable
     private uint blockAttribSSBO;      // binding=4 (output block visibility/AO)
     private uint neighborGroupsSSBO;   // binding=5 (neighbor group ids per chunk)
     private uint remapSSBO;            // binding=13 (primary index -> source group index)
+    // Paged allocator scaffolding
+    private uint freePagesSSBO;        // binding=6
+    private uint pageTableSSBO;        // binding=7 (optional future use)
+    private int freePagesCapacity;
+    // Column spans outputs for CPU collision
+    private uint columnSpanPairsSSBO;  // binding=17 (pairs yStart,yEnd per span slot)
+    private uint columnSpanCountsSSBO; // binding=18 (per-column counts)
 
     // persistent map for blockTypeSSBO
     private IntPtr blockTypePtr = IntPtr.Zero;
@@ -44,9 +51,23 @@ internal sealed class ChunkInitializer : IDisposable
     private int blockAttribCapacityBytes;
     private int neighborGroupsCapacity;
     private int remapCapacityBytes;
+    // Mapped pointers and capacities for column spans readback
+    private IntPtr columnSpanPairsPtr = IntPtr.Zero;
+    private IntPtr columnSpanCountsPtr = IntPtr.Zero;
+    private int columnSpanPairsCapacityBytes;
+    private int columnSpanCountsCapacityBytes;
     private uint countsBuffer;
     private IntPtr countsPtr = IntPtr.Zero;
     private int countsCapacityBytes;
+    // Prepared MDI buffers for renderer consumption
+    private uint preparedIndirect;
+    private IntPtr preparedIndirectMap = IntPtr.Zero;
+    private int preparedIndirectSizeBytes;
+    private uint preparedDrawData;
+    private IntPtr preparedDrawDataMap = IntPtr.Zero;
+    private int preparedDrawDataSizeBytes;
+    private uint preparedDrawCount;
+    private IntPtr preparedDrawCountMap = IntPtr.Zero;
     private static long lastDiagnosticsMs;
     private long lastPublishTick;
 
@@ -147,6 +168,105 @@ internal sealed class ChunkInitializer : IDisposable
 
         // counts buffer (int per chunk)
         EnsureCountsBuffer(maxChunks * sizeof(int));
+        // Initialize/free pages stack with a reasonable headroom
+        try { InitializePagedAllocator(Math.Max(1024, maxChunks * 2)); } catch { }
+    }
+
+    private void BuildPreparedMdiWithCompute(int[] indices, int[] bases, int[] counts)
+    {
+        var drawCount = indices?.Length ?? 0;
+        if (drawCount <= 0) return;
+
+        EnsurePreparedMdiCapacity(drawCount);
+        // Upload indices (binding 2)
+        EnsureChunkIndicesCapacity(drawCount);
+        {
+            var bytes = drawCount * sizeof(int);
+            var mapped = GL.MapNamedBufferRange(chunkIndicesSSBO, IntPtr.Zero, bytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero)
+            {
+                unsafe { fixed (int* src = &indices[0]) { System.Buffer.MemoryCopy(src, (void*)mapped, bytes, bytes); } }
+                GL.UnmapNamedBuffer(chunkIndicesSSBO);
+            }
+            else
+            {
+                GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, bytes, indices);
+            }
+        }
+        // Upload bases (binding 7)
+        int basesSSBO;
+        GL.CreateBuffers(1, out basesSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, basesSSBO, -1, "basesSSBO_mdi");
+        var basesBytes = drawCount * sizeof(int);
+        GL.NamedBufferStorage(basesSSBO, basesBytes, IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        {
+            var mapped = GL.MapNamedBufferRange(basesSSBO, IntPtr.Zero, basesBytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero)
+            {
+                unsafe { fixed (int* src = &bases[0]) { System.Buffer.MemoryCopy(src, (void*)mapped, basesBytes, basesBytes); } }
+                GL.UnmapNamedBuffer(basesSSBO);
+            }
+            else
+            {
+                GL.NamedBufferSubData(basesSSBO, IntPtr.Zero, basesBytes, bases);
+            }
+        }
+        // Upload counts (binding 6)
+        EnsureCountsBuffer(basesBytes);
+        if (countsPtr == IntPtr.Zero)
+        {
+            GL.NamedBufferSubData(countsBuffer, IntPtr.Zero, basesBytes, counts);
+        }
+        else
+        {
+            System.Runtime.InteropServices.Marshal.Copy(counts, 0, countsPtr, drawCount);
+        }
+        // Seed drawCount for compute
+        System.Runtime.InteropServices.Marshal.WriteInt32(preparedDrawCountMap, drawCount);
+
+        var shaderPages = new Shader("Shaders/compute-compact-pages.comp", ShaderType.ComputeShader);
+        shaderPages.Use();
+        shaderPages.SetInt("worldChunksXZ", VoxelHelper.WorldChunksXZ);
+        shaderPages.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        shaderPages.SetInt("indexCountPerVoxel", world.VoxelIndexCount);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnHeightsSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, basesSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, countsBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, preparedDrawData);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, preparedIndirect);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 15, preparedDrawCount);
+        GL.DispatchCompute((drawCount + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.CommandBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+        try { GL.DeleteBuffer(basesSSBO); } catch { }
+        world.SetPreparedMdi(preparedIndirect, preparedDrawData, preparedDrawCount, preparedDrawCountMap, drawCount);
+    }
+
+    private void InitializePagedAllocator(int capacityPages)
+    {
+        if (capacityPages <= 0) return;
+        var bytes = sizeof(int) * (1 + capacityPages);
+        if (freePagesSSBO != 0)
+        {
+            GL.GetNamedBufferParameter(freePagesSSBO, BufferParameterName.BufferSize, out int cur);
+            if (cur >= bytes) { freePagesCapacity = capacityPages; return; }
+            try { GL.DeleteBuffer(freePagesSSBO); } catch { }
+            freePagesSSBO = 0; freePagesCapacity = 0;
+        }
+        GL.CreateBuffers(1, out freePagesSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, freePagesSSBO, -1, "freePages_SSBO");
+        GL.NamedBufferStorage(freePagesSSBO, bytes, IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit);
+        freePagesCapacity = capacityPages;
+        // Initialize via compute shader
+        var init = new Shader("Shaders/compute-init-pages.comp", ShaderType.ComputeShader);
+        init.Use();
+        init.SetInt("pageCount", capacityPages);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, freePagesSSBO);
+        var groups = (capacityPages + 255) / 256;
+        GL.DispatchCompute(groups, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
     }
 
     public ChunkInitializer(VoxelWorld world)
@@ -158,6 +278,7 @@ internal sealed class ChunkInitializer : IDisposable
         shaderCompactCount = new Shader("Shaders/compute-compact-count.comp", ShaderType.ComputeShader);
         shaderCompactWrite = new Shader("Shaders/compute-compact-write.comp", ShaderType.ComputeShader);
         // integrated into compute-chunk; no separate edit passes
+        try { InitializePagedAllocator(2048); } catch { }
     }
 
     // ---- public APIs ----
@@ -290,11 +411,15 @@ internal sealed class ChunkInitializer : IDisposable
         EnsureBlockAttribCapacity(voxBytes * padded.Length);
         EnsureColumnHeightsOutputCapacity(padded.Length);
 
-        // Pass G0: types + initial AO/visibility (+edits)
+        // Pass G0: types + initial AO/visibility (+edits) + column spans/heights
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, blockTypeSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnHeightsSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 4, blockAttribSSBO);
+        const int MaxSpans = 3;
+        EnsureColumnSpansOutputCapacity(padded.Length, MaxSpans);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 17, columnSpanPairsSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 18, columnSpanCountsSSBO);
         FillBreakMask3D(padded, 0, padded.Length, null);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 16, breakMask3DSSBO);
         shader.Use();
@@ -306,6 +431,7 @@ internal sealed class ChunkInitializer : IDisposable
         shader.SetFloat("warpFreq", 1f / 900f);
         shader.SetFloat("warpAmp", 8f);
         shader.SetInt("noiseSeed", world.Seed ^ 0x12345);
+        shader.SetInt("maxSpans", MaxSpans);
         GL.DispatchCompute(padded.Length, 1, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
 
@@ -318,22 +444,27 @@ internal sealed class ChunkInitializer : IDisposable
         GL.DispatchCompute(padded.Length, 1, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
 
+        // Ensure GPU writes are visible to CPU before reading mapped column heights
+        var readFence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
+        try { _ = GL.ClientWaitSync(readFence, ClientWaitSyncFlags.SyncFlushCommandsBit, 50_000_000); } catch { }
+        try { GL.DeleteSync(readFence); } catch { }
+
         // Update CPU collision heights for primaries from columnHeights (persistently mapped)
         try
         {
             unsafe
             {
-                int area = VoxelHelper.ChunkSideSizeSquare;
+                var area = VoxelHelper.ChunkSideSizeSquare;
                 if (columnHeightsPtr != IntPtr.Zero)
                 {
                     var src = (uint*)columnHeightsPtr;
                     // By construction, padded starts with primaries in the same order
-                    for (int i = 0; i < primary.Length; i++)
+                    for (var i = 0; i < primary.Length; i++)
                     {
                         var idx = padded[i];
                         var arr = new int[area];
                         var baseOff = i * area;
-                        for (int j = 0; j < area; j++) arr[j] = (int)src[baseOff + j];
+                        for (var j = 0; j < area; j++) arr[j] = (int)src[baseOff + j];
                         var ch = world.GetOrCreateChunkContainer(idx);
                         ch.ApplyColumnHeightsForCollision(arr);
                         ch.HasGpuColumns = true;
@@ -346,9 +477,9 @@ internal sealed class ChunkInitializer : IDisposable
 
         // Stage G2a: count only primaries (build remap primary->padded)
         var map = new Dictionary<int, int>(padded.Length);
-        for (int i = 0; i < padded.Length; i++) map[padded[i]] = i;
+        for (var i = 0; i < padded.Length; i++) map[padded[i]] = i;
         var remap = new int[primary.Length];
-        for (int i = 0; i < primary.Length; i++) remap[i] = map.TryGetValue(primary[i], out var gi) ? gi : 0;
+        for (var i = 0; i < primary.Length; i++) remap[i] = map.TryGetValue(primary[i], out var gi) ? gi : 0;
         EnsureRemapBuffer(remap);
         var counts = RunCompactCount(padded, 0, primary.Length, remap);
 
@@ -356,25 +487,79 @@ internal sealed class ChunkInitializer : IDisposable
         var oldIndices = world.CompactedChunkIndices ?? Array.Empty<int>();
         var oldBases = world.CompactedBases ?? Array.Empty<int>();
         var oldCounts = world.CompactedCounts ?? Array.Empty<int>();
-        int oldTotal = 0; for (int i = 0; i < oldCounts.Length; i++) oldTotal += oldCounts[i];
+        var oldTotal = 0; for (var i = 0; i < oldCounts.Length; i++) oldTotal += oldCounts[i];
 
-        var bases = new int[primary.Length];
-        int addTotal = 0; for (int i = 0; i < primary.Length; i++) { bases[i] = oldTotal + addTotal; addTotal += counts[i]; }
-        if (addTotal <= 0)
+        // Allocate bases/slots using freelists
+        var freeSlotsStack = new System.Collections.Generic.Stack<int>(world.FreeDrawSlots);
+        var freeRanges = new System.Collections.Generic.List<(int Base, int Length)>(world.FreeAtlasRanges);
+        // Map existing resident draws for in-place updates when possible
+        var oldIndexToSlot = new Dictionary<int, int>(oldIndices.Length);
+        for (var i = 0; i < oldIndices.Length; i++) oldIndexToSlot[oldIndices[i]] = i;
+        var assignedBases = new int[primary.Length];
+        var assignedSlots = new int[primary.Length]; for (var i = 0; i < assignedSlots.Length; i++) assignedSlots[i] = -1;
+        var additionalTotal = 0; var appendedDraws = 0;
+        for (var i = 0; i < primary.Length; i++)
         {
-            // nothing to append
-            return false;
+            var idxVal = primary[i];
+            var need = counts[i];
+            int slot;
+            if (oldIndexToSlot.TryGetValue(idxVal, out slot))
+            {
+                // Try to reuse existing atlas range when capacity is sufficient
+                var oldBase = (slot < oldBases.Length) ? oldBases[slot] : 0;
+                var oldLen = (slot < oldCounts.Length) ? oldCounts[slot] : 0;
+                if (need <= oldLen && oldLen > 0)
+                {
+                    assignedBases[i] = oldBase;
+                }
+                else
+                {
+                    // Allocate new range; old range becomes free
+                    int baseOff = -1;
+                    for (var r = 0; r < freeRanges.Count; r++)
+                    {
+                        var fr = freeRanges[r];
+                        if (fr.Length >= need) { baseOff = fr.Base; fr.Base += need; fr.Length -= need; if (fr.Length == 0) freeRanges.RemoveAt(r); else freeRanges[r] = fr; break; }
+                    }
+                    if (baseOff < 0) { baseOff = oldTotal + additionalTotal; additionalTotal += need; }
+                    assignedBases[i] = baseOff;
+                    if (oldLen > 0) freeRanges.Add((oldBase, oldLen));
+                }
+                assignedSlots[i] = slot; // in-place update of existing draw slot
+            }
+            else
+            {
+                // New resident draw: allocate a slot and a range
+                int baseOff = -1;
+                for (var r = 0; r < freeRanges.Count; r++)
+                {
+                    var fr = freeRanges[r];
+                    if (fr.Length >= need) { baseOff = fr.Base; fr.Base += need; fr.Length -= need; if (fr.Length == 0) freeRanges.RemoveAt(r); else freeRanges[r] = fr; break; }
+                }
+                if (baseOff < 0) { baseOff = oldTotal + additionalTotal; additionalTotal += need; }
+                assignedBases[i] = baseOff;
+                if (freeSlotsStack.Count > 0) assignedSlots[i] = freeSlotsStack.Pop(); else { assignedSlots[i] = -1; appendedDraws++; }
+            }
         }
 
-        // Stage G2b: allocate new atlas = oldTotal + addTotal; copy old then write new slice
+        // Stage G2b: allocate new atlas; ensure capacity covers reused ranges as well as appended ranges
+        var requiredTotal = Math.Max(1, oldTotal + additionalTotal);
+        var maxEnd = 0;
+        for (var i = 0; i < primary.Length; i++)
+        {
+            var end = assignedBases[i] + Math.Max(0, counts[i]);
+            if (end > maxEnd) maxEnd = end;
+        }
+        if (maxEnd > requiredTotal) requiredTotal = maxEnd;
+
         uint newAtlas;
         GL.CreateBuffers(1, out newAtlas);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newAtlas, -1, "compactedAtlas_SSBO");
-        int elemSize = 16; // sizeof(GpuBlockState)
-        GL.NamedBufferStorage(newAtlas, Math.Max(1, oldTotal + addTotal) * elemSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        var elemSize = 16; // sizeof(GpuBlockState)
+        GL.NamedBufferStorage(newAtlas, Math.Max(1, requiredTotal) * elemSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         if (world.CompactedAtlasSSBO != 0 && oldTotal > 0)
         {
-            // copy old content
+            // copy old content (only the existing region)
             GL.CopyNamedBufferSubData(world.CompactedAtlasSSBO, newAtlas, IntPtr.Zero, IntPtr.Zero, (IntPtr)(oldTotal * elemSize));
         }
 
@@ -394,12 +579,27 @@ internal sealed class ChunkInitializer : IDisposable
         FillBreakMask3D(primary, 0, primary.Length, remap);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 16, breakMask3DSSBO);
 
-        // Upload append bases
+        // Upload bases for primaries
         int basesSSBO;
         GL.CreateBuffers(1, out basesSSBO);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, basesSSBO, -1, "basesSSBO_append");
-        GL.NamedBufferStorage(basesSSBO, bases.Length * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-        GL.NamedBufferSubData(basesSSBO, IntPtr.Zero, bases.Length * sizeof(int), bases);
+        var basesBytes = Math.Max(1, assignedBases.Length) * sizeof(int);
+        GL.NamedBufferStorage(basesSSBO, basesBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapWriteBit);
+        if (assignedBases.Length > 0)
+        {
+            var mapped = GL.MapNamedBufferRange(basesSSBO, IntPtr.Zero, basesBytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero)
+            {
+                unsafe { fixed (int* src = &assignedBases[0]) { System.Buffer.MemoryCopy(src, (void*)mapped, (long)basesBytes, (long)basesBytes); } }
+                GL.UnmapNamedBuffer(basesSSBO);
+            }
+            else
+            {
+                // Fallback
+                GL.NamedBufferSubData(basesSSBO, IntPtr.Zero, basesBytes, assignedBases);
+            }
+        }
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, basesSSBO);
 
         shaderCompactWrite.Use();
@@ -412,22 +612,76 @@ internal sealed class ChunkInitializer : IDisposable
         GL.DispatchCompute(primary.Length, 1, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
 
-        // Build new arrays by concatenation
-        var newIndices = new int[oldIndices.Length + primary.Length];
-        var newBases = new int[oldBases.Length + bases.Length];
-        var newCounts = new int[oldCounts.Length + counts.Length];
-        if (oldIndices.Length > 0) Array.Copy(oldIndices, 0, newIndices, 0, oldIndices.Length);
-        if (oldBases.Length > 0) Array.Copy(oldBases, 0, newBases, 0, oldBases.Length);
-        if (oldCounts.Length > 0) Array.Copy(oldCounts, 0, newCounts, 0, oldCounts.Length);
-        Array.Copy(primary, 0, newIndices, oldIndices.Length, primary.Length);
-        Array.Copy(bases, 0, newBases, oldBases.Length, bases.Length);
-        Array.Copy(counts, 0, newCounts, oldCounts.Length, counts.Length);
+        // Build new arrays by reusing freed slots and appending remainder
+        var newLen = oldIndices.Length + appendedDraws;
+        var newIndices = new int[newLen];
+        var newBasesArr = new int[newLen];
+        var newCountsArr = new int[newLen];
+        if (oldIndices.Length > 0)
+        {
+            System.Array.Copy(oldIndices, 0, newIndices, 0, oldIndices.Length);
+            System.Array.Copy(oldBases, 0, newBasesArr, 0, oldBases.Length);
+            System.Array.Copy(oldCounts, 0, newCountsArr, 0, oldCounts.Length);
+        }
+        int appendCursor = oldIndices.Length;
+        for (int i = 0; i < primary.Length; i++)
+        {
+            var slot = assignedSlots[i];
+            var idxVal = primary[i];
+            var baseVal = assignedBases[i];
+            var cntVal = counts[i];
+            if (slot >= 0 && slot < newLen)
+            {
+                newIndices[slot] = idxVal;
+                newBasesArr[slot] = baseVal;
+                newCountsArr[slot] = cntVal;
+            }
+            else
+            {
+                newIndices[appendCursor] = idxVal;
+                newBasesArr[appendCursor] = baseVal;
+                newCountsArr[appendCursor] = cntVal;
+                appendCursor++;
+            }
+        }
 
+        // Also refresh prepared MDI with the full draw set using compute-compact-pages
+        try { BuildPreparedMdiWithCompute(newIndices, newBasesArr, newCountsArr); } catch { }
         // Publish pending: keep resident atlas alive until renderer swaps pending
         var sync = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
-        world.SetPendingCompaction(newAtlas, newIndices, newBases, newCounts, sync);
+        world.SetPendingCompaction(newAtlas, newIndices, newBasesArr, newCountsArr, sync);
+        // Ensure renderer sees matching atlas and MDI: block on fence once and swap now
+        try
+        {
+            var r = GL.ClientWaitSync(sync, ClientWaitSyncFlags.SyncFlushCommandsBit, 50_000_000);
+            world.TrySwapPendingCompaction();
+        }
+        catch { }
+
+        // Persist remaining freelist state back to world (unconsumed entries remain for future appends)
+        world.FreeDrawSlots.Clear();
+        while (freeSlotsStack.Count > 0)
+        {
+            world.FreeDrawSlots.Add(freeSlotsStack.Pop());
+        }
+        world.FreeAtlasRanges.Clear();
+        for (var i = 0; i < freeRanges.Count; i++)
+        {
+            var fr = freeRanges[i];
+            if (fr.Length > 0) world.FreeAtlasRanges.Add(fr);
+        }
+        // Serialize reuse of shared SSBOs for subsequent appends
+        inFlightFence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
         return true;
     }
+
+    /// <summary>
+    /// Minimal in-place update for edits: regenerates the provided primaries and their cardinals
+    /// and appends/writes into the existing atlas/draws without a full surrounding publish.
+    /// </summary>
+    /// <param name="primaries">World chunk indices to update</param>
+    public bool UpdateChunksInPlace(int[] primaries)
+        => AppendChunks(primaries);
 
     public bool SubmitBatch(int[] chunkIndices)
     {
@@ -608,7 +862,6 @@ internal sealed class ChunkInitializer : IDisposable
 
         // Apply CPU results (disabled for GPU-first rendering to avoid stalls)
         var indices = batchIndices;
-        var count = batchCount;
         batchIndices = null;
         batchCount = 0;
         batchInFlight = false;
@@ -823,6 +1076,9 @@ internal sealed class ChunkInitializer : IDisposable
         shader.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
         shader.SetInt("waterLevel", VoxelHelper.WaterLevel);
         shader.SetInt("worldChunksXZ", VoxelHelper.WorldChunksXZ);
+        // Column spans config
+        const int MaxSpans = 3;
+        shader.SetInt("maxSpans", MaxSpans);
         // GPU-side height generation params (approximate TerrainBuilder)
         shader.SetFloat("baseFreq", 1f / 180f);
         shader.SetFloat("warpFreq", 1f / 900f);
@@ -833,6 +1089,10 @@ internal sealed class ChunkInitializer : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 16, breakMask3DSSBO);
 
         // Pass 1: types + initial AO/visibility
+        // Ensure spans buffers for readback
+        EnsureColumnSpansOutputCapacity(count, MaxSpans);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 17, columnSpanPairsSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 18, columnSpanCountsSSBO);
         GL.DispatchCompute(count, 1, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
         Log.CheckGlError(nameof(DispatchAndReadback) + " after Pass1");
@@ -910,9 +1170,20 @@ internal sealed class ChunkInitializer : IDisposable
         if (total <= 0) { GL.DeleteBuffer(atlas); return; }
         var subset = new int[count];
         Array.Copy(chunkIndices, start, subset, 0, count);
+        // Build prepared MDI via compute (author drawData + indirect + drawCount on GPU)
+        BuildPreparedMdiWithCompute(subset, bases, counts);
+
+        // Prepared MDI authored via compute; renderer consumes these directly
         // Publish as pending with a fence for safe swap in renderer
         var sync2 = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
         world.SetPendingCompaction(atlas, subset, bases, counts, sync2);
+        // Ensure renderer binds the swapped atlas consistent with prepared MDI
+        try
+        {
+            var r2 = GL.ClientWaitSync(sync2, ClientWaitSyncFlags.SyncFlushCommandsBit, 50_000_000);
+            world.TrySwapPendingCompaction();
+        }
+        catch { }
         try {
             Log.Info($"GPU Publish: draws={count}, totalInstances={total}");
             // Debug: sample mapping for camera chunk
@@ -975,6 +1246,84 @@ internal sealed class ChunkInitializer : IDisposable
             }
         }
         catch { }
+    }
+
+    private void EnsurePreparedMdiCapacity(int drawCapacity)
+    {
+        var ddBytes = Math.Max(1, drawCapacity) * Unsafe.SizeOf<SpyroGame.World.DrawDataGpu>();
+        var icBytes = Math.Max(1, drawCapacity) * 20; // 5 uints
+        if (preparedDrawData == 0 || preparedDrawDataSizeBytes < ddBytes)
+        {
+            if (preparedDrawData != 0) { try { GL.DeleteBuffer(preparedDrawData); } catch { } }
+            GL.CreateBuffers(1, out preparedDrawData);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, preparedDrawData, -1, "preparedDrawData_SSBO");
+            GL.NamedBufferStorage(preparedDrawData, ddBytes, IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+            preparedDrawDataMap = GL.MapNamedBufferRange(preparedDrawData, IntPtr.Zero, ddBytes, BufferAccessMask.MapWriteBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+            preparedDrawDataSizeBytes = ddBytes;
+        }
+        if (preparedIndirect == 0 || preparedIndirectSizeBytes < icBytes)
+        {
+            if (preparedIndirect != 0) { try { GL.DeleteBuffer(preparedIndirect); } catch { } }
+            GL.CreateBuffers(1, out preparedIndirect);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, preparedIndirect, -1, "preparedIndirectCmdBuffer");
+            GL.NamedBufferStorage(preparedIndirect, icBytes, IntPtr.Zero, BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+            preparedIndirectMap = GL.MapNamedBufferRange(preparedIndirect, IntPtr.Zero, icBytes, BufferAccessMask.MapWriteBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+            preparedIndirectSizeBytes = icBytes;
+        }
+        if (preparedDrawCount == 0)
+        {
+            GL.CreateBuffers(1, out preparedDrawCount);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, preparedDrawCount, -1, "preparedDrawCount_SSBO");
+            GL.NamedBufferStorage(preparedDrawCount, sizeof(uint), IntPtr.Zero, BufferStorageFlags.MapReadBit | BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+            preparedDrawCountMap = GL.MapNamedBufferRange(preparedDrawCount, IntPtr.Zero, sizeof(uint), BufferAccessMask.MapReadBit | BufferAccessMask.MapWriteBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        }
+    }
+
+    private unsafe void FillPreparedMdi(int[] chunkIndices, int start, int count, int[] bases, int[] counts)
+    {
+        if (preparedIndirectMap == IntPtr.Zero || preparedDrawDataMap == IntPtr.Zero || preparedDrawCountMap == IntPtr.Zero) return;
+        // Prepare arrays in CPU then memcpy into mapped buffers
+        var ddArray = new SpyroGame.World.DrawDataGpu[count];
+        var cmdArray = new SpyroGame.World.DrawElementsIndirectCommand[count];
+        for (int i = 0; i < count; i++)
+        {
+            var idx = chunkIndices[start + i];
+            var cx = idx % VoxelHelper.WorldChunksXZ;
+            var cz = idx / VoxelHelper.WorldChunksXZ;
+            var pos = new OpenTK.Mathematics.Vector3(cx * VoxelHelper.ChunkSideSize, 0, cz * VoxelHelper.ChunkSideSize);
+            var model = OpenTK.Mathematics.Matrix4.Identity;
+            model.Row3.Xyz = pos;
+            ddArray[i] = new SpyroGame.World.DrawDataGpu
+            {
+                Model = model,
+                ChunkPos = new OpenTK.Mathematics.Vector4(pos.X, pos.Y, pos.Z, 1f),
+                BlocksBase = bases[i],
+                ChunkSize = VoxelHelper.ChunkSideSize,
+                OutlinedLocalIndex = -1,
+                Enabled = 1
+            };
+            var inst = counts[i]; if (inst < 0) inst = 0; if (inst > VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize) inst = VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize;
+            cmdArray[i] = new SpyroGame.World.DrawElementsIndirectCommand
+            {
+                Count = (uint)world.VoxelIndexCount,
+                InstanceCount = (uint)inst,
+                FirstIndex = 0,
+                BaseVertex = 0,
+                BaseInstance = (uint)i
+            };
+        }
+        System.Runtime.InteropServices.Marshal.WriteInt32(preparedDrawCountMap, count);
+        var ddStride = Unsafe.SizeOf<SpyroGame.World.DrawDataGpu>();
+        var totalDd = count * ddStride;
+        fixed (SpyroGame.World.DrawDataGpu* src = ddArray)
+        {
+            System.Buffer.MemoryCopy(src, (void*)preparedDrawDataMap, preparedDrawDataSizeBytes, totalDd);
+        }
+        fixed (SpyroGame.World.DrawElementsIndirectCommand* src2 = cmdArray)
+        {
+            var totalCmd = count * 20;
+            System.Buffer.MemoryCopy(src2, (void*)preparedIndirectMap, preparedIndirectSizeBytes, totalCmd);
+        }
     }
 
     private void EnsureNeighborGroups(int[] indices, int start, int count)
@@ -1130,6 +1479,47 @@ internal sealed class ChunkInitializer : IDisposable
         }
         // Reuse persistent break mask buffer; do not delete
         return counts;
+    }
+
+    private void EnsureColumnSpansOutputCapacity(int chunkCount, int maxSpans)
+    {
+        if (chunkCount == 0) return;
+        var area = VoxelHelper.ChunkSideSizeSquare;
+        var pairsPerChunk = area * maxSpans * 2;
+        var countsPerChunk = area;
+        var pairsBytes = chunkCount * pairsPerChunk * sizeof(int);
+        var countsBytes = chunkCount * countsPerChunk * sizeof(uint);
+
+        if (columnSpanPairsSSBO != 0)
+        {
+            GL.GetNamedBufferParameter(columnSpanPairsSSBO, BufferParameterName.BufferSize, out int current);
+            if (current >= pairsBytes && columnSpanPairsPtr != IntPtr.Zero) goto ensureCounts;
+            if (columnSpanPairsSSBO != 0) { GL.DeleteBuffer(columnSpanPairsSSBO); }
+            columnSpanPairsSSBO = 0; columnSpanPairsPtr = IntPtr.Zero; columnSpanPairsCapacityBytes = 0;
+        }
+        GL.CreateBuffers(1, out columnSpanPairsSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, columnSpanPairsSSBO, -1, "columnSpanPairsSSBO");
+        GL.NamedBufferStorage(columnSpanPairsSSBO, pairsBytes, IntPtr.Zero,
+            BufferStorageFlags.MapReadBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+        columnSpanPairsPtr = GL.MapNamedBufferRange(columnSpanPairsSSBO, IntPtr.Zero, pairsBytes,
+            BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        columnSpanPairsCapacityBytes = pairsBytes;
+
+ensureCounts:
+        if (columnSpanCountsSSBO != 0)
+        {
+            GL.GetNamedBufferParameter(columnSpanCountsSSBO, BufferParameterName.BufferSize, out int currentC);
+            if (currentC >= countsBytes && columnSpanCountsPtr != IntPtr.Zero) return;
+            if (columnSpanCountsSSBO != 0) { GL.DeleteBuffer(columnSpanCountsSSBO); }
+            columnSpanCountsSSBO = 0; columnSpanCountsPtr = IntPtr.Zero; columnSpanCountsCapacityBytes = 0;
+        }
+        GL.CreateBuffers(1, out columnSpanCountsSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, columnSpanCountsSSBO, -1, "columnSpanCountsSSBO");
+        GL.NamedBufferStorage(columnSpanCountsSSBO, countsBytes, IntPtr.Zero,
+            BufferStorageFlags.MapReadBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
+        columnSpanCountsPtr = GL.MapNamedBufferRange(columnSpanCountsSSBO, IntPtr.Zero, countsBytes,
+            BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        columnSpanCountsCapacityBytes = countsBytes;
     }
 
     private uint RunCompactWrite(int[] chunkIndices, int start, int count, int[] bases, int total, out int[] countsOut, int[]? remapForMasks = null)

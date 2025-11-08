@@ -9,9 +9,9 @@ namespace SpyroGame.World;
 public static class VoxelHelper
 {
     public const float FarPlane = 430f;
-    public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize)-2;
+    public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize)-1;
 
-    public const int MaxPickingDistance = 5;
+    public const int MaxPickingDistance = 3;
 
     public const int WorldChunksXZ = 9600 / ChunkSideSize;
     public const int ChunkSideSize = 16;

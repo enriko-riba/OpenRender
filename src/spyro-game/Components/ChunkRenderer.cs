@@ -80,11 +80,12 @@ public class ChunkRenderer : SceneNode
 
         // DrawData SSBO (binding=5) and indirect command buffer (MDI), persistently mapped
         var initialDrawCapacity = 256;
-        CreateOrResizeMappedBuffer(ref drawDataSSBO, "voxelDrawData_SSBO", initialDrawCapacity * Unsafe.SizeOf<DrawDataGpu>(), out drawDataMap, out drawDataMapSizeBytes);
-        CreateOrResizeMappedBuffer(ref indirectCmdBuffer, "voxelIndirectCmdBuffer", initialDrawCapacity * Unsafe.SizeOf<DrawElementsIndirectCommand>(), out indirectMap, out indirectMapSizeBytes);
+        CreateOrResizeMappedBuffer(ref drawDataSSBO, "voxelDrawData_SSBO", initialDrawCapacity * Unsafe.SizeOf<SpyroGame.World.DrawDataGpu>(), out drawDataMap, out drawDataMapSizeBytes);
+        CreateOrResizeMappedBuffer(ref indirectCmdBuffer, "voxelIndirectCmdBuffer", initialDrawCapacity * GlIndirectCmdSize, out indirectMap, out indirectMapSizeBytes);
 
         RenderGroup = RenderGroup.Default; // Changed from SkyBox to Solid
         DisableCulling = true;
+        world.VoxelIndexCount = Vao!.DataLength;
     }
 
 
@@ -105,16 +106,20 @@ public class ChunkRenderer : SceneNode
 
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, materialsSSBO);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
+        // If world prepared draw buffers, prefer them
+        var ddHandle = world.PreparedDrawDataSSBO != 0 ? world.PreparedDrawDataSSBO : drawDataSSBO;
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, ddHandle);
         if (drawVisibleSSBO != 0)
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
         DrawMdi();
     }
 
-    private int lastCx = int.MinValue;
-    private int lastCz = int.MinValue;
+   
     public override void OnUpdate(Scene scene, double elapsed)
     {
+        // Swap any pending compaction before doing per-frame work to avoid mid-frame swaps
+        try { world.TrySwapPendingCompaction(); } catch { }
+
         // Do not trigger compaction here; VoxelWorld manages publishes to avoid double submits.
 
         _ = ProcessChunksStreamingQueue();
@@ -376,27 +381,9 @@ public class ChunkRenderer : SceneNode
         }
     }
 
-    // GPU-side per-draw data (matched with instancedChunk.vert DrawData)
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DrawDataGpu
-    {
-        public Matrix4 Model;     // 64 bytes
-        public Vector4 ChunkPos;  // 16 bytes (xyz position, w unused)
-        public int BlocksBase;    // 4
-        public int ChunkSize;     // 4
-        public int OutlinedLocalIndex; // 4
-        public int Enabled;       // 4 -> total 96 bytes
-    }
+    // Draw types defined in SpyroGame.World
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct DrawElementsIndirectCommand
-    {
-        public uint Count;
-        public uint InstanceCount;
-        public uint FirstIndex;
-        public uint BaseVertex;
-        public uint BaseInstance;
-    }
+    private const int GlIndirectCmdSize = 5 * sizeof(uint); // 20 bytes
 
     private void UpdateDrawDataForChunk(Chunk chunk, int slot, int outlinedLocalIndex)
     {
@@ -420,8 +407,27 @@ public class ChunkRenderer : SceneNode
     }
 
     // --- MDI path ---
-    private void DrawMdi()
+    private unsafe void DrawMdi()
     {
+        // Preferred: draw using prepared MDI buffers authored by publisher
+        try { world.TrySwapPendingCompaction(); } catch { }
+        if (world.PreparedIndirectCmdBuffer != 0 && world.PreparedDrawDataSSBO != 0 && world.PreparedDrawCountPtr != IntPtr.Zero && world.CompactedAtlasSSBO != 0)
+        {
+            var drawCount = *(int*)world.PreparedDrawCountPtr;
+            if (drawCount > 0)
+            {
+                Material.Shader.Use();
+                Material.Shader.SetInt("useDrawData", 1);
+                Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, world.PreparedDrawDataSSBO);
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, world.CompactedAtlasSSBO);
+                GL.BindVertexArray(Vao!);
+                GL.BindBuffer(BufferTarget.DrawIndirectBuffer, world.PreparedIndirectCmdBuffer);
+                GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, drawCount, 0);
+                Log.CheckGlError();
+                return;
+            }
+        }
         // Defer swapping pending compaction until after issuing draws to avoid mid-pass buffer mismatches
         // If GPU compaction is available, consume it directly; otherwise use fixed atlas path
         var hasCompaction = world.CompactedChunkIndices != null && world.CompactedBases != null && world.CompactedCounts != null && world.CompactedAtlasSSBO != 0;
@@ -459,34 +465,54 @@ public class ChunkRenderer : SceneNode
                 }
                 else
                 {
-                    GL.NamedBufferSubData(compactedIndicesSSBO, IntPtr.Zero, bytes, frustumIndices);
+                    // Recreate buffer with persistent mapping and retry once to avoid pixel-path sync
+                    GL.DeleteBuffer(compactedIndicesSSBO);
+                    CreateOrResizeMappedBuffer(ref compactedIndicesSSBO, "compactedIndicesSSBO", bytes, out var map2, out var _);
+                    if (map2 != IntPtr.Zero && drawCount > 0)
+                    {
+                        unsafe { fixed (int* src = &frustumIndices[0]) { System.Buffer.MemoryCopy(src, (void*)map2, (long)bytes, (long)bytes); } }
+                    }
+                    else
+                    {
+                        // Disable frustum culling for this frame to avoid sync and invalid state
+                        GL.DeleteBuffer(compactedIndicesSSBO);
+                        compactedIndicesSSBO = 0;
+                        UseGpuFrustumCulling = false;
+                    }
                 }
                 EnsureOrResizeBuffer(ref drawVisibleSSBO, "drawVisibleSSBO", drawCount * sizeof(int));
             }
 
-            // Ensure draw buffers capacity
+            // Ensure draw buffers capacity (prefer prepared handles)
+            var ddTarget = world.PreparedDrawDataSSBO != 0 ? world.PreparedDrawDataSSBO : drawDataSSBO;
+            var icTarget = world.PreparedIndirectCmdBuffer != 0 ? world.PreparedIndirectCmdBuffer : indirectCmdBuffer;
             var ddSize = drawCount * Unsafe.SizeOf<DrawDataGpu>();
-            GL.GetNamedBufferParameter(drawDataSSBO, BufferParameterName.BufferSize, out int currentDdSize);
-            if (currentDdSize < ddSize)
+            GL.GetNamedBufferParameter(ddTarget, BufferParameterName.BufferSize, out int currentDdSize);
+            if (currentDdSize < ddSize && world.PreparedDrawDataSSBO == 0)
             {
                 CreateOrResizeMappedBuffer(ref drawDataSSBO, "voxelDrawData_SSBO", ddSize, out drawDataMap, out drawDataMapSizeBytes);
-                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
+                ddTarget = drawDataSSBO;
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, ddTarget);
             }
-            var icSize = drawCount * Unsafe.SizeOf<DrawElementsIndirectCommand>();
-            GL.GetNamedBufferParameter(indirectCmdBuffer, BufferParameterName.BufferSize, out int currentIcSize);
-            if (currentIcSize < icSize)
+            var icSize = drawCount * GlIndirectCmdSize;
+            GL.GetNamedBufferParameter(icTarget, BufferParameterName.BufferSize, out int currentIcSize);
+            if (currentIcSize < icSize && world.PreparedIndirectCmdBuffer == 0)
             {
                 CreateOrResizeMappedBuffer(ref indirectCmdBuffer, "voxelIndirectCmdBuffer", icSize, out indirectMap, out indirectMapSizeBytes);
+                icTarget = indirectCmdBuffer;
             }
 
             var ddArray = new DrawDataGpu[drawCount];
-            var cmdArray = new DrawElementsIndirectCommand[drawCount];
+            var cmdArray = new World.DrawElementsIndirectCommand[drawCount];
             RenderedBlocks = 0;
             // Compute player's current chunk index to correlate draw mapping
             var camPos = world.Camera.Position;
             var pChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
             var pChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
             var playerChunkIdx = pChunkX + pChunkZ * VoxelHelper.WorldChunksXZ;
+            // Compute atlas capacity in elements to validate base/count ranges
+            GL.GetNamedBufferParameter(world.CompactedAtlasSSBO, BufferParameterName.BufferSize, out int atlasBytes);
+            var atlasElemCapacity = atlasBytes / Unsafe.SizeOf<GpuBlockState>();
             for (int i = 0; i < drawCount; i++)
             {
                 var src = filtered[i];
@@ -522,21 +548,44 @@ public class ChunkRenderer : SceneNode
                     OutlinedLocalIndex = outlinedLocal,
                     Enabled = isVisible ? 1 : 0
                 };
-                cmdArray[i] = new DrawElementsIndirectCommand
+                // Clamp instance count to valid atlas range for this draw to avoid out-of-bounds
+                var baseElem = bases[src];
+                if (baseElem < 0) baseElem = 0;
+                var inst = counts[src];
+                if (inst < 0) inst = 0;
+                if (inst > MaxBlocksPerChunk) inst = MaxBlocksPerChunk;
+                var maxAvail = atlasElemCapacity - baseElem;
+                if (maxAvail < 0) maxAvail = 0;
+                if (inst > maxAvail) inst = maxAvail;
+                cmdArray[i] = new World.DrawElementsIndirectCommand
                 {
                     Count = (uint)Vao!.DataLength,
-                    InstanceCount = (uint)(isVisible ? counts[src] : 0),
+                    InstanceCount = (uint)(isVisible ? inst : 0),
                     FirstIndex = 0,
                     BaseVertex = 0,
                     BaseInstance = (uint)i
                 };
-                if (isVisible) RenderedBlocks += counts[src];
+                if (isVisible) RenderedBlocks += inst;
             }
 
             // sampling logs removed
 
-            CopyArrayToMapped(drawDataMap, 0, ddArray, drawCount);
-            CopyArrayToMapped(indirectMap, 0, cmdArray, drawCount);
+            if (world.PreparedDrawDataSSBO == 0)
+            {
+                if (drawDataMap != IntPtr.Zero)
+                    CopyArrayToMapped(drawDataMap, 0, ddArray, drawCount);
+                else
+                    GL.NamedBufferSubData(ddTarget, IntPtr.Zero, drawCount * Unsafe.SizeOf<DrawDataGpu>(), ddArray);
+            }
+
+            // Copy commands; struct is tightly packed (20 bytes) so array layout matches GL
+            if (world.PreparedIndirectCmdBuffer == 0)
+            {
+                if (indirectMap != IntPtr.Zero)
+                    CopyArrayToMapped(indirectMap, 0, cmdArray, drawCount);
+                else
+                    GL.NamedBufferSubData(icTarget, IntPtr.Zero, drawCount * GlIndirectCmdSize, cmdArray);
+            }
             GL.MemoryBarrier(MemoryBarrierFlags.ClientMappedBufferBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.CommandBarrierBit);
 
             var preCullRendered = RenderedBlocks;
@@ -568,8 +617,22 @@ public class ChunkRenderer : SceneNode
 
             // Ensure shader knows chunk grid size for outline mapping in frag
             Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+            // Safety: ensure indirect buffer is large enough for drawCount commands (5 uints each = 20 bytes)
+            GL.GetNamedBufferParameter(indirectCmdBuffer, BufferParameterName.BufferSize, out int icBufSize);
+            var requiredIcBytes = drawCount * GlIndirectCmdSize;
+            var requiredIcBytesMin = drawCount * GlIndirectCmdSize; // GL spec minimum layout
+            if (icBufSize < requiredIcBytesMin)
+            {
+                // Skip this frame to avoid GL_INVALID_VALUE on MultiDraw
+                RenderedBlocks = 0;
+                Log.Warn($"DrawMdi: indirect buffer too small. have={icBufSize}, need>={requiredIcBytesMin}, drawCount={drawCount}");
+                return;
+            }
+
             GL.BindVertexArray(Vao!);
-            GL.BindBuffer(BufferTarget.DrawIndirectBuffer, indirectCmdBuffer);
+            var mdiHandle = world.PreparedIndirectCmdBuffer != 0 ? world.PreparedIndirectCmdBuffer : icTarget;
+            GL.BindBuffer(BufferTarget.DrawIndirectBuffer, mdiHandle);
+            // Tightly packed commands; use stride=0 to match GL convention universally
             GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, drawCount, 0);
             Log.CheckGlError();
             lastCompactionVersion = world.CompactionVersion;
@@ -726,11 +789,4 @@ public class ChunkRenderer : SceneNode
     private uint visibleDrawsSSBO;
     private IntPtr visibleDrawsPtr;
     public int VisibleDraws { get; private set; }
-    private long lastDrawSampleMs;
-
-    // Deterministic atlas mapping removed.
 }
-
-
-
-

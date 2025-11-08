@@ -6,6 +6,9 @@ layout (local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
 layout(std430, binding = 1) buffer ssbo_blocktypes { uint blocktype[]; };
 layout(std430, binding = 2) buffer ssbo_chunk_indices { uint chunkIndices[]; };
 layout(std430, binding = 3) buffer ssbo_column_heights { uint columnHeights[]; };
+// Column spans output (per column): up to maxSpans intervals [yStart,yEnd)
+layout(std430, binding = 17) buffer ssbo_column_spans { int spanPairs[]; };
+layout(std430, binding = 18) buffer ssbo_column_span_counts { uint spanCounts[]; };
 layout(std430, binding = 4) buffer ssbo_blockattrib { uint blockAttribs[]; };
 // 3D per-voxel break mask (1 bit per voxel), packed 32 voxels per uint
 layout(std430, binding = 16) readonly buffer ssbo_breakMask3D { uint breakMask3D[]; };
@@ -14,6 +17,7 @@ uniform int chunkSize;
 uniform int chunkYSize;
 uniform int waterLevel;
 uniform int worldChunksXZ; // map chunk index to world coords
+uniform int maxSpans;      // maximum spans per column (K)
 // Noise uniforms (approximate CPU TerrainBuilder)
 uniform float baseFreq;   // ~1/180
 uniform float warpFreq;   // ~1/900
@@ -271,4 +275,41 @@ void main() {
         if (Occludes(t2)) { top = uint(y2); break; }
     }
     columnHeights[heightBase + lz * uint(chunkSize) + lx] = top;
+
+    // Build column spans for collision (solid intervals)
+    // Write into spanPairs/Counts with layout: for each chunk in dispatch, we pack columns sequentially.
+    uint colIndex = lz * uint(chunkSize) + lx;
+    uint pairsPerChunk = uint(chunkSize * chunkSize * maxSpans * 2);
+    uint basePairs = group * pairsPerChunk;
+    uint baseCounts = group * uint(chunkSize * chunkSize);
+    uint outBase = basePairs + colIndex * uint(maxSpans) * 2u;
+    // scan from y=0..chunkYSize-1 accumulating solid spans
+    uint spanW = 0u;
+    int curStart = -1;
+    for (int y3 = 0; y3 < chunkYSize; ++y3)
+    {
+        uint idx3 = lx + lz * uint(chunkSize) + uint(y3) * chunkArea;
+        bool solid = Occludes(blocktype[base + idx3]);
+        if (solid && curStart < 0)
+        {
+            curStart = y3;
+        }
+        else if (!solid && curStart >= 0)
+        {
+            if (spanW < uint(maxSpans))
+            {
+                spanPairs[outBase + spanW * 2u + 0u] = curStart;
+                spanPairs[outBase + spanW * 2u + 1u] = y3;
+                spanW++;
+            }
+            curStart = -1;
+        }
+    }
+    if (curStart >= 0 && spanW < uint(maxSpans))
+    {
+        spanPairs[outBase + spanW * 2u + 0u] = curStart;
+        spanPairs[outBase + spanW * 2u + 1u] = int(chunkYSize);
+        spanW++;
+    }
+    spanCounts[baseCounts + colIndex] = spanW;
 } 

@@ -18,6 +18,7 @@ public class VoxelWorld
     public volatile int[]? CompactedCounts;
     public volatile int[]? CompactedChunkIndices;
     public volatile int CompactionVersion;
+    public int VoxelIndexCount { get; internal set; }
 
     // Pending (ping-pong) compaction results guarded by a GPU fence; swapped when signaled
     public volatile uint PendingAtlasSSBO;
@@ -25,22 +26,6 @@ public class VoxelWorld
     public volatile int[]? PendingCounts;
     public volatile int[]? PendingChunkIndices;
     public volatile IntPtr PendingFence;
-
-    // Collision probe logging throttle
-    private long lastCollisionProbeMs;
-    private int lastProbeChunkIdx = int.MinValue;
-    private int lastProbeLx = int.MinValue;
-    private int lastProbeLz = int.MinValue;
-
-    public void SetCompactionResult(uint atlas, int[] indices, int[] bases, int[] counts)
-    {
-        // Backward-compat immediate publish (used if no fence is set)
-        CompactedAtlasSSBO = atlas;
-        CompactedChunkIndices = indices;
-        CompactedBases = bases;
-        CompactedCounts = counts;
-        unchecked { CompactionVersion++; }
-    }
 
     public void SetPendingCompaction(uint atlas, int[] indices, int[] bases, int[] counts, IntPtr fence)
     {
@@ -220,10 +205,11 @@ public class VoxelWorld
     private readonly List<Thread> workerThreads = new();
     private readonly int workerCount;
     private long lastStreamingUpdateMs;
-    private long lastWatchdogMs;
-    private long lastCacheMaintenanceMs;
     private long lastCompactionRebuildMs;
     private long lastCompactionRepackMs;
+    // Allocator state (Phase 2.5+): free draw slots and free atlas ranges harvested from evicted draws
+    internal List<int> FreeDrawSlots { get; } = new();
+    internal List<(int Base, int Length)> FreeAtlasRanges { get; } = new();
     private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
@@ -656,17 +642,36 @@ public class VoxelWorld
         SetBreakMask3DBit(block.ChunkIndex, lx, ly, lz, hidden: true);
         SetBreakMaskBit(block.ChunkIndex, lx, lz, hidden: true);
 
-        // Request a full publish for the current surrounding set so atlas stays coherent
+        // Minimal GPU update: owner + cardinals only
         try
         {
             EnsureChunkInitializer();
-            // Simpler and robust: rebuild the full surrounding set so atlas/draws stay coherent
-            int[] desired;
-            lock (surroundingChunkSet)
+            if (ChunkInitializer is not null)
             {
-                desired = surroundingChunkSet.Count > 0 ? new List<int>(surroundingChunkSet).ToArray() : new int[] { block.ChunkIndex };
+                var idx = block.ChunkIndex;
+                var side = VoxelHelper.WorldChunksXZ;
+                var cx = idx % side; var cz = idx / side;
+                var primaries = new List<int>(5) { idx };
+                var west = (cx > 0) ? idx - 1 : -1;
+                var east = (cx + 1 < side) ? idx + 1 : -1;
+                var north = (cz > 0) ? idx - side : -1;
+                var south = (cz + 1 < side) ? idx + side : -1;
+                if (west >= 0) primaries.Add(west);
+                if (east >= 0) primaries.Add(east);
+                if (north >= 0) primaries.Add(north);
+                if (south >= 0) primaries.Add(south);
+                var ok = ChunkInitializer.UpdateChunksInPlace([.. primaries]);
+                if (!ok)
+                {
+                    // Fallback: rebuild current surrounding set if in-place update fails
+                    int[] desired;
+                    lock (surroundingChunkSet)
+                    {
+                        desired = surroundingChunkSet.Count > 0 ? [.. surroundingChunkSet] : [idx];
+                    }
+                    ChunkInitializer.ProcessChunkData(desired);
+                }
             }
-            ChunkInitializer?.ProcessChunkData(desired);
         }
         catch { }
 
@@ -725,7 +730,7 @@ public class VoxelWorld
         var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(blockWorldPosition);
         var chunk = this[chunkIndex];
         if (chunk is null) return null;
-        // Prefer GPU columns (if available) to ensure collision matches GPU terrain, regardless of CPU Blocks
+        // Prefer GPU column heights for collision stability; spans are used as a fallback.
         if (chunk.HasGpuColumns)
         {
             var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
@@ -738,7 +743,7 @@ public class VoxelWorld
             var maxSolid = h - 1;
 
             // Classify via TerrainBuilder to match CPU material layering.
-            BlockType bt = BlockType.None;
+            var bt = BlockType.None;
             if (ly <= maxSolid)
             {
                 bt = TerrainBuilder.GenerateChunkBlockType(maxSolid, lx, ly, lz);
@@ -767,6 +772,17 @@ public class VoxelWorld
 
             var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
             return new BlockState(idx, chunk) { BlockType = bt, IsVisible = bt != BlockType.None };
+        }
+        if (chunk.HasGpuSpans)
+        {
+            var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+            var lx = x - origin.X; var ly = y - origin.Y; var lz = z - origin.Z;
+            if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize || (uint)ly >= (uint)VoxelHelper.ChunkYSize)
+                return null;
+            var solid = chunk.IsSolidBySpans(lx, ly, lz, maxSpans: 3);
+            var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
+            var bt = solid ? BlockType.Rock : BlockType.None;
+            return new BlockState(idx, chunk) { BlockType = bt, IsVisible = solid };
         }
         // Fallback to CPU blocks only if GPU columns are not ready
         if (!chunk.IsInitialized || chunk.Blocks is null) return null;
@@ -941,12 +957,29 @@ public class VoxelWorld
             if (ChunkInitializer is not null)
             {
                 int[] desiredArr;
-                lock (surroundingChunkSet) { desiredArr = surroundingChunkSet.ToArray(); }
+                lock (surroundingChunkSet) { desiredArr = [.. surroundingChunkSet]; }
                 if (desiredArr.Length > 0 && !ChunkInitializer.HasInFlightBatch)
                 {
-                    var current = CompactedChunkIndices ?? Array.Empty<int>();
+                    var current = CompactedChunkIndices ?? [];
                     var currentSet = new HashSet<int>(current);
                     var toAdd = desiredArr.Where(i => !currentSet.Contains(i)).ToArray();
+                    // Harvest freelists from resident draws not in desired set
+                    FreeDrawSlots.Clear();
+                    FreeAtlasRanges.Clear();
+                    if (CompactedChunkIndices != null && CompactedBases != null && CompactedCounts != null)
+                    {
+                        var desiredSet = new HashSet<int>(desiredArr);
+                        for (int i = 0; i < CompactedChunkIndices.Length; i++)
+                        {
+                            var idxRes = CompactedChunkIndices[i];
+                            if (!desiredSet.Contains(idxRes))
+                            {
+                                FreeDrawSlots.Add(i);
+                                var cnt = CompactedCounts[i];
+                                if (cnt > 0) FreeAtlasRanges.Add((CompactedBases[i], cnt));
+                            }
+                        }
+                    }
                     if (CompactedAtlasSSBO == 0 || current.Length == 0)
                     {
                         ChunkInitializer.ProcessChunkData(desiredArr);
@@ -982,6 +1015,22 @@ public class VoxelWorld
                 }
             }
         }
+    }
+
+    // Global MDI buffers prepared by the publisher; renderer consumes them directly
+    public volatile uint PreparedIndirectCmdBuffer; // GL_DRAW_INDIRECT_BUFFER
+    public volatile uint PreparedDrawDataSSBO;      // binding=5
+    public volatile uint PreparedDrawCountSSBO;     // binding=15 (optional for CountARB)
+    public volatile IntPtr PreparedDrawCountPtr;    // mapped read pointer (fallback when CountARB not used)
+    public volatile int PreparedCapacity;
+
+    public void SetPreparedMdi(uint indirect, uint drawData, uint drawCount, IntPtr drawCountPtr, int capacity)
+    {
+        PreparedIndirectCmdBuffer = indirect;
+        PreparedDrawDataSSBO = drawData;
+        PreparedDrawCountSSBO = drawCount;
+        PreparedDrawCountPtr = drawCountPtr;
+        PreparedCapacity = capacity;
     }
 
     /// <summary>
@@ -1466,7 +1515,7 @@ public class VoxelWorld
         }
         if (batch.Count == 0) return;
 
-        ChunkInitializer?.ProcessChunkData(batch.ToArray());
+        ChunkInitializer?.ProcessChunkData([.. batch]);
 
         foreach (var idx in batch)
         {

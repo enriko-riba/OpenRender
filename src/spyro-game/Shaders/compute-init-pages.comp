@@ -1,0 +1,25 @@
+#version 460
+
+// Initializes a lock-free page stack for the atlas allocator.
+// Binding 6: free pages stack { int top; int pages[]; }
+layout(std430, binding = 6) buffer ssbo_free_pages {
+    int top;
+    int pages[];
+};
+
+uniform int pageCount;
+
+layout (local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid < uint(pageCount)) {
+        pages[gid] = int(gid);
+    }
+    // One invocation sets the stack top
+    if (gl_GlobalInvocationID.x == 0u) {
+        top = pageCount - 1;
+    }
+}
+
