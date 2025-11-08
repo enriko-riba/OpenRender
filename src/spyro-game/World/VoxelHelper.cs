@@ -198,27 +198,27 @@ public static class VoxelHelper
 
     public static int[] GetNeighboringChunks(int chunkIndex)
     {
-        var left = chunkIndex - 1;
-        var right = chunkIndex + 1;
-        var top = chunkIndex - WorldChunksXZ;
-        var bottom = chunkIndex + WorldChunksXZ;
-        var topLeft = top - 1;
-        var topRight = top + 1;
-        var bottomLeft = bottom - 1;
-        var bottomRight = bottom + 1;
+        var side = WorldChunksXZ;
+        var cx = chunkIndex % side;
+        var cz = chunkIndex / side;
 
-        int[] result =
-        [
-            topLeft,
-            top,
-            topRight,
-            left,
-            right,
-            bottomLeft,
-            bottom,
-            bottomRight,
-        ];
-        return result.Where(x => x is >= 0 and < TotalChunks).ToArray();
+        var result = new List<int>(8);
+
+        bool hasLeft = cx > 0;
+        bool hasRight = cx < side - 1;
+        bool hasTop = cz > 0;
+        bool hasBottom = cz < side - 1;
+
+        if (hasTop && hasLeft)    result.Add(chunkIndex - side - 1);   // top-left
+        if (hasTop)               result.Add(chunkIndex - side);       // top
+        if (hasTop && hasRight)   result.Add(chunkIndex - side + 1);   // top-right
+        if (hasLeft)              result.Add(chunkIndex - 1);          // left
+        if (hasRight)             result.Add(chunkIndex + 1);          // right
+        if (hasBottom && hasLeft) result.Add(chunkIndex + side - 1);   // bottom-left
+        if (hasBottom)            result.Add(chunkIndex + side);       // bottom
+        if (hasBottom && hasRight)result.Add(chunkIndex + side + 1);   // bottom-right
+
+        return result.ToArray();
     }
 
     /// <summary>

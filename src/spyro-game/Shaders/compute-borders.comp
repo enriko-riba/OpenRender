@@ -1,0 +1,167 @@
+#version 460
+
+layout (local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+
+layout(std430, binding = 1) readonly buffer ssbo_blocktypes { uint blocktype[]; };
+layout(std430, binding = 2) readonly buffer ssbo_chunk_indices { uint chunkIndices[]; };
+layout(std430, binding = 4) writeonly buffer ssbo_blockattrib { uint blockAttribs[]; };
+// Neighbor group indices for each chunk in this dispatch: (west, east, north, south)
+layout(std430, binding = 5) readonly buffer ssbo_neighbors { ivec4 neighbors[]; };
+
+uniform int chunkSize;
+uniform int chunkYSize;
+
+const uint BlockTypeNone = 0u;
+const uint BlockTypeWaterLevel = 1u;
+
+bool IsRenderable(uint type) { return type != BlockTypeNone; }
+bool Occludes(uint type) { return type != BlockTypeNone && type != BlockTypeWaterLevel; }
+
+uint ToAo(uint occluders) { return min(occluders * 4u, 15u); }
+uint PackAo(uint east, uint west, uint up, uint down, uint south, uint north) {
+    return (east & 0xFu)
+        | ((west & 0xFu) << 4)
+        | ((up & 0xFu) << 8)
+        | ((down & 0xFu) << 12)
+        | ((south & 0xFu) << 16)
+        | ((north & 0xFu) << 20);
+}
+
+uint ChunkVoxelCount() { return uint(chunkSize * chunkSize * chunkYSize); }
+uint ChunkArea() { return uint(chunkSize * chunkSize); }
+
+// returns type at (x,y,z) possibly sampling neighbor chunk group's blocktype if coordinates are out of range; if neighbor missing, returns occluding rock-like (non-transparent) type by faking BlockTypeWaterLevel check in Occludes
+uint GetTypeAt(int group, int x, int y, int z)
+{
+    if (y < 0) return 2u; // rock-like occluder
+    if (y >= chunkYSize) return 0u; // none
+
+    int g = group;
+    ivec4 nbs = neighbors[group];
+    int lx = x;
+    int lz = z;
+    if (x < 0) { g = nbs.x; lx = x + chunkSize; }
+    else if (x >= chunkSize) { g = nbs.y; lx = x - chunkSize; }
+    if (z < 0) { g = nbs.z; lz = z + chunkSize; }
+    else if (z >= chunkSize) { g = nbs.w; lz = z - chunkSize; }
+
+    if (g < 0) {
+        // No neighbor available in this batch: treat as empty to avoid false occlusion.
+        // Chunk borders will render their faces when the opposite neighbor isn't present.
+        return 0u; // none (transparent)
+    }
+
+    uint base = uint(g) * ChunkVoxelCount();
+    uint idx = uint(lx) + uint(lz) * uint(chunkSize) + uint(y) * ChunkArea();
+    return blocktype[base + idx];
+}
+
+bool TransparentAt(int group, int x, int y, int z)
+{
+    return !Occludes(GetTypeAt(group, x, y, z));
+}
+
+uint FaceAoEast(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x + 1, y, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x + 1, y, z - 1))) count++;
+    if (Occludes(GetTypeAt(group, x + 1, y - 1, z))) count++;
+    return ToAo(count);
+}
+
+uint FaceAoWest(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x - 1, y, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y, z - 1))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y - 1, z))) count++;
+    return ToAo(count);
+}
+
+uint FaceAoUp(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x + 1, y + 1, z)) || Occludes(GetTypeAt(group, x + 1, y + 2, z))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y + 1, z)) || Occludes(GetTypeAt(group, x - 1, y + 2, z))) count++;
+    if (Occludes(GetTypeAt(group, x, y + 1, z + 1)) || Occludes(GetTypeAt(group, x, y + 2, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x, y + 1, z - 1)) || Occludes(GetTypeAt(group, x, y + 2, z - 1))) count++;
+    return ToAo(count);
+}
+
+uint FaceAoDown(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x + 1, y - 1, z)) || Occludes(GetTypeAt(group, x + 1, y - 2, z))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y - 1, z)) || Occludes(GetTypeAt(group, x - 1, y - 2, z))) count++;
+    if (Occludes(GetTypeAt(group, x, y - 1, z + 1)) || Occludes(GetTypeAt(group, x, y - 2, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x, y - 1, z - 1)) || Occludes(GetTypeAt(group, x, y - 2, z - 1))) count++;
+    return ToAo(count);
+}
+
+uint FaceAoSouth(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x + 1, y, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y, z + 1))) count++;
+    if (Occludes(GetTypeAt(group, x, y - 1, z + 1))) count++;
+    return ToAo(count);
+}
+
+uint FaceAoNorth(int group, int x, int y, int z)
+{
+    uint count = 0u;
+    if (Occludes(GetTypeAt(group, x + 1, y, z - 1))) count++;
+    if (Occludes(GetTypeAt(group, x - 1, y, z - 1))) count++;
+    if (Occludes(GetTypeAt(group, x, y - 1, z - 1))) count++;
+    return ToAo(count);
+}
+
+void main()
+{
+    uint lx = gl_LocalInvocationID.x;
+    uint lz = gl_LocalInvocationID.y;
+    if (lx >= uint(chunkSize) || lz >= uint(chunkSize)) return;
+
+    // border only
+    bool onBorder = (lx == 0u) || (lz == 0u) || (lx == uint(chunkSize - 1)) || (lz == uint(chunkSize - 1));
+    if (!onBorder) return;
+
+    uint group = gl_WorkGroupID.x;
+    uint area = ChunkArea();
+    int ix = int(lx);
+    int iz = int(lz);
+    uint base = group * ChunkVoxelCount();
+
+    for (int y = chunkYSize - 1; y >= 0; --y)
+    {
+        uint blockIdx = lx + lz * uint(chunkSize) + uint(y) * area;
+        uint rawType = blocktype[base + blockIdx];
+        if (!IsRenderable(rawType)) { blockAttribs[base + blockIdx] = 0u; continue; }
+
+        bool eastTrans = TransparentAt(int(group), ix + 1, y, iz);
+        bool westTrans = TransparentAt(int(group), ix - 1, y, iz);
+        bool upTrans = TransparentAt(int(group), ix, y + 1, iz);
+        bool downTrans = TransparentAt(int(group), ix, y - 1, iz);
+        bool southTrans = TransparentAt(int(group), ix, y, iz + 1);
+        bool northTrans = TransparentAt(int(group), ix, y, iz - 1);
+
+        bool visible = eastTrans || westTrans || upTrans || downTrans || southTrans || northTrans;
+
+        if (y == 0 && rawType == 8u) visible = false; // bedrock hidden
+
+        uint aoEast = 0u, aoWest = 0u, aoUp = 0u, aoDown = 0u, aoSouth = 0u, aoNorth = 0u;
+        if (visible)
+        {
+            aoEast = FaceAoEast(int(group), ix, y, iz);
+            aoWest = FaceAoWest(int(group), ix, y, iz);
+            aoUp = FaceAoUp(int(group), ix, y, iz);
+            aoDown = FaceAoDown(int(group), ix, y, iz);
+            aoSouth = FaceAoSouth(int(group), ix, y, iz);
+            aoNorth = FaceAoNorth(int(group), ix, y, iz);
+        }
+        uint packedAo = visible ? PackAo(aoEast, aoWest, aoUp, aoDown, aoSouth, aoNorth) : 0u;
+        uint attrib = (packedAo << 1) | (visible ? 1u : 0u);
+        blockAttribs[base + blockIdx] = attrib;
+    }
+}

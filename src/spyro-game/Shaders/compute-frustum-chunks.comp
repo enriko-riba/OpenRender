@@ -1,0 +1,51 @@
+#version 460
+
+// One thread per chunk draw. Computes frustum visibility flags for chunk AABBs.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Output: 1 = visible, 0 = culled
+layout(std430, binding = 10) buffer ssbo_drawVisible { int drawVisible[]; };
+
+// Input: compacted world chunk indices, one per draw
+layout(std430, binding = 11) readonly buffer ssbo_chunkIndices { int chunkIndices[]; };
+
+uniform int drawCount;
+uniform int worldChunksXZ;
+uniform int chunkSize;
+uniform int chunkYSize;
+
+// Frustum planes (world space): each plane as vec4 (xyz normal, w = distance)
+// Plane equation: dot(n, p) + w >= 0 for inside
+uniform vec4 fp0, fp1, fp2, fp3, fp4, fp5;
+
+bool aabbInFrustum(vec3 center, vec3 extent)
+{
+    vec4 planes[6] = vec4[6](fp0, fp1, fp2, fp3, fp4, fp5);
+    for (int i = 0; i < 6; ++i)
+    {
+        vec3 n = planes[i].xyz;
+        float d = planes[i].w;
+        float dist = dot(n, center) + d;
+        float radius = abs(extent.x * n.x) + abs(extent.y * n.y) + abs(extent.z * n.z);
+        if (dist + radius < 0.0) return false;
+    }
+    return true;
+}
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= uint(drawCount)) return;
+
+    int idx = chunkIndices[gid];
+    int x = idx % worldChunksXZ;
+    int z = idx / worldChunksXZ;
+
+    // Conservative chunk AABB in world space
+    vec3 minP = vec3(float(x * chunkSize), 0.0, float(z * chunkSize));
+    vec3 maxP = minP + vec3(float(chunkSize), float(chunkYSize), float(chunkSize));
+    vec3 center = (minP + maxP) * 0.5;
+    vec3 extent = (maxP - minP) * 0.5;
+
+    drawVisible[gid] = aabbInFrustum(center, extent) ? 1 : 0;
+}

@@ -74,6 +74,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             new KeyboardAction("up", [Keys.LeftShift], ()=> player.Position += Vector3.UnitY, false),
             new KeyboardAction("down", [Keys.LeftControl], ()=> player.Position -= Vector3.UnitY, false),
             new KeyboardAction("wireframe", [Keys.F1], WireframeToggle),
+            new KeyboardAction("rebuild atlas", [Keys.F5], () => {
+                try { var arr = world.SurroundingChunkIndices.ToArray(); world.ChunkInitializer?.ProcessChunkData(arr); } catch { }
+            }),
         ]);
 
         //  create 2D crosshair
@@ -124,12 +127,33 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         text = $"Chunks: {VoxelHelper.TotalChunks:N0}, surrounding {surroundingChunks}, loaded {world.LoadedChunksCount}";
         writeLine(text, textColor);
 
-        var culled = surroundingChunks - world.ChunksInFrustum;
-        text = $"In frustum: {world.ChunksInFrustum:N0}  Culled: {culled:N0}  (of {surroundingChunks:N0})";
+        var inFrustumGpu = world.ChunkRenderer?.VisibleDraws ?? world.ChunksInFrustum;
+        var culled = surroundingChunks - inFrustumGpu;
+        text = $"In frustum: {inFrustumGpu:N0}  Culled: {culled:N0}  (of {surroundingChunks:N0})";
         writeLine(text, textColor);
 
-        text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, worker queue {world.WorkerQueueLength}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
+        text = $"Blocks rendered {world.ChunkRenderer.RenderedBlocks:N0}, render data {world.ChunkRenderer.ChunkRenderDataLength}";
         writeLine(text, textColor);
+
+        // Atlas/MDI debug: show mapping for the camera chunk if GPU compaction is active
+        if (world.CompactedChunkIndices is not null && world.CompactedBases is not null && world.CompactedCounts is not null && world.CompactedAtlasSSBO != 0)
+        {
+            var camPosDbg = camera.Position;
+            var camCx = (int)((camPosDbg.X + 0.5f) / VoxelHelper.ChunkSideSize);
+            var camCz = (int)((camPosDbg.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+            var camIdx = camCx + camCz * VoxelHelper.WorldChunksXZ;
+            var ind = Array.IndexOf(world.CompactedChunkIndices, camIdx);
+            if (ind >= 0)
+            {
+                var b = world.CompactedBases[ind];
+                var c = world.CompactedCounts[ind];
+                writeLine($"MDI cameraChunk draw={ind} base={b} count={c}", debugColorBluish);
+            }
+            else
+            {
+                writeLine($"MDI cameraChunk not in draw list", debugColorBluish);
+            }
+        }
 
         text = $"player position {player.Position.ToString("N2")}{(player.IsGhostMode ? ", ghost mode" : "")}";
         writeLine(text, debugColorBluish);
@@ -145,6 +169,24 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
             text = $"block bellow: {player.CurrentBlockBellow}";
             writeLine(text, debugColorBluish);
         }
+
+        // Extra debug: show GPU ground Y at player feet and delta to feet
+        if (player?.CurrentChunk is not null)
+        {
+            var ch = player.CurrentChunk;
+            var clx = (int)MathF.Floor(player.ChunkLocalPosition.X);
+            var clz = (int)MathF.Floor(player.ChunkLocalPosition.Z);
+            clx = Math.Clamp(clx, 0, VoxelHelper.ChunkSideSize - 1);
+            clz = Math.Clamp(clz, 0, VoxelHelper.ChunkSideSize - 1);
+            var hLocal = ch.GetTerrainHeightAt(clx, clz);
+            var hWorld = ch.Position.Y + hLocal;
+            var footY = player.Position.Y;
+            var delta = footY - hWorld;
+            var gpuText = $"GPU groundY: {hWorld:N2} (local {hLocal})  Δfoot-ground: {delta:N2}  HasGpuCols: {ch.HasGpuColumns}";
+            writeLine(gpuText, debugColorBluish);
+        }
+
+        // Collision/terrain probe logging is handled inside VoxelWorld.GetBlockByPositionGlobalSafe()
 
         text = $"time: {dayNightCycle.TimeOfDay:hh\\:mm}";
         writeLine(text, Vector3.UnitY);
@@ -181,6 +223,9 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         base.UpdateFrame(elapsedSeconds);
 
         dayNightCycle.Tick(elapsedSeconds);
+        // Drive terrain streaming based on camera movement and complete GPU batches
+        try { world.UpdateStreamingFromCamera(); } catch { }
+        try { world.ProcessGpuStreamingOnGlThread(); } catch { }
         // Per-frame visibility update using the current camera frustum (authoritative culling)
         world.UpdateVisibilityFromCamera(camera!);
         player.Update(elapsedSeconds, SceneManager.KeyboardState);
@@ -254,6 +299,28 @@ internal class MainScene(ITextRenderer textRenderer) : Scene
         AddNode(world.ChunkRenderer);
         world.Camera = camera!;
         camera!.Invalidate();
+
+        // Ensure initial GPU publish so terrain is visible immediately when entering MainScene
+        try
+        {
+            world.EnsureChunkInitializer();
+            // Build full surrounding set around current camera tile
+            var camPos = camera.Position;
+            var cameraChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+            var cameraChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+            var side = VoxelHelper.WorldChunksXZ;
+            var r = VoxelHelper.MaxDistanceInChunks;
+            var minX = Math.Max(0, cameraChunkX - r);
+            var maxX = Math.Min(side - 1, cameraChunkX + r);
+            var minZ = Math.Max(0, cameraChunkZ - r);
+            var maxZ = Math.Min(side - 1, cameraChunkZ + r);
+            var list = new System.Collections.Generic.List<int>((2 * r + 1) * (2 * r + 1));
+            for (int z = minZ; z <= maxZ; z++)
+                for (int x = minX; x <= maxX; x++)
+                    list.Add(x + z * side);
+            world.ChunkInitializer?.ProcessChunkData(list.ToArray());
+        }
+        catch { }
 
         waterNode = WaterNode.Create(dayNightCycle);
         AddNode(waterNode);

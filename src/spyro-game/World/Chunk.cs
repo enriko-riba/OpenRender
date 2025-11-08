@@ -1,4 +1,4 @@
-﻿using OpenTK.Mathematics;
+using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
 
@@ -304,9 +304,24 @@ public class Chunk(VoxelWorld world, int index)
     /// <summary>
     /// Bottom left chunk corner position in the world.
     /// </summary>
-    public Vector3i Position => Aabb.Min;
+    
 
-    #region Rendering data
+    public void ApplyColumnHeightsForCollision(int[] columnHeights)
+    {
+        if (columnHeights == null || columnHeights.Length != VoxelHelper.ChunkSideSizeSquare) return;
+        var size = VoxelHelper.ChunkSideSize;
+        for (int z = 0; z < size; z++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                var idx = x + z * size;
+                maxHeights[x, z] = columnHeights[idx];
+            }
+        }
+    }
+
+        public Vector3i Position => Aabb.Min;
+#region Rendering data
     public volatile uint BlocksSSBO;
     public int SolidCount;
     public int SolidCapacity;
@@ -319,11 +334,51 @@ public class Chunk(VoxelWorld world, int index)
     internal volatile bool PendingCompute;
     internal volatile bool ComputeInProgress;
 
-    public IEnumerable<BlockState> VisibleBlocks => Blocks.Where(x => x.IsVisible && !x.IsTransparent);
-
-    public IEnumerable<BlockState> TransparentBlocks => Blocks.Where(x => x.IsVisible && x.IsTransparent);
+    public IEnumerable<BlockState> VisibleBlocks => Blocks is null ? [] : Blocks.Where(x => x.IsVisible && !x.IsTransparent);
+    
+    public IEnumerable<BlockState> TransparentBlocks => Blocks is null ? [] : Blocks.Where(x => x.IsVisible && x.IsTransparent);
 
     internal ChunkState State { get; set; }
+
+    // Indicates that GPU column heights were read back and applied
+    public bool HasGpuColumns { get; internal set; }
+
+    /// <summary>
+    /// Initializes CPU Blocks[] from GPU-provided column heights so CPU-side systems (picking/edit) have a coherent view.
+    /// Uses the same material classification as the CPU generator.
+    /// </summary>
+    public void InitializeFromGpuColumns()
+    {
+        if (isInitialized) return;
+
+        var size = VoxelHelper.ChunkSideSize;
+        var area = VoxelHelper.ChunkSideSizeSquare;
+        Blocks = new BlockState[area * VoxelHelper.ChunkYSize];
+
+        for (int z = 0; z < size; z++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                var h = maxHeights[x, z];
+                var maxHeight = h - 1; // top solid local y
+                for (int y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
+                {
+                    var i = x + z * size + y * area;
+                    var bt = TerrainBuilder.GenerateChunkBlockType(maxHeight, x, y, z);
+                    Blocks[i] = new BlockState(i, this)
+                    {
+                        BlockType = bt,
+                        IsVisible = false,
+                        PackedAO = 0
+                    };
+                }
+            }
+        }
+
+        isInitialized = true;
+        // Compute basic visibility for CPU consumers (cheap path)
+        RecomputeLighting(force: true, includeNeighborData: true, bordersOnly: true);
+    }
     #endregion
 
     public BlockState GetBlockAtLocalPosition(Vector3 localPosition)
@@ -477,3 +532,6 @@ public enum ChunkState
     /// </summary>
     SafeToRemove,
 }
+
+
+

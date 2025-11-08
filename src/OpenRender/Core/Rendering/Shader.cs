@@ -362,15 +362,6 @@ public class Shader
         }
     }
 
-    //private static string ReadShaderText(string path)
-    //{
-    //    var bytes = File.ReadAllBytes(path);
-    //    if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-    //        bytes = bytes[3..];
-    //    var src = System.Text.Encoding.UTF8.GetString(bytes);
-    //    return src.TrimStart('\uFEFF'); // also remove accidental zero-width NBSP
-    //}
-
     private static string ReadShaderText(string path)
     {
         // Read raw bytes

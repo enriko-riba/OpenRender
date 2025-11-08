@@ -152,7 +152,7 @@ public class Player
     /// If true, the player can walk through blocks and is not attached to the terrain.
     /// Reset vertical dynamics when toggled to avoid stale velocities.
     /// </summary>
-    private bool _isGhostMode;
+    private bool _isGhostMode = true;
     public bool IsGhostMode
     {
         get => _isGhostMode;
@@ -206,7 +206,8 @@ public class Player
 
     public void Jump()
     {
-        if (isGrounded && !isJumping && !IsUpBlocked())
+        // Prevent initiating a jump when inside a low tunnel (headroom < ~1 block)
+        if (isGrounded && !isJumping && !IsUpBlocked() && !IsInLowHeadroomTunnel())
         {
             isGrounded = false;
             isJumping = true;
@@ -218,7 +219,7 @@ public class Player
 
     public void ClimbingJump()
     {
-        if (isGrounded && !isJumping && !IsUpBlocked())
+        if (isGrounded && !isJumping && !IsUpBlocked() && !IsInLowHeadroomTunnel())
         {
             isGrounded = false;
             isJumping = true;
@@ -249,12 +250,40 @@ public class Player
 
     private void HandleMovement(double elapsedSeconds)
     {
-        float terrainHeight = 0;
+        float terrainHeight = float.NaN;
         var pos = Position;
 
         // integrate Y
-        pos.Y += velocityY * (float)elapsedSeconds + 0.5f * Gravity * (float)elapsedSeconds * (float)elapsedSeconds;
+        var dy = velocityY * (float)elapsedSeconds + 0.5f * Gravity * (float)elapsedSeconds * (float)elapsedSeconds;
+        pos.Y += dy;
         velocityY += (float)elapsedSeconds * Gravity;
+
+        // prevent head penetration into ceiling: if moving up and head space blocked, clamp and zero vertical velocity
+        if (dy > 0f && !IsGhostMode)
+        {
+            // Robust head clamp: AABB test at head-top tile across horizontal extents
+            const float eps = 0.001f;
+            var headTop = pos.Y + Height - 0.05f;
+            var tileY = (int)MathF.Floor(headTop);
+            int minX = (int)MathF.Floor(pos.X - HalfWidth + eps);
+            int maxX = (int)MathF.Floor(pos.X + HalfWidth - eps);
+            int minZ = (int)MathF.Floor(pos.Z - HalfWidth + eps);
+            int maxZ = (int)MathF.Floor(pos.Z + HalfWidth - eps);
+            bool blocked = false;
+            for (int tz = minZ; tz <= maxZ && !blocked; tz++)
+                for (int tx = minX; tx <= maxX && !blocked; tx++)
+                {
+                    var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
+                    if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+                        blocked = true;
+                }
+            if (blocked)
+            {
+                pos.Y = tileY - Height + 0.001f;
+                velocityY = 0f;
+                isJumping = false;
+            }
+        }
 
         // speed tiers
         var tier = _isSprinting ? 1.5f : _isCrouching ? 0.6f : 1.0f;
@@ -297,11 +326,12 @@ public class Player
             }
         }
 
-        // ground detection (GLOBAL Y)
+        // Ground detection via local voxel query (respects caves/tunnels)
         var bellowBlock = world.GetBlockByPositionGlobalSafe((int)pos.X, (int)Math.Floor(pos.Y - 0.5f), (int)pos.Z);
         if (bellowBlock is null)
         {
             CurrentBlockBellow = null;
+            // If GPU height not available, remain airborne until we have a solid reference
             isGrounded = false;
         }
         else
@@ -322,7 +352,7 @@ public class Player
             var ascending = velocityY > 0f;
             var allowSnap = stepUpGrace <= 0f && !ascending;  // <-- stricter than before
 
-            if (allowSnap && pos.Y <= terrainHeight + 0.01f)
+            if (!float.IsNaN(terrainHeight) && allowSnap && pos.Y <= terrainHeight + 0.01f)
             {
                 pos.Y = terrainHeight + 0.001f;
                 isJumping = false;
@@ -330,7 +360,7 @@ public class Player
                 velocityY = 0;
                 // keep inertialStepXZ as last applied ground step for next takeoff
             }
-            else if (pos.Y > terrainHeight && pos.Y < Position.Y)
+            else if (!float.IsNaN(terrainHeight) && pos.Y > terrainHeight && pos.Y < Position.Y)
             {
                 isGrounded = false;
             }
@@ -577,6 +607,30 @@ public class Player
         c3.Y += Height + 0.3f;
         c4.Y += Height + 0.3f;
         return HasBlockAbove(c1) || HasBlockAbove(c2) || HasBlockAbove(c3) || HasBlockAbove(c4);
+    }
+
+    // Returns true if the vertical clearance above the player's head is less than ~1 block
+    // (e.g., inside a 1-block-high tunnel). In that case, suppress jump to avoid head penetration.
+    private bool IsInLowHeadroomTunnel()
+    {
+        if (IsGhostMode) return false;
+        // Evaluate at the current position using the player horizontal footprint
+        const float eps = 0.001f;
+        var headTop = position.Y + Height - 0.05f;
+        var tileY = (int)MathF.Floor(headTop) + 1; // immediate block above head tile
+        int minX = (int)MathF.Floor(position.X - HalfWidth + eps);
+        int maxX = (int)MathF.Floor(position.X + HalfWidth - eps);
+        int minZ = (int)MathF.Floor(position.Z - HalfWidth + eps);
+        int maxZ = (int)MathF.Floor(position.Z + HalfWidth - eps);
+
+        for (int tz = minZ; tz <= maxZ; tz++)
+        for (int tx = minX; tx <= maxX; tx++)
+        {
+            var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
+            if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+                return true; // ceiling within one block above head
+        }
+        return false;
     }
 
     private bool HasBlockAbove(Vector3 globalPosition)

@@ -99,10 +99,9 @@ internal class LoadingScene2 : Scene
                 if (computeDone)
                 {
                     totalInitializationTime = totalTime;
-                    var surroundingChunks = world.SurroundingChunks;
-                    Debug.Assert(surroundingChunks.All(x => x.IsProcessed), "unprocessed chunk");
-                    completedChunks = [.. surroundingChunks];
-                    state = StateAddingChunks;
+                    // In GPU compaction path, CPU chunks may not be marked processed; skip per-chunk upload.
+                    // Consider initialization done and let MainScene start; renderer consumes GPU compaction results.
+                    state = StateCompleted;
                 }
                 break;
 

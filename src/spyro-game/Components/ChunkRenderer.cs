@@ -9,6 +9,7 @@ using OpenTK.Mathematics;
 using SpyroGame.World;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace SpyroGame.Components;
 
@@ -17,13 +18,31 @@ public class ChunkRenderer : SceneNode
     private static readonly int MaxBlocksPerChunk = VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize;
     private static readonly int DefaultMaxInstances = MaxBlocksPerChunk / 2;
     private const BufferStorageFlags BlockBufferFlags = BufferStorageFlags.MapWriteBit | BufferStorageFlags.DynamicStorageBit;
+    private const BufferStorageFlags PersistentWriteCoherent = BufferStorageFlags.MapWriteBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit | BufferStorageFlags.DynamicStorageBit;
 
     private readonly uint texturesSSBO;
     private readonly uint materialsSSBO;
+    private uint drawDataSSBO;
+    private uint indirectCmdBuffer;
+    
+    private uint drawVisibleSSBO;       // binding=10 for compute frustum result
+    private uint compactedIndicesSSBO;  // binding=11 copy of world.CompactedChunkIndices for compute
+    private uint drawnTotalSSBO;        // binding=14 for sum of InstanceCount
+    private IntPtr drawnTotalPtr;
+    private IntPtr drawDataMap;
+    private IntPtr indirectMap;
+    
+    private int drawDataMapSizeBytes;
+    private int indirectMapSizeBytes;
+    
     // Chunks with GPU render data ready (SSBOs). Indexed by chunk index for O(1) upserts.
     private readonly Dictionary<int, Chunk> loadedChunksMap = new();
     private readonly VoxelWorld world;
     private double uTime;
+    private int lastCompactionVersion = -1;
+    public bool UseGpuFrustumCulling { get; set; } = false;
+    // Temporary: avoid modifying indirect InstanceCount until driver sync is nailed down
+    public bool ApplyIndirectCulling { get; set; } = false;
 
     internal ConcurrentQueue<Chunk> chunksStreamingQueue = [];
     // Reused buffers to reduce per-frame allocations for queue draining
@@ -59,6 +78,11 @@ public class ChunkRenderer : SceneNode
         GL.NamedBufferStorage(materialsSSBO, materials.Length * Unsafe.SizeOf<VoxelMaterial>(), materials, BufferStorageFlags.MapWriteBit);
         Log.CheckGlError();
 
+        // DrawData SSBO (binding=5) and indirect command buffer (MDI), persistently mapped
+        var initialDrawCapacity = 256;
+        CreateOrResizeMappedBuffer(ref drawDataSSBO, "voxelDrawData_SSBO", initialDrawCapacity * Unsafe.SizeOf<DrawDataGpu>(), out drawDataMap, out drawDataMapSizeBytes);
+        CreateOrResizeMappedBuffer(ref indirectCmdBuffer, "voxelIndirectCmdBuffer", initialDrawCapacity * Unsafe.SizeOf<DrawElementsIndirectCommand>(), out indirectMap, out indirectMapSizeBytes);
+
         RenderGroup = RenderGroup.Default; // Changed from SkyBox to Solid
         DisableCulling = true;
     }
@@ -81,33 +105,18 @@ public class ChunkRenderer : SceneNode
 
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, texturesSSBO);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, materialsSSBO);
-
-        RenderedBlocks = 0;
-        var modelMatrix = Matrix4.Identity;
-        foreach (var chunkData in loadedChunksMap.Values)
-        {
-            var canDraw = chunkData.SolidCount > 0 && chunkData.State == ChunkState.Added && chunkData.Visible;
-
-            if (canDraw)
-            {
-                RenderedBlocks += chunkData.SolidCount;
-                if (PickedBlock != null && VoxelHelper.GetChunkIndexFromPositionGlobal(PickedBlock.Value.GlobalPosition) == chunkData.Index)
-                {
-                    Material.Shader.SetInt("outlinedBlockId", PickedBlock.Value.Index);
-                }
-                else
-                {
-                    Material.Shader.SetInt("outlinedBlockId", -1);
-                }
-
-                _ = AreChunkSSBOsRecreated(chunkData);
-                RenderChunk(chunkData.Position, chunkData.BlocksSSBO, chunkData.SolidCount, ref modelMatrix);
-            }
-        }
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
+        if (drawVisibleSSBO != 0)
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
+        DrawMdi();
     }
 
+    private int lastCx = int.MinValue;
+    private int lastCz = int.MinValue;
     public override void OnUpdate(Scene scene, double elapsed)
     {
+        // Do not trigger compaction here; VoxelWorld manages publishes to avoid double submits.
+
         _ = ProcessChunksStreamingQueue();
     }
 
@@ -142,75 +151,77 @@ public class ChunkRenderer : SceneNode
 
         const int MaxPerFrame = 256;
         var processed = 0;
-        var iEntry = 0;
-        for (; iEntry < sortBuffer.Count && processed < MaxPerFrame; iEntry++)
+
+        // Phase 1: Loaded/Add updates first
+        foreach (var entry in sortBuffer)
         {
-            var chunk = sortBuffer[iEntry].chunk;
-
-            switch (chunk.State)
+            if (processed >= MaxPerFrame) break;
+            var chunk = entry.chunk;
+            if (chunk.State == ChunkState.Loaded)
             {
-                case ChunkState.ToBeRemoved:
-                    // Guard against stale removals for interior chunks.
-                    // If this chunk is still within the active radius around the camera, treat this as stale and keep it.
-                    {
-                        var camPos = world.Camera.Position;
-                        var camChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
-                        var camChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-                        var manhattan = Math.Abs(chunk.ChunkPosition.X - camChunkX) + Math.Abs(chunk.ChunkPosition.Y - camChunkZ);
-                        if (manhattan <= VoxelHelper.MaxDistanceInChunks + 1)
-                        {
-                            // Stale removal: restore state and ensure it's tracked
-                            chunk.State = ChunkState.Added;
-                            loadedChunksMap[chunk.Index] = chunk;
-                            chunk.PendingUpload = false;
-                            break;
-                        }
-                    }
-
-                    // Remove if present, then free GL buffers
-                    loadedChunksMap.Remove(chunk.Index);
-                    GL.DeleteBuffer(chunk.BlocksSSBO);
-                    GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
-                    chunk.BlocksSSBO = 0;
-                    chunk.TransparentBlocksSSBO = 0;
-                    chunk.SolidCount = 0;
-                    chunk.SolidCapacity = 0;
-                    chunk.TransparentCount = 0;
-                    chunk.TransparentCapacity = 0;
-                    chunk.State = ChunkState.SafeToRemove;
-                    chunk.PendingUpload = false;
-                    isChunkDataUpdated = true;
-                    break;
-
-                case ChunkState.Loaded:
-                    CreateChunkRenderData(chunk);
-                    chunk.State = ChunkState.Added;
-                    loadedChunksMap[chunk.Index] = chunk;
-                    chunk.PendingUpload = false;
-                    isChunkDataUpdated = true;
-                    processed++;
-                    break;
-
-                case ChunkState.Added:
-                    UpdateChunkRenderData(chunk);
-                    loadedChunksMap[chunk.Index] = chunk;
-                    chunk.PendingUpload = false;
-                    isChunkDataUpdated = true;
-                    processed++;
-                    break;
-
-                case ChunkState.SafeToRemove:
-                    // nothing
-                    break;
+                CreateChunkRenderData(chunk);
+                chunk.State = ChunkState.Added;
+                loadedChunksMap[chunk.Index] = chunk;
+                chunk.PendingUpload = false;
+                isChunkDataUpdated = true;
+                processed++;
+            }
+            else if (chunk.State == ChunkState.Added)
+            {
+                UpdateChunkRenderData(chunk);
+                loadedChunksMap[chunk.Index] = chunk;
+                chunk.PendingUpload = false;
+                isChunkDataUpdated = true;
+                processed++;
             }
         }
-        // Re-enqueue any unprocessed entries to avoid dropping work
-        for (; iEntry < sortBuffer.Count; iEntry++)
+
+        // Phase 2: removals with remaining budget
+        foreach (var entry in sortBuffer)
         {
-            chunksStreamingQueue.Enqueue(sortBuffer[iEntry].chunk);
+            if (processed >= MaxPerFrame) break;
+            var chunk = entry.chunk;
+            if (chunk.State != ChunkState.ToBeRemoved) continue;
+
+            var camPos = world.Camera.Position;
+            var camChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+            var camChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+            var manhattan = Math.Abs(chunk.ChunkPosition.X - camChunkX) + Math.Abs(chunk.ChunkPosition.Y - camChunkZ);
+            if (manhattan <= VoxelHelper.MaxDistanceInChunks + 1)
+            {
+                chunk.State = ChunkState.Added;
+                loadedChunksMap[chunk.Index] = chunk;
+                chunk.PendingUpload = false;
+                continue;
+            }
+
+            loadedChunksMap.Remove(chunk.Index);
+            GL.DeleteBuffer(chunk.BlocksSSBO);
+            GL.DeleteBuffer(chunk.TransparentBlocksSSBO);
+            chunk.BlocksSSBO = 0;
+            chunk.TransparentBlocksSSBO = 0;
+            chunk.SolidCount = 0;
+            chunk.SolidCapacity = 0;
+            chunk.TransparentCount = 0;
+            chunk.TransparentCapacity = 0;
+            chunk.State = ChunkState.SafeToRemove;
+            chunk.PendingUpload = false;
+            isChunkDataUpdated = true;
+            processed++;
         }
+
+        // Re-enqueue any entries that may still need work
+        foreach (var entry in sortBuffer)
+        {
+            if (entry.chunk.PendingUpload) chunksStreamingQueue.Enqueue(entry.chunk);
+        }
+
+        // If streaming queue is empty, ensure full coverage: assign slots for any missing visible chunks.
+        // No fixed-atlas fallback; renderer relies on GPU compaction results
         return isChunkDataUpdated;
     }
+
+    // Fixed-atlas fallback removed; renderer relies on GPU compaction atlas only.
 
     internal void AddChunkDirect(Chunk chunk)
     {
@@ -219,11 +230,13 @@ public class ChunkRenderer : SceneNode
         chunk.Visible = true;
         loadedChunksMap[chunk.Index] = chunk;
         chunk.PendingUpload = false;
+        // Fixed-atlas path removed; uploads are unused in GPU compaction mode
     }
 
     private void RenderChunk(Vector3i position, uint ssbo, int instanceCount, ref Matrix4 modelMatrix)
     {
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, ssbo);
+        // Legacy uniforms set for shader fallback; draw data is preferred
         modelMatrix.Row3.Xyz = position;
         Material.Shader.SetMatrix4("model", ref modelMatrix);
         Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
@@ -278,6 +291,16 @@ public class ChunkRenderer : SceneNode
         var sizeInBytes = Math.Max(1, capacity) * Unsafe.SizeOf<GpuBlockState>();
         GL.NamedBufferStorage(buffer, sizeInBytes, IntPtr.Zero, BlockBufferFlags);
         return buffer;
+    }
+
+    private void CreateOrResizeMappedBuffer(ref uint handle, string label, int sizeBytes, out IntPtr mapPtr, out int mapSize)
+    {
+        if (handle != 0) GL.DeleteBuffer(handle);
+        GL.CreateBuffers(1, out handle);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, handle, -1, label);
+        GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, PersistentWriteCoherent);
+        mapPtr = GL.MapNamedBufferRange(handle, IntPtr.Zero, sizeBytes, BufferAccessMask.MapWriteBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        mapSize = sizeBytes;
     }
 
     private static GpuBlockState CreateGpuBlockState(BlockState block)
@@ -352,5 +375,343 @@ public class ChunkRenderer : SceneNode
             PackedAO = packedAO;
         }
     }
+
+    // GPU-side per-draw data (matched with instancedChunk.vert DrawData)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DrawDataGpu
+    {
+        public Matrix4 Model;     // 64 bytes
+        public Vector4 ChunkPos;  // 16 bytes (xyz position, w unused)
+        public int BlocksBase;    // 4
+        public int ChunkSize;     // 4
+        public int OutlinedLocalIndex; // 4
+        public int Enabled;       // 4 -> total 96 bytes
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DrawElementsIndirectCommand
+    {
+        public uint Count;
+        public uint InstanceCount;
+        public uint FirstIndex;
+        public uint BaseVertex;
+        public uint BaseInstance;
+    }
+
+    private void UpdateDrawDataForChunk(Chunk chunk, int slot, int outlinedLocalIndex)
+    {
+        var model = Matrix4.Identity;
+        model.Row3.Xyz = chunk.Position;
+        var dd = new DrawDataGpu
+        {
+            Model = model,
+            ChunkPos = new Vector4(chunk.Position.X, chunk.Position.Y, chunk.Position.Z, 1f),
+            BlocksBase = 0, // legacy per-chunk SSBO path
+            ChunkSize = VoxelHelper.ChunkSideSize,
+            OutlinedLocalIndex = outlinedLocalIndex,
+            Enabled = 1
+        };
+        unsafe
+        {
+            var offset = slot * Unsafe.SizeOf<DrawDataGpu>();
+            var dst = (byte*)drawDataMap + offset;
+            System.Buffer.MemoryCopy(&dd, dst, Unsafe.SizeOf<DrawDataGpu>(), Unsafe.SizeOf<DrawDataGpu>());
+        }
+    }
+
+    // --- MDI path ---
+    private bool mdiDirty = true;
+    // Fixed-size MDI atlas: pre-partitioned into equal per-chunk slots.
+    // Compute reserved blocks per chunk based on VoxelHelper constants to avoid hardcoded values.
+    // Fixed-atlas reservation removed.
+    
+
+    // Fixed-atlas initialization removed.
+
+    // Fixed-atlas slot assignment removed.
+
+    // Fixed-atlas eviction removed.
+
+    // Fixed-atlas free removed.
+
+    private void DrawMdi()
+    {
+        // Defer swapping pending compaction until after issuing draws to avoid mid-pass buffer mismatches
+        // If GPU compaction is available, consume it directly; otherwise use fixed atlas path
+        var hasCompaction = world.CompactedChunkIndices != null && world.CompactedBases != null && world.CompactedCounts != null && world.CompactedAtlasSSBO != 0;
+        if (hasCompaction)
+        {
+            var version = world.CompactionVersion;
+            var indices = world.CompactedChunkIndices!;
+            var bases = world.CompactedBases!;
+            var counts = world.CompactedCounts!;
+            var drawCount = indices.Length;
+            if (drawCount == 0)
+            {
+                RenderedBlocks = 0;
+                return;
+            }
+
+            // Ensure/resize frustum compute buffers and upload indices
+            EnsureOrResizeBuffer(ref compactedIndicesSSBO, "compactedIndicesSSBO", drawCount * sizeof(int));
+            GL.NamedBufferSubData(compactedIndicesSSBO, IntPtr.Zero, drawCount * sizeof(int), indices);
+            EnsureOrResizeBuffer(ref drawVisibleSSBO, "drawVisibleSSBO", drawCount * sizeof(int));
+            // Initialize to 1 so in case compute is skipped, everything draws (use Clear to avoid sync warnings)
+            unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+
+            // Ensure draw buffers capacity
+            var ddSize = drawCount * Unsafe.SizeOf<DrawDataGpu>();
+            GL.GetNamedBufferParameter(drawDataSSBO, BufferParameterName.BufferSize, out int currentDdSize);
+            if (currentDdSize < ddSize)
+            {
+                CreateOrResizeMappedBuffer(ref drawDataSSBO, "voxelDrawData_SSBO", ddSize, out drawDataMap, out drawDataMapSizeBytes);
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
+            }
+            var icSize = drawCount * Unsafe.SizeOf<DrawElementsIndirectCommand>();
+            GL.GetNamedBufferParameter(indirectCmdBuffer, BufferParameterName.BufferSize, out int currentIcSize);
+            if (currentIcSize < icSize)
+            {
+                CreateOrResizeMappedBuffer(ref indirectCmdBuffer, "voxelIndirectCmdBuffer", icSize, out indirectMap, out indirectMapSizeBytes);
+            }
+
+            var ddArray = new DrawDataGpu[drawCount];
+            var cmdArray = new DrawElementsIndirectCommand[drawCount];
+            RenderedBlocks = 0;
+            // Compute player's current chunk index to correlate draw mapping
+            var camPos = world.Camera.Position;
+            var pChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+            var pChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+            var playerChunkIdx = pChunkX + pChunkZ * VoxelHelper.WorldChunksXZ;
+            for (int i = 0; i < drawCount; i++)
+            {
+                var idx = indices[i];
+                // Derive world position directly from chunk index to avoid dependency on CPU upload
+                var cx = idx % VoxelHelper.WorldChunksXZ;
+                var cz = idx / VoxelHelper.WorldChunksXZ;
+                var pos = new Vector3(cx * VoxelHelper.ChunkSideSize, 0, cz * VoxelHelper.ChunkSideSize);
+                var isVisible = true; // visibility is further culled by compute frustum
+                var model = Matrix4.Identity;
+                model.Row3.Xyz = pos;
+                int outlinedLocal = -1;
+                if (PickedBlock != null && VoxelHelper.GetChunkIndexFromPositionGlobal(PickedBlock.Value.GlobalPosition) == idx)
+                {
+                    // Compute local 3D voxel index (vi) for the picked block within this chunk
+                    var gp = PickedBlock.Value.GlobalPosition;
+                    var lxPick = gp.X - (int)pos.X;
+                    var lyPick = gp.Y - 0; // chunk Y origin is 0
+                    var lzPick = gp.Z - (int)pos.Z;
+                    if ((uint)lxPick < (uint)VoxelHelper.ChunkSideSize && (uint)lzPick < (uint)VoxelHelper.ChunkSideSize && (uint)lyPick < (uint)VoxelHelper.ChunkYSize)
+                    {
+                        int area = VoxelHelper.ChunkSideSizeSquare;
+                        outlinedLocal = lxPick + lzPick * VoxelHelper.ChunkSideSize + lyPick * area;
+                    }
+                }
+
+                ddArray[i] = new DrawDataGpu
+                {
+                    Model = model,
+                    ChunkPos = new Vector4(pos.X, pos.Y, pos.Z, 1f),
+                    BlocksBase = bases[i],
+                    ChunkSize = VoxelHelper.ChunkSideSize,
+                    OutlinedLocalIndex = outlinedLocal,
+                    Enabled = isVisible ? 1 : 0
+                };
+                cmdArray[i] = new DrawElementsIndirectCommand
+                {
+                    Count = (uint)Vao!.DataLength,
+                    InstanceCount = (uint)(isVisible ? counts[i] : 0),
+                    FirstIndex = 0,
+                    BaseVertex = 0,
+                    BaseInstance = (uint)i
+                };
+                if (isVisible) RenderedBlocks += counts[i];
+            }
+
+            // sampling logs removed
+
+            CopyArrayToMapped(drawDataMap, 0, ddArray, drawCount);
+            CopyArrayToMapped(indirectMap, 0, cmdArray, drawCount);
+            GL.MemoryBarrier(MemoryBarrierFlags.ClientMappedBufferBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.CommandBarrierBit);
+
+            var preCullRendered = RenderedBlocks;
+            // Dispatch frustum culling compute to set per-draw visibility (optional)
+            if (UseGpuFrustumCulling)
+            {
+                RunFrustumCullingCompute(drawCount);
+            }
+            else
+            {
+                // Ensure visibility mask is all ones and keep pre-cull RenderedBlocks
+                unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+            }
+
+            // If compaction changed mid-pass, skip drawing this frame to avoid mismatched buffers
+            if (version != world.CompactionVersion)
+            {
+                RenderedBlocks = 0;
+                return;
+            }
+
+            // Bind compacted atlas
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, world.CompactedAtlasSSBO);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
+            Material.Shader.SetInt("useDrawData", 1);
+            // Force legacy selection uniform to disabled to avoid leaking outline to other draws
+            if (Material.Shader.UniformExists("outlinedBlockId")) Material.Shader.SetInt("outlinedBlockId", -1);
+
+            // Ensure shader knows chunk grid size for outline mapping in frag
+            Material.Shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+            GL.BindVertexArray(Vao!);
+            GL.BindBuffer(BufferTarget.DrawIndirectBuffer, indirectCmdBuffer);
+            GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, DrawElementsType.UnsignedInt, IntPtr.Zero, drawCount, 0);
+            Log.CheckGlError();
+            lastCompactionVersion = world.CompactionVersion;
+            // Now safe to swap pending compaction for the next frame
+            try { world.TrySwapPendingCompaction(); } catch { }
+            return;
+        }
+
+        // No legacy fixed-atlas fallback; rely solely on GPU compaction.
+        RenderedBlocks = 0;
+        try { world.TrySwapPendingCompaction(); } catch { }
+        return;
+    }
+
+    private void EnsureOrResizeBuffer(ref uint handle, string label, int sizeBytes)
+    {
+        if (handle == 0)
+        {
+            GL.CreateBuffers(1, out handle);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, handle, -1, label);
+            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            return;
+        }
+        GL.GetNamedBufferParameter(handle, BufferParameterName.BufferSize, out int current);
+        if (current < sizeBytes)
+        {
+            GL.DeleteBuffer(handle);
+            GL.CreateBuffers(1, out handle);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, handle, -1, label);
+            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        }
+    }
+
+    private Shader? frustumShader;
+    private Shader? frustumApplyShader;
+    private Shader? frustumCountVisibleShader;
+    private long lastFrustumLogMs;
+    private void RunFrustumCullingCompute(int drawCount)
+    {
+        frustumShader ??= new Shader("Shaders/compute-frustum-chunks.comp", ShaderType.ComputeShader);
+        frustumShader.Use();
+
+        // Bind SSBOs
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 11, compactedIndicesSSBO);
+
+        // Upload uniforms
+        frustumShader.SetInt("drawCount", drawCount);
+        frustumShader.SetInt("worldChunksXZ", VoxelHelper.WorldChunksXZ);
+        frustumShader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        frustumShader.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
+
+        // Compute frustum planes from camera
+        var planes = ComputeFrustumPlanes(world.Camera);
+        frustumShader.SetVector4("fp0", ref planes[0]);
+        frustumShader.SetVector4("fp1", ref planes[1]);
+        frustumShader.SetVector4("fp2", ref planes[2]);
+        frustumShader.SetVector4("fp3", ref planes[3]);
+        frustumShader.SetVector4("fp4", ref planes[4]);
+        frustumShader.SetVector4("fp5", ref planes[5]);
+
+        GL.DispatchCompute((drawCount + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.AllBarrierBits);
+
+        // Apply mask to indirect commands: zero out InstanceCount for culled draws
+        if (ApplyIndirectCulling)
+        {
+            frustumApplyShader ??= new Shader("Shaders/compute-frustum-apply.comp", ShaderType.ComputeShader);
+            frustumApplyShader.Use();
+            frustumApplyShader.SetInt("drawCount", drawCount);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, indirectCmdBuffer);
+            GL.DispatchCompute((drawCount + 63) / 64, 1, 1);
+            GL.MemoryBarrier(MemoryBarrierFlags.CommandBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
+        }
+        else
+        {
+            // Keep drawVisible at 1s to avoid VS discard while debugging
+            unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+        }
+        // Compute sum of InstanceCount into a persistently mapped 4-byte buffer and read without stalls
+        if (drawnTotalSSBO == 0)
+        {
+            GL.CreateBuffers(1, out drawnTotalSSBO);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, drawnTotalSSBO, -1, "drawnTotalSSBO");
+            var flags = BufferStorageFlags.MapReadBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit | BufferStorageFlags.DynamicStorageBit;
+            GL.NamedBufferStorage(drawnTotalSSBO, sizeof(uint), IntPtr.Zero, flags);
+            drawnTotalPtr = GL.MapNamedBufferRange(drawnTotalSSBO, IntPtr.Zero, sizeof(uint), BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        }
+        unsafe { GL.ClearNamedBufferData(drawnTotalSSBO, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, new uint[] { 0 }); }
+        var sumShader = new Shader("Shaders/compute-sum-indirect.comp", ShaderType.ComputeShader);
+        sumShader.Use();
+        sumShader.SetInt("drawCount", drawCount);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, indirectCmdBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, drawnTotalSSBO);
+        GL.DispatchCompute((drawCount + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.AllBarrierBits);
+        unsafe { RenderedBlocks = *(int*)drawnTotalPtr; }
+        // Also count visible draws for diagnostics (chunks in frustum)
+        if (visibleDrawsSSBO == 0)
+        {
+            GL.CreateBuffers(1, out visibleDrawsSSBO);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, visibleDrawsSSBO, -1, "visibleDrawsSSBO");
+            var flags2 = BufferStorageFlags.MapReadBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit | BufferStorageFlags.DynamicStorageBit;
+            GL.NamedBufferStorage(visibleDrawsSSBO, sizeof(uint), IntPtr.Zero, flags2);
+            visibleDrawsPtr = GL.MapNamedBufferRange(visibleDrawsSSBO, IntPtr.Zero, sizeof(uint), BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
+        }
+        unsafe { GL.ClearNamedBufferData(visibleDrawsSSBO, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, new uint[] { 0 }); }
+        frustumCountVisibleShader ??= new Shader("Shaders/compute-count-visible.comp", ShaderType.ComputeShader);
+        frustumCountVisibleShader.Use();
+        frustumCountVisibleShader.SetInt("drawCount", drawCount);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, indirectCmdBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 15, visibleDrawsSSBO);
+        GL.DispatchCompute((drawCount + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.AllBarrierBits);
+        unsafe { VisibleDraws = *(int*)visibleDrawsPtr; }
+        // Frustum metrics are available via VisibleDraws/RenderedBlocks; suppress periodic logs to reduce noise
+        lastFrustumLogMs = System.Environment.TickCount64;
+    }
+
+    private static Vector4[] ComputeFrustumPlanes(ICamera camera)
+    {
+        // Use the existing Frustum extraction for consistency
+        var fr = new OpenRender.Core.Culling.Frustum();
+        fr.Update(camera);
+        return fr.Planes;
+    }
+
+    private unsafe void CopyArrayToMapped<T>(IntPtr basePtr, int elementBaseOffset, T[] data, int count) where T : unmanaged
+    {
+        if (count <= 0 || data.Length == 0) return;
+        var elemSize = Unsafe.SizeOf<T>();
+        var dst = (byte*)basePtr + (elementBaseOffset * elemSize);
+        fixed (T* src = &data[0])
+        {
+            System.Buffer.MemoryCopy(src, dst, long.MaxValue, (long)count * elemSize);
+        }
+    }
+
+    // Diagnostics for GPU frustum
+    private uint visibleDrawsSSBO;
+    private IntPtr visibleDrawsPtr;
+    public int VisibleDraws { get; private set; }
+    private long lastDrawSampleMs;
+
+    // Deterministic atlas mapping removed.
 }
+
+
+
 

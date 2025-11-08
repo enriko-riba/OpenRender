@@ -10,7 +10,7 @@ layout (std140, binding = 0) uniform camera {
     vec3 cameraDir;
 };
 
-struct BlockState {   
+struct BlockState {
     uint index;
     uint blockType;
     uint blockDirection;

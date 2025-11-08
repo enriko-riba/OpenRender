@@ -10,6 +10,7 @@
 
 uniform int uTotalLights;
 uniform int outlinedBlockId;
+uniform int chunkSize; // for mapping 3D voxel index -> 2D column index
 uniform int useFog = 1;
 
 // Fog UBO (shared across shaders)
@@ -67,6 +68,7 @@ flat in uint materialIndex; // per-instance material index
 flat in uint textureIndex;  // per-instance texture index
 flat in uint blockId;       // per-instance block ID (instance ID)
 flat in float aoBrightness;
+flat in int outlinedLocalIndex; // per-draw outlined local index (MDI/DrawData path)
 
 out vec4 outputColor;
 
@@ -129,8 +131,11 @@ void main()
     base.rgb *= aoBrightness;
 
     // Optional block outline overlay (bindlessTextures[0] assumed to be outline atlas)
+    // Prefer per-draw outlined index from VS; fall back to legacy uniform if negative
+    int selectedLocalIndex = (outlinedLocalIndex >= 0) ? outlinedLocalIndex : outlinedBlockId;
     BlockState blk = blocks[blockId];
-    if (uint(outlinedBlockId) == blk.index)
+    // Compare by exact local 3D voxel index (vi) and skip air
+    if (selectedLocalIndex >= 0 && selectedLocalIndex == int(blk.index) && materialIndex != 0u)
     {
         sampler2D outlineSampler = bindlessTextures[0];
         vec4 texOutline = texture(outlineSampler, texCoord);

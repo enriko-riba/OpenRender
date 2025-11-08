@@ -258,3 +258,30 @@ These metrics should stay below ~1 ms per chunk on development hardware; use t
 ## 9. Summary
 
 This architecture provides a high-performance, modular, noise-driven world generation system suitable for voxel terrain. Each terrain layer is independent yet compositionally consistent through normalization and calibration, yielding natural-looking continents, ridges, and coastlines while maintaining performance across large (300×300) chunk worlds.
+## TODO: Incremental GPU Compaction & Streaming
+
+Goal: Eliminate full-atlas rebuilds on every tile change; only process new tiles and their border dependencies to reduce churn and jitter.
+
+- Track per-tile sets
+  - Keep `prevSet` and `newSet` of surrounding chunks (by camera tile).
+  - Compute `added = newSet − prevSet`, `removed = prevSet − newSet`.
+
+- Border AO dependencies
+  - For `added`, build a padded subset `added ∪ 4‑neighbors` (neighbors must be in `newSet`).
+  - Dispatch `compute-chunk` + `compute-borders` for this subset only.
+
+- Incremental compaction
+  - Append compacted data for `added` into the existing atlas; maintain `chunkIndex -> (base,count)`.
+  - For `removed`, mark counts=0 and push regions to a free‑list (soft delete).
+  - Periodic defrag: when fragmentation > threshold (e.g., 25%) or on a coarse timer, do a full rebuild.
+
+- Draw arrays maintenance
+  - Keep `CompactedChunkIndices/Bases/Counts` synced; update only touched chunks.
+  - Optionally re‑emit a compact index array to keep draw index stable.
+
+- Publish policy
+  - Publish only on tile change with non‑empty delta; rate limit (≥150–200 ms) to remove jitter.
+  - Edits: update only the edited chunk (plus borders if needed) and patch its draw in place — no full rebuild.
+
+- Synchronization & swap
+  - Retain fences after count/write; swap atlas only after issuing draws for the current frame.

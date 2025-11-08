@@ -1,0 +1,29 @@
+#version 460
+
+// Zero out InstanceCount in the indirect command buffer for culled draws.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 10) readonly buffer ssbo_drawVisible { int drawVisible[]; };
+
+// Must match DrawElementsIndirectCommand layout: 5 uints
+struct IndirectCmd {
+    uint Count;
+    uint InstanceCount;
+    uint FirstIndex;
+    uint BaseVertex;
+    uint BaseInstance;
+};
+layout(std430, binding = 12) buffer ssbo_indirect {
+    IndirectCmd cmds[];
+};
+
+uniform int drawCount;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= uint(drawCount)) return;
+    if (drawVisible[gid] == 0) {
+        cmds[gid].InstanceCount = 0u;
+    }
+}

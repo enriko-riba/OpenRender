@@ -1,4 +1,4 @@
-﻿using OpenRender;
+using OpenRender;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
@@ -6,14 +6,86 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.Components;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Threading;
 
 namespace SpyroGame.World;
 
 public class VoxelWorld
 {
+    // GPU compaction outputs (Stage 2)
+    public volatile uint CompactedAtlasSSBO;
+    public volatile int[]? CompactedBases;
+    public volatile int[]? CompactedCounts;
+    public volatile int[]? CompactedChunkIndices;
+    public volatile int CompactionVersion;
+
+    // Pending (ping-pong) compaction results guarded by a GPU fence; swapped when signaled
+    public volatile uint PendingAtlasSSBO;
+    public volatile int[]? PendingBases;
+    public volatile int[]? PendingCounts;
+    public volatile int[]? PendingChunkIndices;
+    public volatile IntPtr PendingFence;
+
+    // Collision probe logging throttle
+    private long lastCollisionProbeMs;
+    private int lastProbeChunkIdx = int.MinValue;
+    private int lastProbeLx = int.MinValue;
+    private int lastProbeLz = int.MinValue;
+
+    public void SetCompactionResult(uint atlas, int[] indices, int[] bases, int[] counts)
+    {
+        // Backward-compat immediate publish (used if no fence is set)
+        CompactedAtlasSSBO = atlas;
+        CompactedChunkIndices = indices;
+        CompactedBases = bases;
+        CompactedCounts = counts;
+        unchecked { CompactionVersion++; }
+    }
+
+    public void SetPendingCompaction(uint atlas, int[] indices, int[] bases, int[] counts, IntPtr fence)
+    {
+        PendingAtlasSSBO = atlas;
+        PendingChunkIndices = indices;
+        PendingBases = bases;
+        PendingCounts = counts;
+        PendingFence = fence;
+    }
+
+    public void TrySwapPendingCompaction()
+    {
+        var fence = PendingFence;
+        if (fence == IntPtr.Zero) return;
+        // Non-blocking test
+        var res = GL.ClientWaitSync(fence, ClientWaitSyncFlags.SyncFlushCommandsBit, 0);
+        if (res == WaitSyncStatus.AlreadySignaled || res == WaitSyncStatus.ConditionSatisfied)
+        {
+            try
+            {
+                GL.DeleteSync(fence);
+            }
+            catch { }
+            PendingFence = IntPtr.Zero;
+
+            // Swap to pending
+            if (CompactedAtlasSSBO != 0 && PendingAtlasSSBO != 0 && CompactedAtlasSSBO != PendingAtlasSSBO)
+            {
+                try { GL.DeleteBuffer(CompactedAtlasSSBO); } catch { }
+            }
+            CompactedAtlasSSBO = PendingAtlasSSBO;
+            CompactedChunkIndices = PendingChunkIndices;
+            CompactedBases = PendingBases;
+            CompactedCounts = PendingCounts;
+            unchecked { CompactionVersion++; }
+
+        // reduced logging
+
+            // Clear pending refs
+            PendingAtlasSSBO = 0;
+            PendingChunkIndices = null;
+            PendingBases = null;
+            PendingCounts = null;
+        }
+    }
     #region Textures and materials
     //  key is material id, value is the material
     public static readonly Dictionary<int, VoxelMaterial> materials = new() {
@@ -150,6 +222,7 @@ public class VoxelWorld
     private long lastStreamingUpdateMs;
     private long lastWatchdogMs;
     private long lastCacheMaintenanceMs;
+    private long lastCompactionRebuildMs;
     private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
@@ -167,6 +240,8 @@ public class VoxelWorld
         if (ChunkInitializer is null)
         {
             ChunkInitializer = new ChunkInitializer(this);
+            // Preallocate buffers for the full surrounding set to avoid invalid dispatches during movement
+            try { ChunkInitializer.PreallocateForMaxSurrounding(); } catch { }
         }
     }
 
@@ -196,20 +271,9 @@ public class VoxelWorld
         terrainBuilder = new TerrainBuilder(seed);
         ChunkRenderer = ChunkRenderer.Create(this, GetTextureHandles(), GetMaterials());
 
-        // Start a small pool of background workers to increase chunk generation throughput.
-        // Use up to 4 workers or (CPU count - 1), whichever is lower.
-        workerCount = Math.Clamp(Environment.ProcessorCount - 1, 1, 4);
-        isRunning = true;
-        for (var i = 0; i < workerCount; i++)
-        {
-            var t = new Thread(WorkQueueProcessor)
-            {
-                IsBackground = true,
-                Name = $"VoxelWorker-{i+1}"
-            };
-            workerThreads.Add(t);
-            t.Start();
-        }
+        // GPU-first pipeline: disable CPU worker threads
+        workerCount = 0;
+        isRunning = false;
     }
 
     /// <summary>
@@ -298,6 +362,21 @@ public class VoxelWorld
             foreach (var i in set) surroundingChunkSet.Add(i);
         }
         TotalStartingChunks = surroundingChunkSet.Count;
+
+        // Bootstrap GPU compaction atlas for the initial surrounding set
+        try
+        {
+            EnsureChunkInitializer();
+            if (ChunkInitializer is not null)
+            {
+                var indices = surroundingChunkSet.ToArray();
+                if (indices.Length > 0)
+                {
+                    ChunkInitializer.ProcessChunkData(indices);
+                }
+            }
+        }
+        catch { }
     }
 
     /// <summary>
@@ -411,6 +490,11 @@ public class VoxelWorld
         }
     }
 
+    [ThreadStatic]
+    private static Dictionary<long, BlockType>? borderQueryCache;
+
+    private static long PackKey(int x, int y, int z) => ((long)(x & 0x3FFFFF) << 42) | ((long)(y & 0x3FF) << 32) | (long)(z & 0x3FFFFF);
+
     public BlockType GetBlockTypeGlobal(Vector3i globalPosition)
     {
         if (globalPosition.Y < 0)
@@ -425,10 +509,45 @@ public class VoxelWorld
         }
 
         var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(globalPosition);
+        var key = PackKey(globalPosition.X, globalPosition.Y, globalPosition.Z);
+        if (borderQueryCache is not null && borderQueryCache.TryGetValue(key, out var cached))
+            return cached;
         if (loadedChunks.TryGetValue(chunkIndex, out var loaded) && loaded.Blocks is not null)
         {
             var local = globalPosition - loaded.Position;
-            return loaded.Blocks[local.X + local.Z * VoxelHelper.ChunkSideSize + local.Y * VoxelHelper.ChunkSideSizeSquare].BlockType;
+            var bt = loaded.Blocks[local.X + local.Z * VoxelHelper.ChunkSideSize + local.Y * VoxelHelper.ChunkSideSizeSquare].BlockType;
+            if (borderQueryCache is not null) borderQueryCache[key] = bt;
+            return bt;
+        }
+
+        // GPU-first collision: if we have column heights, synthesize a block type quickly to match GPU terrain
+        if (loadedChunks.TryGetValue(chunkIndex, out loaded))
+        {
+            var origin2 = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+            var lx2 = globalPosition.X - origin2.X;
+            var lz2 = globalPosition.Z - origin2.Z;
+            if ((uint)lx2 < (uint)VoxelHelper.ChunkSideSize && (uint)lz2 < (uint)VoxelHelper.ChunkSideSize)
+            {
+                // Use per-column max height; treat below as solid, above as air; water occupies air below water level
+                int terrainH = loaded.GetTerrainHeightAt(lx2, lz2);
+                var y = globalPosition.Y - origin2.Y;
+                BlockType bt;
+                if (y < terrainH)
+                {
+                    // choose a representative solid type; collision only needs solid vs non-solid
+                    bt = BlockType.Rock;
+                }
+                else if (globalPosition.Y <= VoxelHelper.WaterLevel)
+                {
+                    bt = BlockType.WaterLevel;
+                }
+                else
+                {
+                    bt = BlockType.None;
+                }
+                if (borderQueryCache is not null) borderQueryCache[key] = bt;
+                return bt;
+            }
         }
 
         // unified: no separate cached collection
@@ -437,61 +556,74 @@ public class VoxelWorld
         var lx = globalPosition.X - chunkOrigin.X;
         var ly = globalPosition.Y - chunkOrigin.Y;
         var lz = globalPosition.Z - chunkOrigin.Z;
-        return terrainBuilder.GenerateChunkBlockLocal(chunkIndex, lx, ly, lz);
+        var result = terrainBuilder.GenerateChunkBlockLocal(chunkIndex, lx, ly, lz);
+        if (borderQueryCache is not null) borderQueryCache[key] = result;
+        return result;
     }
 
     public BlockState? PickBlock(Vector3 origin, Vector3 direction, float pickingDistance = VoxelHelper.MaxPickingDistance)
     {
-        //  first get the chunks intersecting with the ray
-        var start = stopwatch.ElapsedTicks;
-        var intersections = ChunkRenderer.VisibleChunks
-            .Select(x => (distance: VoxelHelper.RayIntersect(origin, direction, x.Aabb), chunk: x))
-            .Where(x => x.distance.HasValue && x.distance < pickingDistance);
+        // GPU-first: DDA voxel traversal using GetBlockByPositionGlobalSafe()
+        if (direction.LengthSquared < 1e-8f) return null;
+        var dir = direction;
+        dir.Normalize();
 
-        var chunkIntersectionTime = stopwatch.ElapsedTicks - start;
-        //Log.Debug($"found {intersections.Length} chunks intersecting in {chunkIntersectionTime:N0} ticks");
-        start = stopwatch.ElapsedTicks;
+        int x = (int)MathF.Floor(origin.X);
+        int y = (int)MathF.Floor(origin.Y);
+        int z = (int)MathF.Floor(origin.Z);
 
-        var minDistance = float.MaxValue;
-        var totalBlocks = 0;
-        var totalChunks = 0;
-        BlockState? nearestBlock = null;
-        foreach (var (distance, chunk) in intersections)
+        int stepX = dir.X > 0 ? 1 : (dir.X < 0 ? -1 : 0);
+        int stepY = dir.Y > 0 ? 1 : (dir.Y < 0 ? -1 : 0);
+        int stepZ = dir.Z > 0 ? 1 : (dir.Z < 0 ? -1 : 0);
+
+        float tMaxX, tMaxY, tMaxZ;
+        float tDeltaX = stepX != 0 ? MathF.Abs(1f / dir.X) : float.PositiveInfinity;
+        float tDeltaY = stepY != 0 ? MathF.Abs(1f / dir.Y) : float.PositiveInfinity;
+        float tDeltaZ = stepZ != 0 ? MathF.Abs(1f / dir.Z) : float.PositiveInfinity;
+
+        float fx = origin.X - MathF.Floor(origin.X);
+        float fy = origin.Y - MathF.Floor(origin.Y);
+        float fz = origin.Z - MathF.Floor(origin.Z);
+
+        tMaxX = stepX > 0 ? (1f - fx) * (tDeltaX == float.PositiveInfinity ? 1f : tDeltaX) : (fx) * (tDeltaX == float.PositiveInfinity ? 1f : tDeltaX);
+        tMaxY = stepY > 0 ? (1f - fy) * (tDeltaY == float.PositiveInfinity ? 1f : tDeltaY) : (fy) * (tDeltaY == float.PositiveInfinity ? 1f : tDeltaY);
+        tMaxZ = stepZ > 0 ? (1f - fz) * (tDeltaZ == float.PositiveInfinity ? 1f : tDeltaZ) : (fz) * (tDeltaZ == float.PositiveInfinity ? 1f : tDeltaZ);
+
+        // Check starting cell
+        var startBlock = GetBlockByPositionGlobalSafe(x, y, z);
+        if (startBlock is not null && startBlock.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+            return startBlock;
+
+        float t = 0f;
+        int maxSteps = (int)(pickingDistance * 4) + 4; // guard
+        for (int i = 0; i < maxSteps && t <= pickingDistance; i++)
         {
-            totalChunks++;
-            var chunkPosition = chunk.Aabb.Min;
-            var visibleBlocks = chunk.Blocks.Where(x => x.IsVisible && x.BlockType != BlockType.WaterLevel && x.BlockType != BlockType.None)
-                //.Where(x => (x.Aabb.Min - (Vector3i)origin).ManhattanLength < pickingDistance);
-                .Where(x =>
-                 {
-                     var d = x.Aabb.Min - origin;
-                     return d.LengthSquared < pickingDistance * pickingDistance;
-                 });
-            //Log.Debug($"testing block intersections for chunk: {chunk}, visible blocks; {visibleBlocks.Count()}");
-            foreach (var block in visibleBlocks)
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ)
             {
-                totalBlocks++;
-                var blockDistance = VoxelHelper.RayIntersect(origin, direction, block.Aabb);
-                if (blockDistance.HasValue && blockDistance < pickingDistance)
-                {
-                    //Log.Debug($"block intersection: {block.LocalPosition} {block.BlockType}, world position: {blockBB}");
-                    if (blockDistance.Value < minDistance)
-                    {
-                        minDistance = blockDistance.Value;
-                        nearestBlock = block;
-                        //Log.Debug($"nearest block: {nearestBlock} at distance: {minDistance}");
-                    }
-                }
+                x += stepX; t = tMaxX; tMaxX += tDeltaX;
             }
-        }
-        //var resultString = nearestBlock is not null ? $"block: {nearestBlock} at distance: {minDistance:N2}" : "no intersection found";
-        //Log.Debug($"{resultString}, chunks ({totalChunks}) intersection time {chunkIntersectionTime:N0} ticks, blocks ({totalBlocks}) picking time {stopwatch.ElapsedTicks - start:N0} ticks");
+            else if (tMaxY <= tMaxZ)
+            {
+                y += stepY; t = tMaxY; tMaxY += tDeltaY;
+            }
+            else
+            {
+                z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ;
+            }
 
-        return nearestBlock;
+            if (y < 0 || y > VoxelHelper.MaxBlockPositionY) break;
+            if (x < 0 || z < 0 || x > VoxelHelper.MaxBlockPositionXZ || z > VoxelHelper.MaxBlockPositionXZ) break;
+
+            var b = GetBlockByPositionGlobalSafe(x, y, z);
+            if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+                return b;
+        }
+        return null;
     }
 
     public void BreakBlock(BlockState block)
     {
+        var updatedChunks = new HashSet<Chunk>();
         if (block.BlockType is BlockType.None or BlockType.WaterLevel)
         {
             Log.Warn("BreakBlock() invalid block type!");
@@ -505,11 +637,37 @@ public class VoxelWorld
             return;
         }
 
-        var updatedChunks = new HashSet<Chunk>();
-        block.BlockType = BlockType.None;
-        block.IsVisible = false;
-        chunk.UpdateBlock(ref block, true);
-        updatedChunks.Add(chunk);
+        // If CPU Blocks[] exists, update it; otherwise rely on GPU path only
+        if (chunk.Blocks is not null)
+        {
+
+            block.BlockType = BlockType.None;
+            block.IsVisible = false;
+            chunk.UpdateBlock(ref block, true);
+            updatedChunks.Add(chunk);
+        }
+
+        // Set a 3D break mask bit for the exact voxel, and also set column mask
+        var origin = VoxelHelper.GetChunkPositionGlobal(block.ChunkIndex);
+        var lx = block.GlobalPosition.X - origin.X;
+        var lz = block.GlobalPosition.Z - origin.Z;
+        var ly = block.GlobalPosition.Y - origin.Y;
+        SetBreakMask3DBit(block.ChunkIndex, lx, ly, lz, hidden: true);
+        SetBreakMaskBit(block.ChunkIndex, lx, lz, hidden: true);
+
+        // Request a full publish for the current surrounding set so atlas stays coherent
+        try
+        {
+            EnsureChunkInitializer();
+            // Simpler and robust: rebuild the full surrounding set so atlas/draws stay coherent
+            int[] desired;
+            lock (surroundingChunkSet)
+            {
+                desired = surroundingChunkSet.Count > 0 ? new List<int>(surroundingChunkSet).ToArray() : new int[] { block.ChunkIndex };
+            }
+            ChunkInitializer?.ProcessChunkData(desired);
+        }
+        catch { }
 
         //  make neighbor blocks visible
         void MakeNeighborBlockVisible(BlockState? blockState)
@@ -519,11 +677,7 @@ public class VoxelWorld
                 block = blockState.Value;
                 block.IsVisible = true;
                 var chunk = this[block.ChunkIndex];
-                if (chunk is not null)
-                {
-                    chunk.UpdateBlock(ref block);
-                    updatedChunks.Add(chunk);
-                }
+                if (chunk is not null && chunk.Blocks is not null) { chunk.UpdateBlock(ref block); updatedChunks.Add(chunk); }
             }
         }
 
@@ -533,14 +687,16 @@ public class VoxelWorld
             MakeNeighborBlockVisible(neighbor);
         }
 
-        foreach (var updatedChunk in updatedChunks)
-        {
-            var chunkToProcess = updatedChunk;
-            ThreadPool.QueueUserWorkItem(_ =>
+        if (updatedChunks.Count > 0) {
+            foreach (var updatedChunk in updatedChunks)
             {
-                chunkToProcess.RecomputeLighting(force: true, includeNeighborData: true);
-                RefreshChunkBorders(chunkToProcess);
-            });
+                var chunkToProcess = updatedChunk;
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    chunkToProcess.RecomputeLighting(force: true, includeNeighborData: true);
+                    RefreshChunkBorders(chunkToProcess);
+                });
+            }
         }
     }
 
@@ -568,6 +724,50 @@ public class VoxelWorld
         var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(blockWorldPosition);
         var chunk = this[chunkIndex];
         if (chunk is null) return null;
+        // Prefer GPU columns (if available) to ensure collision matches GPU terrain, regardless of CPU Blocks
+        if (chunk.HasGpuColumns)
+        {
+            var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+            var lx = x - origin.X;
+            var ly = y - origin.Y;
+            var lz = z - origin.Z;
+            if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize || (uint)ly >= (uint)VoxelHelper.ChunkYSize)
+                return null;
+            var h = chunk.GetTerrainHeightAt(lx, lz); // top face local y (one past top solid)
+            var maxSolid = h - 1;
+
+            // Classify via TerrainBuilder to match CPU material layering.
+            BlockType bt = BlockType.None;
+            if (ly <= maxSolid)
+            {
+                bt = TerrainBuilder.GenerateChunkBlockType(maxSolid, lx, ly, lz);
+                // Treat WaterLevel as air for CPU queries/HUD/collision
+                if (bt == BlockType.WaterLevel) bt = BlockType.None;
+            }
+
+            // Apply 3D break mask (1 bit per voxel) to carve tunnels/holes
+            try
+            {
+                var mask = GetBreakMask3D(chunkIndex);
+                if (mask is not null)
+                {
+                    int area = VoxelHelper.ChunkSideSizeSquare;
+                    int linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
+                    int byteIndex = linear >> 3; // 8 voxels per byte
+                    int bit = linear & 7;
+                    if ((uint)byteIndex < (uint)mask.Length)
+                    {
+                        if ((mask[byteIndex] & (byte)(1 << bit)) != 0)
+                            bt = BlockType.None;
+                    }
+                }
+            }
+            catch { }
+
+            var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
+            return new BlockState(idx, chunk) { BlockType = bt, IsVisible = bt != BlockType.None };
+        }
+        // Fallback to CPU blocks only if GPU columns are not ready
         if (!chunk.IsInitialized || chunk.Blocks is null) return null;
 
         var chunkWorldPosition = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
@@ -725,11 +925,36 @@ public class VoxelWorld
                 else ready++;
             }
         }
-        Log.Debug($"Streaming: desired={desired.Count}, gen={toGenerate}, upload={toUpload}, ready={ready}, workQ={workQueue.Count}");
+        //Log.Debug($"Streaming: desired={desired.Count}, gen={toGenerate}, upload={toUpload}, ready={ready}, workQ={workQueue.Count}");
 
         // Update visibility from a frustum snapshot
         var planes = (Vector4[])camera.Frustum.Planes.Clone();
         UpdateChunkVisibility(planes);
+
+        // Rebuild GPU compaction only on tile change with debounce; keeps atlas coherent without churn
+        var now = stopwatch.ElapsedMilliseconds;
+        const int RebuildDebounceMs = 180; // modest debounce to reduce jitter during fast flight
+        if ((lastCameraChunkX != cameraChunkX || lastCameraChunkZ != cameraChunkZ) && (now - lastCompactionRebuildMs) >= RebuildDebounceMs)
+        {
+            EnsureChunkInitializer();
+            if (ChunkInitializer is not null)
+            {
+                // Rebuild for the current desired surrounding set regardless of CPU-chunk IsProcessed
+                int[] desiredArr;
+                lock (surroundingChunkSet)
+                {
+                    desiredArr = surroundingChunkSet.ToArray();
+                }
+                if (desiredArr.Length > 0 && !ChunkInitializer.HasInFlightBatch)
+                {
+                    ChunkInitializer.ProcessChunkData(desiredArr);
+                    lastCompactionRebuildMs = now;
+                    // mark current tile as processed to debounce next rebuild until we actually move
+                    lastCameraChunkX = cameraChunkX;
+                    lastCameraChunkZ = cameraChunkZ;
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -818,101 +1043,107 @@ public class VoxelWorld
         return true;
     }
 
-    private void WorkQueueProcessor()
-    {
-        while (isRunning)
-        {
-            // Non-blocking camera event drain to avoid stalling work processing
-            var hadEvent = false;
-            while (cameraChangedEvent.WaitOne(0))
-            {
-                hadEvent = true;
-            }
-            if (hadEvent && camera is not null)
-            {
-                // Only recompute streaming if the camera chunk tile changed (simplified trigger)
-                var poseChanged = HasCameraPoseChanged(camera);
-                if (poseChanged)
-                {
-                    CalculateTerrainStreamingChanges();
-                    lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
-                }
-            }
+    //private void WorkQueueProcessor()
+    //{
+    //    if (UseGpuStreaming)
+    //    {
+    //        // GPU-first mode: disable CPU work queue processing
+    //        Thread.Sleep(10);
+    //        return;
+    //    }
+    //    while (isRunning)
+    //    {
+    //        // Non-blocking camera event drain to avoid stalling work processing
+    //        var hadEvent = false;
+    //        while (cameraChangedEvent.WaitOne(0))
+    //        {
+    //            hadEvent = true;
+    //        }
+    //        if (hadEvent && camera is not null)
+    //        {
+    //            // Only recompute streaming if the camera chunk tile changed (simplified trigger)
+    //            var poseChanged = HasCameraPoseChanged(camera);
+    //            if (poseChanged)
+    //            {
+    //                CalculateTerrainStreamingChanges();
+    //                lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+    //            }
+    //        }
 
-            // Failsafe: if camera chunk tile changed but we missed the event, trigger streaming.
-            if (camera is not null)
-            {
-                var posFS = camera.Position;
-                var ccxFS = (int)((posFS.X + 0.5f) / VoxelHelper.ChunkSideSize);
-                var cczFS = (int)((posFS.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-                if (ccxFS != lastCameraChunkX || cczFS != lastCameraChunkZ)
-                {
-                    lastCameraChunkX = ccxFS;
-                    lastCameraChunkZ = cczFS;
-                    CalculateTerrainStreamingChanges();
-                    lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
-                }
-            }
+    //        // Failsafe: if camera chunk tile changed but we missed the event, trigger streaming.
+    //        if (camera is not null)
+    //        {
+    //            var posFS = camera.Position;
+    //            var ccxFS = (int)((posFS.X + 0.5f) / VoxelHelper.ChunkSideSize);
+    //            var cczFS = (int)((posFS.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+    //            if (ccxFS != lastCameraChunkX || cczFS != lastCameraChunkZ)
+    //            {
+    //                lastCameraChunkX = ccxFS;
+    //                lastCameraChunkZ = cczFS;
+    //                CalculateTerrainStreamingChanges();
+    //                lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+    //            }
+    //        }
 
-            if (!workQueue.IsEmpty)
-            {
-                // Process a small batch per tick with a time budget
-                const int MaxItemsPerTick = 64;
-                const int TimeBudgetMs = 30;
-                var start = stopwatch.ElapsedMilliseconds;
-                var processed = 0;
-                while (processed < MaxItemsPerTick && (stopwatch.ElapsedMilliseconds - start) < TimeBudgetMs && !workQueue.IsEmpty)
-                {
-                    ProcessWorkItem();
-                    processed++;
-                }
+    //        if (!workQueue.IsEmpty)
+    //        {
+    //            // Process a small batch per tick with a time budget
+    //            const int MaxItemsPerTick = 64;
+    //            const int TimeBudgetMs = 30;
+    //            var start = stopwatch.ElapsedMilliseconds;
+    //            var processed = 0;
+    //            while (processed < MaxItemsPerTick && (stopwatch.ElapsedMilliseconds - start) < TimeBudgetMs && !workQueue.IsEmpty)
+    //            {
+    //                ProcessWorkItem();
+    //                processed++;
+    //            }
 
-                // Perform periodic cache maintenance and watchdog even while there is work
-                if (camera is not null)
-                {
-                    var now2 = stopwatch.ElapsedMilliseconds;
-                    if (now2 - lastCacheMaintenanceMs > 500)
-                    {
-                        var centerPosition = camera.Position;
-                        var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
-                        var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-                        var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
-                        EvictIfOverCapacity(cameraXZ);
-                        lastCacheMaintenanceMs = now2;
-                    }
-                    if (now2 - lastWatchdogMs > 1000)
-                    {
-                        WatchdogReenqueue();
-                        lastWatchdogMs = now2;
-                    }
-                }
-                continue; // do not idle-wait when there is work
-            }
+    //            // Perform periodic cache maintenance and watchdog even while there is work
+    //            if (camera is not null)
+    //            {
+    //                var now2 = stopwatch.ElapsedMilliseconds;
+    //                if (now2 - lastCacheMaintenanceMs > 500)
+    //                {
+    //                    var centerPosition = camera.Position;
+    //                    var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
+    //                    var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+    //                    var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
+    //                    EvictIfOverCapacity(cameraXZ);
+    //                    lastCacheMaintenanceMs = now2;
+    //                }
+    //                if (now2 - lastWatchdogMs > 1000)
+    //                {
+    //                    WatchdogReenqueue();
+    //                    lastWatchdogMs = now2;
+    //                }
+    //            }
+    //            continue; // do not idle-wait when there is work
+    //        }
 
-            // Idle path: maintain cache and wait briefly for camera events
-            if (camera is not null)
-            {
-                var now3 = stopwatch.ElapsedMilliseconds;
-                if (now3 - lastCacheMaintenanceMs > 1000)
-                {
-                    var centerPosition = camera.Position;
-                    var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
-                    var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-                    var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
-                    EvictIfOverCapacity(cameraXZ);
-                    lastCacheMaintenanceMs = now3;
-                }
-                if (now3 - lastWatchdogMs > 1000)
-                {
-                    WatchdogReenqueue();
-                    lastWatchdogMs = now3;
-                }
-            }
+    //        // Idle path: maintain cache and wait briefly for camera events
+    //        if (camera is not null)
+    //        {
+    //            var now3 = stopwatch.ElapsedMilliseconds;
+    //            if (now3 - lastCacheMaintenanceMs > 1000)
+    //            {
+    //                var centerPosition = camera.Position;
+    //                var cameraChunkX = (int)((centerPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
+    //                var cameraChunkZ = (int)((centerPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+    //                var cameraXZ = new Vector2i(cameraChunkX, cameraChunkZ);
+    //                EvictIfOverCapacity(cameraXZ);
+    //                lastCacheMaintenanceMs = now3;
+    //            }
+    //            if (now3 - lastWatchdogMs > 1000)
+    //            {
+    //                WatchdogReenqueue();
+    //                lastWatchdogMs = now3;
+    //            }
+    //        }
 
-            // Short wait to avoid busy-spin when idle
-            cameraChangedEvent.WaitOne(5);
-        }
-    }
+    //        // Short wait to avoid busy-spin when idle
+    //        cameraChangedEvent.WaitOne(5);
+    //    }
+    //}
 
     // Unified eviction: trim active set if it grows past capacity. Prefer evicting far chunks not in surrounding set.
     private void EvictIfOverCapacity(in Vector2i cameraXZ)
@@ -985,12 +1216,12 @@ public class VoxelWorld
                     chunk.RecomputeLighting(force: true, includeNeighborData: true);
                 }
                 var processed = stopwatch.ElapsedMilliseconds - processingStart;
-                Log.Debug($"ProcessWorkItem() chunk: {chunk}, init time:{initialized} ms, process time:{processed} ms");
+                //Log.Debug($"ProcessWorkItem() chunk: {chunk}, init time:{initialized} ms, process time:{processed} ms");
             }
             else
             {
                 var initialized = stopwatch.ElapsedMilliseconds - start;
-                Log.Debug($"ProcessWorkItem() reusing existing chunk: {chunk}, time:{initialized} ms");
+                //Log.Debug($"ProcessWorkItem() reusing existing chunk: {chunk}, time:{initialized} ms");
                 if (chunk.State is ChunkState.SafeToRemove)
                     chunk.State = ChunkState.Loaded;
                 else if (chunk.State is ChunkState.ToBeRemoved)
@@ -1018,6 +1249,25 @@ public class VoxelWorld
         var planes = (Vector4[])cam.Frustum.Planes.Clone();
         UpdateChunkVisibility(planes);
     }
+
+    /// <summary>
+    /// Public hook for the GL thread to drive terrain streaming when the camera moves.
+    /// Triggers a streaming recompute on camera tile change and updates the debounce timer.
+    /// </summary>
+    public void UpdateStreamingFromCamera()
+    {
+        if (camera is null) return;
+        // Detect tile change without mutating lastCameraChunk* beforehand,
+        // so CalculateTerrainStreamingChanges() can see the delta and publish.
+        var camPos = camera.Position;
+        var camChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
+        var camChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
+        if (camChunkX != lastCameraChunkX || camChunkZ != lastCameraChunkZ)
+        {
+            CalculateTerrainStreamingChanges();
+            lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
+        }
+    }
     #endregion
 
     private void RefreshChunkBorders(Chunk chunk)
@@ -1026,6 +1276,7 @@ public class VoxelWorld
             return;
 
         var refreshed = new HashSet<int>();
+        borderQueryCache = new Dictionary<long, BlockType>(8 * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize);
         void RefreshChunk(Chunk target)
         {
             if (target.Blocks is null) return;
@@ -1044,6 +1295,7 @@ public class VoxelWorld
                 RefreshChunk(neighbor);
             }
         }
+        borderQueryCache = null;
     }
 
     private static IEnumerable<int> EnumerateCardinalNeighbors(int chunkIndex)
@@ -1121,7 +1373,7 @@ public class VoxelWorld
     }
 
     // --- GPU streaming integration ---
-    internal bool UseGpuStreaming { get; set; } = false;
+    internal bool UseGpuStreaming { get; set; } = true;
 
     internal void ProcessGpuStreamingOnGlThread(int submitMax = 32)
     {
@@ -1129,27 +1381,18 @@ public class VoxelWorld
         EnsureChunkInitializer();
         if (ChunkInitializer is null) return;
 
-        // Submit a batch if none is in flight
-        if (!ChunkInitializer.HasInFlightBatch)
+        // If a batch is in flight, try completing it quickly (non-blocking)
+        if (ChunkInitializer.HasInFlightBatch)
         {
-            var batch = new List<int>(submitMax);
-            while (batch.Count < submitMax && workQueue.TryDequeue(out var idx))
-            {
-                bool isStillNeeded;
-                lock (surroundingChunkSet)
-                {
-                    isStillNeeded = surroundingChunkSet.Contains(idx);
-                }
-                if (!isStillNeeded) continue;
-                batch.Add(idx);
-            }
-            if (batch.Count > 0)
-            {
-                ChunkInitializer.SubmitBatch(batch.ToArray());
-            }
+            _ = ChunkInitializer.TryCompleteBatch(out var _);
         }
 
-        // Try to complete the in-flight batch without blocking
+        // Periodic full rebuild disabled: publish only on camera tile change (CalculateTerrainStreamingChanges)
+
+        // Skip per-batch streaming submits for now; rely on frequent full rebuilds for coherence
+        // (reduces churn and avoids partial atlas publishes during movement)
+
+        // Try to complete any in-flight batch at the end of this call
         if (ChunkInitializer.TryCompleteBatch(out var completed))
         {
             foreach (var idx in completed)
@@ -1166,6 +1409,12 @@ public class VoxelWorld
     internal void EnqueueChunkForUpload(Chunk chunk)
     {
         if (chunk is null) return;
+        // If GPU compaction drives rendering, skip legacy per-chunk uploads to avoid churn
+        if (ChunkRenderer != null && CompactedAtlasSSBO != 0)
+        {
+            chunk.PendingUpload = false;
+            return;
+        }
         if (chunk.PendingUpload) return;
         chunk.PendingUpload = true;
         pendingUploadSince[chunk.Index] = stopwatch.ElapsedMilliseconds;
@@ -1174,7 +1423,7 @@ public class VoxelWorld
 
     internal void ProcessPendingWorkOnGlThread(int maxBatch = 16)
     {
-        if (workQueue.IsEmpty) return;
+        if (UseGpuStreaming || workQueue.IsEmpty) return;
 
         EnsureChunkInitializer();
         var batch = new List<int>(maxBatch);
@@ -1232,40 +1481,85 @@ public class VoxelWorld
         return false;
     }
 
-    private void WatchdogReenqueue()
-    {
-        // Self-heal chunks that are CPU-ready but missing GPU data or stuck PendingUpload
-        List<int> indices;
-        lock (surroundingChunkSet)
-        {
-            indices = surroundingChunkSet.ToList();
-        }
-        var now = stopwatch.ElapsedMilliseconds;
-        foreach (var idx in indices)
-        {
-            if (!loadedChunks.TryGetValue(idx, out var chunk)) continue;
-            // CPU compute watchdog (conservative): only enqueue if not already pending and not in progress
-            if (!chunk.IsProcessed)
-            {
-                if (!chunk.PendingCompute && !chunk.ComputeInProgress)
-                {
-                    chunk.PendingCompute = true;
-                    workQueue.Enqueue(idx);
-                    pendingComputeSince[idx] = now;
-                    Log.Debug($"Watchdog compute enqueue {idx}");
-                }
-                continue;
-            }
+    //private void WatchdogReenqueue()
+    //{
+    //    // Self-heal chunks that are CPU-ready but missing GPU data or stuck PendingUpload
+    //    List<int> indices;
+    //    lock (surroundingChunkSet)
+    //    {
+    //        indices = surroundingChunkSet.ToList();
+    //    }
+    //    var now = stopwatch.ElapsedMilliseconds;
+    //    foreach (var idx in indices)
+    //    {
+    //        if (!loadedChunks.TryGetValue(idx, out var chunk)) continue;
+    //        // CPU compute watchdog (conservative): only enqueue if not already pending and not in progress
+    //        if (!chunk.IsProcessed)
+    //        {
+    //            if (!chunk.PendingCompute && !chunk.ComputeInProgress)
+    //            {
+    //                chunk.PendingCompute = true;
+    //                workQueue.Enqueue(idx);
+    //                pendingComputeSince[idx] = now;
+    //                Log.Debug($"Watchdog compute enqueue {idx}");
+    //            }
+    //            continue;
+    //        }
 
-            // GPU upload watchdog (only for processed chunks)
-            var missingGpu = chunk.BlocksSSBO == 0u && chunk.State != ChunkState.ToBeRemoved && chunk.State != ChunkState.SafeToRemove;
-            var stuck = chunk.PendingUpload && pendingUploadSince.TryGetValue(idx, out var since) && (now - since) > 1000;
-            if (missingGpu || stuck)
-            {
-                if (stuck) chunk.PendingUpload = false; // allow re-enqueue
-                EnqueueChunkForUpload(chunk);
-                Log.Debug($"Watchdog upload re-enqueue {idx} (missingGpu={missingGpu}, stuck={stuck})");
-            }
-        }
+    //        // GPU upload watchdog (only for processed chunks)
+    //        if (CompactedAtlasSSBO == 0)
+    //        {
+    //            var missingGpu = chunk.BlocksSSBO == 0u && chunk.State != ChunkState.ToBeRemoved && chunk.State != ChunkState.SafeToRemove;
+    //            var stuck = chunk.PendingUpload && pendingUploadSince.TryGetValue(idx, out var since) && (now - since) > 1000;
+    //            if (missingGpu || stuck)
+    //            {
+    //                if (stuck) chunk.PendingUpload = false; // allow re-enqueue
+    //                EnqueueChunkForUpload(chunk);
+    //                // reduced log noise
+    //            }
+    //        }
+    //    }
+    //}
+
+    // Per-chunk column masks for edits (e.g., broken top-of-column). 1 = hidden, 0 = normal
+    private readonly ConcurrentDictionary<int, byte[]> breakMasks = new(); // per-column (legacy)
+    // Per-chunk 3D break mask bitset: 1 bit per voxel (length = VoxelsCount/8)
+    private readonly ConcurrentDictionary<int, byte[]> breakMasks3D = new();
+
+    internal byte[]? GetBreakMask(int chunkIndex)
+    {
+        return breakMasks.TryGetValue(chunkIndex, out var mask) ? mask : null;
+    }
+
+    // Returns 3D bitset as bytes (will be reinterpreted as uints when uploading)
+    internal byte[]? GetBreakMask3D(int chunkIndex)
+    {
+        return breakMasks3D.TryGetValue(chunkIndex, out var mask) ? mask : null;
+    }
+
+    private void SetBreakMaskBit(int chunkIndex, int lx, int lz, bool hidden)
+    {
+        var size = VoxelHelper.ChunkSideSize;
+        var area = VoxelHelper.ChunkSideSizeSquare;
+        var mask = breakMasks.GetOrAdd(chunkIndex, _ => new byte[area]);
+        var idx = lx + lz * size;
+        mask[idx] = hidden ? (byte)1 : (byte)0;
+    }
+
+    private void SetBreakMask3DBit(int chunkIndex, int lx, int ly, int lz, bool hidden)
+    {
+        var area = VoxelHelper.ChunkSideSizeSquare;
+        var voxels = area * VoxelHelper.ChunkYSize;
+        var bytesLen = (voxels + 7) / 8;
+        var mask = breakMasks3D.GetOrAdd(chunkIndex, _ => new byte[bytesLen]);
+        int linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
+        int byteIndex = linear >> 3;
+        int bit = linear & 7;
+        byte b = mask[byteIndex];
+        if (hidden) b = (byte)(b | (1 << bit)); else b = (byte)(b & ~(1 << bit));
+        mask[byteIndex] = b;
     }
 }
+
+
+
