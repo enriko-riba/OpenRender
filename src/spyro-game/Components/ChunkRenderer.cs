@@ -420,20 +420,6 @@ public class ChunkRenderer : SceneNode
     }
 
     // --- MDI path ---
-    private bool mdiDirty = true;
-    // Fixed-size MDI atlas: pre-partitioned into equal per-chunk slots.
-    // Compute reserved blocks per chunk based on VoxelHelper constants to avoid hardcoded values.
-    // Fixed-atlas reservation removed.
-    
-
-    // Fixed-atlas initialization removed.
-
-    // Fixed-atlas slot assignment removed.
-
-    // Fixed-atlas eviction removed.
-
-    // Fixed-atlas free removed.
-
     private void DrawMdi()
     {
         // Defer swapping pending compaction until after issuing draws to avoid mid-pass buffer mismatches
@@ -445,19 +431,38 @@ public class ChunkRenderer : SceneNode
             var indices = world.CompactedChunkIndices!;
             var bases = world.CompactedBases!;
             var counts = world.CompactedCounts!;
-            var drawCount = indices.Length;
+            // Filter draws to current surrounding set to avoid rendering evicted chunks
+            var desired = new HashSet<int>(world.SurroundingChunkIndices);
+            var filtered = new List<int>(indices.Length);
+            for (int i = 0; i < indices.Length; i++) if (desired.Contains(indices[i])) filtered.Add(i);
+            var drawCount = filtered.Count;
             if (drawCount == 0)
             {
                 RenderedBlocks = 0;
                 return;
             }
 
-            // Ensure/resize frustum compute buffers and upload indices
-            EnsureOrResizeBuffer(ref compactedIndicesSSBO, "compactedIndicesSSBO", drawCount * sizeof(int));
-            GL.NamedBufferSubData(compactedIndicesSSBO, IntPtr.Zero, drawCount * sizeof(int), indices);
-            EnsureOrResizeBuffer(ref drawVisibleSSBO, "drawVisibleSSBO", drawCount * sizeof(int));
-            // Initialize to 1 so in case compute is skipped, everything draws (use Clear to avoid sync warnings)
-            unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+            if (UseGpuFrustumCulling)
+            {
+                // Ensure/resize frustum compute buffers and upload filtered indices in draw order
+                EnsureOrResizeBuffer(ref compactedIndicesSSBO, "compactedIndicesSSBO", drawCount * sizeof(int));
+                var frustumIndices = new int[drawCount];
+                for (int i = 0; i < drawCount; i++) frustumIndices[i] = indices[filtered[i]];
+                // Upload via unsynchronized mapped range to avoid pixel-path sync
+                var bytes = drawCount * sizeof(int);
+                var mapped = GL.MapNamedBufferRange(compactedIndicesSSBO, IntPtr.Zero, bytes,
+                    BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+                if (mapped != IntPtr.Zero && drawCount > 0)
+                {
+                    unsafe { fixed (int* src = &frustumIndices[0]) { System.Buffer.MemoryCopy(src, (void*)mapped, (long)bytes, (long)bytes); } }
+                    GL.UnmapNamedBuffer(compactedIndicesSSBO);
+                }
+                else
+                {
+                    GL.NamedBufferSubData(compactedIndicesSSBO, IntPtr.Zero, bytes, frustumIndices);
+                }
+                EnsureOrResizeBuffer(ref drawVisibleSSBO, "drawVisibleSSBO", drawCount * sizeof(int));
+            }
 
             // Ensure draw buffers capacity
             var ddSize = drawCount * Unsafe.SizeOf<DrawDataGpu>();
@@ -484,7 +489,8 @@ public class ChunkRenderer : SceneNode
             var playerChunkIdx = pChunkX + pChunkZ * VoxelHelper.WorldChunksXZ;
             for (int i = 0; i < drawCount; i++)
             {
-                var idx = indices[i];
+                var src = filtered[i];
+                var idx = indices[src];
                 // Derive world position directly from chunk index to avoid dependency on CPU upload
                 var cx = idx % VoxelHelper.WorldChunksXZ;
                 var cz = idx / VoxelHelper.WorldChunksXZ;
@@ -511,7 +517,7 @@ public class ChunkRenderer : SceneNode
                 {
                     Model = model,
                     ChunkPos = new Vector4(pos.X, pos.Y, pos.Z, 1f),
-                    BlocksBase = bases[i],
+                    BlocksBase = bases[src],
                     ChunkSize = VoxelHelper.ChunkSideSize,
                     OutlinedLocalIndex = outlinedLocal,
                     Enabled = isVisible ? 1 : 0
@@ -519,12 +525,12 @@ public class ChunkRenderer : SceneNode
                 cmdArray[i] = new DrawElementsIndirectCommand
                 {
                     Count = (uint)Vao!.DataLength,
-                    InstanceCount = (uint)(isVisible ? counts[i] : 0),
+                    InstanceCount = (uint)(isVisible ? counts[src] : 0),
                     FirstIndex = 0,
                     BaseVertex = 0,
                     BaseInstance = (uint)i
                 };
-                if (isVisible) RenderedBlocks += counts[i];
+                if (isVisible) RenderedBlocks += counts[src];
             }
 
             // sampling logs removed
@@ -541,8 +547,7 @@ public class ChunkRenderer : SceneNode
             }
             else
             {
-                // Ensure visibility mask is all ones and keep pre-cull RenderedBlocks
-                unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+                // No GPU frustum: VS ignores drawVisible; do not bind/clear it
             }
 
             // If compaction changed mid-pass, skip drawing this frame to avoid mismatched buffers
@@ -554,7 +559,8 @@ public class ChunkRenderer : SceneNode
 
             // Bind compacted atlas
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, world.CompactedAtlasSSBO);
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
+            if (UseGpuFrustumCulling && drawVisibleSSBO != 0)
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, drawVisibleSSBO);
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, drawDataSSBO);
             Material.Shader.SetInt("useDrawData", 1);
             // Force legacy selection uniform to disabled to avoid leaking outline to other draws
@@ -584,7 +590,9 @@ public class ChunkRenderer : SceneNode
         {
             GL.CreateBuffers(1, out handle);
             GL.ObjectLabel(ObjectLabelIdentifier.Buffer, handle, -1, label);
-            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            // Allow mapping for write uploads when needed
+            var flags = BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapWriteBit;
+            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, flags);
             return;
         }
         GL.GetNamedBufferParameter(handle, BufferParameterName.BufferSize, out int current);
@@ -593,7 +601,8 @@ public class ChunkRenderer : SceneNode
             GL.DeleteBuffer(handle);
             GL.CreateBuffers(1, out handle);
             GL.ObjectLabel(ObjectLabelIdentifier.Buffer, handle, -1, label);
-            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            var flags = BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapWriteBit;
+            GL.NamedBufferStorage(handle, sizeBytes, IntPtr.Zero, flags);
         }
     }
 
@@ -641,8 +650,7 @@ public class ChunkRenderer : SceneNode
         }
         else
         {
-            // Keep drawVisible at 1s to avoid VS discard while debugging
-            unsafe { GL.ClearNamedBufferData(drawVisibleSSBO, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 1 }); }
+            // No-op: when not applying indirect culling, the VS ignores drawVisible mask
         }
         // Compute sum of InstanceCount into a persistently mapped 4-byte buffer and read without stalls
         if (drawnTotalSSBO == 0)
@@ -653,7 +661,13 @@ public class ChunkRenderer : SceneNode
             GL.NamedBufferStorage(drawnTotalSSBO, sizeof(uint), IntPtr.Zero, flags);
             drawnTotalPtr = GL.MapNamedBufferRange(drawnTotalSSBO, IntPtr.Zero, sizeof(uint), BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
         }
-        unsafe { GL.ClearNamedBufferData(drawnTotalSSBO, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, new uint[] { 0 }); }
+        // Reset via compute to avoid pixel-path sync
+        var clearU32 = new Shader("Shaders/compute-clear-uint.comp", ShaderType.ComputeShader);
+        clearU32.Use();
+        clearU32.SetInt("valueIn", 0);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, drawnTotalSSBO);
+        GL.DispatchCompute(1, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
         var sumShader = new Shader("Shaders/compute-sum-indirect.comp", ShaderType.ComputeShader);
         sumShader.Use();
         sumShader.SetInt("drawCount", drawCount);
@@ -671,7 +685,12 @@ public class ChunkRenderer : SceneNode
             GL.NamedBufferStorage(visibleDrawsSSBO, sizeof(uint), IntPtr.Zero, flags2);
             visibleDrawsPtr = GL.MapNamedBufferRange(visibleDrawsSSBO, IntPtr.Zero, sizeof(uint), BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
         }
-        unsafe { GL.ClearNamedBufferData(visibleDrawsSSBO, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, new uint[] { 0 }); }
+        // Reset via compute
+        clearU32.Use();
+        clearU32.SetInt("valueIn", 0);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, visibleDrawsSSBO);
+        GL.DispatchCompute(1, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
         frustumCountVisibleShader ??= new Shader("Shaders/compute-count-visible.comp", ShaderType.ComputeShader);
         frustumCountVisibleShader.Use();
         frustumCountVisibleShader.SetInt("drawCount", drawCount);

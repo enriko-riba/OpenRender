@@ -184,7 +184,27 @@ internal sealed class ChunkInitializer : IDisposable
         // Ensure previous GPU work finished before reusing SSBOs
         WaitForPreviousGpu();
         EnsureChunkIndicesCapacity(chunkCount);
-        GL.NamedBufferSubData(chunkIndicesSSBO, 0, chunkCount * sizeof(int), indicesSorted);
+        // Upload indices via unsynchronized mapped range to avoid pixel-path sync
+        {
+            var bytes = chunkCount * sizeof(int);
+            var mapped = GL.MapNamedBufferRange(chunkIndicesSSBO, IntPtr.Zero, bytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero && indicesSorted.Length > 0)
+            {
+                unsafe
+                {
+                    fixed (int* src = &indicesSorted[0])
+                    {
+                        System.Buffer.MemoryCopy(src, (void*)mapped, (long)bytes, (long)bytes);
+                    }
+                }
+                GL.UnmapNamedBuffer(chunkIndicesSSBO);
+            }
+            else
+            {
+                GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, bytes, indicesSorted);
+            }
+        }
 
         // GPU computes heights; skip CPU height upload
 
@@ -210,6 +230,204 @@ internal sealed class ChunkInitializer : IDisposable
     private IntPtr batchFence = IntPtr.Zero;
 
     public bool HasInFlightBatch => batchInFlight;
+
+    /// <summary>
+    /// Append-only publish: generates and compacts only the provided primary chunk indices,
+    /// repairs border AO/visibility via a padded dispatch (primaries + cardinals), and appends
+    /// the new draws to the resident atlas and draw arrays. Existing draws remain intact.
+    /// </summary>
+    public bool AppendChunks(int[] primary)
+    {
+        if (primary == null || primary.Length == 0) return false;
+
+        // Build padded batch: primary + unique 4-neighbors for border correctness
+        var set = new HashSet<int>(primary);
+        var paddedList = new List<int>(primary.Length * 2);
+        paddedList.AddRange(primary);
+        var side = VoxelHelper.WorldChunksXZ;
+        foreach (var idx in primary)
+        {
+            var x = idx % side; var z = idx / side;
+            int west = (x > 0) ? idx - 1 : -1;
+            int east = (x + 1 < side) ? idx + 1 : -1;
+            int north = (z > 0) ? idx - side : -1;
+            int south = (z + 1 < side) ? idx + side : -1;
+            if (west >= 0 && set.Add(west)) paddedList.Add(west);
+            if (east >= 0 && set.Add(east)) paddedList.Add(east);
+            if (north >= 0 && set.Add(north)) paddedList.Add(north);
+            if (south >= 0 && set.Add(south)) paddedList.Add(south);
+        }
+        var padded = paddedList.ToArray();
+
+        // Ensure previous GPU work finished before reusing SSBOs
+        WaitForPreviousGpu();
+        EnsureChunkIndicesCapacity(padded.Length);
+        // Upload indices via unsynchronized mapped range to avoid pixel-path sync
+        {
+            var bytes = padded.Length * sizeof(int);
+            var mapped = GL.MapNamedBufferRange(chunkIndicesSSBO, IntPtr.Zero, bytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero && padded.Length > 0)
+            {
+                unsafe
+                {
+                    fixed (int* src = &padded[0])
+                    {
+                        System.Buffer.MemoryCopy(src, (void*)mapped, (long)bytes, (long)bytes);
+                    }
+                }
+                GL.UnmapNamedBuffer(chunkIndicesSSBO);
+            }
+            else
+            {
+                GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, bytes, padded);
+            }
+        }
+
+        // Ensure storage
+        var voxBytes = VoxelsCount * Unsafe.SizeOf<uint>();
+        EnsureBlockTypeCapacity(voxBytes * padded.Length);
+        EnsureBlockAttribCapacity(voxBytes * padded.Length);
+        EnsureColumnHeightsOutputCapacity(padded.Length);
+
+        // Pass G0: types + initial AO/visibility (+edits)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, blockTypeSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, chunkIndicesSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnHeightsSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 4, blockAttribSSBO);
+        FillBreakMask3D(padded, 0, padded.Length, null);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 16, breakMask3DSSBO);
+        shader.Use();
+        shader.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        shader.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
+        shader.SetInt("waterLevel", VoxelHelper.WaterLevel);
+        shader.SetInt("worldChunksXZ", VoxelHelper.WorldChunksXZ);
+        shader.SetFloat("baseFreq", 1f / 180f);
+        shader.SetFloat("warpFreq", 1f / 900f);
+        shader.SetFloat("warpAmp", 8f);
+        shader.SetInt("noiseSeed", world.Seed ^ 0x12345);
+        GL.DispatchCompute(padded.Length, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+
+        // Pass G1: border fix on padded set
+        EnsureNeighborGroups(padded, 0, padded.Length);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, neighborGroupsSSBO);
+        shaderBorders.Use();
+        shaderBorders.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        shaderBorders.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
+        GL.DispatchCompute(padded.Length, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+
+        // Update CPU collision heights for primaries from columnHeights (persistently mapped)
+        try
+        {
+            unsafe
+            {
+                int area = VoxelHelper.ChunkSideSizeSquare;
+                if (columnHeightsPtr != IntPtr.Zero)
+                {
+                    var src = (uint*)columnHeightsPtr;
+                    // By construction, padded starts with primaries in the same order
+                    for (int i = 0; i < primary.Length; i++)
+                    {
+                        var idx = padded[i];
+                        var arr = new int[area];
+                        var baseOff = i * area;
+                        for (int j = 0; j < area; j++) arr[j] = (int)src[baseOff + j];
+                        var ch = world.GetOrCreateChunkContainer(idx);
+                        ch.ApplyColumnHeightsForCollision(arr);
+                        ch.HasGpuColumns = true;
+                        ch.Visible = true;
+                    }
+                }
+            }
+        }
+        catch { }
+
+        // Stage G2a: count only primaries (build remap primary->padded)
+        var map = new Dictionary<int, int>(padded.Length);
+        for (int i = 0; i < padded.Length; i++) map[padded[i]] = i;
+        var remap = new int[primary.Length];
+        for (int i = 0; i < primary.Length; i++) remap[i] = map.TryGetValue(primary[i], out var gi) ? gi : 0;
+        EnsureRemapBuffer(remap);
+        var counts = RunCompactCount(padded, 0, primary.Length, remap);
+
+        // Compute append bases using current resident total
+        var oldIndices = world.CompactedChunkIndices ?? Array.Empty<int>();
+        var oldBases = world.CompactedBases ?? Array.Empty<int>();
+        var oldCounts = world.CompactedCounts ?? Array.Empty<int>();
+        int oldTotal = 0; for (int i = 0; i < oldCounts.Length; i++) oldTotal += oldCounts[i];
+
+        var bases = new int[primary.Length];
+        int addTotal = 0; for (int i = 0; i < primary.Length; i++) { bases[i] = oldTotal + addTotal; addTotal += counts[i]; }
+        if (addTotal <= 0)
+        {
+            // nothing to append
+            return false;
+        }
+
+        // Stage G2b: allocate new atlas = oldTotal + addTotal; copy old then write new slice
+        uint newAtlas;
+        GL.CreateBuffers(1, out newAtlas);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newAtlas, -1, "compactedAtlas_SSBO");
+        int elemSize = 16; // sizeof(GpuBlockState)
+        GL.NamedBufferStorage(newAtlas, Math.Max(1, oldTotal + addTotal) * elemSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        if (world.CompactedAtlasSSBO != 0 && oldTotal > 0)
+        {
+            // copy old content
+            GL.CopyNamedBufferSubData(world.CompactedAtlasSSBO, newAtlas, IntPtr.Zero, IntPtr.Zero, (IntPtr)(oldTotal * elemSize));
+        }
+
+        // Bind new atlas for write pass
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 8, newAtlas);
+        // Bind column heights and break mask similar to ProcessChunkData
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnHeightsSSBO);
+        EnsureCountsBuffer(primary.Length * sizeof(int));
+        // Zero cursors (countsBuffer) via compute to avoid pixel-path sync
+        var clearCursors = new Shader("Shaders/compute-clear-int-array.comp", ShaderType.ComputeShader);
+        clearCursors.Use();
+        clearCursors.SetInt("elementCount", primary.Length);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, countsBuffer);
+        GL.DispatchCompute((primary.Length + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 9, countsBuffer);
+        FillBreakMask3D(primary, 0, primary.Length, remap);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 16, breakMask3DSSBO);
+
+        // Upload append bases
+        int basesSSBO;
+        GL.CreateBuffers(1, out basesSSBO);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, basesSSBO, -1, "basesSSBO_append");
+        GL.NamedBufferStorage(basesSSBO, bases.Length * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        GL.NamedBufferSubData(basesSSBO, IntPtr.Zero, bases.Length * sizeof(int), bases);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, basesSSBO);
+
+        shaderCompactWrite.Use();
+        shaderCompactWrite.SetInt("chunkSize", VoxelHelper.ChunkSideSize);
+        shaderCompactWrite.SetInt("chunkYSize", VoxelHelper.ChunkYSize);
+        shaderCompactWrite.SetInt("waterBlockType", (int)BlockType.WaterLevel);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, blockTypeSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 4, blockAttribSSBO);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, remapSSBO);
+        GL.DispatchCompute(primary.Length, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+
+        // Build new arrays by concatenation
+        var newIndices = new int[oldIndices.Length + primary.Length];
+        var newBases = new int[oldBases.Length + bases.Length];
+        var newCounts = new int[oldCounts.Length + counts.Length];
+        if (oldIndices.Length > 0) Array.Copy(oldIndices, 0, newIndices, 0, oldIndices.Length);
+        if (oldBases.Length > 0) Array.Copy(oldBases, 0, newBases, 0, oldBases.Length);
+        if (oldCounts.Length > 0) Array.Copy(oldCounts, 0, newCounts, 0, oldCounts.Length);
+        Array.Copy(primary, 0, newIndices, oldIndices.Length, primary.Length);
+        Array.Copy(bases, 0, newBases, oldBases.Length, bases.Length);
+        Array.Copy(counts, 0, newCounts, oldCounts.Length, counts.Length);
+
+        // Publish pending: keep resident atlas alive until renderer swaps pending
+        var sync = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
+        world.SetPendingCompaction(newAtlas, newIndices, newBases, newCounts, sync);
+        return true;
+    }
 
     public bool SubmitBatch(int[] chunkIndices)
     {
@@ -242,7 +460,27 @@ internal sealed class ChunkInitializer : IDisposable
         // Ensure previous GPU work finished before reusing SSBOs
         WaitForPreviousGpu();
         EnsureChunkIndicesCapacity(paddedCount);
-        GL.NamedBufferSubData(chunkIndicesSSBO, 0, paddedCount * sizeof(int), padded);
+        // Upload indices via unsynchronized mapped range to avoid pixel-path sync
+        {
+            var bytes = paddedCount * sizeof(int);
+            var mapped = GL.MapNamedBufferRange(chunkIndicesSSBO, IntPtr.Zero, bytes,
+                BufferAccessMask.MapWriteBit | BufferAccessMask.MapInvalidateBufferBit | BufferAccessMask.MapUnsynchronizedBit);
+            if (mapped != IntPtr.Zero && paddedCount > 0)
+            {
+                unsafe
+                {
+                    fixed (int* src = &padded[0])
+                    {
+                        System.Buffer.MemoryCopy(src, (void*)mapped, (long)bytes, (long)bytes);
+                    }
+                }
+                GL.UnmapNamedBuffer(chunkIndicesSSBO);
+            }
+            else
+            {
+                GL.NamedBufferSubData(chunkIndicesSSBO, IntPtr.Zero, bytes, padded);
+            }
+        }
 
         // Height SSBO not required; compute-chunk generates heights on GPU
 
@@ -343,11 +581,7 @@ internal sealed class ChunkInitializer : IDisposable
             var newIndices = (int[])primary.Clone();
             var newBases = bases;
             var newCounts = counts; // use counts from count pass to match bases
-            // Dispose previous atlas, if any
-            if (world.CompactedAtlasSSBO != 0)
-            {
-                GL.DeleteBuffer(world.CompactedAtlasSSBO);
-            }
+            // Keep resident atlas alive; renderer swaps pending safely
             var sync = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
             world.SetPendingCompaction(newAtlas, newIndices, newBases, newCounts, sync);
         }
@@ -448,7 +682,9 @@ internal sealed class ChunkInitializer : IDisposable
         }
         if (count > chunkIndicesCapacity)
         {
-            GL.NamedBufferStorage(chunkIndicesSSBO, count * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            // Allow mapping for write to avoid pixel-path sync during uploads
+            var flags = BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapWriteBit;
+            GL.NamedBufferStorage(chunkIndicesSSBO, count * sizeof(int), IntPtr.Zero, flags);
             chunkIndicesCapacity = count;
         }
     }
@@ -831,10 +1067,15 @@ internal sealed class ChunkInitializer : IDisposable
             countsPtr = IntPtr.Zero;
             countsCapacityBytes = bytes;
         }
+        // Zero counts via compute to avoid pixel-path sync
         if (bytes > 0)
         {
-            // Clear with zeros (use ClearNamedBufferData to avoid pixel-path sync)
-            unsafe { GL.ClearNamedBufferData(countsBuffer, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 0 }); }
+            var clear = new Shader("Shaders/compute-clear-int-array.comp", ShaderType.ComputeShader);
+            clear.Use();
+            clear.SetInt("elementCount", count);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, countsBuffer);
+            GL.DispatchCompute((count + 63) / 64, 1, 1);
+            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
         }
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, countsBuffer);
 
@@ -902,7 +1143,13 @@ internal sealed class ChunkInitializer : IDisposable
 
         // Ensure a counts/cursors buffer exists (persistently mapped). We won't read it on CPU.
         EnsureCountsBuffer(basesBytes);
-        unsafe { GL.ClearNamedBufferData(countsBuffer, PixelInternalFormat.R32i, PixelFormat.RedInteger, PixelType.Int, new int[] { 0 }); }
+        // Zero cursors (countsBuffer) via compute to avoid pixel-path sync
+        var clear2 = new Shader("Shaders/compute-clear-int-array.comp", ShaderType.ComputeShader);
+        clear2.Use();
+        clear2.SetInt("elementCount", count);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, countsBuffer);
+        GL.DispatchCompute((count + 63) / 64, 1, 1);
+        GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit | MemoryBarrierFlags.ClientMappedBufferBarrierBit);
 
         uint atlasSSBO;
         GL.CreateBuffers(1, out atlasSSBO);

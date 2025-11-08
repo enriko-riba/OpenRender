@@ -1,0 +1,14 @@
+#version 460
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// Rebind any single-uint SSBO to binding=14 before dispatching this shader.
+layout(std430, binding = 14) buffer ssbo_u32 { uint valueOut; };
+
+// Use int uniform for wider engine compatibility; cast in shader.
+uniform int valueIn;
+
+void main()
+{
+    valueOut = uint(valueIn);
+}

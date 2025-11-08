@@ -1,0 +1,15 @@
+#version 460
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 6) buffer ssbo_ints { int data[]; };
+
+uniform int elementCount;
+
+void main()
+{
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= uint(elementCount)) return;
+    data[gid] = 0;
+}
+

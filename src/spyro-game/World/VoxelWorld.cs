@@ -223,6 +223,7 @@ public class VoxelWorld
     private long lastWatchdogMs;
     private long lastCacheMaintenanceMs;
     private long lastCompactionRebuildMs;
+    private long lastCompactionRepackMs;
     private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
@@ -931,27 +932,53 @@ public class VoxelWorld
         var planes = (Vector4[])camera.Frustum.Planes.Clone();
         UpdateChunkVisibility(planes);
 
-        // Rebuild GPU compaction only on tile change with debounce; keeps atlas coherent without churn
+        // Append-only streaming: on tile change, compute additions and append only those.
         var now = stopwatch.ElapsedMilliseconds;
-        const int RebuildDebounceMs = 180; // modest debounce to reduce jitter during fast flight
+        const int RebuildDebounceMs = 120; // slightly tighter debounce
         if ((lastCameraChunkX != cameraChunkX || lastCameraChunkZ != cameraChunkZ) && (now - lastCompactionRebuildMs) >= RebuildDebounceMs)
         {
             EnsureChunkInitializer();
             if (ChunkInitializer is not null)
             {
-                // Rebuild for the current desired surrounding set regardless of CPU-chunk IsProcessed
                 int[] desiredArr;
-                lock (surroundingChunkSet)
-                {
-                    desiredArr = surroundingChunkSet.ToArray();
-                }
+                lock (surroundingChunkSet) { desiredArr = surroundingChunkSet.ToArray(); }
                 if (desiredArr.Length > 0 && !ChunkInitializer.HasInFlightBatch)
                 {
-                    ChunkInitializer.ProcessChunkData(desiredArr);
+                    var current = CompactedChunkIndices ?? Array.Empty<int>();
+                    var currentSet = new HashSet<int>(current);
+                    var toAdd = desiredArr.Where(i => !currentSet.Contains(i)).ToArray();
+                    if (CompactedAtlasSSBO == 0 || current.Length == 0)
+                    {
+                        ChunkInitializer.ProcessChunkData(desiredArr);
+                    }
+                    else if (toAdd.Length > 0)
+                    {
+                        try { ChunkInitializer.AppendChunks(toAdd); } catch { }
+                    }
                     lastCompactionRebuildMs = now;
-                    // mark current tile as processed to debounce next rebuild until we actually move
                     lastCameraChunkX = cameraChunkX;
                     lastCameraChunkZ = cameraChunkZ;
+                }
+            }
+        }
+
+        // Phase 2.5: periodic eviction/repack when resident overhead is high
+        // If resident draw array is much larger than desired, rebuild exactly for desired
+        var resident = CompactedChunkIndices ?? Array.Empty<int>();
+        var desiredCountNow = desired.Count;
+        const float OverheadFactor = 1.6f;   // rebuild if resident > 1.6x desired
+        const int MinOverhead = 256;         // and at least 256 extra draws
+        const int RepackDebounceMs = 500;    // don’t spam repacks
+        if (resident.Length > 0 && desiredCountNow > 0)
+        {
+            var extra = resident.Length - desiredCountNow;
+            if (extra > 0 && (resident.Length > desiredCountNow * OverheadFactor) && extra >= MinOverhead)
+            {
+                if (now - lastCompactionRepackMs >= RepackDebounceMs && ChunkInitializer is not null && !ChunkInitializer.HasInFlightBatch)
+                {
+                    int[] desiredArr;
+                    lock (surroundingChunkSet) { desiredArr = surroundingChunkSet.ToArray(); }
+                    try { ChunkInitializer.ProcessChunkData(desiredArr); lastCompactionRepackMs = now; } catch { }
                 }
             }
         }
