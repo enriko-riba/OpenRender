@@ -48,11 +48,11 @@ public sealed class ChunkStreamingManager : IDisposable
     public int CulledChunkCount { get; private set; }
 
     // Phase 5: Streaming & Unloading
-    // CRITICAL: Unload distance must be LARGER than load distance to provide hysteresis
-    // Otherwise chunks at the edge constantly load/unload (thrashing)
-    // Load distance: 16 chunks radius
-    // Unload distance: 24 chunks radius (50% larger for stable streaming)
-    private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 8; // Was +4, now +8 for more hysteresis
+    // CRITICAL: Unload distance must provide hysteresis but not accumulate too many chunks
+    // Load distance: 16 chunks radius (1089 chunks in 33x33 grid)
+    // Unload distance: 20 chunks radius (1681 chunks in 41x41 grid)
+    // Hysteresis: 4 chunks (25% buffer) - enough to prevent thrashing
+    private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 4; // Was +8, now +4
     private const int MAX_UNLOADS_PER_FRAME = 32; // Phase 5.2 FIX: Increased from 8 to handle unbounded growth
     private Vector3 lastCameraPosition;
     private int unloadCheckFrame = 0;
@@ -73,19 +73,23 @@ public sealed class ChunkStreamingManager : IDisposable
     }
     
     /// <summary>
-    /// Calculate the maximum number of chunks that can be visible at once based on view distance.
+    /// Calculate the maximum number of chunks that can be active at once based on UNLOAD distance.
     /// This is used for pre-allocating buffers to eliminate progressive resizing.
+    /// CRITICAL: Must account for hysteresis - chunks load at MaxDistanceInChunks but unload at UNLOAD_DISTANCE_CHUNKS!
     /// </summary>
     public static int CalculateMaxViewChunks()
     {
-        // Maximum view distance in chunks (e.g., 8 for FarPlane=430)
-        var viewDistance = VoxelHelper.MaxDistanceInChunks;
+        // CRITICAL: Use UNLOAD distance, not LOAD distance!
+        // Chunks are loaded within MaxDistanceInChunks (16) but kept until UNLOAD_DISTANCE_CHUNKS (20)
+        // So max active chunks = (2 * unloadDistance + 1)^2
+        const int UNLOAD_HYSTERESIS = 4; // Must match UNLOAD_DISTANCE_CHUNKS calculation
+        var unloadDistance = VoxelHelper.MaxDistanceInChunks + UNLOAD_HYSTERESIS;
         
-        // Calculate square area: (2 * distance + 1)^2
-        // For distance=8: (2*8+1)^2 = 17^2 = 289 chunks
-        var maxChunks = (2 * viewDistance + 1) * (2 * viewDistance + 1);
+        // Calculate square area: (2 * unloadDistance + 1)^2
+        // For unloadDistance=20: (2*20+1)^2 = 41^2 = 1,681 chunks
+        var maxChunks = (2 * unloadDistance + 1) * (2 * unloadDistance + 1);
         
-        Log.Info($"ChunkStreamingManager: Calculated max view chunks: {maxChunks} (viewDistance={viewDistance})");
+        Log.Info($"ChunkStreamingManager: Calculated max view chunks: {maxChunks} (unloadDistance={unloadDistance}, loadDistance={VoxelHelper.MaxDistanceInChunks})");
         
         return maxChunks;
     }
