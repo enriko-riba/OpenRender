@@ -1,0 +1,307 @@
+#version 460
+#extension GL_ARB_gpu_shader_int64 : require
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+
+// ============================================================================
+// Constants (match VoxelHelper.cs values)
+// ============================================================================
+const int CHUNK_SIDE_SIZE = 16;
+const int CHUNK_Y_SIZE = 128;
+const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
+const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+const int WATER_LEVEL = 35;
+
+// Block types (match BlockType enum)
+const uint BLOCK_NONE = 0u;
+const uint BLOCK_ROCK = 1u;
+const uint BLOCK_DIRT = 2u;
+const uint BLOCK_GRASS_DIRT = 3u;
+const uint BLOCK_GRASS = 4u;
+const uint BLOCK_SAND = 5u;
+const uint BLOCK_SNOW = 6u;
+const uint BLOCK_WATER = 7u;
+const uint BLOCK_BEDROCK = 8u;
+const uint BLOCK_GRAVEL = 9u;
+
+// ============================================================================
+// Uniforms
+// ============================================================================
+uniform uint uSeed;                    // World seed
+uniform uint uChunkCount;              // Number of chunks in this batch
+uniform uint uWorldChunksXZ;           // World width in chunks (matches VoxelHelper.WorldChunksXZ)
+uniform float uElevOffset;             // Calibrated elevation offset
+uniform float uElevScale;              // Calibrated elevation scale
+
+// TEST MODE: Set to 1 for simple flat terrain (height=40), 0 for full procedural generation
+uniform int uTestMode = 0;
+
+// Noise settings (match TerrainBuilder)
+uniform float uBaseFreq = 0.00555556;      // 1/180
+uniform float uBaseWarpFreq = 0.00111111;  // 1/900
+uniform float uBaseWarpAmp = 8.0;
+
+uniform float uRidgeFreq = 0.00454545;     // 1/220
+uniform float uRidgeWarpFreq = 0.00181818; // 1/550
+uniform float uRidgeWarpAmp = 14.0;
+
+// Terrain generation parameters
+uniform float uSeaMin = -0.80;         // Deeper oceans for more contrast
+uniform float uSeaMax = 0.50;          // Higher coastal terrain
+uniform float uMtnLow = 0.60;          // Higher base mountains
+uniform float uMtnHigh = 3.50;         // Even taller mountain peaks
+uniform float uRidgePow = 1.8;         // Slightly less sharp ridges
+uniform float uSmoothPow = 0.75;       // More contrast in smooth areas
+
+// ============================================================================
+// SSBOs (Storage Buffers)
+// ============================================================================
+
+// Input: Chunk indices to generate
+layout(std430, binding = 0) readonly buffer ChunkIndicesBuffer {
+    uint chunkIndices[];
+};
+
+// Output: Voxel data (packed: blockType | biomeID | light | flags)
+layout(std430, binding = 1) writeonly buffer VoxelDataBuffer {
+    uint voxelData[];
+};
+
+// Output: Column heights (for collision/physics)
+layout(std430, binding = 2) writeonly buffer ColumnHeightsBuffer {
+    int columnHeights[];
+};
+
+// Output: Column metadata (biome, C, E, T, H values)
+layout(std430, binding = 3) writeonly buffer ColumnMetaBuffer {
+    uvec4 columnMeta[];  // Packed metadata
+};
+
+// ============================================================================
+// Noise Functions
+// ============================================================================
+
+uint pcgHash(uint seed) {
+    uint state = seed * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+uint hash2D(ivec2 p, uint seed) {
+    return pcgHash(uint(p.x) + pcgHash(uint(p.y) + seed));
+}
+
+float hashFloat(uint h) {
+    return float(h) / float(0xFFFFFFFFu) * 2.0 - 1.0;
+}
+
+vec2 getGradient2D(ivec2 p, uint seed) {
+    uint h = hash2D(p, seed);
+    float angle = hashFloat(h) * 3.14159265359;
+    return vec2(cos(angle), sin(angle));
+}
+
+float quinticSmooth(float t) {
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+}
+
+float gradientNoise2D(vec2 pos, float freq, float amp, uint seed) {
+    vec2 p = pos * freq;
+    ivec2 p0 = ivec2(floor(p));
+    vec2 f = fract(p);
+    
+    vec2 g0 = getGradient2D(p0, seed);
+    vec2 g1 = getGradient2D(p0 + ivec2(1, 0), seed);
+    vec2 g2 = getGradient2D(p0 + ivec2(0, 1), seed);
+    vec2 g3 = getGradient2D(p0 + ivec2(1, 1), seed);
+    
+    float d0 = dot(g0, f);
+    float d1 = dot(g1, f - vec2(1.0, 0.0));
+    float d2 = dot(g2, f - vec2(0.0, 1.0));
+    float d3 = dot(g3, f - vec2(1.0, 1.0));
+    
+    vec2 u = vec2(quinticSmooth(f.x), quinticSmooth(f.y));
+    return mix(mix(d0, d1, u.x), mix(d2, d3, u.x), u.y) * amp;
+}
+
+float domainWarpedNoise2D(vec2 pos, float baseFreq, float warpFreq, float warpAmp, uint seed) {
+    uint warpSeedX = seed ^ 0x9E3779B9u;
+    uint warpSeedY = seed ^ 0x7F4A7C15u;
+    
+    float warpX = gradientNoise2D(pos, warpFreq, warpAmp, warpSeedX);
+    float warpY = gradientNoise2D(pos, warpFreq, warpAmp, warpSeedY);
+    
+    vec2 warpedPos = pos + vec2(warpX, warpY);
+    return gradientNoise2D(warpedPos, baseFreq, 1.0, seed);
+}
+
+// ============================================================================
+// Terrain Generation Functions
+// ============================================================================
+
+// Multi-octave fractal noise for smoother terrain
+float fractalNoise2D(vec2 pos, float baseFreq, int octaves, float persistence, uint seed) {
+    float total = 0.0;
+    float frequency = baseFreq;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+    
+    for (int i = 0; i < octaves; i++) {
+        total += gradientNoise2D(pos, frequency, amplitude, seed + uint(i * 1000));
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= 2.0;
+    }
+    
+    return total / maxValue;
+}
+
+float sampleBaseNoise(int wx, int wz) {
+    vec2 pos = vec2(float(wx), float(wz));
+    // Multi-octave noise with balanced frequency for natural rolling hills
+    // Frequency: 1/400 provides good medium-scale terrain features
+    // Using 4 octaves with 0.5 persistence for good detail
+    return clamp(fractalNoise2D(pos, 1.0 / 400.0, 4, 0.55, uSeed ^ 0x12345u), -1.0, 1.0);
+}
+
+float sampleRidgeNoise(int wx, int wz) {
+    vec2 pos = vec2(float(wx), float(wz));
+    // Ridge noise for mountain features - sharper but still smooth
+    // Frequency: 1/500 creates nice mountain ranges
+    // Using 3 octaves with higher persistence for more detail
+    float noise = fractalNoise2D(pos, 1.0 / 500.0, 3, 0.6, uSeed ^ 0x5A17C3u);
+    return clamp(1.0 - abs(noise), 0.0, 1.0);
+}
+
+// Simplified field sampling (Phase 2 - no texture lookups yet)
+vec4 sampleFields01(int wx, int wz) {
+    vec2 pos = vec2(float(wx), float(wz));
+    
+    // Large-scale biome fields for realistic continent-sized regions
+    // These frequencies create natural biome transitions
+    float C = clamp(fractalNoise2D(pos, 1.0 / 25000.0, 2, 0.5, uSeed ^ 0xCCCC0000u) * 0.5 + 0.5, 0.0, 1.0);
+    float E = clamp(fractalNoise2D(pos, 1.0 / 8000.0, 2, 0.5, uSeed ^ 0xEEEE0000u) * 0.5 + 0.5, 0.0, 1.0);
+    float T = clamp(fractalNoise2D(pos, 1.0 / 10000.0, 2, 0.5, uSeed ^ 0xAAAA0000u) * 0.5 + 0.5, 0.0, 1.0);
+    float H = clamp(fractalNoise2D(pos, 1.0 / 10000.0, 2, 0.5, uSeed ^ 0xBBBB0000u) * 0.5 + 0.5, 0.0, 1.0);
+    
+    return vec4(C, E, T, H);
+}
+
+float heightRaw(int wx, int wz, float baseVal, vec4 fields) {
+    float C = fields.x;
+    float E = fields.y;
+    
+    float fbm = 0.5 * (baseVal + 1.0);
+    float rid = 1.0 - abs(sampleRidgeNoise(wx, wz));
+    rid = pow(clamp(rid, 0.0, 1.0), uRidgePow);
+    
+    float ruggedWeight = pow(1.0 - E, 1.6) * mix(0.5, 1.2, C);
+    float relief = mix(pow(fbm, uSmoothPow), rid, ruggedWeight);
+    
+    float seaBias = mix(uSeaMin, uSeaMax, C);
+    float mountainK = mix(uMtnLow, uMtnHigh, C);
+    
+    float h = seaBias + (relief - 0.5) * mountainK;
+    
+    vec2 pos = vec2(float(wx), float(wz));
+    float r = gradientNoise2D(pos, 0.0009, 1.0, uSeed ^ 0xBEEFu);
+    float band = 1.0 - smoothstep(0.0, 1.0, abs(r));
+    float riverDepth = mix(0.02, 0.14, C) * mix(1.0, 0.5, E);
+    h -= band * riverDepth;
+    
+    h += (rid - 0.5) * (C * C) * 0.45;
+    h -= (1.0 - C) * (1.0 - C) * 1.5;
+    
+    return h;
+}
+
+float smoothstep01(float x) {
+    x = clamp(x, 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x);
+}
+
+float height01At(int wx, int wz, float baseVal, vec4 fields) {
+    float h = heightRaw(wx, wz, baseVal, fields);
+    
+    // Much more aggressive scaling to spread values across full height range
+    // The issue is that heightRaw is producing values too close together
+    // We need to amplify the differences before quantizing to integers
+    float minHeight = -2.5;   // Tighter minimum
+    float maxHeight = 2.5;    // Tighter maximum for more contrast
+    float h01 = clamp((h - minHeight) / (maxHeight - minHeight), 0.0, 1.0);
+    
+    // Apply non-linear curve to increase mid-range variation
+    // This spreads out the values that were clustering together
+    h01 = pow(h01, 0.9);  // Slight curve to expand mid-range
+    
+    // Minimal coastal smoothing to preserve variation
+    float wl01 = float(WATER_LEVEL) / float(CHUNK_Y_SIZE - 1);
+    float d = h01 - wl01;
+    if (d < 0.02 && d > -0.02) {  // Very narrow band around water level
+        float k = smoothstep01((d + 0.02) / 0.04);
+        h01 = wl01 + d * mix(0.70, 1.0, k);  // Minimal flattening
+    }
+    
+    return h01;
+}
+
+uint generateBlockType(int height, int y) {
+    if (y > height) {
+        return BLOCK_NONE;
+    } else if (y == height) {
+        return BLOCK_GRASS_DIRT;
+    } else if (y >= height - 2) {
+        return BLOCK_DIRT;
+    } else {
+        return BLOCK_ROCK;
+    }
+}
+
+uint packVoxel(uint blockType, uint biomeID, uint light, uint flags) {
+    return (blockType & 0xFFu) | ((biomeID & 0xFFu) << 8) | ((light & 0xFFu) << 16) | ((flags & 0xFFu) << 24);
+}
+
+// ============================================================================
+// Main Compute Shader
+// ============================================================================
+
+void main() {
+    uint chunkIdx = gl_WorkGroupID.x;
+    if (chunkIdx >= uChunkCount) return;
+    uint lx = gl_LocalInvocationID.x;
+    uint lz = gl_LocalInvocationID.z;
+    uint chunkIndexGlobal = chunkIndices[chunkIdx];
+    uint chunkX = chunkIndexGlobal % uWorldChunksXZ;
+    uint chunkZ = chunkIndexGlobal / uWorldChunksXZ;
+    int wx = int(chunkX * CHUNK_SIDE_SIZE + lx);
+    int wz = int(chunkZ * CHUNK_SIDE_SIZE + lz);
+
+    int height;
+    
+    if (uTestMode == 1) {
+        // TEST MODE: Generate staircase pattern for debugging with VISIBLE heights
+        height = 40 + int((chunkX + chunkZ) % 8u);  // Heights 40-47 (visible above water level)
+    } else {
+        // PROCEDURAL MODE: Full terrain generation
+        float baseVal = sampleBaseNoise(wx, wz);
+        vec4 fields = sampleFields01(wx, wz);
+        float h01 = height01At(wx, wz, baseVal, fields);
+        height = int(h01 * float(CHUNK_Y_SIZE - 1));
+    }
+
+    uint columnIdx = chunkIdx * CHUNK_SIDE_SIZE_SQUARED + lz * CHUNK_SIDE_SIZE + lx;
+    columnHeights[columnIdx] = height;
+    columnMeta[columnIdx] = uvec4(0, 0, 0, 0);
+
+    uint voxelBaseIdx = chunkIdx * CHUNK_VOXEL_COUNT + lz * CHUNK_SIDE_SIZE + lx;
+
+    for (int y = 0; y < CHUNK_Y_SIZE; y++) {
+        uint blockType = generateBlockType(height, y);
+        
+        // TODO: Add water/sand/snow logic based on biome and height
+        // For now, just generate simple terrain blocks
+        
+        uint voxelIdx = voxelBaseIdx + y * CHUNK_SIDE_SIZE_SQUARED;
+        voxelData[voxelIdx] = packVoxel(blockType, 0u, 15u, 0u);
+    }
+}

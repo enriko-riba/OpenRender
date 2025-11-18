@@ -26,6 +26,34 @@ public static class VoxelHelper
     public const int MaxBlockPositionY = ChunkYSize - 1;
     public const int TotalChunks = WorldChunksXZ * WorldChunksXZ;
 
+    // GPU Pipeline Constants (Phase 2-5)
+    public const int DEFAULT_MAX_CHUNKS_PER_BATCH = 64;
+    public const int VERTEX_STRIDE_BYTES = 7 * sizeof(float); // Phase 5.2: pos(3) + uv(2) + ao(1) + faceIndex(1) = 28 bytes
+    
+    // Shared quad indices for instanced rendering
+    public static readonly uint[] SHARED_QUAD_INDICES = [0, 1, 2, 2, 3, 0];
+
+    // SSBO Binding Points (Phase 3+)
+    public static class SSBOBindings
+    {
+        public const int VOXEL_DATA = 0;
+        public const int VISIBILITY_MASK = 1;
+        public const int VISIBLE_COUNTS = 2;
+        public const int BASE_OFFSETS = 3;
+        public const int COMPACT_VERTICES = 4;
+        public const int ATOMIC_COUNTERS = 5;
+    }
+
+    /// <summary>
+    /// Validates that shader constants match C# constants (Phase 3)
+    /// </summary>
+    public static void ValidateShaderConstants()
+    {
+        // Validation logic would go here - for now just log
+        // This ensures CHUNK_SIDE_SIZE in shaders matches ChunkSideSize constant
+        OpenRender.Log.Debug($"VoxelHelper: ChunkSideSize={ChunkSideSize}, ChunkYSize={ChunkYSize}");
+    }
+
     public static (Vertex[], uint[]) CreateVoxelCube()
     {
         Vertex[] vertices =

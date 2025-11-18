@@ -1,0 +1,116 @@
+#version 460 core
+
+// ============================================================================
+// Phase 4.5: GPU Frustum Culling Compute Shader
+// ============================================================================
+// Purpose: Test each chunk's AABB against the camera frustum and mark visibility
+// Input: Chunk indices, chunk AABBs, frustum planes
+// Output: Per-chunk visibility flags (0 = culled, 1 = visible)
+// ============================================================================
+
+layout(local_size_x = 64) in;
+
+// Frustum planes in world space (6 planes: left, right, bottom, top, near, far)
+// Each plane is a vec4(nx, ny, nz, d) where the plane equation is: nx*x + ny*y + nz*z + d = 0
+layout(std140, binding = 0) uniform FrustumPlanes
+{
+    vec4 planes[6];  // Normalized plane equations
+};
+
+// Chunk data
+layout(std430, binding = 1) readonly buffer ChunkIndices
+{
+    int chunkIndices[];  // Array of chunk indices to test
+};
+
+// Output visibility flags
+layout(std430, binding = 2) writeonly buffer VisibilityFlags
+{
+    int visibilityFlags[];  // 0 = culled, 1 = visible
+};
+
+// Constants
+uniform int chunkCount;      // Number of chunks to process
+uniform int chunkSideSize;   // Chunk size in XZ (blocks)
+uniform int chunkYSize;      // Chunk height in Y (blocks)
+uniform int worldChunksXZ;   // World size in chunks (XZ)
+
+// ============================================================================
+// Calculate chunk AABB in world space
+// ============================================================================
+void getChunkAABB(int chunkIndex, out vec3 aabbMin, out vec3 aabbMax)
+{
+    // Calculate chunk position in world grid
+    int chunkX = chunkIndex % worldChunksXZ;
+    int chunkZ = chunkIndex / worldChunksXZ;
+    
+    // World space position (bottom-left corner)
+    vec3 chunkPos = vec3(
+        float(chunkX * chunkSideSize),
+        0.0,
+        float(chunkZ * chunkSideSize)
+    );
+    
+    // AABB extents
+    aabbMin = chunkPos;
+    aabbMax = chunkPos + vec3(float(chunkSideSize), float(chunkYSize), float(chunkSideSize));
+}
+
+// ============================================================================
+// Test AABB against frustum planes
+// Returns true if AABB is at least partially inside frustum
+// ============================================================================
+bool isAABBInFrustum(vec3 aabbMin, vec3 aabbMax)
+{
+    // For each frustum plane
+    for (int i = 0; i < 6; i++)
+    {
+        vec3 planeNormal = planes[i].xyz;
+        float planeDistance = planes[i].w;
+        
+        // Find the positive vertex (vertex furthest along plane normal direction)
+        vec3 positiveVertex;
+        positiveVertex.x = (planeNormal.x >= 0.0) ? aabbMax.x : aabbMin.x;
+        positiveVertex.y = (planeNormal.y >= 0.0) ? aabbMax.y : aabbMin.y;
+        positiveVertex.z = (planeNormal.z >= 0.0) ? aabbMax.z : aabbMin.z;
+        
+        // Test if positive vertex is behind the plane
+        float distance = dot(planeNormal, positiveVertex) + planeDistance;
+        
+        // If the positive vertex is behind this plane, the entire AABB is outside the frustum
+        if (distance < 0.0)
+        {
+            return false;
+        }
+    }
+    
+    // AABB intersects or is inside the frustum
+    return true;
+}
+
+// ============================================================================
+// Main compute shader
+// ============================================================================
+void main()
+{
+    uint idx = gl_GlobalInvocationID.x;
+    
+    // Bounds check
+    if (idx >= chunkCount)
+    {
+        return;
+    }
+    
+    // Get chunk index
+    int chunkIndex = chunkIndices[idx];
+    
+    // Calculate chunk AABB
+    vec3 aabbMin, aabbMax;
+    getChunkAABB(chunkIndex, aabbMin, aabbMax);
+    
+    // Test against frustum
+    bool isVisible = isAABBInFrustum(aabbMin, aabbMax);
+    
+    // Write visibility flag
+    visibilityFlags[idx] = isVisible ? 1 : 0;
+}

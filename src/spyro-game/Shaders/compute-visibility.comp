@@ -1,0 +1,129 @@
+#version 460
+
+// CRITICAL: Work group layout MUST match generation shader!
+// Generation uses (16, 1, 16) and loops over Y explicitly
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+
+// ============================================================================
+// Constants (match VoxelHelper.cs)
+// ============================================================================
+const int CHUNK_SIDE_SIZE = 16;
+const int CHUNK_Y_SIZE = 128;
+const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
+const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+
+// Block types
+const uint BLOCK_NONE = 0u;
+const uint BLOCK_WATER = 7u;
+
+// Face bits (match order: +X, -X, +Y, -Y, +Z, -Z)
+const uint FACE_POS_X = (1u << 0);
+const uint FACE_NEG_X = (1u << 1);
+const uint FACE_POS_Y = (1u << 2);
+const uint FACE_NEG_Y = (1u << 3);
+const uint FACE_POS_Z = (1u << 4);
+const uint FACE_NEG_Z = (1u << 5);
+
+// ============================================================================
+// Uniforms
+// ============================================================================
+uniform uint uChunkCount;
+
+// ============================================================================
+// SSBOs (using VoxelHelper.SSBOBindings constants)
+// ============================================================================
+
+// Input: Generated voxel data from Phase 2
+layout(std430, binding = 0) readonly buffer VoxelData {
+    uint voxelData[];  // Packed: blockType(8) | biomeID(8) | light(8) | flags(8)
+};
+
+// Output: Visibility mask (6 bits per voxel)
+layout(std430, binding = 1) writeonly buffer VisibilityMask {
+    uint visibilityMask[];  // lower 6 bits used
+};
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Check if voxel is transparent (air or water)
+bool isTransparent(uint voxel) {
+    uint blockType = voxel & 0xFFu;
+    return blockType == BLOCK_NONE || blockType == BLOCK_WATER;
+}
+
+/// Get voxel at local coordinates (with bounds checking)
+uint getVoxelLocal(uint chunkIdx, int lx, int ly, int lz) {
+    if (lx < 0 || lx >= CHUNK_SIDE_SIZE ||
+        ly < 0 || ly >= CHUNK_Y_SIZE ||
+        lz < 0 || lz >= CHUNK_SIDE_SIZE) {
+        return 0u;  // Out of bounds = air
+    }
+    uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                    uint(lx) +
+                    uint(lz) * CHUNK_SIDE_SIZE +
+                    uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
+    return voxelData[voxelIdx];
+}
+
+// ============================================================================
+// Main Shader
+// ============================================================================
+
+void main() {
+    uint chunkIdx = gl_WorkGroupID.x;
+    uint ly = gl_WorkGroupID.y;  // Y slice
+    if (chunkIdx >= uChunkCount || ly >= CHUNK_Y_SIZE) return;
+
+    int lx = int(gl_LocalInvocationID.x);
+    int lz = int(gl_LocalInvocationID.z);
+
+    uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                    uint(lx) +
+                    uint(lz) * CHUNK_SIDE_SIZE +
+                    ly * CHUNK_SIDE_SIZE_SQUARED;
+
+    uint voxel = voxelData[voxelIdx];
+    uint blockType = voxel & 0xFFu;
+
+    if (blockType == BLOCK_NONE) {
+        visibilityMask[voxelIdx] = 0u;
+        return;
+    }
+
+    // Neighbor-based face visibility (restored)
+    uint mask = 0u;
+
+    // +X
+    if (lx < CHUNK_SIDE_SIZE - 1) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx + 1, int(ly), lz))) mask |= FACE_POS_X;
+    } else { mask |= FACE_POS_X; }
+
+    // -X
+    if (lx > 0) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx - 1, int(ly), lz))) mask |= FACE_NEG_X;
+    } else { mask |= FACE_NEG_X; }
+
+    // +Y
+    if (ly < CHUNK_Y_SIZE - 1u) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx, int(ly) + 1, lz))) mask |= FACE_POS_Y;
+    } else { mask |= FACE_POS_Y; }
+
+    // -Y
+    if (ly > 0u) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx, int(ly) - 1, lz))) mask |= FACE_NEG_Y;
+    } else { mask |= FACE_NEG_Y; }
+
+    // +Z
+    if (lz < CHUNK_SIDE_SIZE - 1) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx, int(ly), lz + 1))) mask |= FACE_POS_Z;
+    } else { mask |= FACE_POS_Z; }
+
+    // -Z
+    if (lz > 0) {
+        if (isTransparent(getVoxelLocal(chunkIdx, lx, int(ly), lz - 1))) mask |= FACE_NEG_Z;
+    } else { mask |= FACE_NEG_Z; }
+
+    visibilityMask[voxelIdx] = mask;
+}

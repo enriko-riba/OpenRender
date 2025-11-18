@@ -106,7 +106,7 @@ public class Shader
         GL.ShaderSource(shaderObject, shaderSource);
         CompileShader(shaderObject, path);
         Log.CheckGlError();
-        
+
         // create the program
         Handle = GL.CreateProgram();
         GL.AttachShader(Handle, shaderObject);
@@ -230,7 +230,18 @@ public class Shader
     public void SetInt(string name, int data)
     {
         GL.UseProgram(Handle);
-        if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);        
+        if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);
+    }
+
+    /// <summary>
+    /// Sets a uniform unsigned int.
+    /// </summary>
+    /// <param name="name">The name of the uniform</param>
+    /// <param name="data">The data to set</param>
+    public void SetUInt(string name, uint data)
+    {
+        GL.UseProgram(Handle);
+        if (IsUniformValid(name)) GL.Uniform1(uniformLocations[name], data);
     }
 
     /// <summary>

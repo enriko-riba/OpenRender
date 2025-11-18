@@ -579,7 +579,9 @@ public class VoxelWorld
         // Check starting cell
         var startBlock = GetBlockByPositionGlobalSafe(x, y, z);
         if (startBlock is not null && startBlock.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+        {
             return startBlock;
+        }
 
         float t = 0f;
         int maxSteps = (int)(pickingDistance * 4) + 4; // guard
@@ -603,7 +605,9 @@ public class VoxelWorld
 
             var b = GetBlockByPositionGlobalSafe(x, y, z);
             if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+            {
                 return b;
+            }
         }
         return null;
     }
@@ -1585,7 +1589,7 @@ public class VoxelWorld
     //        // GPU upload watchdog (only for processed chunks)
     //        if (CompactedAtlasSSBO == 0)
     //        {
-    //            var missingGpu = chunk.BlocksSSBO == 0u && chunk.State != ChunkState.ToBeRemoved && chunk.State != ChunkState.SafeToRemove;
+    //            var missingGpu = chunk.BlocksSSBO == 0u && chunk.State != ChunkState.ToBeRemoved && chunk.State != ChunkState.SafeToRemoved;
     //            var stuck = chunk.PendingUpload && pendingUploadSince.TryGetValue(idx, out var since) && (now - since) > 1000;
     //            if (missingGpu || stuck)
     //            {
@@ -1636,6 +1640,12 @@ public class VoxelWorld
         mask[byteIndex] = b;
     }
 }
+
+
+
+
+
+
 
 
 

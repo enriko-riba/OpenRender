@@ -85,67 +85,57 @@ public class Player
     internal bool IsGrounded => isGrounded;
     internal float VelocityY => velocityY;
     internal Vector3 RequestedMovement => requestedMovement;
-    internal BlockState? PickedBlock => pickedBlock;
+    internal BlockState? PickedBlock
+    {
+        get => pickedBlock;
+        set => pickedBlock = value;
+    }
 
     private float physicsAccumulator;
 
     public void Update(double elapsedSeconds, KeyboardState keyboardState)
     {
-        // Fixed timestep accumulator (stable collisions irrespective of FPS)
-        var frame = MathF.Min((float)elapsedSeconds, 0.25f);
-        physicsAccumulator += frame;
-        const float fixedDt = 1f / 60f;
-        const int maxStepsPerFrame = 8;
-
+        // Update actions (e.g., toggle ghost mode)
         kbdActions.Update(keyboardState);
 
-        // capture sprint/crouch modifiers each frame
+        // Sample speed mods before processing
         _isSprinting = keyboardState.IsKeyDown(Keys.LeftShift) || keyboardState.IsKeyDown(Keys.RightShift);
         _isCrouching = keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl);
 
-        var pos = Position;
-        if (world.GetChunkByGlobalPosition(pos, out var chunk))
+        // Decrement grace/cooldown every frame
+        if (stepUpGrace > 0f) stepUpGrace -= (float)elapsedSeconds;
+        if (stepUpCooldown > 0f) stepUpCooldown -= (float)elapsedSeconds;
+
+        // Process movement/physics (grounded or ghost)
+        if (IsGhostMode)
         {
-            CurrentChunk = chunk;
-            ChunkLocalPosition = pos - chunk!.Position;
+            HandleGhostMode(elapsedSeconds);
         }
         else
         {
-            CurrentChunk = null;
+            HandleMovement(elapsedSeconds);
         }
 
-        var steps = 0;
-        while (physicsAccumulator >= fixedDt && steps < maxStepsPerFrame)
+        // Update camera position and direction
+        UpdateCamera();
+
+        // Handle rotation
+        if (requestedRotation != Vector3.Zero)
         {
-            // decrement step timers per fixed step
-            stepUpGrace = MathF.Max(0f, stepUpGrace - fixedDt);
-            stepUpCooldown = MathF.Max(0f, stepUpCooldown - fixedDt);
-
-            if (IsGhostMode)
-                HandleGhostMode(fixedDt);
-            else
-                HandleMovement(fixedDt);
-
-            physicsAccumulator -= fixedDt;
-            steps++;
-        }
-
-        var hasMovement = requestedMovement.X != 0 || requestedMovement.Z != 0;
-        var hasRotation = requestedRotation.X != 0 || requestedRotation.Y != 0 || requestedRotation.Z != 0;
-        if (hasRotation)
-        {
-            var rotationPerSecond = (float)elapsedSeconds * RotationSpeed;
-            var rotation = requestedRotation * rotationPerSecond;
-            camera.AddRotation(rotation.X, rotation.Y, rotation.Z);
+            camera.AddRotation(requestedRotation.X * RotationSpeed, requestedRotation.Y * RotationSpeed, requestedRotation.Z * RotationSpeed);
             Direction = camera.Front;
-            requestedRotation = Vector3i.Zero;
+            requestedRotation = Vector3.Zero;
         }
 
-        if (hasRotation || hasMovement)
+        // Update chunk tracking
+        if (world.GetChunkByGlobalPosition(Position, out var chunk))
         {
-            pickedBlock = world.PickBlock(camera.Position, Direction);
-            world.ChunkRenderer.PickedBlock = pickedBlock;
+            CurrentChunk = chunk;
+            ChunkLocalPosition = Position - chunk!.Position;
         }
+
+        // CPU raycast for picked block - will be replaced by GPU picking in GameScene
+        pickedBlock = world.PickBlock(camera.Position, camera.Front);
     }
 
     /// <summary>
@@ -234,7 +224,7 @@ public class Player
         {
             world.BreakBlock(pickedBlock.Value);
             pickedBlock = null;
-            world.ChunkRenderer.PickedBlock = null;
+            // NOTE: PickedBlock sync handled by GameScene
         }
     }
     #endregion
@@ -244,8 +234,6 @@ public class Player
         var p = Position;
         p.Y += EyeHeight;
         camera.Position = p;
-
-        world.ChunkRenderer.PickedBlock = pickedBlock;
     }
 
     private void HandleMovement(double elapsedSeconds)
@@ -382,88 +370,89 @@ public class Player
         pos.Z += step.Z;
 
         var currentBlock = world.GetBlockByPositionGlobalSafe((int)pos.X, (int)(pos.Y) + 1, (int)pos.Z);
-        if (currentBlock is null) return;
-
-        var neighbors = world.GetCollideCandidateBlocks(currentBlock.Value, 2);
-        for (var i = 0; i < neighbors.Length - 1; i++)
+        if (currentBlock is not null)
         {
-            var neighbor = neighbors[i];
-            if (neighbor is null || neighbor.Value.BlockType is BlockType.None or BlockType.WaterLevel) continue;
-
-            const float r = 0.3f;
-            var collidingSphereCenter = pos + new Vector3(0, 1, 0);
-            if (!VoxelWorld.IsSphereBlockCollision(neighbor.Value.Aabb, collidingSphereCenter, r)) continue;
-
-            // normalized world-space normal between blocks for the steep-angle test
-            var raw = (Vector3)currentBlock.Value.GlobalPosition - neighbor.Value.GlobalPosition;
-            var nWorld = raw.LengthSquared > 1e-6f ? Vector3.Normalize(raw) : Vector3.UnitZ;
-
-            var dirNorm = step.LengthSquared > 1e-6f ? Vector3.Normalize(step) : Vector3.Zero;
-            var dot = dirNorm == Vector3.Zero ? 0f : MathF.Abs(Vector3.Dot(nWorld, dirNorm));
-            if (dot > 0.85f && isGrounded) // only auto-step from ground
+            var neighbors = world.GetCollideCandidateBlocks(currentBlock.Value, 2);
+            for (var i = 0; i < neighbors.Length - 1; i++)
             {
-                var angle = (MathHelper.RadiansToDegrees((float)Math.Atan2(step.X, step.Z)) + 360) % 360;
-                var eyeLevelFrontBlock = angle switch
+                var neighbor = neighbors[i];
+                if (neighbor is null || neighbor.Value.BlockType is BlockType.None or BlockType.WaterLevel) continue;
+
+                const float r = 0.3f;
+                var collidingSphereCenter = pos + new Vector3(0, 1, 0);
+                if (!VoxelWorld.IsSphereBlockCollision(neighbor.Value.Aabb, collidingSphereCenter, r)) continue;
+
+                // normalized world-space normal between blocks for the steep-angle test
+                var raw = (Vector3)currentBlock.Value.GlobalPosition - neighbor.Value.GlobalPosition;
+                var nWorld = raw.LengthSquared > 1e-6f ? Vector3.Normalize(raw) : Vector3.UnitZ;
+
+                var dirNorm = step.LengthSquared > 1e-6f ? Vector3.Normalize(step) : Vector3.Zero;
+                var dot = dirNorm == Vector3.Zero ? 0f : MathF.Abs(Vector3.Dot(nWorld, dirNorm));
+                if (dot > 0.85f && isGrounded) // only auto-step from ground
                 {
-                    > 315f or <= 45f => neighbors[4],   // front (south)
-                    > 45f and <= 135f => neighbors[6],  // right (east)
-                    > 135f and <= 225f => neighbors[5], // back (north)
-                    _ => neighbors[7]                   // left (west)
-                };
-                if (eyeLevelFrontBlock is null || eyeLevelFrontBlock.Value.BlockType == BlockType.None)
-                {
-                    // gentle auto-step: single impulse + grace, no sticky snap
-                    if (stepUpCooldown <= 0f)
+                    var angle = (MathHelper.RadiansToDegrees((float)Math.Atan2(step.X, step.Z)) + 360) % 360;
+                    var eyeLevelFrontBlock = angle switch
                     {
-                        pos.Y += 0.02f; // tiny pre-lift to avoid immediate re-collide (reduced)
-                        isGrounded = false;
-                        isJumping = true;
-                        velocityY = MathF.Max(velocityY, StepUpImpulse);
-                        stepUpGrace = StepUpGraceDuration;
-                        stepUpCooldown = StepUpCooldownDuration;
+                        > 315f or <= 45f => neighbors[4],   // front (south)
+                        > 45f and <= 135f => neighbors[6],  // right (east)
+                        > 135f and <= 225f => neighbors[5], // back (north)
+                        _ => neighbors[7]                   // left (west)
+                    };
+                    if (eyeLevelFrontBlock is null || eyeLevelFrontBlock.Value.BlockType == BlockType.None)
+                    {
+                        // gentle auto-step: single impulse + grace, no sticky snap
+                        if (stepUpCooldown <= 0f)
+                        {
+                            pos.Y += 0.02f; // tiny pre-lift to avoid immediate re-collide (reduced)
+                            isGrounded = false;
+                            isJumping = true;
+                            velocityY = MathF.Max(velocityY, StepUpImpulse);
+                            stepUpGrace = StepUpGraceDuration;
+                            stepUpCooldown = StepUpCooldownDuration;
+                        }
                     }
                 }
-            }
 
-            // side resolution & sliding (same as before, using 'step')
-            var aabb = neighbor.Value.Aabb;
-            var closestX = Math.Clamp(collidingSphereCenter.X, aabb.Min.X, aabb.Max.X);
-            var closestZ = Math.Clamp(collidingSphereCenter.Z, aabb.Min.Z, aabb.Max.Z);
-            var nx = collidingSphereCenter.X - closestX;
-            var nz = collidingSphereCenter.Z - closestZ;
-            var len = MathF.Sqrt(nx * nx + nz * nz);
-            const float epsSep = 0.001f;
-            Vector2 nXZ;
-            if (len < 1e-4f)
-            {
-                // Fallback: choose nearest face outward normal
-                var dLeft = MathF.Abs(collidingSphereCenter.X - aabb.Min.X);
-                var dRight = MathF.Abs(aabb.Max.X - collidingSphereCenter.X);
-                var dFront = MathF.Abs(collidingSphereCenter.Z - aabb.Min.Z);
-                var dBack = MathF.Abs(aabb.Max.Z - collidingSphereCenter.Z);
-                var minD = MathF.Min(MathF.Min(dLeft, dRight), MathF.Min(dFront, dBack));
-                if (minD == dLeft) nXZ = new Vector2(-1, 0);
-                else if (minD == dRight) nXZ = new Vector2(1, 0);
-                else if (minD == dFront) nXZ = new Vector2(0, -1);
-                else nXZ = new Vector2(0, 1);
-            }
-            else
-            {
-                nXZ = new Vector2(nx / len, nz / len);
-            }
+                // side resolution & sliding (same as before, using 'step')
+                var aabb = neighbor.Value.Aabb;
+                var closestX = Math.Clamp(collidingSphereCenter.X, aabb.Min.X, aabb.Max.X);
+                var closestZ = Math.Clamp(collidingSphereCenter.Z, aabb.Min.Z, aabb.Max.Z);
+                var nx = collidingSphereCenter.X - closestX;
+                var nz = collidingSphereCenter.Z - closestZ;
+                var len = MathF.Sqrt(nx * nx + nz * nz);
+                const float epsSep = 0.001f;
+                Vector2 nXZ;
+                if (len < 1e-4f)
+                {
+                    // Fallback: choose nearest face outward normal
+                    var dLeft = MathF.Abs(collidingSphereCenter.X - aabb.Min.X);
+                    var dRight = MathF.Abs(aabb.Max.X - collidingSphereCenter.X);
+                    var dFront = MathF.Abs(collidingSphereCenter.Z - aabb.Min.Z);
+                    var dBack = MathF.Abs(aabb.Max.Z - collidingSphereCenter.Z);
+                    var minD = MathF.Min(MathF.Min(dLeft, dRight), MathF.Min(dFront, dBack));
+                    if (minD == dLeft) nXZ = new Vector2(-1, 0);
+                    else if (minD == dRight) nXZ = new Vector2(1, 0);
+                    else if (minD == dFront) nXZ = new Vector2(0, -1);
+                    else nXZ = new Vector2(0, 1);
+                }
+                else
+                {
+                    nXZ = new Vector2(nx / len, nz / len);
+                }
 
-            var penetration = r - len;
-            if (penetration > 0)
-            {
-                pos.X += nXZ.X * (penetration + epsSep);
-                pos.Z += nXZ.Y * (penetration + epsSep);
-            }
+                var penetration = r - len;
+                if (penetration > 0)
+                {
+                    pos.X += nXZ.X * (penetration + epsSep);
+                    pos.Z += nXZ.Y * (penetration + epsSep);
+                }
 
-            var moveDot = step.X * nXZ.X + step.Z * nXZ.Y;
-            if (moveDot > 0)
-            {
-                pos.X -= nXZ.X * moveDot;
-                pos.Z -= nXZ.Y * moveDot;
+                var moveDot = step.X * nXZ.X + step.Z * nXZ.Y;
+                if (moveDot > 0)
+                {
+                    pos.X -= nXZ.X * moveDot;
+                    pos.Z -= nXZ.Y * moveDot;
+                }
             }
         }
     }

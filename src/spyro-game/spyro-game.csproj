@@ -9,6 +9,13 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- Exclude old CPU-based implementation files from build -->
+  <ItemGroup>
+    <Compile Remove="MainScene.cs" />
+    <Compile Remove="LoadingScene.cs" />
+    <Compile Remove="LoadingScene2.cs" />
+  </ItemGroup>
+
   <!-- Copy all shaders and resources to the output -->
   <ItemGroup>
     <Content Include="Resources\**\*.*">

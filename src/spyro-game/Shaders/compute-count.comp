@@ -1,0 +1,58 @@
+// compute-count.comp - Phase 3.2: Count Visible Faces
+// Purpose: Count total visible faces per chunk for prefix sum calculation
+// Version: 1.0
+//
+// This shader performs a simple reduction: sum the popcount of all visibility
+// masks in each chunk to determine how many faces will be rendered.
+
+#version 460
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+// ============================================================================
+// Constants
+// ============================================================================
+const int CHUNK_SIDE_SIZE = 16;
+const int CHUNK_Y_SIZE = 128;
+const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
+const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+
+// ============================================================================
+// Uniforms
+// ============================================================================
+uniform uint uChunkCount;
+
+// ============================================================================
+// SSBOs (using VoxelHelper.SSBOBindings constants)
+// ============================================================================
+
+// Input: Visibility mask from Stage 3.1
+layout(std430, binding = 1) readonly buffer VisibilityMask {
+    uint visibilityMask[];
+};
+
+// Output: Visible face count per chunk
+layout(std430, binding = 2) writeonly buffer VisibleCounts {
+    uint visibleCounts[];
+};
+
+// ============================================================================
+// Main Shader
+// ============================================================================
+
+void main() {
+    uint chunkIdx = gl_GlobalInvocationID.x;
+    if (chunkIdx >= uChunkCount) return;
+    
+    uint baseIdx = chunkIdx * CHUNK_VOXEL_COUNT;
+    uint count = 0u;
+    
+    // Count visible faces in this chunk
+    // popcount (bitCount in GLSL) counts number of set bits
+    for (uint i = 0u; i < CHUNK_VOXEL_COUNT; i++) {
+        uint mask = visibilityMask[baseIdx + i];
+        count += uint(bitCount(mask));
+    }
+    
+    visibleCounts[chunkIdx] = count;
+}

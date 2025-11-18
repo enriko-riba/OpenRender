@@ -220,16 +220,14 @@ public class Sprite : SceneNode
 
     public override void OnDraw(double elapsed)
     {
-        var previousDepthTestEnabled = GL.IsEnabled(EnableCap.DepthTest);
-        if (previousDepthTestEnabled) GL.Disable(EnableCap.DepthTest);
-        var texture = Material.Textures[0];
+        // Sprites in UI layer don't need depth testing - state should be managed at render layer level
+        // Toggling GL state here causes shader recompilation warnings
         Material.Shader.SetUniform4("sourceFrame",
-            (float)sourceRectangle.X / texture.Width,
-            1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / texture.Height,
-            (float)sourceRectangle.Width / texture.Width,
-            (float)sourceRectangle.Height / texture.Height);
+            (float)sourceRectangle.X / Material.Textures[0].Width,
+            1.0f - (float)(sourceRectangle.Y + sourceRectangle.Height) / Material.Textures[0].Height,
+            (float)sourceRectangle.Width / Material.Textures[0].Width,
+            (float)sourceRectangle.Height / Material.Textures[0].Height);
         Material.Shader.SetVector3("tint", ref tint);
         base.OnDraw(elapsed);
-        if (previousDepthTestEnabled) GL.Enable(EnableCap.DepthTest);
     }
 }

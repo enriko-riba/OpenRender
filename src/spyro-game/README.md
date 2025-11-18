@@ -1,0 +1,107 @@
+# Spyro Game
+
+A voxel-based 3D platformer built on the OpenRender engine.
+
+## Quick Start
+
+```bash
+cd src/spyro-game
+dotnet run
+```
+
+## Project Structure
+
+```
+src/spyro-game/
+├── Components/         # Game-specific components (ChunkRenderer, etc.)
+├── Shaders/           # Compute and rendering shaders
+├── World/             # Voxel world system (terrain, chunks, etc.)
+├── docs/              # Project documentation
+│   ├── TERRAIN_PROGRESS.md      # 🎯 Current work tracking
+│   └── terrain/                 # Terrain system docs
+├── MainScene.cs       # Main game scene
+└── LoadingScene2.cs   # Loading screen
+```
+
+## Current Development
+
+### Active Work: GPU Terrain System Redesign
+**Status**: 🔴 Planning Phase  
+**Timeline**: Week 1 of 5  
+**Goal**: Replace CPU-based terrain with GPU-first streaming system
+
+📋 **[Track Progress →](docs/TERRAIN_PROGRESS.md)**  
+📖 **[Architecture →](../../docs/GPU-Terrain-Architecture.md)**
+
+### Known Issues
+- Terrain generation is slow (~45ms per 64 chunks)
+- Memory usage high (~800MB VRAM)
+- Shader execution issues (buffers returning zeros)
+
+**Resolution**: Complete system redesign in progress
+
+## Dependencies
+
+- **OpenRender** - Generic rendering engine (sibling project)
+- **TextRendering** - Font/text rendering library
+- OpenTK 4.x - OpenGL bindings
+- .NET 10
+
+## Key Systems
+
+### Voxel World (`World/`)
+- Chunk-based terrain (16×16×128 voxels per chunk)
+- GPU compute shader generation
+- Edit system (breaking/placing blocks)
+- Collision detection
+
+### Rendering (`Components/ChunkRenderer.cs`)
+- Multi-draw indirect (MDI) batching
+- Instanced voxel rendering
+- Frustum culling
+- LOD system (planned)
+
+### Shaders (`Shaders/`)
+Current (being replaced):
+- `compute-chunk.comp` - Terrain generation
+- `compute-compact-*.comp` - Mesh compaction
+- `instancedChunk.*` - Rendering
+
+New (in development):
+- `compute-generate.comp` - GPU generation
+- `compute-visibility.comp` - Face culling
+- `compute-compact.comp` - Unified compaction
+- `voxel-terrain.*` - Modern rendering
+
+## Documentation
+
+- **[Terrain Progress Tracker](docs/TERRAIN_PROGRESS.md)** - Current work status
+- **[GPU Architecture](../../docs/GPU-Terrain-Architecture.md)** - Technical design
+- **[Original Terrain Doc](docs/terrain/VoxelWorld-Streaming-Terrain-Doc.md)** - Requirements
+
+## Development Notes
+
+### Performance Targets (60 FPS)
+- Generation: <2ms per 64 chunks
+- Frame time: <16.67ms
+- Memory: <500MB VRAM
+- Visible chunks: 2000+
+
+### Current Metrics
+- Generation: ~45ms ⚠️
+- Frame time: ~25-40ms ⚠️
+- Memory: ~800MB ⚠️
+- Visible chunks: ~400 ⚠️
+
+## Contributing
+
+This is a personal project, but feel free to:
+1. Review the architecture docs
+2. Suggest optimizations
+3. Report bugs in Issues
+
+---
+
+**Last Updated**: 2025-01-14  
+**Engine**: OpenRender (custom)  
+**Platform**: Windows/Linux (OpenGL 4.6)
