@@ -8,11 +8,24 @@ namespace SpyroGame.World;
 /// </summary>
 public static class VoxelHelper
 {
-    public const float FarPlane = 430f;
-    // CRITICAL FIX: Decouple chunk loading distance from far plane
-    // Far plane is for rendering, chunk loading should be much smaller
-    // Radius 8 = 289 chunks (reasonable), Radius 25 = 2601 chunks (too many!)
-    public const int MaxDistanceInChunks = 8; // Was: (int)(FarPlane / ChunkSideSize)-1 = 25
+    // Rendering far plane: should be slightly larger than max chunk distance
+    // to avoid popping when chunks at the edge are culled
+    // MaxDistanceInChunks * ChunkSideSize * 2 = 16 * 16 * 2 = 512 blocks
+    // Far plane should be ~600 to account for chunk height and diagonal distance
+    public const float FarPlane = 600f; // Was 430f
+    // Chunk loading distance: determines how far chunks are loaded/generated
+    // LOD 0 (Full detail): 0-16 chunks = 256 blocks = 256m
+    // LOD 1 (Medium): 16-32 chunks = 512m (future: half-res mesh)
+    // LOD 2 (Low): 32-64 chunks = 1024m = ~1km (future: impostor)
+    // 
+    // Current: No LOD system, so keep this small to avoid memory issues
+    // For kilometers view: implement LOD tiers (Phase 6)
+    public const int MaxDistanceInChunks = 16; // 16 chunks = 512m diameter (256m radius)
+    
+    // Future LOD tiers (Phase 6):
+    // public const int LOD0_Distance = 16;  // Full detail
+    // public const int LOD1_Distance = 32;  // Half resolution
+    // public const int LOD2_Distance = 64;  // Quarter resolution / impostor
 
     public const int MaxPickingDistance = 3;
 

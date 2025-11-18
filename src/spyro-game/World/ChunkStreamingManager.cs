@@ -48,7 +48,11 @@ public sealed class ChunkStreamingManager : IDisposable
     public int CulledChunkCount { get; private set; }
 
     // Phase 5: Streaming & Unloading
-    private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 4; // Hysteresis buffer
+    // CRITICAL: Unload distance must be LARGER than load distance to provide hysteresis
+    // Otherwise chunks at the edge constantly load/unload (thrashing)
+    // Load distance: 16 chunks radius
+    // Unload distance: 24 chunks radius (50% larger for stable streaming)
+    private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 8; // Was +4, now +8 for more hysteresis
     private const int MAX_UNLOADS_PER_FRAME = 32; // Phase 5.2 FIX: Increased from 8 to handle unbounded growth
     private Vector3 lastCameraPosition;
     private int unloadCheckFrame = 0;
