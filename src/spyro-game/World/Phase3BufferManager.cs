@@ -6,6 +6,7 @@ namespace SpyroGame.World;
 /// <summary>
 /// Manages GPU buffer allocation and initialization for Phase 3 (Visibility & Compaction).
 /// Implements explicit initialization strategy to avoid garbage data issues.
+/// Phase 5: Adds incremental updates and buffer reuse for streaming.
 /// </summary>
 public class Phase3BufferManager : IDisposable
 {
@@ -25,6 +26,16 @@ public class Phase3BufferManager : IDisposable
     private int maxVertices;
     private int maxIndices;             // Note: No longer allocated - kept for API compatibility
 
+    // Phase 5: Buffer reuse tracking
+    private struct BufferRegion
+    {
+        public uint Offset;
+        public uint Size;
+    }
+    private List<BufferRegion> freeRegions = new();
+    private uint currentBufferEnd = 0;
+    private uint vertexBufferCapacity = 0;
+
     // Vertex stride from VoxelHelper (position=12, normal=12, texCoord=8, ao=4 = 36 bytes)
     private const int VERTEX_STRIDE = VoxelHelper.VERTEX_STRIDE_BYTES;
 
@@ -41,6 +52,11 @@ public class Phase3BufferManager : IDisposable
     public int MaxVertices => maxVertices;
     public int MaxIndices => maxIndices;
 
+    // Phase 5: Public accessors for buffer reuse
+    public uint VertexBufferCapacity => vertexBufferCapacity;
+    public uint CurrentBufferEnd => currentBufferEnd;
+    public int FreeRegionCount => freeRegions.Count;
+
     /// <summary>
     /// Allocate all Phase 3 buffers with explicit initialization.
     /// Phase 5.2: Optimized vertex format (28 bytes vs 36 bytes = 22% reduction!)
@@ -55,6 +71,11 @@ public class Phase3BufferManager : IDisposable
         var worstCaseFaces = maxVoxels * 6; // 6 faces/voxel
         maxVertices = worstCaseFaces * 4;   // 4 vertices per face
         maxIndices = 6;                      // PHASE 5.1: Only 6 indices shared across all faces!
+        
+        // Phase 5: Initialize buffer tracking
+        vertexBufferCapacity = (uint)maxVertices;
+        currentBufferEnd = 0;
+        freeRegions.Clear();
 
         // Calculate memory savings from optimizations
         var oldVertexSize = 36;  // Old format: pos(12) + normal(12) + uv(8) + ao(4)
@@ -63,7 +84,7 @@ public class Phase3BufferManager : IDisposable
         var vertexSavingsMB = (long)maxVertices * vertexSavingsPerVert / 1024f / 1024f;
         var indexSavingsGB = worstCaseFaces * 6 * sizeof(uint) / 1024f / 1024f / 1024f;
 
-        Log.Info($"Phase3BufferManager: Allocating buffers for {maxChunks} chunks (Phase 5.2: Optimized Vertex Format)");
+        Log.Info($"Phase3BufferManager: Allocating buffers for {maxChunks} chunks (Phase 5: Streaming support)");
         Log.Info($"  Max voxels: {maxVoxels:N0}");
         Log.Info($"  Worst-case faces: {worstCaseFaces:N0}");
         Log.Info($"  Max vertices: {maxVertices:N0} ({(long)maxVertices * VERTEX_STRIDE / 1024f / 1024f:F2} MB, saves {vertexSavingsMB:F2} MB vs old format)");
@@ -123,7 +144,7 @@ public class Phase3BufferManager : IDisposable
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, atomicCounterBuffer, -1, "atomic_counters_ssbo");
 
         Log.CheckGlError();
-        Log.Info("Phase3BufferManager: All buffers allocated (Phase 5.1: Shared IBO enabled)");
+        Log.Info("Phase3BufferManager: All buffers allocated (Phase 5: Streaming enabled)");
     }
 
     /// <summary>
@@ -253,5 +274,194 @@ public class Phase3BufferManager : IDisposable
         total += 2 * sizeof(uint);
         
         return total;
+    }
+
+    // ========================================================================
+    // Phase 5: Incremental Updates & Buffer Reuse
+    // ========================================================================
+
+    /// <summary>
+    /// Allocate a buffer region, reusing freed space if available (Phase 5)
+    /// Returns the offset into the vertex buffer where the region starts
+    /// </summary>
+    public uint AllocateRegion(uint requestedSize)
+    {
+        if (requestedSize == 0)
+            return 0;
+
+        // Try to find a free region that fits
+        for (int i = 0; i < freeRegions.Count; i++)
+        {
+            var region = freeRegions[i];
+            if (region.Size >= requestedSize)
+            {
+                // Use this region
+                var offset = region.Offset;
+
+                // Update free region (shrink or remove)
+                if (region.Size == requestedSize)
+                {
+                    freeRegions.RemoveAt(i);
+                }
+                else
+                {
+                    freeRegions[i] = new BufferRegion
+                    {
+                        Offset = region.Offset + requestedSize,
+                        Size = region.Size - requestedSize
+                    };
+                }
+
+                Log.Debug($"Reused buffer region: offset={offset}, size={requestedSize}");
+                return offset;
+            }
+        }
+
+        // No free region found - allocate at end
+        var newOffset = currentBufferEnd;
+        currentBufferEnd += requestedSize;
+
+        // Check if we need to resize
+        if (currentBufferEnd > vertexBufferCapacity)
+        {
+            ResizeVertexBuffer(currentBufferEnd * 2);
+        }
+
+        Log.Debug($"Allocated new buffer region: offset={newOffset}, size={requestedSize}, end={currentBufferEnd}");
+        return newOffset;
+    }
+
+    /// <summary>
+    /// Mark a buffer region as free for reuse (Phase 5)
+    /// </summary>
+    public void FreeRegion(uint baseOffset, uint size)
+    {
+        if (size == 0)
+            return;
+
+        // Add to free list
+        freeRegions.Add(new BufferRegion { Offset = baseOffset, Size = size });
+
+        // Sort by offset to enable merging
+        freeRegions = freeRegions.OrderBy(r => r.Offset).ToList();
+
+        // Try to merge adjacent free regions
+        MergeFreeRegions();
+
+        Log.Debug($"Freed buffer region: offset={baseOffset}, size={size}, freeRegions={freeRegions.Count}");
+    }
+
+    /// <summary>
+    /// Merge adjacent free regions to reduce fragmentation (Phase 5)
+    /// </summary>
+    private void MergeFreeRegions()
+    {
+        if (freeRegions.Count < 2)
+            return;
+
+        var merged = new List<BufferRegion>();
+        var current = freeRegions[0];
+
+        for (int i = 1; i < freeRegions.Count; i++)
+        {
+            var next = freeRegions[i];
+
+            // Check if current and next are adjacent
+            if (current.Offset + current.Size == next.Offset)
+            {
+                // Merge them
+                current = new BufferRegion
+                {
+                    Offset = current.Offset,
+                    Size = current.Size + next.Size
+                };
+            }
+            else
+            {
+                // Not adjacent, keep current and move to next
+                merged.Add(current);
+                current = next;
+            }
+        }
+
+        // Add the last region
+        merged.Add(current);
+
+        freeRegions = merged;
+    }
+
+    /// <summary>
+    /// Resize the vertex buffer to accommodate more vertices (Phase 5)
+    /// This is expensive and should be avoided by pre-allocating enough space
+    /// </summary>
+    private void ResizeVertexBuffer(uint newCapacity)
+    {
+        Log.Warn($"Resizing vertex buffer from {vertexBufferCapacity} to {newCapacity} vertices (expensive!)");
+
+        // Create new buffer
+        uint newBuffer;
+        GL.CreateBuffers(1, out newBuffer);
+        GL.NamedBufferStorage(newBuffer, (nint)newCapacity * VERTEX_STRIDE, IntPtr.Zero,
+            BufferStorageFlags.DynamicStorageBit);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "compact_vertices_vbo_resized");
+
+        // Copy old data
+        GL.CopyNamedBufferSubData(vertexBuffer, newBuffer, IntPtr.Zero, IntPtr.Zero,
+            (nint)vertexBufferCapacity * VERTEX_STRIDE);
+
+        // Delete old buffer and replace
+        GL.DeleteBuffer(vertexBuffer);
+        vertexBuffer = newBuffer;
+        vertexBufferCapacity = newCapacity;
+
+        Log.CheckGlError();
+    }
+
+    /// <summary>
+    /// Update a single chunk's mesh data in the vertex buffer (Phase 5)
+    /// This allows incremental updates without full regeneration
+    /// </summary>
+    public void UpdateChunkMesh(int chunkIndex, uint baseOffset, uint vertexCount, ReadOnlySpan<byte> vertexData)
+    {
+        if (vertexCount == 0)
+            return;
+
+        // Validate offset and count
+        if (baseOffset + vertexCount > vertexBufferCapacity)
+        {
+            throw new ArgumentException($"Buffer overflow: offset={baseOffset}, count={vertexCount}, capacity={vertexBufferCapacity}");
+        }
+
+        // Upload new vertex data to GPU
+        var byteOffset = (nint)(baseOffset * VERTEX_STRIDE);
+        var byteSize = (nint)(vertexCount * VERTEX_STRIDE);
+
+        unsafe
+        {
+            fixed (byte* ptr = vertexData)
+            {
+                GL.NamedBufferSubData(vertexBuffer, byteOffset, byteSize, (IntPtr)ptr);
+            }
+        }
+
+        Log.Debug($"Updated chunk {chunkIndex} mesh: {vertexCount} vertices at offset {baseOffset}");
+    }
+
+    /// <summary>
+    /// Read vertex data from the buffer (Phase 5)
+    /// Used for incremental updates when chunks change
+    /// </summary>
+    public byte[] ReadVertices(uint baseOffset, uint vertexCount)
+    {
+        if (vertexCount == 0)
+            return Array.Empty<byte>();
+
+        var byteOffset = (nint)(baseOffset * VERTEX_STRIDE);
+        var byteSize = (nint)(vertexCount * VERTEX_STRIDE);
+        var data = new byte[byteSize];
+
+        GL.GetNamedBufferSubData(vertexBuffer, byteOffset, byteSize, data);
+
+        return data;
     }
 }
