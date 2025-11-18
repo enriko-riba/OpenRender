@@ -257,15 +257,21 @@ public sealed class ChunkStreamingManager : IDisposable
         if (inFlightBatches.Count >= MAX_IN_FLIGHT_BATCHES)
             return;
 
-        // Don't submit if not enough pending
-        if (pendingGeneration.Count < MAX_CHUNKS_PER_BATCH)
+        // CRITICAL FIX: Submit batches even if small, don't wait for MAX_CHUNKS_PER_BATCH
+        // This fixes the bug where chunks < 64 never get generated
+        if (pendingGeneration.Count == 0)
             return;
 
-        // Build batch
+        // Build batch (up to MAX_CHUNKS_PER_BATCH, but submit even if smaller)
         var batchIndices = new List<int>();
-        while (batchIndices.Count < MAX_CHUNKS_PER_BATCH && pendingGeneration.Count > 0)
+        var batchSize = Math.Min(MAX_CHUNKS_PER_BATCH, pendingGeneration.Count);
+        
+        for (int i = 0; i < batchSize; i++)
         {
-            batchIndices.Add(pendingGeneration.Dequeue());
+            if (pendingGeneration.Count > 0)
+            {
+                batchIndices.Add(pendingGeneration.Dequeue());
+            }
         }
 
         if (batchIndices.Count == 0)
