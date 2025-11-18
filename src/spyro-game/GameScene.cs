@@ -87,18 +87,13 @@ internal class GameScene : Scene
         GL.FrontFace(FrontFaceDirection.Ccw);
 
         // Setup camera - FPS camera
-        // CRITICAL FIX: Must match TerrainLoadingScene spawn position!
-        // TerrainLoadingScene generates chunks around (816, 100, 816) = chunk (51, 51)
-        // Player must spawn at the SAME location to see the initial terrain
+        // CRITICAL: Must match TerrainLoadingScene spawn position!
+        // Both must use the same calculation: WorldChunksXZ * ChunkSideSize / 2
         var startPos = new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // Center of world in blocks
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // = 16 * 600 / 2 = 4800
             100,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
         );
-        
-        // Override with actual terrain generation spawn (from TerrainLoadingScene line 54)
-        // This MUST match or initial chunks will be immediately unloaded!
-        startPos = new Vector3(816f, 100f, 816f); // Chunk (51, 51) - matches TerrainLoadingScene
         
         camera = new CameraFps(startPos, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
         {
