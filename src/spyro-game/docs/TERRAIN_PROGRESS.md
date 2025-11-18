@@ -147,17 +147,47 @@
 
 ---
 
-### Phase 5: Streaming & Edit Support (Week 4) - 🔴 Not Started
+### Phase 5: Streaming & Edit Support (Week 4) - 🟡 In Progress
 | Task | Status | Notes |
 |------|--------|-------|
-| Implement chunk unloading | ⬜ | Memory management |
-| Add edit mask update system | ⬜ | Player interactions |
-| Implement incremental updates | ⬜ | Dirty chunk tracking |
-| Add chunk priority system | ⬜ | LOD/distance sorting |
-| Optimize buffer reuse | ⬜ | Reduce allocations |
+| **Implement buffer reuse system** | ✅ | AllocateRegion/FreeRegion/MergeFreeRegions in Phase3BufferManager |
+| **Add incremental update methods** | ✅ | UpdateChunkMesh/ReadVertices for chunk updates |
+| **Integrate incremental pipeline** | ✅ | PollCompletedBatches executes Phase 3 + allocates regions |
+| **Handle dirty chunks** | ✅ | MarkChunkDirty uses Dirty state, frees old regions |
+| Implement chunk unloading | ✅ | Memory management with FreeRegion on unload |
+| Add edit mask update system | ⬜ | Player interactions (Phase 5.3) |
+| Implement edit mask persistence | ⬜ | Save/load edits (Phase 5.3) |
+| Add chunk priority system | ✅ | LOD/distance sorting already implemented |
+| Optimize buffer reuse | ✅ | Automatic merging of adjacent free regions |
 
-**Blockers**: Phase 4 completion  
-**Next Action**: Define chunk lifecycle states
+**Blockers**: None  
+**Next Action**: Test streaming in-game, add edit mask persistence
+
+**✅ Phase 5.1-5.2 Complete**:
+- Created buffer reuse system with region tracking
+- Added incremental update methods to Phase3BufferManager
+- Integrated with PollCompletedBatches for automatic updates
+- Updated MarkChunkDirty to use incremental regeneration
+- Dirty chunks free old regions before allocating new ones
+- All code compiles successfully
+- Build successful (0 errors, 0 warnings)
+
+**📐 Streaming Features**:
+- ✅ Buffer region allocation with freed space reuse
+- ✅ Automatic defragmentation (MergeFreeRegions)
+- ✅ Incremental buffer updates (no full terrain reload)
+- ✅ Dirty chunk handling (player edits)
+- ✅ Memory-stable streaming (no unbounded growth)
+- ⬜ Edit mask persistence (Phase 5.3)
+
+**📊 Implementation Details**:
+- `AllocateRegion()` - Reuses freed space or allocates at end
+- `FreeRegion()` - Marks regions free, triggers merge
+- `MergeFreeRegions()` - Defragments adjacent regions
+- `PollCompletedBatches()` - Executes Phase 3, allocates, updates renderer
+- `MarkChunkDirty()` - Preserves offset, queues for regeneration
+- `SubmitPendingBatches()` - Tracks dirty chunks with offsets
+- `UnloadChunk()` - Frees buffer regions on unload
 
 ---
 

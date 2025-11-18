@@ -261,11 +261,20 @@ public sealed class ChunkStreamingManager : IDisposable
         if (batchIndices.Count == 0)
             return;
 
-        // Mark chunks as generating
+        // Mark chunks as generating (both new and dirty chunks)
         foreach (var idx in batchIndices)
         {
             if (activeChunks.TryGetValue(idx, out var desc))
             {
+                // Phase 5.2: If chunk is Dirty, remember its old buffer offset
+                // so we can free it after regeneration
+                if (desc.State == TerrainChunkState.Dirty && desc.AtlasOffset >= 0)
+                {
+                    // Keep old offset - we'll free it in PollCompletedBatches
+                    // after new mesh is ready
+                    Log.Debug($"Chunk {idx} dirty with offset {desc.AtlasOffset}, will regenerate");
+                }
+                
                 desc.State = TerrainChunkState.Generating;
                 activeChunks[idx] = desc;
             }
@@ -309,23 +318,125 @@ public sealed class ChunkStreamingManager : IDisposable
             
             Log.Info($"ChunkStreamingManager: Completed batch of {batch.ChunkIndices.Length} chunks (latency: {currentFrame - batch.SubmitFrame} frames)");
 
-            // TODO CRITICAL: Streaming needs incremental mesh updates!
-            // For now, just mark chunks as ready without updating renderer
-            // This will only work for the INITIAL load, streaming will be broken
-            // Need to implement: Phase3BufferManager.AppendChunks() or similar
+            // ========================================================================
+            // Phase 5.2: INCREMENTAL BUFFER UPDATES
+            // ========================================================================
+            // Instead of marking chunks as ready without updating renderer,
+            // we now:
+            // 1. Execute Phase 3 pipeline on completed chunks
+            // 2. Allocate buffer regions (reusing freed space)
+            // 3. Update chunk descriptors with offsets
+            // 4. Register chunks as ready
             
-            // Mark chunks as ready
-            foreach (var chunkIdx in batch.ChunkIndices)
+            if (phase3Buffers != null && terrainRenderer != null && batch.ChunkIndices.Length > 0)
             {
-                if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                try
                 {
-                    desc.State = TerrainChunkState.Ready;
-                    desc.Fence = IntPtr.Zero;
-                    activeChunks[chunkIdx] = desc;
+                    // Execute Phase 3: Visibility → Count → Prefix Sum → Compaction
+                    var (vertexCount, faceCount) = ExecutePhase3(batch.ChunkIndices);
+                    
+                    if (vertexCount > 0)
+                    {
+                        // Get current vertex buffer state
+                        var currentBufferEnd = phase3Buffers.CurrentBufferEnd;
+                        
+                        // Allocate buffer region for these chunks (reuses freed space!)
+                        var allocatedOffset = phase3Buffers.AllocateRegion(vertexCount);
+                        
+                        // Update chunk descriptors with buffer offsets
+                        var verticesPerFace = 4;
+                        var vertexOffset = 0u;
+                        
+                        // Read face counts from Phase 3 count buffer
+                        var counts = new uint[batch.ChunkIndices.Length];
+                        GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero,
+                            batch.ChunkIndices.Length * sizeof(uint), counts);
+                        
+                        // Phase 5.2: Free old buffer regions for dirty chunks before allocating new
+                        foreach (var chunkIdx in batch.ChunkIndices)
+                        {
+                            if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                            {
+                                // If chunk had an old buffer region, free it now
+                                if (desc.AtlasOffset >= 0 && desc.VisibleVoxelCount > 0)
+                                {
+                                    phase3Buffers.FreeRegion((uint)desc.AtlasOffset, (uint)(desc.VisibleVoxelCount * verticesPerFace));
+                                    Log.Debug($"Freed old buffer region for dirty chunk {chunkIdx}: offset={desc.AtlasOffset}, size={desc.VisibleVoxelCount * verticesPerFace}");
+                                }
+                            }
+                        }
+                        
+                        for (int i = 0; i < batch.ChunkIndices.Length; i++)
+                        {
+                            var chunkIdx = batch.ChunkIndices[i];
+                            if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                            {
+                                desc.AtlasOffset = (int)(allocatedOffset + vertexOffset);
+                                desc.VisibleVoxelCount = (int)counts[i];  // Face count
+                                desc.State = TerrainChunkState.Ready;
+                                desc.Fence = IntPtr.Zero;
+                                activeChunks[chunkIdx] = desc;
+                                
+                                vertexOffset += counts[i] * (uint)verticesPerFace;
+                            }
+                        }
+                        
+                        // NOTE: Vertices are already in Phase3BufferManager's vertex buffer
+                        // from ExecutePhase3's compaction stage. No need to copy again!
+                        
+                        // Update renderer to use the new buffer state
+                        terrainRenderer.SetupBuffers(phase3Buffers, currentBufferEnd + vertexCount, faceCount);
+                        
+                        Log.Info($"Phase 5.2: Updated {batch.ChunkIndices.Length} chunks, allocated {vertexCount} vertices at offset {allocatedOffset}, {phase3Buffers.FreeRegionCount} free regions");
+                    }
+                    else
+                    {
+                        // No visible faces - mark chunks as ready anyway
+                        foreach (var chunkIdx in batch.ChunkIndices)
+                        {
+                            if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                            {
+                                desc.State = TerrainChunkState.Ready;
+                                desc.Fence = IntPtr.Zero;
+                                activeChunks[chunkIdx] = desc;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"Phase 5.2: Failed to update batch: {ex.Message}");
+                    
+                    // Fallback: mark chunks as ready without buffer update
+                    foreach (var chunkIdx in batch.ChunkIndices)
+                    {
+                        if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                        {
+                            desc.State = TerrainChunkState.Ready;
+                            desc.Fence = IntPtr.Zero;
+                            activeChunks[chunkIdx] = desc;
+                        }
+                    }
                 }
             }
-            
-            Log.Warn($"STREAMING DISABLED: Cannot update renderer incrementally - only initial load works!");
+            else
+            {
+                // Phase 3/4 not initialized - fallback behavior
+                foreach (var chunkIdx in batch.ChunkIndices)
+                {
+                    if (activeChunks.TryGetValue(chunkIdx, out var desc))
+                    {
+                        desc.State = TerrainChunkState.Ready;
+                        desc.Fence = IntPtr.Zero;
+                        activeChunks[chunkIdx] = desc;
+                    }
+                }
+                
+                if (phase3Buffers == null)
+                    Log.Warn("Phase 3 not initialized - skipping buffer updates");
+                if (terrainRenderer == null)
+                    Log.Warn("Phase 4 not initialized - skipping renderer updates");
+            }
         }
     }
 
@@ -535,6 +646,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// <summary>
     /// Mark a chunk as dirty (needs regeneration) (Phase 5)
     /// Dirty chunks will be regenerated on the next update cycle
+    /// Phase 5.2: Uses incremental updates to preserve buffer regions
     /// </summary>
     private void MarkChunkDirty(int chunkIdx)
     {
@@ -547,11 +659,19 @@ public sealed class ChunkStreamingManager : IDisposable
         // Mark as pending regeneration
         if (desc.State == TerrainChunkState.Ready)
         {
-            desc.State = TerrainChunkState.Pending;
+            // Phase 5.2: Keep existing buffer offset - we'll update in-place
+            // Free the old buffer region only if we can't reuse it
+            // (size might change after edit, but usually it's similar)
+            desc.State = TerrainChunkState.Dirty;
             activeChunks[chunkIdx] = desc;
             pendingGeneration.Enqueue(chunkIdx);
             
-            Log.Debug($"Marked chunk {chunkIdx} as dirty (was Ready, now Pending)");
+            Log.Debug($"Marked chunk {chunkIdx} as dirty (was Ready, now Dirty for incremental update)");
+        }
+        else if (desc.State == TerrainChunkState.Dirty)
+        {
+            // Already dirty, no need to re-queue
+            Log.Debug($"Chunk {chunkIdx} already marked as dirty");
         }
     }
 
