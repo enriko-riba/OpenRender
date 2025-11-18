@@ -9,7 +9,10 @@ namespace SpyroGame.World;
 public static class VoxelHelper
 {
     public const float FarPlane = 430f;
-    public const int MaxDistanceInChunks = (int)(FarPlane / ChunkSideSize)-1;
+    // CRITICAL FIX: Decouple chunk loading distance from far plane
+    // Far plane is for rendering, chunk loading should be much smaller
+    // Radius 8 = 289 chunks (reasonable), Radius 25 = 2601 chunks (too many!)
+    public const int MaxDistanceInChunks = 8; // Was: (int)(FarPlane / ChunkSideSize)-1 = 25
 
     public const int MaxPickingDistance = 3;
 
