@@ -49,10 +49,10 @@ public sealed class ChunkStreamingManager : IDisposable
 
     // Phase 5: Streaming & Unloading
     private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 4; // Hysteresis buffer
-    private const int MAX_UNLOADS_PER_FRAME = 8; // Throttle unloading to avoid frame spikes
+    private const int MAX_UNLOADS_PER_FRAME = 32; // Phase 5.2 FIX: Increased from 8 to handle unbounded growth
     private Vector3 lastCameraPosition;
     private int unloadCheckFrame = 0;
-    private const int UNLOAD_CHECK_INTERVAL = 30; // Check for unloading every 30 frames (~0.5s at 60fps)
+    private const int UNLOAD_CHECK_INTERVAL = 5; // Phase 5.2 FIX: Check every 5 frames instead of 30
 
     // Public access to the world for Player integration
     public VoxelWorld World => world;
@@ -384,10 +384,14 @@ public sealed class ChunkStreamingManager : IDisposable
                         // NOTE: Vertices are already in Phase3BufferManager's vertex buffer
                         // from ExecutePhase3's compaction stage. No need to copy again!
                         
-                        // Update renderer to use the new buffer state
-                        terrainRenderer.SetupBuffers(phase3Buffers, currentBufferEnd + vertexCount, faceCount);
+                        // Phase 5.2 FIX: Update renderer with CUMULATIVE buffer state, not per-batch
+                        // The renderer needs to know the TOTAL vertices/faces in the buffer
+                        var totalVerticesInBuffer = phase3Buffers.CurrentBufferEnd;
+                        var totalFacesInBuffer = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
                         
-                        Log.Info($"Phase 5.2: Updated {batch.ChunkIndices.Length} chunks, allocated {vertexCount} vertices at offset {allocatedOffset}, {phase3Buffers.FreeRegionCount} free regions");
+                        terrainRenderer.SetupBuffers(phase3Buffers, totalVerticesInBuffer, (uint)totalFacesInBuffer);
+                        
+                        Log.Info($"Phase 5.2: Updated {batch.ChunkIndices.Length} chunks, allocated {vertexCount} vertices at offset {allocatedOffset}, buffer end={totalVerticesInBuffer}, {phase3Buffers.FreeRegionCount} free regions");
                     }
                     else
                     {
@@ -529,6 +533,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
     /// <summary>
     /// Unload a single chunk and clean up its resources (Phase 5)
+    /// Phase 5.2: Frees buffer regions for reuse
     /// </summary>
     private void UnloadChunk(int chunkIndex)
     {
@@ -541,11 +546,16 @@ public sealed class ChunkStreamingManager : IDisposable
             try { GL.DeleteSync(desc.Fence); } catch { }
         }
 
+        // Phase 5.2: Free buffer region for reuse
+        if (desc.AtlasOffset >= 0 && desc.VisibleVoxelCount > 0 && phase3Buffers != null)
+        {
+            var verticesPerFace = 4;
+            phase3Buffers.FreeRegion((uint)desc.AtlasOffset, (uint)(desc.VisibleVoxelCount * verticesPerFace));
+            Log.Debug($"Freed buffer region for chunk {chunkIndex}: offset={desc.AtlasOffset}, size={desc.VisibleVoxelCount * verticesPerFace}");
+        }
+
         // Remove from active chunks
         activeChunks.Remove(chunkIndex);
-        
-        // TODO Phase 5: Mark buffer regions as free for reuse
-        // For now, we rely on buffer reallocation as needed
         
         Log.Debug($"Unloaded chunk {chunkIndex}");
     }
