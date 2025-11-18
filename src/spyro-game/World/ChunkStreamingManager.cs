@@ -186,9 +186,19 @@ public sealed class ChunkStreamingManager : IDisposable
         var viewDistance = VoxelHelper.MaxDistanceInChunks;
         var viewDistanceSq = viewDistance * viewDistance;
 
-        // Calculate chunk position directly
-        var cameraChunkX = (int)(cameraPosition.X / VoxelHelper.ChunkSideSize);
-        var cameraChunkZ = (int)(cameraPosition.Z / VoxelHelper.ChunkSideSize);
+        // CRITICAL FIX: Clamp camera position to world bounds
+        // Prevents invalid chunk indices when player flies outside world in ghost mode
+        var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
+        var clampedX = Math.Clamp(cameraPosition.X, 0, worldSizeInBlocks - 1);
+        var clampedZ = Math.Clamp(cameraPosition.Z, 0, worldSizeInBlocks - 1);
+
+        // Calculate chunk position directly from clamped coordinates
+        var cameraChunkX = (int)(clampedX / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)(clampedZ / VoxelHelper.ChunkSideSize);
+        
+        // Additional safety clamp to chunk indices
+        cameraChunkX = Math.Clamp(cameraChunkX, 0, VoxelHelper.WorldChunksXZ - 1);
+        cameraChunkZ = Math.Clamp(cameraChunkZ, 0, VoxelHelper.WorldChunksXZ - 1);
 
         // Use circular distance check to match unload behavior
         for (var dz = -viewDistance; dz <= viewDistance; dz++)
