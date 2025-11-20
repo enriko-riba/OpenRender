@@ -111,7 +111,7 @@ internal class GpuTerrainLoadingScene : Scene
         }));
         
         // Phase 3: Terrain generation
-        operationQueue.Enqueue(("Generating chunk indices...", () =>
+        operationQueue.Enqueue(("Generating chunk indices...", (Action)(() =>
         {
             var chunkIndices = GenerateTestChunkIndices(testChunkCount);
             Log.Info($"Generated {chunkIndices.Length} chunk indices");
@@ -122,38 +122,26 @@ internal class GpuTerrainLoadingScene : Scene
                 streamingManager!.DispatchGeneration(chunkIndices);
                 timings.RecordPhase2Generation(chunkIndices.Length);
                 Log.Info($"Phase 2 complete: {timings.Phase2GenerationMs:F2}ms");
-            }));
+            }
+            ));
             
-            operationQueue.Enqueue(("GPU Phase 3: Visibility & compaction...", () =>
+            operationQueue.Enqueue(("GPU Phase 3: Visibility & compaction + Setup", () =>
             {
-                var (vertexCount, indexCount) = streamingManager!.ExecutePhase3(chunkIndices);
-                timings.RecordPhase3Compaction(vertexCount, indexCount);
-                Log.Info($"Phase 3 complete: {timings.TotalPhase3Ms:F2}ms ({vertexCount} vertices)");
-            }));
-            
-            operationQueue.Enqueue(("Setting up rendering buffers...", () =>
-            {
-                if (terrainRenderer != null && timings.VertexCount > 0)
+                streamingManager!.ExecuteCompletePipeline(chunkIndices);
+                var phase3Buffers = typeof(ChunkStreamingManager)
+                    .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
+                    .GetValue(streamingManager) as Phase3BufferManager;
+                if (phase3Buffers != null)
                 {
-                    var phase3Buffers = typeof(ChunkStreamingManager)
-                        .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                        .GetValue(streamingManager) as Phase3BufferManager;
-                        
-                    if (phase3Buffers != null)
-                    {
-                        terrainRenderer.SetupBuffers(phase3Buffers, timings.VertexCount, timings.IndexCount);
-                        timings.RecordPhase4Setup();
-                    }
+                    timings.RecordPhase3Compaction(phase3Buffers.CurrentVertexBufferEnd, (phase3Buffers.CurrentVertexBufferEnd / 4) * 6);
+                    timings.RecordPhase4Setup();
                 }
-                
-                Log.Highlight($"✅ GPU Terrain Complete!");
-                Log.Info($"   Total Time: {timer.ElapsedMilliseconds}ms");
-                Log.Info($"   Vertices: {timings.VertexCount:N0}, Indices: {timings.IndexCount:N0}");
+                Log.Info($"Phase 3+4 complete: {timings.TotalPhase3Ms:F2}ms");
             }));
             
             // Update total operations count now that we've added dynamic operations
             totalOperations = operationQueue.Count + completedOperations;
-        }));
+        })));
     }
     
     public override void UpdateFrame(double elapsedSeconds)

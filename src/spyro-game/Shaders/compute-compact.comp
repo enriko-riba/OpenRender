@@ -1,19 +1,20 @@
+#version 460
 // compute-compact.comp - Phase 3.4: Mesh Compaction
 // Purpose: Build compact vertex buffer from visible faces
-// Version: 3.0 (Phase 5.2: Optimized vertex format - removes redundant normals)
+// Version: 4.0 (Phase 5.3: Per-chunk index buffers - one command per chunk)
 //
-// Phase 5.1: Shared Index Buffer - removed per-face index generation (saved ~12GB)
-// Phase 5.2: Face Index Encoding - removed normal vectors (saved ~25GB for full terrain!)
+// Phase 5.3: Per-Chunk Index Buffers - generates indices per face (restored efficient batching)
+// Phase 5.2: Face Index Encoding - removed normal vectors (saved memory)
 //
 // New vertex layout: position(12) + texCoord(8) + ao(4) + faceIndex(4) = 28 bytes
 // Old vertex layout: position(12) + normal(12) + texCoord(8) + ao(4) = 36 bytes
-// Savings: 8 bytes per vertex = 22% reduction!
+// Savings: 8 bytes per vertex = 22 percent reduction
+//
+// PHASE 5.3 KEY CHANGE:
+// Now generates 6 indices per face (not shared across faces)
+// Enables one indirect command per chunk instead of per face
+// Result: ~1000 commands instead of 2.5M for full terrain
 
-#version 460
-
-// CRITICAL: Work group layout MUST match generation shader!
-// Generation uses (16, 1, 16) and loops over Y explicitly
-// So we dispatch 128 work groups (one per Y slice) with (16, 1, 16) threads each
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
 // ============================================================================
@@ -43,18 +44,20 @@ const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
 // ============================================================================
 uniform uint uChunkCount;
 uniform uint uWorldChunksXZ;  // For calculating chunk world position
+uniform uint uVertexRegionOffset; // start vertex index for this batch region
+uniform uint uIndexRegionOffset;  // start index for this batch region
 
 // ============================================================================
 // SSBOs (using VoxelHelper.SSBOBindings constants)
 // ============================================================================
 
 // Input: Chunk indices
-layout(std430, binding = 0) readonly buffer ChunkIndices {
+layout(std430, binding = 6) readonly buffer ChunkIndices {
     uint chunkIndices[];
 };
 
 // Input: Voxel data
-layout(std430, binding = 1) readonly buffer VoxelData {
+layout(std430, binding = 0) readonly buffer VoxelData {
     uint voxelData[];
 };
 
@@ -70,25 +73,31 @@ layout(std430, binding = 3) readonly buffer BaseOffsets {
 
 // Output: Compacted vertices (Phase 5.2: position, texCoord, ao, faceIndex)
 layout(std430, binding = 4) writeonly buffer CompactVertices {
-    // Phase 5.2 optimized format: vec3 pos, vec2 uv, float ao, uint faceIdx = 7 floats = 28 bytes
-    // (faceIndex stored as float via uintBitsToFloat for simpler buffer layout)
+    // vec3 pos, vec2 uv, float ao, uint faceIdx = 7 floats = 28 bytes
+    // faceIndex stored as float via uintBitsToFloat for simpler buffer layout
     float compactVertices[];
 };
 
-// PHASE 5.1: Index buffer output REMOVED - uses shared IBO instead
-// layout(std430, binding = 7) writeonly buffer CompactIndices { ... } // DELETED
+// PHASE 5.3: Per-chunk index buffer (restored for efficient batching)
+layout(std430, binding = 7) writeonly buffer CompactIndices {
+    uint compactIndices[];
+};
+
+layout(std430, binding = 8) buffer PerChunkEmit {
+    uint perChunkEmit[];
+}; // per-chunk face emission counters
 
 // Atomic counters
 layout(std430, binding = 5) buffer AtomicCounters {
     uint vertexCounter;
-    uint faceCounter;    // PHASE 5.1: Changed from indexCounter to faceCounter
+    uint indexCounter;
+    uint faceCounter;
 };
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
 
-/// Get face normal vector
 vec3 getFaceNormal(uint face) {
     if (face == FACE_POS_X) return vec3(1, 0, 0);
     if (face == FACE_NEG_X) return vec3(-1, 0, 0);
@@ -99,55 +108,45 @@ vec3 getFaceNormal(uint face) {
     return vec3(0, 1, 0);
 }
 
-/// Get quad corners for a face (local voxel coordinates)
 void getFaceCorners(uint face, vec3 pos, out vec3 corners[4]) {
-    // Generate quad corners based on face direction
-    // Each quad is a unit square offset by voxel position
-    
-    if (face == FACE_POS_X) {  // Right face
+    if (face == FACE_POS_X) {
         corners[0] = pos + vec3(1, 0, 0);
         corners[1] = pos + vec3(1, 1, 0);
         corners[2] = pos + vec3(1, 1, 1);
         corners[3] = pos + vec3(1, 0, 1);
     }
-    else if (face == FACE_NEG_X) {  // Left face
+    else if (face == FACE_NEG_X) {
         corners[0] = pos + vec3(0, 0, 1);
         corners[1] = pos + vec3(0, 1, 1);
         corners[2] = pos + vec3(0, 1, 0);
         corners[3] = pos + vec3(0, 0, 0);
     }
-    else if (face == FACE_POS_Y) {  // Top face
+    else if (face == FACE_POS_Y) {
         corners[0] = pos + vec3(0, 1, 0);
         corners[1] = pos + vec3(0, 1, 1);
         corners[2] = pos + vec3(1, 1, 1);
         corners[3] = pos + vec3(1, 1, 0);
     }
-    else if (face == FACE_NEG_Y) {  // Bottom face
+    else if (face == FACE_NEG_Y) {
         corners[0] = pos + vec3(0, 0, 1);
         corners[1] = pos + vec3(0, 0, 0);
         corners[2] = pos + vec3(1, 0, 0);
         corners[3] = pos + vec3(1, 0, 1);
     }
-    else if (face == FACE_POS_Z) {  // Front face (+Z)
-        // CRITICAL: When viewer is at -Z looking toward +Z, they see THIS face
-        // Winding must be CCW from -Z viewpoint = CW in world space
-        // Shared IBO {0,1,2, 0,2,3} with reversed X ordering:
-        corners[0] = pos + vec3(1, 0, 1);  // bottom-left (from -Z view = bottom-right in world)
-        corners[1] = pos + vec3(1, 1, 1);  // top-left    (from -Z view = top-right in world)
-        corners[2] = pos + vec3(0, 1, 1);  // top-right   (from -Z view = top-left in world)
-        corners[3] = pos + vec3(0, 0, 1);  // bottom-right (from -Z view = bottom-left in world)
+    else if (face == FACE_POS_Z) {
+        corners[0] = pos + vec3(1, 0, 1);
+        corners[1] = pos + vec3(1, 1, 1);
+        corners[2] = pos + vec3(0, 1, 1);
+        corners[3] = pos + vec3(0, 0, 1);
     }
-    else if (face == FACE_NEG_Z) {  // Back face (-Z)
-        // When viewer is at +Z looking toward -Z, they see THIS face
-        // Standard ordering works here (matches other faces):
-        corners[0] = pos + vec3(0, 0, 0);  // bottom-left
-        corners[1] = pos + vec3(0, 1, 0);  // top-left
-        corners[2] = pos + vec3(1, 1, 0);  // top-right
-        corners[3] = pos + vec3(1, 0, 0);  // bottom-right
+    else if (face == FACE_NEG_Z) {
+        corners[0] = pos + vec3(0, 0, 0);
+        corners[1] = pos + vec3(0, 1, 0);
+        corners[2] = pos + vec3(1, 1, 0);
+        corners[3] = pos + vec3(1, 0, 0);
     }
 }
 
-/// Get texture coordinates for quad corner
 vec2 getBaseUV(uint corner) {
     if (corner == 0u) return vec2(0, 1);
     if (corner == 1u) return vec2(0, 0);
@@ -156,20 +155,15 @@ vec2 getBaseUV(uint corner) {
     return vec2(0, 0);
 }
 
-// Flip UV V coordinate (texture origin differences) helper
 vec2 flipV(vec2 uv) { return vec2(uv.x, 1.0 - uv.y); }
 
-// Adjust faceToTile if vertical orientation inverted
 ivec2 faceToTile(uint face) {
-    // Original order: top, bottom, front, left, right, back (rows: top=0 bottom=1)
-    // If texture loads with origin top-left, keep row indices; if upside-down, swap rows.
-    // Here we keep but will flip V after combining.
-    if (face == FACE_POS_Y) return ivec2(0, 0); // top
-    if (face == FACE_NEG_Y) return ivec2(1, 0); // bottom
-    if (face == FACE_POS_Z) return ivec2(2, 0); // front
-    if (face == FACE_NEG_X) return ivec2(0, 1); // left
-    if (face == FACE_POS_X) return ivec2(1, 1); // right
-    return ivec2(2, 1); // back
+    if (face == FACE_POS_Y) return ivec2(0, 0);
+    if (face == FACE_NEG_Y) return ivec2(1, 0);
+    if (face == FACE_POS_Z) return ivec2(2, 0);
+    if (face == FACE_NEG_X) return ivec2(0, 1);
+    if (face == FACE_POS_X) return ivec2(1, 1);
+    return ivec2(2, 1);
 }
 
 vec2 getAtlasUV(uint face, uint corner) {
@@ -177,102 +171,67 @@ vec2 getAtlasUV(uint face, uint corner) {
     ivec2 tile = faceToTile(face);
     vec2 offset = vec2(float(tile.x) / ATLAS_COLS, float(tile.y) / ATLAS_ROWS);
     vec2 finalUv = offset + uv * TILE_SIZE;
-    return flipV(finalUv); // apply vertical flip
+    return flipV(finalUv);
 }
 
-/// Simple ambient occlusion (placeholder - returns 1.0 = no occlusion)
-/// TODO: Implement proper 3x3 neighborhood check
 float calculateAO(uint face, uint corner) {
-    // For now, return full brightness
-    // Phase 6 will add proper AO calculation
     return 1.0;
 }
 
-/// Write vertex data to buffer (Phase 5.2: optimized layout without normals)
 void writeVertex(uint vertexIdx, vec3 position, vec2 uv, float ao, uint faceIdx) {
-    uint baseIdx = vertexIdx * 7u;  // Phase 5.2: 7 floats per vertex (was 9)
+    uint baseIdx = vertexIdx * 7u;
     compactVertices[baseIdx + 0u] = position.x;
     compactVertices[baseIdx + 1u] = position.y;
     compactVertices[baseIdx + 2u] = position.z;
     compactVertices[baseIdx + 3u] = uv.x;
     compactVertices[baseIdx + 4u] = uv.y;
     compactVertices[baseIdx + 5u] = ao;
-    compactVertices[baseIdx + 6u] = uintBitsToFloat(faceIdx);  // Store face index as float bits
+    compactVertices[baseIdx + 6u] = uintBitsToFloat(faceIdx);
 }
 
 // ============================================================================
 // Main Shader
 // ============================================================================
 
-void main() {
-    // Each work group processes one Y-slice of one chunk
-    // Work group X determines which chunk (0 to uChunkCount-1)
-    // Work group Y determines which Y-slice (0 to 127)
+void main(){
     uint chunkIdx = gl_WorkGroupID.x;
-    uint workGroupY = gl_WorkGroupID.y;  // Y-slice this work group processes (0-127)
-    
-    if (chunkIdx >= uChunkCount) return;
-    if (workGroupY >= uint(CHUNK_Y_SIZE)) return;
-    
-    // Get actual chunk index from buffer
+    uint workGroupY = gl_WorkGroupID.y;
+    if(chunkIdx>=uChunkCount||workGroupY>=uint(CHUNK_Y_SIZE)) return;
     uint actualChunkIdx = chunkIndices[chunkIdx];
-    
-    // Calculate chunk world position
     uint chunkX = actualChunkIdx % uWorldChunksXZ;
     uint chunkZ = actualChunkIdx / uWorldChunksXZ;
-    vec3 chunkWorldOffset = vec3(float(chunkX * CHUNK_SIDE_SIZE), 0.0, float(chunkZ * CHUNK_SIDE_SIZE));
-    
-    // Local voxel coordinates within the chunk
-    int lx = int(gl_LocalInvocationID.x);  // 0-15 (X within chunk)
-    int lz = int(gl_LocalInvocationID.z);  // 0-15 (Z within chunk)
-    int ly = int(workGroupY);              // Y coordinate for this Y-slice (0-127)
-    
-    // Calculate voxel index - MUST MATCH generation shader layout
-    uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) +
-                    uint(lx) +                                    // X (stride 1)
-                    uint(lz) * uint(CHUNK_SIDE_SIZE) +           // Z * 16
-                    uint(ly) * uint(CHUNK_SIDE_SIZE_SQUARED);    // Y * 256
-    
-    // Read voxel data
+    vec3 chunkWorldOffset = vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
+    int lx=int(gl_LocalInvocationID.x);
+    int lz=int(gl_LocalInvocationID.z);
+    int ly=int(workGroupY);
+    uint voxelIdx = chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED);
     uint voxel = voxelData[voxelIdx];
     uint blockType = voxel & 0xFFu;
     uint mask = visibilityMask[voxelIdx];
-    
-    // Skip if no visible faces
-    if (mask == 0u) return;
-    
-    // Get chunk base offset
-    uint baseOffset = baseOffsets[chunkIdx];
-    
-    // Voxel position in WORLD space (chunk offset + local position)
-    vec3 voxelPos = chunkWorldOffset + vec3(float(lx), float(ly), float(lz));
-    
-    // Emit visible faces
-    for (uint face = 0u; face < 6u; face++) {
-        uint faceBit = 1u << face;
-        if ((mask & faceBit) == 0u) continue;
-        
-        // PHASE 5.1: Only allocate vertices (4 per face)
-        // Indices are shared across all faces (0,1,2, 0,2,3)
-        uint vertBase = atomicAdd(vertexCounter, 4u);
-        atomicAdd(faceCounter, 1u);  // Track face count for rendering
-        
-        // Get face geometry
+    if(mask==0u||blockType==0u) return;
+    uint vertexChunkBase = baseOffsets[chunkIdx];
+    uint indexChunkBase  = (vertexChunkBase / 4u) * 6u;
+    vec3 voxelPos = chunkWorldOffset + vec3(float(lx),float(ly),float(lz));
+    for(uint face=0u; face<6u; face++){
+        uint faceBit=1u<<face;
+        if((mask & faceBit)==0u) continue;
+        uint localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
+        uint vertBaseAbs = uVertexRegionOffset + vertexChunkBase + localFaceIdx*4u;
+        uint idxWriteBase = uIndexRegionOffset + indexChunkBase + localFaceIdx*6u;
+        atomicAdd(faceCounter,1u);
         vec3 corners[4];
         getFaceCorners(face, voxelPos, corners);
-        
-        // Phase 5.2: No longer need to calculate normal - just pass face index
-        // Vertex shader will derive normal from face index
-        
-        // Emit 4 vertices
-        for (uint v = 0u; v < 4u; v++) {
-            vec2 uv = getAtlasUV(face, v);
-            float ao = calculateAO(face, v);
-            writeVertex(vertBase + v, corners[v], uv, ao, face);  // Pass face index instead of normal
+        for(uint v=0u; v<4u; v++){
+            vec2 uv=getAtlasUV(face,v);
+            float ao=calculateAO(face,v);
+            writeVertex(vertBaseAbs+v,corners[v],uv,ao,face);
         }
-        
-        // PHASE 5.1: Index generation REMOVED
-        // Rendering uses shared quad IBO with gl_BaseVertex offsets
-        // Pattern: 0,1,2, 0,2,3 is reused for all faces
+        uint localVertBase = localFaceIdx*4u;
+        compactIndices[idxWriteBase+0u]=localVertBase+0u;
+        compactIndices[idxWriteBase+1u]=localVertBase+1u;
+        compactIndices[idxWriteBase+2u]=localVertBase+2u;
+        compactIndices[idxWriteBase+3u]=localVertBase+2u;
+        compactIndices[idxWriteBase+4u]=localVertBase+3u;
+        compactIndices[idxWriteBase+5u]=localVertBase+0u;
     }
 }

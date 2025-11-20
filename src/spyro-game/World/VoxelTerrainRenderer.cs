@@ -1,3 +1,4 @@
+using System.Buffers;
 using OpenRender;
 using OpenRender.Core;
 using OpenRender.Core.Buffers;
@@ -22,6 +23,9 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private uint actualIndexCount;          // Deprecated - kept for compatibility
     private uint actualFaceCount;           // Phase 5.1: Track face count instead
     private bool disposed;
+    
+    // Debug frame counter for logging
+    private int frameCounter = 0;
 
     // Light direction (pointing from surface toward light source)
     private Vector3 lightDirection = new(-0.5f, -0.8f, -0.3f);
@@ -43,9 +47,9 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public int VisibleDraws { get; private set; }
     
     /// <summary>
-    /// Total number of rendered blocks (Phase 5.1: uses face count)
+    /// Total number of draw commands (Phase 5.3: one per chunk)
     /// </summary>
-    public uint RenderedBlocks => actualFaceCount;
+    public uint RenderedBlocks => actualFaceCount;  // Now stores command count, not face count
     
     /// <summary>
     /// Total draw call count (1 multi-draw indirect call)
@@ -86,90 +90,118 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
     /// <summary>
     /// Set up VAO to use Phase 3 compacted buffers.
+    /// Phase 5.3: Builds multi-draw indirect commands (ONE per chunk).
     /// Phase 5.2: Uses optimized vertex layout without normals (28 bytes vs 36 bytes).
-    /// Phase 5.1: Uses shared quad IBO instead of per-face indices.
-    /// Phase 5.3: Builds multi-draw indirect commands for efficient rendering.
     /// Must be called after Phase 3 completes.
     /// Can be called multiple times to update buffers (e.g., when regenerating terrain).
+    /// 
+    /// PHASE 5.2 STREAMING FIX: Now requires chunk descriptors to handle non-sequential buffer layout.
+    /// When chunks are unloaded/reloaded, both vertices AND indices may NOT be sequential in the buffer!
     /// </summary>
-    public void SetupBuffers(Phase3BufferManager buffers, uint vertexCount, uint faceCount)
+    public void SetupBuffers(Phase3BufferManager buffers, uint vertexCount, uint faceCount, IEnumerable<ChunkDescriptor>? chunkDescriptors = null)
     {
         if (disposed)
         {
             Log.Warn("VoxelTerrainRenderer: Cannot setup buffers - renderer is disposed");
             return;
         }
-        
+
         bufferManager = buffers;
         actualVertexCount = vertexCount;
-        actualFaceCount = faceCount;
-        actualIndexCount = 0;  // Deprecated - no longer used
+        actualIndexCount = 0;
 
-        // Phase 5.2: Optimized vertex layout (position, texCoord, ao, faceIndex)
-        // position(vec3=12) + texCoord(vec2=8) + ao(float=4) + faceIndex(uint=4) = 28 bytes
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
-        // Attribute 0: Position (vec3)
         GL.EnableVertexArrayAttrib(vao, 0);
         GL.VertexArrayAttribFormat(vao, 0, 3, VertexAttribType.Float, false, 0);
         GL.VertexArrayAttribBinding(vao, 0, 0);
 
-        // Attribute 1: TexCoord (vec2) - offset 12
         GL.EnableVertexArrayAttrib(vao, 1);
         GL.VertexArrayAttribFormat(vao, 1, 2, VertexAttribType.Float, false, 12);
         GL.VertexArrayAttribBinding(vao, 1, 0);
 
-        // Attribute 2: AO (float) - offset 20
         GL.EnableVertexArrayAttrib(vao, 2);
         GL.VertexArrayAttribFormat(vao, 2, 1, VertexAttribType.Float, false, 20);
         GL.VertexArrayAttribBinding(vao, 2, 0);
 
-        // Attribute 3: FaceIndex (uint) - offset 24
-        // CRITICAL: Use AttribIFormat for integer attributes!
         GL.EnableVertexArrayAttrib(vao, 3);
         GL.VertexArrayAttribIFormat(vao, 3, 1, VertexAttribIType.UnsignedInt, 24);
         GL.VertexArrayAttribBinding(vao, 3, 0);
 
-        // Bind vertex buffer
         GL.VertexArrayVertexBuffer(vao, 0, buffers.VertexBuffer, IntPtr.Zero, stride);
+        GL.VertexArrayElementBuffer(vao, buffers.IndexBuffer);
 
-        // PHASE 5.1: Bind shared quad index buffer (6 indices, reused for all faces)
-        GL.VertexArrayElementBuffer(vao, buffers.SharedIndexBuffer);
-
-        // PHASE 5.3: Build multi-draw indirect commands
-        BuildIndirectCommands(buffers, faceCount);
+        // With GPU-built indirect, the command count equals the last dispatched batch size.
+        // We rely on ChunkStreamingManager to bind and dispatch draw using the updated indirect buffer.
+        // PHASE 5.3 FIX: Set actualFaceCount to the CommandSlotCapacity so OnDraw draws all potential slots.
+        // Empty slots have count=0 and will be skipped by GPU.
+        actualFaceCount = buffers.CommandSlotCapacity;
 
         Log.CheckGlError();
-        Log.Info($"VoxelTerrainRenderer: Buffers configured (Phase 5.3: {vertexCount} vertices, {faceCount} faces, multi-draw indirect)");
+
+        Log.Info($"VoxelTerrainRenderer: Buffers configured (Phase 5.3: {vertexCount} vertices, {faceCount} faces, {actualFaceCount} commands - GPU built)");
     }
 
     /// <summary>
     /// Build indirect draw commands for multi-draw rendering.
-    /// Each command draws the same 6 indices but with different base vertex offsets.
+    /// PHASE 5.3: Now builds ONE command PER CHUNK instead of per face!
+    /// Each command draws all indices for that chunk in a single draw call.
+    /// 
+    /// PHASE 5.2 STREAMING FIX: Handles non-sequential buffer layout when chunks are freed/reallocated.
+    /// Uses chunk descriptors with AtlasOffset and IndexOffset for correct buffer positions.
     /// </summary>
-    private unsafe void BuildIndirectCommands(Phase3BufferManager buffers, uint faceCount)
+    private unsafe void BuildIndirectCommands(Phase3BufferManager buffers, uint faceCount, IEnumerable<ChunkDescriptor>? chunkDescriptors = null)
     {
         if (faceCount == 0) return;
 
+        // PHASE 5.3: Count chunks to allocate command buffer
+        var chunks = chunkDescriptors?
+            .Where(c => c.State == TerrainChunkState.Ready && c.VisibleVoxelCount > 0)
+            .ToList();  // REMOVED: .OrderBy(c => c.IndexOffset) - causes gaps!
+        
+        if (chunks == null || chunks.Count == 0)
+        {
+            Log.Warn("VoxelTerrainRenderer: No ready chunks to render");
+            return;
+        }
+        
+        var commandCount = chunks.Count;
+        
+        // Ensure capacity only grows; buffer preallocated at init to max capacity
+        buffers.ResizeIndirectDrawBuffer((uint)commandCount);
+        
         // DrawElementsIndirectCommand structure (5 uints = 20 bytes)
         // uint count, uint instanceCount, uint firstIndex, int baseVertex, uint baseInstance
-        var commands = new uint[faceCount * 5];
+        var commandBytes = new byte[commandCount * 20]; // 20 bytes per command
         
-        for (uint i = 0; i < faceCount; i++)
+        // PHASE 5.3: Build ONE command per chunk
+        for (int i = 0; i < chunks.Count; i++)
         {
-            var baseIdx = i * 5;
-            commands[baseIdx + 0] = 6;              // count: 6 indices (shared quad)
-            commands[baseIdx + 1] = 1;              // instanceCount: 1 (no instancing)
-            commands[baseIdx + 2] = 0;              // firstIndex: 0 (always start of shared IBO)
-            commands[baseIdx + 3] = (uint)(i * 4);  // baseVertex: 4 vertices per face
-            commands[baseIdx + 4] = 0;              // baseInstance: 0 (no instancing)
+            var chunk = chunks[i];
+            var byteOffset = i * 20;
+            
+            // Calculate chunk's index and vertex counts
+            // Each face = 6 indices, 4 vertices
+            var chunkIndexCount = chunk.IndexCount;      // Pre-calculated: VisibleVoxelCount * 6
+            var chunkBaseVertex = chunk.AtlasOffset;     // Vertex buffer offset
+            var chunkFirstIndex = chunk.IndexOffset;      // Index buffer offset
+            
+            // Build command for this chunk
+            BitConverter.GetBytes((uint)chunkIndexCount).CopyTo(commandBytes, byteOffset + 0);      // count (uint)
+            BitConverter.GetBytes(1u).CopyTo(commandBytes, byteOffset + 4);                         // instanceCount (uint)
+            BitConverter.GetBytes((uint)chunkFirstIndex).CopyTo(commandBytes, byteOffset + 8);      // firstIndex (uint)
+            BitConverter.GetBytes(chunkBaseVertex).CopyTo(commandBytes, byteOffset + 12);           // baseVertex (int)
+            BitConverter.GetBytes(0u).CopyTo(commandBytes, byteOffset + 16);                        // baseInstance (uint)
         }
 
         // Upload to GPU
         GL.NamedBufferSubData(buffers.IndirectDrawBuffer, IntPtr.Zero, 
-            (int)(faceCount * 5 * sizeof(uint)), commands);
+            commandBytes.Length, commandBytes);
         
-        Log.Info($"VoxelTerrainRenderer: Built {faceCount} indirect draw commands");
+        // PHASE 5.3: Update draw count to number of chunks (not faces!)
+        actualFaceCount = (uint)commandCount;  // Repurpose this field to store command count
+        
+        Log.Info($"VoxelTerrainRenderer: Built {commandCount} indirect draw commands (one per chunk) for {faceCount} total faces");
     }
 
     /// <summary>
@@ -287,7 +319,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
     /// <summary>
     /// Override OnDraw to render the voxel terrain using the scene's rendering pipeline.
-    /// Phase 5.1: Uses shared quad IBO with multiple draw calls (one per face, using gl_BaseVertex).
+    /// Phase 5.3: Uses per-chunk index buffers with ONE multi-draw command PER CHUNK!
     /// Camera UBO is already bound by Renderer.RenderNode().
     /// Enables backface culling for proper voxel rendering.
     /// </summary>
@@ -298,12 +330,25 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return; // Nothing to render yet or already disposed
         }
 
+        // DEBUG: Log that we're rendering
+        if (++frameCounter % 60 == 0) // Log every 60 frames
+        {
+            Log.Info($"VoxelTerrainRenderer.OnDraw: Rendering {actualFaceCount} chunks via multi-draw indirect");
+        }
+
         // Enable backface culling for voxel terrain
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(TriangleFace.Back);
         GL.FrontFace(FrontFaceDirection.Ccw);
 
         var shader = Material.Shader;
+        
+        // DEBUG: Check if shader is valid
+        if (shader == null)
+        {
+            Log.Error("VoxelTerrainRenderer.OnDraw: Material.Shader is NULL!");
+            return;
+        }
         
         // Bind the grass-dirt texture atlas
         if (Material.Textures != null && Material.Textures.Length > 0 && Material.Textures[0] != null)
@@ -322,16 +367,28 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         var identity = Matrix4.Identity;
         shader.SetMatrix4("uChunkTransform", ref identity);
 
-        // Bind VAO (has shared quad IBO bound)
+        // Bind VAO (has per-chunk IBO bound)
         GL.BindVertexArray(vao);
         
-        // PHASE 5.3: Single multi-draw indirect call
+        // DEBUG: Verify buffer binding
+        if (bufferManager.IndirectDrawBuffer == 0)
+        {
+            Log.Error("VoxelTerrainRenderer.OnDraw: IndirectDrawBuffer is 0!");
+            return;
+        }
+        
+        // PHASE 5.3: Single multi-draw indirect call with ONE command per chunk!
+        // CRITICAL FIX: Use HighWaterMark as draw count, not active chunk count!
+        // Slots are allocated sparsely/using free list, so we must draw up to the highest allocated slot.
+        // Empty slots (freed) are zeroed out and will be skipped by GPU.
+        int drawCount = bufferManager.GetCommandSlotHighWaterMark();
+        
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
             IntPtr.Zero,
-            (int)actualFaceCount,  // Draw count
+            drawCount,             // Draw up to the highest allocated slot
             0                      // Stride (tightly packed)
         );
 

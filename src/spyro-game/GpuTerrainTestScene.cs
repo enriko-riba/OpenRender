@@ -210,21 +210,19 @@ internal class GpuTerrainTestScene : Scene
                 streamingManager.DispatchGeneration(chunkIndices);
                 initialTimings.RecordPhase2Generation(chunkIndices.Length);
 
-                // Phase 3: Visibility and compaction
-                var (vertexCount, indexCount) = streamingManager.ExecutePhase3(chunkIndices);
-                initialTimings.RecordPhase3Compaction(vertexCount, indexCount);
-
-                // Phase 4: Setup rendering
+                // Phase 3+4: Complete pipeline (assign descriptors, setup renderer)
+                streamingManager.ExecuteCompletePipeline(chunkIndices);
                 var phase3Buffers = typeof(ChunkStreamingManager)
                     .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
                     .GetValue(streamingManager) as Phase3BufferManager;
-
-                if (phase3Buffers != null && vertexCount > 0)
+                if (phase3Buffers != null)
                 {
-                    terrainRenderer.SetupBuffers(phase3Buffers, vertexCount, indexCount);
+                    var vertexCount = phase3Buffers.CurrentVertexBufferEnd;
+                    var faceCount = vertexCount / 4; // 4 vertices per face
+                    var indexCount = faceCount * 6;  // 6 indices per face
+                    initialTimings.RecordPhase3Compaction(vertexCount, indexCount);
                     initialTimings.RecordPhase4Setup();
                 }
-
                 Log.Highlight($"✅ Regeneration Complete!");
                 Log.Info($"   Total Time: {initialTimings.TotalPipelineMs:F2}ms");
                 Log.Info($"   Vertices: {initialTimings.VertexCount:N0}, Indices: {initialTimings.IndexCount:N0}");

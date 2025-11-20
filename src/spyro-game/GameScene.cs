@@ -62,8 +62,54 @@ internal class GameScene : Scene
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
-        // BlockPickingService will be initialized in Load() after world is set
+        
+        // Add renderer to scene
+        AddNode(terrainRenderer);
+        
+        // Ensure camera is initialized before creating player
+        EnsureCameraInitialized();
+        
+        // Calculate center of world for spawn
+        var centerPos = new Vector3(
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
+            100,
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+        );
+        
+        // Initialize player with world at center position
+        // Note: Player expects VoxelWorld, but we are using ChunkStreamingManager.
+        // Ideally Player should be refactored to use an interface or ChunkStreamingManager.
+        // For now, we pass the world instance from streamingManager if available, or the scene's world.
+        var playerWorld = streamingManager.World ?? world;
+        player = new Player(camera!, centerPos, playerWorld);
+        
+        // Initialize block picking service
+        // Use the constructor that accepts ChunkStreamingManager
+        blockPickingService = new BlockPickingService(streamingManager, camera!);
+        
+        // Restore full load distance for gameplay
+        streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
+        
         Log.Info("GameScene: GPU terrain components configured");
+    }
+
+    private void EnsureCameraInitialized()
+    {
+        if (camera != null) return;
+
+        // Setup camera - FPS camera
+        // CRITICAL: Must match TerrainLoadingScene spawn position!
+        // Both must use the same calculation: WorldChunksXZ * ChunkSideSize / 2
+        var startPos = new Vector3(
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // = 16 * 600 / 2 = 4800
+            100,
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
+        );
+
+        camera = new CameraFps(startPos, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
+        {
+            MaxFov = 70
+        };
     }
 
     public override void Load()
@@ -72,7 +118,7 @@ internal class GameScene : Scene
         BackgroundColor = Color4.CornflowerBlue;
 
         // Initialize block picking service NOW (after world and terrainRenderer are set)
-        if (terrainRenderer != null && world != null)
+        if (terrainRenderer != null && world != null && blockPickingService == null)
         {
             blockPickingService = new BlockPickingService(world, terrainRenderer);
             Log.Info("GameScene: Block picking service initialized");
@@ -86,22 +132,21 @@ internal class GameScene : Scene
         GL.CullFace(TriangleFace.Back);
         GL.FrontFace(FrontFaceDirection.Ccw);
 
-        // Setup camera - FPS camera
-        // CRITICAL: Must match TerrainLoadingScene spawn position!
-        // Both must use the same calculation: WorldChunksXZ * ChunkSideSize / 2
-        var startPos = new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // = 16 * 600 / 2 = 4800
-            100,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
-        );
-        
-        camera = new CameraFps(startPos, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
-        {
-            MaxFov = 70
-        };
+        EnsureCameraInitialized();
 
-        // Create player with physics enabled (we have proper voxel data!)
-        player = new Player(camera, startPos, world);
+        // Player is initialized in SetupGpuTerrain if coming from loading screen
+        // If not (e.g. direct load), initialize here
+        if (player == null)
+        {
+            // Re-calculate startPos since it's local to EnsureCameraInitialized now
+            var startPos = new Vector3(
+                VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
+                100,
+                VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+            );
+            player = new Player(camera!, startPos, world);
+        }
+
         player.IsGhostMode = true; // Start in ghost mode for easy exploration
 
         // Mouse centering for FPS controls
@@ -150,7 +195,11 @@ internal class GameScene : Scene
         if (terrainRenderer != null)
         {
             // Use GPU terrain renderer from loading scene
-            AddNode(terrainRenderer);
+            // Note: Already added in SetupGpuTerrain, but check just in case
+            if (terrainRenderer.Scene == null)
+            {
+                AddNode(terrainRenderer);
+            }
             Log.Info("GameScene: Using GPU terrain renderer");
         }
         else
@@ -162,9 +211,6 @@ internal class GameScene : Scene
         
         world.Camera = camera!;
         camera!.Invalidate();
-
-        // Initial terrain was already generated by TerrainLoadingScene
-        // No need to call PrepareStartingChunks() here
 
         // Add water
         waterNode = WaterNode.Create(dayNightCycle);
@@ -308,11 +354,7 @@ internal class GameScene : Scene
 
     public override void RenderFrame(double elapsedSeconds)
     {
-        base.RenderFrame(elapsedSeconds);
-        
-        // Picking data is rendered on-demand in UpdateFrame (right before reading)
-        // to avoid race conditions with FBO clearing
-        
+        base.RenderFrame(elapsedSeconds);        
         RenderUI();
     }
 
@@ -486,7 +528,5 @@ internal class GameScene : Scene
         crosshair.Pivot = new(0.0f, 1.0f);
 
         mouseCenter = clientSize / 2;
-        
-        // Picking FBO removed - no longer needed
     }
 }

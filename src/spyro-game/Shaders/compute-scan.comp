@@ -1,0 +1,51 @@
+#version 460
+// compute-scan.comp: exclusive prefix sum on VISIBLE_COUNTS and write BASE_OFFSETS and totals
+// Inputs: binding=2 counts[], Outputs: binding=3 baseOffsets[], binding=9 totals[2]
+// totals[0]=totalVertices, totals[1]=totalIndices
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 2) readonly buffer Counts { uint counts[]; };
+layout(std430, binding = 3) writeonly buffer Offsets { uint baseOffsets[]; };
+layout(std430, binding = 9) writeonly buffer Totals { uint totals[]; };
+
+uniform uint uChunkCount;
+
+shared uint sdata[256];
+
+void main(){
+    uint gid = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    uint cFaces = 0u;
+    if (gid < uChunkCount) cFaces = counts[gid];
+    uint c = cFaces * 4u; // vertices per face
+    sdata[lid] = c;
+    memoryBarrierShared();
+    barrier();
+
+    // upsweep
+    for(uint offset=1u; offset<256u; offset<<=1u){
+        uint idx = (lid+1u)*offset*2u - 1u;
+        if(idx<256u){ sdata[idx] += sdata[idx - offset]; }
+        memoryBarrierShared(); barrier();
+    }
+    // exclusive
+    if(lid==255u) sdata[255u] = 0u;
+    memoryBarrierShared(); barrier();
+    // downsweep
+    for(uint offset=128u; offset>=1u; offset>>=1u){
+        uint idx = (lid+1u)*offset*2u - 1u;
+        if(idx<256u){ uint t = sdata[idx - offset]; sdata[idx - offset] = sdata[idx]; sdata[idx] += t; }
+        memoryBarrierShared(); barrier();
+        if(offset==1u) break;
+    }
+
+    if (gid < uChunkCount) baseOffsets[gid] = sdata[lid];
+
+    // Write totals once by the last valid thread
+    if (gid + 1u == uChunkCount) {
+        uint totalVertices = sdata[lid] + c;
+        totals[0] = totalVertices;
+        totals[1] = (totalVertices / 4u) * 6u; // indices
+    }
+}

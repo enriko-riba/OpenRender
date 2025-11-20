@@ -64,93 +64,73 @@ internal class TerrainLoadingScene : Scene
         Log.Info("TerrainLoadingScene: Starting GPU terrain generation...");
     }
     
+    private bool isWaitingForTerrain = false;
+    private const int INITIAL_LOAD_DISTANCE = 5;
+    // private const int TARGET_CHUNKS = (2 * INITIAL_LOAD_DISTANCE + 1) * (2 * INITIAL_LOAD_DISTANCE + 1); // REMOVED
+
     private void BuildOperationQueue()
     {
         // Calculate surrounding chunks for spawn position
         var cameraChunkX = (int)((startPosition.X + 0.5f) / VoxelHelper.ChunkSideSize);
         var cameraChunkZ = (int)((startPosition.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-        var chunkIndices = GenerateSurroundingChunkIndices(cameraChunkX, cameraChunkZ);
-        surroundingChunkCount = chunkIndices.Length;
-        
+        // var chunkIndices = GenerateSurroundingChunkIndices(cameraChunkX, cameraChunkZ); // REMOVED
+        // surroundingChunkCount = chunkIndices.Length; // REMOVED
+
         // Phase 1: Initialize ChunkStreamingManager
         operationQueue.Enqueue(("Initializing GPU streaming manager...", () =>
         {
             streamingManager = new ChunkStreamingManager(world);
+            // Set reduced load distance for initial load
+            streamingManager.LoadDistance = INITIAL_LOAD_DISTANCE;
             Log.Info("ChunkStreamingManager created");
         }));
-        
+
         // Phase 2: GPU Pipeline initialization
         operationQueue.Enqueue(("Initializing GPU generation pipeline...", () =>
         {
             // FULL PROCEDURAL MODE for GameScene
             // Elevation parameters calibrated for procedural noise range
             // Pre-allocates buffers for max view distance automatically
-            streamingManager!.InitializeGpuGeneration(world.Seed, 
+            streamingManager!.InitializeGpuGeneration(world.Seed,
                 elevOffset: -0.5f,     // Minimum terrain height (handles underwater/caves)
                 elevScale: 0.8f,       // Scale factor to normalize to [0,1]
                 testMode: false);      // PROCEDURAL MODE - full terrain generation
                                        // maxChunks=0 (default) uses CalculateMaxViewChunks()
             Log.Info($"GPU generation initialized (PROCEDURAL MODE) with pre-allocated buffers");
         }));
-        
+
         operationQueue.Enqueue(("Initializing visibility & compaction buffers...", () =>
         {
-            streamingManager!.InitializePhase3(surroundingChunkCount);
-            Log.Info($"Phase 3 initialized for {surroundingChunkCount} chunks");
+            // Initialize for full capacity, not just initial chunks
+            streamingManager!.InitializePhase3();
+            Log.Info($"Phase 3 initialized");
         }));
-        
+
         operationQueue.Enqueue(("Initializing terrain renderer...", () =>
         {
             streamingManager!.InitializePhase4();
             terrainRenderer = streamingManager.GetTerrainRenderer();
             Log.Info("Terrain renderer initialized");
         }));
-        
+
         operationQueue.Enqueue(("Initializing frustum culling...", () =>
         {
             // Pre-allocates for max view distance automatically (maxChunks=0)
             streamingManager!.InitializeFrustumCulling();
             Log.Info("Frustum culling initialized with pre-allocated buffers");
         }));
-        
-        // Phase 3: Generate starting chunks
-        operationQueue.Enqueue(("Generating voxel data (GPU Phase 2)...", () =>
+
+        // Phase 3: Stream terrain - SKIPPED to let GameScene handle it naturally
+        /*
+        operationQueue.Enqueue(("Streaming terrain...", () =>
         {
-            streamingManager!.DispatchGeneration(chunkIndices);
-            Log.Info($"Generated {chunkIndices.Length} chunks on GPU");
+            isWaitingForTerrain = true;
+            // Force initial update to queue chunks
+            streamingManager!.Update(startPosition);
+            Log.Info("Started terrain streaming...");
         }));
-        
-        operationQueue.Enqueue(("Processing visibility & compaction (GPU Phase 3)...", (Action)(() =>
-        {
-            var (vertexCount, indexCount) = streamingManager!.ExecutePhase3(chunkIndices);
-            lastVertexCount = vertexCount;
-            lastIndexCount = indexCount;
-            
-            // Register chunks as ready so GameScene stats work correctly
-            streamingManager.RegisterChunksAsReady(chunkIndices);
-            
-            Log.Info($"Phase 3 complete: {vertexCount:N0} vertices, {indexCount:N0} indices");
-        })));
-        
-        operationQueue.Enqueue(("Setting up rendering buffers...", (Action)(() =>
-        {
-            // Use reflection to access private phase3Buffers field
-            var phase3Buffers = typeof(ChunkStreamingManager)
-                .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                .GetValue(streamingManager) as Phase3BufferManager;
-                
-            if (phase3Buffers != null && terrainRenderer != null)
-            {
-                // Use the counts we stored from ExecutePhase3
-                terrainRenderer.SetupBuffers(phase3Buffers, lastVertexCount, lastIndexCount);
-                Log.Info("Rendering buffers configured");
-            }
-            
-            Log.Highlight($"✅ GPU Terrain Generation Complete!");
-            Log.Info($"   Total Time: {timer.ElapsedMilliseconds}ms");
-            Log.Info($"   Chunks: {surroundingChunkCount}");
-        })));
-        
+        */
+
         totalOperations = operationQueue.Count;
         Log.Info($"TerrainLoadingScene: Queued {totalOperations} operations");
     }
@@ -158,7 +138,7 @@ internal class TerrainLoadingScene : Scene
     public override void UpdateFrame(double elapsedSeconds)
     {
         base.UpdateFrame(elapsedSeconds);
-        
+
         // Build queue after first render
         if (!isQueueBuilt)
         {
@@ -166,37 +146,62 @@ internal class TerrainLoadingScene : Scene
             isQueueBuilt = true;
             return;
         }
-        
+
         if (isComplete) return;
-        
+
         try
         {
+            // Handle waiting state
+            if (isWaitingForTerrain && streamingManager != null)
+            {
+                streamingManager.Update(startPosition);
+                var (total, pending, generating, ready) = streamingManager.GetStats();
+                
+                // Update status text
+                currentOperation = $"Streaming terrain: {ready} chunks ready (Pending: {pending}, Gen: {generating})";
+                
+                // Check if we have enough chunks
+                // Wait until system is idle (no pending or generating chunks) and we have at least some chunks
+                if (ready > 0 && pending == 0 && generating == 0)
+                {
+                    isWaitingForTerrain = false;
+                    lastVertexCount = 0; // Not tracking exact counts anymore
+                    lastIndexCount = 0;
+                    Log.Info($"Initial terrain streaming complete. Ready: {ready}");
+                }
+                else
+                {
+                    // Keep waiting
+                    return;
+                }
+            }
+
             // Process one operation per frame
             if (operationQueue.Count > 0)
             {
                 var (description, operation) = operationQueue.Dequeue();
                 currentOperation = description;
-                
+
                 Log.Info($"[{completedOperations + 1}/{totalOperations}] {description}");
                 operation.Invoke();
-                
+
                 completedOperations++;
             }
-            else if (streamingManager != null && terrainRenderer != null)
+            else if (streamingManager != null && terrainRenderer != null && !isWaitingForTerrain)
             {
                 // All operations complete - transition to game
                 isComplete = true;
                 currentOperation = "Complete!";
-                
+
                 Log.Info("TerrainLoadingScene: Transitioning to GameScene");
-                
+
                 AddAction(() =>
                 {
                     var gameScene = SceneManager.GetScene("GameScene");
                     // Pass the streaming manager and renderer to GameScene
                     if (gameScene is GameScene gs)
                     {
-                        Log.Info($"TerrainLoadingScene: Passing terrain to GameScene - vertexCount={lastVertexCount}, indexCount={lastIndexCount}");
+                        Log.Info($"TerrainLoadingScene: Passing terrain to GameScene");
                         gs.SetupGpuTerrain(streamingManager, terrainRenderer);
                     }
                     else

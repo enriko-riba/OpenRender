@@ -5,6 +5,7 @@ namespace SpyroGame.World;
 /// <summary>
 /// Describes the state and GPU resource locations for a single chunk.
 /// CPU-side metadata that tracks GPU buffer offsets and sync state.
+/// Phase 5.3: Now tracks both vertex and index buffer regions.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct ChunkDescriptor
@@ -20,12 +21,26 @@ public struct ChunkDescriptor
     public int VoxelBufferOffset;
 
     /// <summary>
-    /// Offset into AtlasSSBO for compacted visible voxels
+    /// Offset into vertex buffer for compacted visible vertices (in vertices, not bytes)
+    /// Phase 5.3: This is the baseVertex for indirect draw commands
     /// </summary>
     public int AtlasOffset;
 
     /// <summary>
-    /// Number of visible voxels in this chunk (instanceCount for rendering)
+    /// Offset into index buffer for this chunk's indices (in indices, not bytes)
+    /// Phase 5.3: NEW - tracks per-chunk index buffer region
+    /// </summary>
+    public int IndexOffset;
+
+    /// <summary>
+    /// Slot index in the Indirect Draw Buffer (0..MaxChunks-1)
+    /// Phase 5.3: Tracks where this chunk's draw command is stored on GPU
+    /// </summary>
+    public int CommandSlot;
+
+    /// <summary>
+    /// Number of visible faces in this chunk
+    /// Phase 5.3: Used to calculate vertex count (faces * 4) and index count (faces * 6)
     /// </summary>
     public int VisibleVoxelCount;
 
@@ -49,9 +64,19 @@ public struct ChunkDescriptor
     /// </summary>
     public int Priority;
 
+    /// <summary>
+    /// Get total vertex count for this chunk (4 vertices per face)
+    /// </summary>
+    public int VertexCount => VisibleVoxelCount * 4;
+
+    /// <summary>
+    /// Get total index count for this chunk (6 indices per face)
+    /// </summary>
+    public int IndexCount => VisibleVoxelCount * 6;
+
     public override string ToString()
     {
-        return $"Chunk[{ChunkIndex}] State={State}, Visible={VisibleVoxelCount}, AtlasOff={AtlasOffset}";
+        return $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
     }
 }
 

@@ -1,0 +1,40 @@
+#version 460
+// compute-build-indirect.comp: build DrawElementsIndirectCommand per chunk on GPU
+// Inputs: binding=2 counts[] (faces), binding=3 baseOffsets[] (in vertices)
+//         binding=11 commandSlots[] (target index in indirect buffer)
+// Output: binding=10 indirect[] (5 uints per command)
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 2) readonly buffer Counts { uint counts[]; };
+layout(std430, binding = 3) readonly buffer Offsets { uint baseOffsets[]; };
+layout(std430, binding = 11) readonly buffer CommandSlots { uint commandSlots[]; };
+layout(std430, binding = 10) writeonly buffer Indirect { uint cmd[]; };
+
+uniform uint uChunkCount;
+uniform uint uVertexRegionOffset;
+uniform uint uIndexRegionOffset;
+
+void main(){
+    uint i = gl_GlobalInvocationID.x;
+    if(i>=uChunkCount) return;
+    uint faces = counts[i];
+    uint vBase = baseOffsets[i];            // vertices (relative to batch start)
+    uint indexFirst = (vBase / 4u) * 6u;    // indices (relative to batch start)
+    uint countIdx = faces * 6u;             // indices to draw
+
+    // Compute absolute buffer offsets
+    int baseVertex = int(uVertexRegionOffset + vBase);
+    uint firstIndex = uIndexRegionOffset + indexFirst;
+
+    // Write 5 uints starting at commandSlots[i]*5
+    // Use the allocated slot index instead of batch index 'i'
+    uint slot = commandSlots[i];
+    uint o = slot*5u;
+    
+    cmd[o+0u] = countIdx;   // count
+    cmd[o+1u] = 1u;         // instanceCount
+    cmd[o+2u] = firstIndex; // firstIndex
+    cmd[o+3u] = uint(baseVertex); // baseVertex as uint bits (reinterpreted in GL)
+    cmd[o+4u] = 0u;         // baseInstance
+}

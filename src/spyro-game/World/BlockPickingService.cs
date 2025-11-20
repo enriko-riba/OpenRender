@@ -31,6 +31,17 @@ public class BlockPickingService
         this.world = world;
         this.terrainRenderer = terrainRenderer;
     }
+
+    /// <summary>
+    /// Constructor for GPU streaming mode.
+    /// </summary>
+    public BlockPickingService(ChunkStreamingManager streamingManager, ICamera camera)
+    {
+        // In GPU mode, we don't have direct access to VoxelWorld or VoxelTerrainRenderer in the same way
+        // But since picking is disabled anyway, we just need to satisfy the constructor
+        this.world = null!; 
+        this.terrainRenderer = streamingManager.GetTerrainRenderer();
+    }
     
     /// <summary>
     /// Currently picked block (cached result).
