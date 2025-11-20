@@ -119,7 +119,7 @@ public class Phase3BufferManager : IDisposable
         // Visible counts (1 uint per chunk)
         GL.CreateBuffers(1, out countBuffer);
         GL.NamedBufferStorage(countBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
-            BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
+            BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
         ClearBufferUInt(countBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, countBuffer, -1, "count_visible_ssbo");
 
@@ -133,7 +133,7 @@ public class Phase3BufferManager : IDisposable
         // Base offsets (1 uint per chunk)
         GL.CreateBuffers(1, out offsetBuffer);
         GL.NamedBufferStorage(offsetBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
-            BufferStorageFlags.DynamicStorageBit);
+            BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
         ClearBufferUInt(offsetBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, offsetBuffer, -1, "offset_base_ssbo");
 
@@ -152,7 +152,7 @@ public class Phase3BufferManager : IDisposable
         // Multi-draw indirect command buffer
         // Initial size is small, will be resized by ResizeIndirectDrawBuffer
         GL.CreateBuffers(1, out indirectDrawBuffer);
-        var indirectSize = maxChunks * 5 * sizeof(uint); 
+        var indirectSize = maxChunks * 5 * sizeof(uint);
         GL.NamedBufferStorage(indirectDrawBuffer, indirectSize, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indirectDrawBuffer, -1, "indirect_draw_commands");
@@ -173,7 +173,8 @@ public class Phase3BufferManager : IDisposable
 
         // NEW: totals buffer (2 uints)
         GL.CreateBuffers(1, out scanTotalsBuffer);
-        GL.NamedBufferStorage(scanTotalsBuffer, 2 * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
+        GL.NamedBufferStorage(scanTotalsBuffer, 2 * sizeof(uint), IntPtr.Zero, 
+            BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, scanTotalsBuffer, -1, "scan_totals_ssbo");
 
         Log.CheckGlError();

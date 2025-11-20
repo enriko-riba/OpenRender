@@ -1,7 +1,5 @@
-using System.Buffers;
 using OpenRender;
 using OpenRender.Core;
-using OpenRender.Core.Buffers;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
@@ -20,20 +18,16 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private uint vao;
     private Phase3BufferManager? bufferManager;
     private uint actualVertexCount;
-    private uint actualIndexCount;          // Deprecated - kept for compatibility
     private uint actualFaceCount;           // Phase 5.1: Track face count instead
     private bool disposed;
-    
+
     // Debug frame counter for logging
     private int frameCounter = 0;
-
-    // Light direction (pointing from surface toward light source)
-    private Vector3 lightDirection = new(-0.5f, -0.8f, -0.3f);
 
     // Visibility tracking (for frustum culling)
     private int[]? visibilityFlags;
     private int[]? chunkIndices;
-    
+
     // Block outline rendering
     private Shader? outlineShader;
     private uint outlineVao;
@@ -45,12 +39,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// Number of visible chunks (after frustum culling)
     /// </summary>
     public int VisibleDraws { get; private set; }
-    
+
     /// <summary>
     /// Total number of draw commands (Phase 5.3: one per chunk)
     /// </summary>
     public uint RenderedBlocks => actualFaceCount;  // Now stores command count, not face count
-    
+
     /// <summary>
     /// Total draw call count (1 multi-draw indirect call)
     /// </summary>
@@ -67,14 +61,14 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Create VAO
         GL.CreateVertexArrays(1, out vao);
         GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, vao, -1, "voxel_terrain_vao");
-        
+
         // Initialize outline rendering resources
         InitializeOutlineRendering();
-        
+
         // Don't cull this node - we handle culling internally with GPU frustum culling
         DisableCulling = true;
         RenderGroup = RenderGroup.Default;
-        
+
         Log.Info("VoxelTerrainRenderer: Initialized");
     }
 
@@ -108,7 +102,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         bufferManager = buffers;
         actualVertexCount = vertexCount;
-        actualIndexCount = 0;
 
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
@@ -143,68 +136,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     }
 
     /// <summary>
-    /// Build indirect draw commands for multi-draw rendering.
-    /// PHASE 5.3: Now builds ONE command PER CHUNK instead of per face!
-    /// Each command draws all indices for that chunk in a single draw call.
-    /// 
-    /// PHASE 5.2 STREAMING FIX: Handles non-sequential buffer layout when chunks are freed/reallocated.
-    /// Uses chunk descriptors with AtlasOffset and IndexOffset for correct buffer positions.
-    /// </summary>
-    private unsafe void BuildIndirectCommands(Phase3BufferManager buffers, uint faceCount, IEnumerable<ChunkDescriptor>? chunkDescriptors = null)
-    {
-        if (faceCount == 0) return;
-
-        // PHASE 5.3: Count chunks to allocate command buffer
-        var chunks = chunkDescriptors?
-            .Where(c => c.State == TerrainChunkState.Ready && c.VisibleVoxelCount > 0)
-            .ToList();  // REMOVED: .OrderBy(c => c.IndexOffset) - causes gaps!
-        
-        if (chunks == null || chunks.Count == 0)
-        {
-            Log.Warn("VoxelTerrainRenderer: No ready chunks to render");
-            return;
-        }
-        
-        var commandCount = chunks.Count;
-        
-        // Ensure capacity only grows; buffer preallocated at init to max capacity
-        buffers.ResizeIndirectDrawBuffer((uint)commandCount);
-        
-        // DrawElementsIndirectCommand structure (5 uints = 20 bytes)
-        // uint count, uint instanceCount, uint firstIndex, int baseVertex, uint baseInstance
-        var commandBytes = new byte[commandCount * 20]; // 20 bytes per command
-        
-        // PHASE 5.3: Build ONE command per chunk
-        for (int i = 0; i < chunks.Count; i++)
-        {
-            var chunk = chunks[i];
-            var byteOffset = i * 20;
-            
-            // Calculate chunk's index and vertex counts
-            // Each face = 6 indices, 4 vertices
-            var chunkIndexCount = chunk.IndexCount;      // Pre-calculated: VisibleVoxelCount * 6
-            var chunkBaseVertex = chunk.AtlasOffset;     // Vertex buffer offset
-            var chunkFirstIndex = chunk.IndexOffset;      // Index buffer offset
-            
-            // Build command for this chunk
-            BitConverter.GetBytes((uint)chunkIndexCount).CopyTo(commandBytes, byteOffset + 0);      // count (uint)
-            BitConverter.GetBytes(1u).CopyTo(commandBytes, byteOffset + 4);                         // instanceCount (uint)
-            BitConverter.GetBytes((uint)chunkFirstIndex).CopyTo(commandBytes, byteOffset + 8);      // firstIndex (uint)
-            BitConverter.GetBytes(chunkBaseVertex).CopyTo(commandBytes, byteOffset + 12);           // baseVertex (int)
-            BitConverter.GetBytes(0u).CopyTo(commandBytes, byteOffset + 16);                        // baseInstance (uint)
-        }
-
-        // Upload to GPU
-        GL.NamedBufferSubData(buffers.IndirectDrawBuffer, IntPtr.Zero, 
-            commandBytes.Length, commandBytes);
-        
-        // PHASE 5.3: Update draw count to number of chunks (not faces!)
-        actualFaceCount = (uint)commandCount;  // Repurpose this field to store command count
-        
-        Log.Info($"VoxelTerrainRenderer: Built {commandCount} indirect draw commands (one per chunk) for {faceCount} total faces");
-    }
-
-    /// <summary>
     /// Set visibility flags for frustum culling (optional)
     /// Pass null to disable culling (render all chunks)
     /// </summary>
@@ -212,7 +143,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     {
         visibilityFlags = flags;
         chunkIndices = indices;
-        
+
         if (flags != null)
         {
             VisibleDraws = flags.Count(f => f == 1);
@@ -230,7 +161,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     {
         // Load outline shader
         outlineShader = new Shader("Shaders/block-outline.vert", "Shaders/block-outline.frag");
-        
+
         // Create cube wireframe vertices (8 corners)
         float[] outlineVertices = [
             // Bottom face
@@ -244,7 +175,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             1.0f, 1.0f, 1.0f,  // 6
             0.0f, 1.0f, 1.0f,  // 7
         ];
-        
+
         // Create cube wireframe indices (12 edges = 24 indices for GL_LINES)
         uint[] outlineIndices = [
             // Bottom face edges
@@ -254,33 +185,33 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             // Vertical edges
             0, 4,  1, 5,  2, 6,  3, 7
         ];
-        
+
         // Create VAO, VBO, EBO
         GL.CreateVertexArrays(1, out outlineVao);
         GL.CreateBuffers(1, out outlineVbo);
         GL.CreateBuffers(1, out outlineEbo);
-        
+
         // Upload vertex data
-        GL.NamedBufferStorage(outlineVbo, outlineVertices.Length * sizeof(float), 
+        GL.NamedBufferStorage(outlineVbo, outlineVertices.Length * sizeof(float),
             outlineVertices, BufferStorageFlags.None);
-        
+
         // Upload index data
-        GL.NamedBufferStorage(outlineEbo, outlineIndices.Length * sizeof(uint), 
+        GL.NamedBufferStorage(outlineEbo, outlineIndices.Length * sizeof(uint),
             outlineIndices, BufferStorageFlags.None);
-        
+
         // Configure VAO
         GL.VertexArrayVertexBuffer(outlineVao, 0, outlineVbo, IntPtr.Zero, 3 * sizeof(float));
         GL.VertexArrayElementBuffer(outlineVao, outlineEbo);
-        
+
         // Attribute 0: Position (vec3)
         GL.EnableVertexArrayAttrib(outlineVao, 0);
         GL.VertexArrayAttribFormat(outlineVao, 0, 3, VertexAttribType.Float, false, 0);
         GL.VertexArrayAttribBinding(outlineVao, 0, 0);
-        
+
         GL.ObjectLabel(ObjectLabelIdentifier.VertexArray, outlineVao, -1, "block_outline_vao");
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, outlineVbo, -1, "block_outline_vbo");
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, outlineEbo, -1, "block_outline_ebo");
-        
+
         Log.CheckGlError();
         Log.Info("VoxelTerrainRenderer: Outline rendering initialized");
     }
@@ -292,28 +223,28 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     {
         if (PickedBlock == null || outlineShader == null)
             return;
-        
+
         // Use outline shader (camera UBO already bound by renderer at binding=0)
         outlineShader.Use();
-        
+
         // Create transform matrix for the picked block
         var blockPos = PickedBlock.Value.GlobalPosition;
         const float outlineScale = 1.02f; // 2% larger than block
-        var transform = Matrix4.CreateScale(outlineScale) * 
+        var transform = Matrix4.CreateScale(outlineScale) *
                        Matrix4.CreateTranslation(blockPos.X, blockPos.Y, blockPos.Z);
-        
+
         // Set uniforms
         outlineShader.SetMatrix4("uBlockTransform", ref transform);
         var color = outlineColor;
         outlineShader.SetVector3("uOutlineColor", ref color);
-        
+
         // Render wireframe cube WITH depth test (so it respects solid geometry)
         GL.BindVertexArray(outlineVao);
         GL.Enable(EnableCap.DepthTest);
         GL.DepthFunc(DepthFunction.Lequal); // Render when equal or closer
         GL.DrawElements(PrimitiveType.Lines, 24, DrawElementsType.UnsignedInt, IntPtr.Zero);
         GL.DepthFunc(DepthFunction.Less); // Restore default
-        
+
         Log.CheckGlError();
     }
 
@@ -331,10 +262,10 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         }
 
         // DEBUG: Log that we're rendering
-        if (++frameCounter % 60 == 0) // Log every 60 frames
-        {
-            Log.Info($"VoxelTerrainRenderer.OnDraw: Rendering {actualFaceCount} chunks via multi-draw indirect");
-        }
+        //if (++frameCounter % 60 == 0) // Log every 60 frames
+        //{
+        //    Log.Info($"VoxelTerrainRenderer.OnDraw: Rendering {actualFaceCount} chunks via multi-draw indirect");
+        //}
 
         // Enable backface culling for voxel terrain
         GL.Enable(EnableCap.CullFace);
@@ -342,14 +273,14 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.FrontFace(FrontFaceDirection.Ccw);
 
         var shader = Material.Shader;
-        
+
         // DEBUG: Check if shader is valid
         if (shader == null)
         {
             Log.Error("VoxelTerrainRenderer.OnDraw: Material.Shader is NULL!");
             return;
         }
-        
+
         // Bind the grass-dirt texture atlas
         if (Material.Textures != null && Material.Textures.Length > 0 && Material.Textures[0] != null)
         {
@@ -357,7 +288,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             GL.BindTexture(TextureTarget.Texture2D, Material.Textures[0].Handle);
             shader.SetInt("uBlockTexture", 0);
         }
-        
+
         // Set material uniforms
         var matSpecular = new Vector3(0.1f, 0.1f, 0.1f);
         shader.SetVector3("uMaterialSpecular", ref matSpecular);
@@ -369,20 +300,20 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // Bind VAO (has per-chunk IBO bound)
         GL.BindVertexArray(vao);
-        
+
         // DEBUG: Verify buffer binding
         if (bufferManager.IndirectDrawBuffer == 0)
         {
             Log.Error("VoxelTerrainRenderer.OnDraw: IndirectDrawBuffer is 0!");
             return;
         }
-        
+
         // PHASE 5.3: Single multi-draw indirect call with ONE command per chunk!
         // CRITICAL FIX: Use HighWaterMark as draw count, not active chunk count!
         // Slots are allocated sparsely/using free list, so we must draw up to the highest allocated slot.
         // Empty slots (freed) are zeroed out and will be skipped by GPU.
         int drawCount = bufferManager.GetCommandSlotHighWaterMark();
-        
+
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
@@ -394,19 +325,11 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // Disable backface culling after rendering (restore default state)
         GL.Disable(EnableCap.CullFace);
-        
+
         // Render picked block outline (on top of terrain)
         RenderPickedBlockOutline();
 
         Log.CheckGlError();
-    }
-    
-    /// <summary>
-    /// Update light direction (for testing/debugging).
-    /// </summary>
-    public void SetLightDirection(Vector3 direction)
-    {
-        lightDirection = Vector3.Normalize(direction);
     }
 
     /// <summary>
@@ -415,15 +338,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public void Dispose()
     {
         if (disposed) return;
-        
+
         disposed = true;
-        
+
         if (vao != 0)
         {
             GL.DeleteVertexArray(vao);
             vao = 0;
         }
-        
+
         // Cleanup outline resources
         if (outlineVao != 0)
         {
@@ -444,10 +367,9 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Don't dispose bufferManager - it's owned by ChunkStreamingManager
         bufferManager = null;
         actualVertexCount = 0;
-        actualIndexCount = 0;
 
         Log.Info("VoxelTerrainRenderer: Disposed");
-        
+
         GC.SuppressFinalize(this);
     }
 
@@ -457,16 +379,16 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public long GetAllocatedBytes()
     {
         if (bufferManager == null) return 0;
-        
+
         // Vertex buffer: actualVertexCount * stride
         var vertexBytes = actualVertexCount * VoxelHelper.VERTEX_STRIDE_BYTES;
-        
+
         // Shared index buffer: always 6 indices * 4 bytes
         var indexBytes = 6 * sizeof(uint);
-        
+
         // Indirect draw commands: actualFaceCount * 5 uints
         var indirectBytes = actualFaceCount * 5 * sizeof(uint);
-        
+
         return vertexBytes + indexBytes + indirectBytes;
     }
 

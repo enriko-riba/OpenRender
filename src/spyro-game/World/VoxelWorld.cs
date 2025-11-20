@@ -42,7 +42,7 @@ public class VoxelWorld
         if (fence == IntPtr.Zero) return;
         // Non-blocking test
         var res = GL.ClientWaitSync(fence, ClientWaitSyncFlags.SyncFlushCommandsBit, 0);
-        if (res == WaitSyncStatus.AlreadySignaled || res == WaitSyncStatus.ConditionSatisfied)
+        if (res is WaitSyncStatus.AlreadySignaled or WaitSyncStatus.ConditionSatisfied)
         {
             try
             {
@@ -176,12 +176,7 @@ public class VoxelWorld
     /// </summary>
     /// <param name="world"></param>
     /// <returns></returns>
-    public static VoxelMaterial[] GetMaterials()
-    {
-        return Enumerable.Range(0, materials.Keys.Max() + 1)
-            .Select(index => materials.TryGetValue(index, out var value) ? value : default)
-            .ToArray();
-    }
+    public static VoxelMaterial[] GetMaterials() => [.. Enumerable.Range(0, materials.Keys.Max() + 1).Select(index => materials.TryGetValue(index, out var value) ? value : default)];
     #endregion
 
     public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
@@ -202,14 +197,14 @@ public class VoxelWorld
     private readonly int seed;
     private readonly HashSet<int> surroundingChunkSet = [];
     // Multi-worker CPU generation
-    private readonly List<Thread> workerThreads = new();
+    private readonly List<Thread> workerThreads = [];
     private readonly int workerCount;
     private long lastStreamingUpdateMs;
     private long lastCompactionRebuildMs;
     private long lastCompactionRepackMs;
     // Allocator state (Phase 2.5+): free draw slots and free atlas ranges harvested from evicted draws
-    internal List<int> FreeDrawSlots { get; } = new();
-    internal List<(int Base, int Length)> FreeAtlasRanges { get; } = new();
+    internal List<int> FreeDrawSlots { get; } = [];
+    internal List<(int Base, int Length)> FreeAtlasRanges { get; } = [];
     private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
@@ -503,7 +498,7 @@ public class VoxelWorld
         {
             var local = globalPosition - loaded.Position;
             var bt = loaded.Blocks[local.X + local.Z * VoxelHelper.ChunkSideSize + local.Y * VoxelHelper.ChunkSideSizeSquare].BlockType;
-            if (borderQueryCache is not null) borderQueryCache[key] = bt;
+            borderQueryCache?[key] = bt;
             return bt;
         }
 
@@ -532,7 +527,7 @@ public class VoxelWorld
                 {
                     bt = BlockType.None;
                 }
-                if (borderQueryCache is not null) borderQueryCache[key] = bt;
+                borderQueryCache?[key] = bt;
                 return bt;
             }
         }
@@ -544,7 +539,7 @@ public class VoxelWorld
         var ly = globalPosition.Y - chunkOrigin.Y;
         var lz = globalPosition.Z - chunkOrigin.Z;
         var result = terrainBuilder.GenerateChunkBlockLocal(chunkIndex, lx, ly, lz);
-        if (borderQueryCache is not null) borderQueryCache[key] = result;
+        borderQueryCache?[key] = result;
         return result;
     }
 
@@ -600,7 +595,7 @@ public class VoxelWorld
                 z += stepZ; t = tMaxZ; tMaxZ += tDeltaZ;
             }
 
-            if (y < 0 || y > VoxelHelper.MaxBlockPositionY) break;
+            if (y is < 0 or > VoxelHelper.MaxBlockPositionY) break;
             if (x < 0 || z < 0 || x > VoxelHelper.MaxBlockPositionXZ || z > VoxelHelper.MaxBlockPositionXZ) break;
 
             var b = GetBlockByPositionGlobalSafe(x, y, z);
@@ -1001,7 +996,7 @@ public class VoxelWorld
 
         // Phase 2.5: periodic eviction/repack when resident overhead is high
         // If resident draw array is much larger than desired, rebuild exactly for desired
-        var resident = CompactedChunkIndices ?? Array.Empty<int>();
+        var resident = CompactedChunkIndices ?? [];
         var desiredCountNow = desired.Count;
         const float OverheadFactor = 1.6f;   // rebuild if resident > 1.6x desired
         const int MinOverhead = 256;         // and at least 256 extra draws
@@ -1014,7 +1009,7 @@ public class VoxelWorld
                 if (now - lastCompactionRepackMs >= RepackDebounceMs && ChunkInitializer is not null && !ChunkInitializer.HasInFlightBatch)
                 {
                     int[] desiredArr;
-                    lock (surroundingChunkSet) { desiredArr = surroundingChunkSet.ToArray(); }
+                    lock (surroundingChunkSet) { desiredArr = [.. surroundingChunkSet]; }
                     try { ChunkInitializer.ProcessChunkData(desiredArr); lastCompactionRepackMs = now; } catch { }
                 }
             }
@@ -1042,7 +1037,7 @@ public class VoxelWorld
     /// </summary>
     /// <param name="centerPosition"></param>
     /// <returns></returns>
-    private HashSet<int> BuildSurroundingSet(int cameraChunkX, int cameraChunkZ)
+    private static HashSet<int> BuildSurroundingSet(int cameraChunkX, int cameraChunkZ)
     {
         var newChunkSetIndices = new HashSet<int>(1024);
 
@@ -1288,19 +1283,19 @@ public class VoxelWorld
 
             if (CreateChunkInitializeAndAddToLoaded(index, out var chunk))
             {
-                var initialized = stopwatch.ElapsedMilliseconds - start;
-                var processingStart = stopwatch.ElapsedMilliseconds;
+                //var initialized = stopwatch.ElapsedMilliseconds - start;
+                //var processingStart = stopwatch.ElapsedMilliseconds;
                 var hasChanges = LoadChangedChunkBlocks(chunk);
                 if (!chunk.IsProcessed || hasChanges)
                 {
                     chunk.RecomputeLighting(force: true, includeNeighborData: true);
                 }
-                var processed = stopwatch.ElapsedMilliseconds - processingStart;
+                //var processed = stopwatch.ElapsedMilliseconds - processingStart;
                 //Log.Debug($"ProcessWorkItem() chunk: {chunk}, init time:{initialized} ms, process time:{processed} ms");
             }
             else
             {
-                var initialized = stopwatch.ElapsedMilliseconds - start;
+                //var initialized = stopwatch.ElapsedMilliseconds - start;
                 //Log.Debug($"ProcessWorkItem() reusing existing chunk: {chunk}, time:{initialized} ms");
                 if (chunk.State is ChunkState.SafeToRemove)
                     chunk.State = ChunkState.Loaded;
@@ -1606,16 +1601,10 @@ public class VoxelWorld
     // Per-chunk 3D break mask bitset: 1 bit per voxel (length = VoxelsCount/8)
     private readonly ConcurrentDictionary<int, byte[]> breakMasks3D = new();
 
-    internal byte[]? GetBreakMask(int chunkIndex)
-    {
-        return breakMasks.TryGetValue(chunkIndex, out var mask) ? mask : null;
-    }
+    internal byte[]? GetBreakMask(int chunkIndex) => breakMasks.TryGetValue(chunkIndex, out var mask) ? mask : null;
 
     // Returns 3D bitset as bytes (will be reinterpreted as uints when uploading)
-    internal byte[]? GetBreakMask3D(int chunkIndex)
-    {
-        return breakMasks3D.TryGetValue(chunkIndex, out var mask) ? mask : null;
-    }
+    internal byte[]? GetBreakMask3D(int chunkIndex) => breakMasks3D.TryGetValue(chunkIndex, out var mask) ? mask : null;
 
     private void SetBreakMaskBit(int chunkIndex, int lx, int lz, bool hidden)
     {

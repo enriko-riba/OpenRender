@@ -43,7 +43,7 @@ public static class Log
     {
         if (level >= MinimumLevel)
         {
-            using (@lock.EnterScope())  // ✅ Correct usage of Lock
+            using (@lock.EnterScope())
             {
                 var textColor = ConsoleColor.DarkGray;
                 switch (level)

@@ -426,7 +426,8 @@ internal class GameScene : Scene
         WriteLine("Rendering:", highlightColor);
         if (terrainRenderer != null)
         {
-            WriteLine($"  Faces: {terrainRenderer.RenderedBlocks:N0}", textColor);
+            WriteLine($"  Visible Chunks: {terrainRenderer.VisibleDraws:N0}", textColor);
+            WriteLine($"  Capacity: {terrainRenderer.RenderedBlocks:N0}", textColor);
             WriteLine($"  Draw Calls: {terrainRenderer.DrawCallCount}", textColor);
         }
         WriteLine("", textColor);

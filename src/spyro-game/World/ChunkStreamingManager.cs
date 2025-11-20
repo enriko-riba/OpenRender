@@ -34,11 +34,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private Shader? generationShader;
     private int generationSeed;
     private bool generationTestMode;
-    private uint[] chunkIndicesBuffers = new uint[2];
-    private uint[] voxelDataBuffers = new uint[2];
-    private uint[] columnHeightsBuffers = new uint[2];
-    private uint[] columnMetaBuffers = new uint[2];
-    private IntPtr[] bufferFences = new IntPtr[2]; // Fences to track when buffers are free (Phase 3 complete)
+    private readonly uint[] chunkIndicesBuffers = new uint[2];
+    private readonly uint[] voxelDataBuffers = new uint[2];
+    private readonly uint[] columnHeightsBuffers = new uint[2];
+    private readonly uint[] columnMetaBuffers = new uint[2];
     private int nextBufferIndex = 0; // Phase 5.3: Toggle for double buffering
 
     // Phase 3: dedicated chunk indices buffer to avoid races with Phase 2 uploads
@@ -82,7 +81,7 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         this.world = world ?? throw new ArgumentNullException(nameof(world));
         bufferAllocator = new GpuBufferAllocator();
-        activeChunks = new Dictionary<int, ChunkDescriptor>();
+        activeChunks = [];
         pendingGeneration = new Queue<int>();
         inFlightBatches = new Queue<BatchSubmission>();
         scanningBatches = new Queue<ScanningBatch>();
@@ -292,7 +291,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var batchIndices = new List<int>();
         var batchSize = Math.Min(MAX_CHUNKS_PER_BATCH, pendingGeneration.Count);
         
-        for (int i = 0; i < batchSize; i++)
+        for (var i = 0; i < batchSize; i++)
         {
             if (pendingGeneration.Count > 0)
             {
@@ -324,15 +323,15 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // CRITICAL FIX: Actually dispatch GPU generation!
         // Use double buffering for generation buffers
-        int bufferIndex = nextBufferIndex;
+        var bufferIndex = nextBufferIndex;
         nextBufferIndex = (nextBufferIndex + 1) % 2;
         
-        var fence = DispatchGenerationAsync(batchIndices.ToArray(), bufferIndex);
+        var fence = DispatchGenerationAsync([.. batchIndices], bufferIndex);
 
         // Create batch submission with fence
         var submission = new BatchSubmission
         {
-            ChunkIndices = batchIndices.ToArray(),
+            ChunkIndices = [.. batchIndices],
             Fence = fence,
             SubmitFrame = currentFrame,
             BufferIndex = bufferIndex
@@ -533,8 +532,8 @@ public sealed class ChunkStreamingManager : IDisposable
             var desc = kvp.Value;
             
             // Don't unload chunks that are still generating or pending
-            if (desc.State == TerrainChunkState.Generating || 
-                desc.State == TerrainChunkState.Pending)
+            if (desc.State is TerrainChunkState.Generating or
+                TerrainChunkState.Pending)
                 continue;
 
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
@@ -687,7 +686,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var voxelIdx = localZ * VoxelHelper.ChunkSideSizeSquare + 
                        localY * VoxelHelper.ChunkSideSize + 
                        localX;
-        
+
         // Mark voxel as edited in edit mask
         MarkVoxelEdited(chunkIdx, voxelIdx, blockType, isBreaking);
         
@@ -711,7 +710,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Mark a specific voxel as edited in the GPU edit mask buffer (Phase 5)
     /// This will be read by the generation shader to override generated terrain
     /// </summary>
-    private void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockType blockType, bool isBreaking)
+    private static void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockType blockType, bool isBreaking)
     {
         // TODO Phase 5.2: Upload edit data to GPU editMask3D buffer
         // For now, we just mark the chunk as dirty and rely on full regeneration
@@ -768,8 +767,8 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public void InitializeGpuGeneration(int seed, float elevOffset, float elevScale, bool testMode = false, int maxChunks = 0)
     {
-        this.generationSeed = seed;
-        this.generationTestMode = testMode;
+       generationSeed = seed;
+       generationTestMode = testMode;
 
         // Pre-allocate for max view distance if not specified
         if (maxChunks == 0)
@@ -900,9 +899,6 @@ public sealed class ChunkStreamingManager : IDisposable
         if (generationShader == null || chunkIndices.Length == 0)
             return IntPtr.Zero;
 
-        var voxelsPerChunk = VoxelHelper.ChunkSideSizeSquare * VoxelHelper.ChunkYSize;
-        var totalVoxels = chunkIndices.Length * voxelsPerChunk;
-
         // Upload chunk indices to the selected buffer
         GL.NamedBufferSubData(chunkIndicesBuffers[bufferIndex], IntPtr.Zero, chunkIndices.Length * sizeof(int), chunkIndices);
 
@@ -1001,9 +997,16 @@ public sealed class ChunkStreamingManager : IDisposable
         // Stage 3.1 Visibility
         // Bind the correct voxel data buffer for this batch
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
+        // Bind chunk indices buffer for neighbor lookup (Phase 5.4 FIX)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, chunkIndicesBuffers[bufferIndex]);
+        
         phase3Buffers.BindBuffersForVisibility();
         visibilityShader.Use();
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
+        GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed);
+        GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
+        GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
+        
         GL.DispatchCompute((int)chunkCount, 128, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
 
@@ -1043,20 +1046,21 @@ public sealed class ChunkStreamingManager : IDisposable
         
         var chunkCount = (uint)chunkIndices.Length;
 
-        // Fetch baseOffsets (needed to set per-chunk baseVertex) and totals for allocations
-        // This readback should be fast now because we waited for the fence
-        var baseOffsets = new uint[chunkCount];
-        GL.GetNamedBufferSubData(phase3Buffers.OffsetBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), baseOffsets);
-        
         // Fetch face counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
         GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
         
-        uint[] totals = new uint[2];
-        GL.GetNamedBufferSubData(phase3Buffers.ScanTotalsBuffer, IntPtr.Zero, 2 * sizeof(uint), totals);
-        
-        var totalVertices = totals[0];
-        var totalIndices = totals[1];
+        // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
+        // We only need to read 'counts'. Base offsets and totals are derived from it.
+        var baseOffsets = new uint[chunkCount];
+        uint totalVertices = 0;
+        for (int i = 0; i < chunkCount; i++)
+        {
+            baseOffsets[i] = totalVertices;
+            totalVertices += counts[i] * 4u; // 4 vertices per face
+        }
+        uint totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face
+
         uint allocatedVertexOffset = phase3Buffers.AllocateVertexRegion(totalVertices);
         uint allocatedIndexOffset = phase3Buffers.AllocateIndexRegion(totalIndices);
 
@@ -1112,26 +1116,6 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
-    /// Compute prefix sum for vertex buffer offsets.
-    /// Stage 3.3: CPU Prefix Sum
-    /// </summary>
-    private (uint[] baseOffsets, uint totalVertices) ComputePrefixSum(uint[] visibleCounts)
-    {
-        var baseOffsets = new uint[visibleCounts.Length];
-        uint runningTotal = 0;
-
-        for (int i = 0; i < visibleCounts.Length; i++)
-        {
-            baseOffsets[i] = runningTotal;
-            runningTotal += visibleCounts[i] * 4;  // 4 vertices per face
-        }
-
-        Log.Debug($"Prefix sum: {visibleCounts.Length} chunks, {runningTotal} total vertices");
-
-        return (baseOffsets, runningTotal);
-    }
-
-    /// <summary>
     /// Initialize Phase 4 GPU rendering
     /// </summary>
     public void InitializePhase4()
@@ -1153,10 +1137,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
         
         // Load frustum culling shader
-        if (frustumShader == null)
-        {
-            frustumShader = new Shader("Shaders/compute-frustum.comp", ShaderType.ComputeShader);
-        }
+        frustumShader ??= new Shader("Shaders/compute-frustum.comp", ShaderType.ComputeShader);
 
         // Create or recreate frustum UBO (6 planes * vec4 = 96 bytes)
         if (frustumUBO == 0)
@@ -1203,20 +1184,20 @@ public sealed class ChunkStreamingManager : IDisposable
         if (frustumShader == null || chunkIndices.Length == 0)
         {
             // Return all visible if culling not initialized
-            return Enumerable.Repeat(1, chunkIndices.Length).ToArray();
+            return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         }
 
         // Buffers are pre-allocated to max view distance, so this should never happen
         if (chunkIndices.Length > chunkIndicesBufferCapacity)
         {
             Log.Error($"Frustum culling buffer overflow! Requested {chunkIndices.Length} chunks, capacity {chunkIndicesBufferCapacity}.");
-            return Enumerable.Repeat(1, chunkIndices.Length).ToArray();
+            return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         }
         
         if (chunkIndices.Length > visibilityFlagsCapacity)
         {
             Log.Error($"Visibility flags buffer overflow! Requested {chunkIndices.Length} chunks, capacity {visibilityFlagsCapacity}.");
-            return Enumerable.Repeat(1, chunkIndices.Length).ToArray();
+            return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         }
 
         // Update frustum planes UBO
@@ -1254,7 +1235,7 @@ public sealed class ChunkStreamingManager : IDisposable
         VisibleChunkCount = chunkIndices.Length; // Conservative estimate
         CulledChunkCount = 0;
         
-        return Enumerable.Repeat(1, chunkIndices.Length).ToArray();
+        return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         
         /* REMOVED: Expensive CPU readback that causes VIDEO→HOST memory copies
         var visibilityFlags = new int[chunkIndices.Length];
@@ -1381,34 +1362,6 @@ public sealed class ChunkStreamingManager : IDisposable
             terrainRenderer.SetupBuffers(phase3Buffers, totalVertices, (uint)totalFaces, activeChunks.Values.Where(c=>c.State==TerrainChunkState.Ready));
             Log.Info($"Complete pipeline executed: {chunkIndices.Length} chunks processed in batches");
         }
-    }
-
-    public void RegisterChunksAsReady(int[] chunkIndices)
-    {
-        foreach (var chunkIdx in chunkIndices)
-        {
-            if (activeChunks.ContainsKey(chunkIdx))
-            {
-                // Update existing chunk
-                var desc = activeChunks[chunkIdx];
-                desc.State = TerrainChunkState.Ready;
-                activeChunks[chunkIdx] = desc;
-            }
-            else
-            {
-                // Create new descriptor for chunk not tracked yet
-                var descriptor = new ChunkDescriptor
-                {
-                    ChunkIndex = chunkIdx,
-                    State = TerrainChunkState.Ready,
-                    LastAccessFrame = currentFrame,
-                    Priority = CalculatePriority(chunkIdx)
-                };
-                activeChunks[chunkIdx] = descriptor;
-            }
-        }
-        
-        Log.Info($"Registered {chunkIndices.Length} chunks as ready");
     }
 
     public void Dispose()
