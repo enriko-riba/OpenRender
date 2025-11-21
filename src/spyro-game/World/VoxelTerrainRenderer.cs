@@ -320,6 +320,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Empty slots (freed) are zeroed out and will be skipped by GPU.
         int drawCount = bufferManager.GetCommandSlotHighWaterMark();
 
+        if (drawCount == 0)
+        {
+            Log.Warn("VoxelTerrainRenderer.OnDraw: drawCount is 0!");
+        }
+        else if (frameCounter % 60 == 0)
+        {
+            Log.Info($"VoxelTerrainRenderer.OnDraw: Drawing {drawCount} commands (HighWaterMark)");
+        }
+
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,

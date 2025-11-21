@@ -58,7 +58,9 @@ public sealed class ChunkStreamingManager : IDisposable
     // Phase 3: Visibility & Compaction pipeline
     private Shader? visibilityShader;
     private Shader? countShader;
+    private Shader? scanShader; // Cached scan shader
     private Shader? compactShader;
+    private Shader? buildIndirectShader; // Cached build-indirect shader
     private Phase3BufferManager? phase3Buffers;
 
     // Phase 4: Rendering
@@ -283,6 +285,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 {
                     ChunkIndex = chunkIdx,
                     State = TerrainChunkState.Pending,
+                    CommandSlot = -1, // Initialize to -1 so we know it's not allocated
                     //LastAccessFrame = currentFrame,
                     //Priority = CalculatePriority(chunkIdx)
                 };
@@ -1008,15 +1011,19 @@ public sealed class ChunkStreamingManager : IDisposable
                 GL.DeleteBuffers(2, voxelDataBuffers);
                 GL.DeleteBuffers(2, columnHeightsBuffers);
                 GL.DeleteBuffers(2, columnMetaBuffers);
+                GL.DeleteBuffers(2, columnSpansBuffers);
                 GL.DeleteBuffer(compactionChunkIndicesBuffer);
                 GL.DeleteBuffer(cullingChunkIndicesBuffer);
+                GL.DeleteBuffer(editBuffer);
                 
                 GL.CreateBuffers(2, chunkIndicesBuffers);
                 GL.CreateBuffers(2, voxelDataBuffers);
                 GL.CreateBuffers(2, columnHeightsBuffers);
                 GL.CreateBuffers(2, columnMetaBuffers);
+                GL.CreateBuffers(2, columnSpansBuffers);
                 GL.CreateBuffers(1, out compactionChunkIndicesBuffer);
                 GL.CreateBuffers(1, out cullingChunkIndicesBuffer);
+                GL.CreateBuffers(1, out editBuffer);
             }
 
             // NOTE: Using int (not uint) to match C# int[] arrays used throughout the codebase
@@ -1162,7 +1169,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 applyEditsShader.Use();
                 applyEditsShader.SetUInt("uEditCount", (uint)(editsToUpload.Count / 2));
                 
-                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]); // Voxel data (binding 0)
+                GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, voxelDataBuffers[bufferIndex]); // Voxel data (binding 1)
                 GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, editBuffer); // Edits (binding 5)
                 
                 var groups = (editsToUpload.Count / 2 + 63) / 64;
@@ -1216,6 +1223,14 @@ public sealed class ChunkStreamingManager : IDisposable
         // Dispose old buffers if reinitializing
         phase3Buffers?.Dispose();
 
+        // CRITICAL: Clear active chunks when reinitializing buffers
+        // Existing chunks point to offsets in the disposed buffers and are now invalid
+        if (activeChunks.Count > 0)
+        {
+            Log.Warn($"InitializePhase3: Clearing {activeChunks.Count} active chunks due to buffer reinitialization");
+            activeChunks.Clear();
+        }
+
         // FORCE shader reload by clearing cache
         // This ensures we get the latest shader code after edits
         var shaderCacheField = typeof(Shader).GetField("shaderCache",
@@ -1230,7 +1245,9 @@ public sealed class ChunkStreamingManager : IDisposable
         // Load compute shaders (will reload from disk after cache clear)
         visibilityShader = new Shader("Shaders/compute-visibility.comp", ShaderType.ComputeShader);
         countShader = new Shader("Shaders/compute-count.comp", ShaderType.ComputeShader);
+        scanShader = new Shader("Shaders/compute-scan.comp", ShaderType.ComputeShader);
         compactShader = new Shader("Shaders/compute-compact.comp", ShaderType.ComputeShader);
+        buildIndirectShader = new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
 
         // Allocate Phase 3 buffers
         phase3Buffers = new Phase3BufferManager();
@@ -1283,7 +1300,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Stage 3.3 Prefix Sum (GPU)
         phase3Buffers.BindBuffersForScan();
-        var scanShader = new Shader("Shaders/compute-scan.comp", ShaderType.ComputeShader);
+        if (scanShader == null) scanShader = new Shader("Shaders/compute-scan.comp", ShaderType.ComputeShader);
         scanShader.Use();
         GL.Uniform1(scanShader.GetUniformLocation("uChunkCount"), chunkCount);
         var scanGroups = (chunkCount + 255) / 256;
@@ -1312,7 +1329,18 @@ public sealed class ChunkStreamingManager : IDisposable
         // Fetch face counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
         GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-        
+
+        // DEBUG: Log counts
+        var totalFaces = counts.Aggregate(0u, (a, c) => a + c);
+        if (totalFaces == 0)
+        {
+            Log.Warn($"ExecutePhase3_Part2: Total visible faces is 0 for {chunkCount} chunks! (First 5 counts: {string.Join(",", counts.Take(5))})");
+        }
+        else
+        {
+            Log.Info($"ExecutePhase3_Part2: Total visible faces: {totalFaces} for {chunkCount} chunks");
+        }
+
         // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
         // We only need to read 'counts'. Base offsets and totals are derived from it.
         var baseOffsets = new uint[chunkCount];
@@ -1378,11 +1406,11 @@ public sealed class ChunkStreamingManager : IDisposable
         // Bind chunk info buffer
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.ChunkInfoBuffer);
 
-        var buildIndirect = new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
-        buildIndirect.Use();
-        GL.Uniform1(buildIndirect.GetUniformLocation("uChunkCount"), chunkCount);
-        GL.Uniform1(buildIndirect.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
-        GL.Uniform1(buildIndirect.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
+        if (buildIndirectShader == null) buildIndirectShader = new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
+        buildIndirectShader.Use();
+        GL.Uniform1(buildIndirectShader.GetUniformLocation("uChunkCount"), chunkCount);
+        GL.Uniform1(buildIndirectShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
+        GL.Uniform1(buildIndirectShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
         var groups = (chunkCount + 255) / 256;
         GL.DispatchCompute((int)groups, 1, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.CommandBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
