@@ -240,8 +240,6 @@ public class VoxelWorld
     public volatile int ProcessedStartingChunks;
     public int TotalStartingChunks;
 
-    public ChunkRenderer ChunkRenderer { get; private set; }
-
     public int WorkerQueueLength => workQueue.Count;
 
     private volatile bool isRunning;
@@ -251,7 +249,6 @@ public class VoxelWorld
         this.seed = seed;
 
         terrainBuilder = new TerrainBuilder(seed);
-        ChunkRenderer = ChunkRenderer.Create(this, GetTextureHandles(), GetMaterials());
 
         // GPU-first pipeline: disable CPU worker threads
         workerCount = 0;
@@ -729,7 +726,23 @@ public class VoxelWorld
         var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(blockWorldPosition);
         var chunk = this[chunkIndex];
         if (chunk is null) return null;
-        // Prefer GPU column heights for collision stability; spans are used as a fallback.
+
+        // Prefer GPU spans for accurate collision (caves, overhangs)
+        if (chunk.HasGpuSpans)
+        {
+            var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+            var lx = x - origin.X; var ly = y - origin.Y; var lz = z - origin.Z;
+            if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize || (uint)ly >= (uint)VoxelHelper.ChunkYSize)
+                return null;
+            
+            var bt = chunk.GetBlockTypeFromSpans(lx, ly, lz, ChunkCollisionData.MaxSpansPerColumn);
+            // if (bt == BlockType.None) return null; // Don't return null for air, return BlockType.None
+
+            var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
+            return new BlockState(idx, chunk) { BlockType = bt, IsVisible = true };
+        }
+
+        // Fallback to GPU column heights (heightmap only)
         if (chunk.HasGpuColumns)
         {
             var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
@@ -771,17 +784,6 @@ public class VoxelWorld
 
             var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
             return new BlockState(idx, chunk) { BlockType = bt, IsVisible = bt != BlockType.None };
-        }
-        if (chunk.HasGpuSpans)
-        {
-            var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
-            var lx = x - origin.X; var ly = y - origin.Y; var lz = z - origin.Z;
-            if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize || (uint)ly >= (uint)VoxelHelper.ChunkYSize)
-                return null;
-            var solid = chunk.IsSolidBySpans(lx, ly, lz, maxSpans: 3);
-            var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
-            var bt = solid ? BlockType.Rock : BlockType.None;
-            return new BlockState(idx, chunk) { BlockType = bt, IsVisible = solid };
         }
         // Fallback to CPU blocks only if GPU columns are not ready
         if (!chunk.IsInitialized || chunk.Blocks is null) return null;
@@ -1246,7 +1248,7 @@ public class VoxelWorld
                 {
                     evicted.State = ChunkState.ToBeRemoved;
                     evicted.Visible = false;
-                    ChunkRenderer.chunksStreamingQueue.Enqueue(evicted);
+                    // ChunkRenderer.chunksStreamingQueue.Enqueue(evicted);
                     SaveChangedChunkBlocks(evicted);
                 }
             }
@@ -1273,7 +1275,7 @@ public class VoxelWorld
                 return;
             }
 
-            var start = stopwatch.ElapsedMilliseconds;
+            //var start = stopwatch.ElapsedMilliseconds;
 
             // Mark compute in progress
             if (loadedChunks.TryGetValue(index, out var inProgChunk))
@@ -1485,7 +1487,7 @@ public class VoxelWorld
     {
         if (chunk is null) return;
         // If GPU compaction drives rendering, skip legacy per-chunk uploads to avoid churn
-        if (ChunkRenderer != null && CompactedAtlasSSBO != 0)
+        if (CompactedAtlasSSBO != 0)
         {
             chunk.PendingUpload = false;
             return;
@@ -1493,7 +1495,7 @@ public class VoxelWorld
         if (chunk.PendingUpload) return;
         chunk.PendingUpload = true;
         pendingUploadSince[chunk.Index] = stopwatch.ElapsedMilliseconds;
-        ChunkRenderer.chunksStreamingQueue.Enqueue(chunk);
+        // ChunkRenderer.chunksStreamingQueue.Enqueue(chunk);
     }
 
     internal void ProcessPendingWorkOnGlThread(int maxBatch = 16)

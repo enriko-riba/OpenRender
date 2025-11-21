@@ -24,7 +24,7 @@ var nativeWindowSettings = new NativeWindowSettings()
     WindowState = WindowState.Maximized,
 };
 
-OpenRender.Log.MinimumLevel = OpenRender.Log.LevelInfo;
+OpenRender.Log.MinimumLevel = OpenRender.Log.LevelDebug;
 
 //  the one and only SceneManager
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);
@@ -41,8 +41,10 @@ var tr2 = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.Client
 var world = new VoxelWorld(1338);
 
 // Create GameScene (will receive terrain from loading scene)
-var gameScene = new GameScene(tr2);
-gameScene.World = world;
+var gameScene = new GameScene(tr2)
+{
+    World = world
+};
 scm.AddScene(gameScene);
 
 // Start with TerrainLoadingScene which initializes GPU terrain and transitions to GameScene

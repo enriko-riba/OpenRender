@@ -29,6 +29,18 @@ layout(std430, binding = 2) writeonly buffer VisibilityFlags
     int visibilityFlags[];  // 0 = culled, 1 = visible
 };
 
+// Command slots for updating indirect buffer
+layout(std430, binding = 3) readonly buffer CommandSlots
+{
+    int commandSlots[];
+};
+
+// Indirect draw buffer (to update instanceCount)
+layout(std430, binding = 4) writeonly buffer IndirectDraws
+{
+    uint indirectDraws[];
+};
+
 // Constants
 uniform int chunkCount;      // Number of chunks to process
 uniform int chunkSideSize;   // Chunk size in XZ (blocks)
@@ -113,4 +125,16 @@ void main()
     
     // Write visibility flag
     visibilityFlags[idx] = isVisible ? 1 : 0;
+
+    // Update indirect draw command instance count
+    // This effectively culls the chunk from rendering without rebuilding the buffer
+    int slot = commandSlots[idx];
+    if (slot >= 0)
+    {
+        // Indirect command structure: count, instanceCount, firstIndex, baseVertex, baseInstance
+        // We update instanceCount (offset 1)
+        // 5 uints per command
+        uint offset = uint(slot) * 5u + 1u;
+        indirectDraws[offset] = isVisible ? 1u : 0u;
+    }
 }

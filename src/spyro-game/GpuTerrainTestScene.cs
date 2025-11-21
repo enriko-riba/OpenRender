@@ -153,7 +153,7 @@ internal class GpuTerrainTestScene : Scene
         }
 
         // Update player (handles physics, collision, and WASD movement input)
-        player.Update(elapsedSeconds, SceneManager.KeyboardState);
+        player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
 
         // Vertical movement in ghost mode is handled by Player internally via keyboard actions
         // Note: Shift and Ctrl for up/down removed - player handles all movement

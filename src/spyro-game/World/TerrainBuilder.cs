@@ -176,8 +176,7 @@ public class TerrainBuilder
 
     private float Height01At(int gx, int gz)
     {
-        var baseVal = SampleBaseNoise(gx, gz);   // [-1,1]
-        return Height01At(gx, gz, baseVal);            // [0,1]
+        return (float)GenerateHeight(gx, gz) / (VoxelHelper.ChunkYSize - 1);
     }
 
     // baseVal in [-1,1]; returns normalized height in [0,1]
@@ -324,17 +323,96 @@ public class TerrainBuilder
 
 
 
+    // ------------------------------------------------------------------------
+    // CPU implementation of GPU noise functions to ensure collision consistency
+    // ------------------------------------------------------------------------
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint Hash(uint x, uint seed)
+    {
+        x += seed;
+        x = ((x >> 16) ^ x) * 0x45d9f3bu;
+        x = ((x >> 16) ^ x) * 0x45d9f3bu;
+        x = (x >> 16) ^ x;
+        return x;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static float Noise2D(int x, int z, uint seed)
+    {
+        uint n = Hash((uint)x + Hash((uint)z, seed), seed);
+        return (float)n / uint.MaxValue * 2.0f - 1.0f;
+    }
+
+    private static float InterpolatedNoise(float x, float z, uint seed)
+    {
+        int ix = (int)MathF.Floor(x);
+        int iz = (int)MathF.Floor(z);
+        float fx = x - ix;
+        float fz = z - iz;
+
+        // Smooth the interpolation
+        fx = fx * fx * (3.0f - 2.0f * fx);
+        fz = fz * fz * (3.0f - 2.0f * fz);
+
+        float v00 = Noise2D(ix, iz, seed);
+        float v10 = Noise2D(ix + 1, iz, seed);
+        float v01 = Noise2D(ix, iz + 1, seed);
+        float v11 = Noise2D(ix + 1, iz + 1, seed);
+
+        float v0 = Lerp(v00, v10, fx);
+        float v1 = Lerp(v01, v11, fx);
+        return Lerp(v0, v1, fz);
+    }
+
+    private static float MultiOctaveNoise(float x, float z, uint seed, int octaves)
+    {
+        float total = 0.0f;
+        float frequency = 1.0f;
+        float amplitude = 1.0f;
+        float maxValue = 0.0f;
+
+        for (int i = 0; i < octaves; i++)
+        {
+            total += InterpolatedNoise(x * frequency, z * frequency, seed + (uint)(i * 100));
+            maxValue += amplitude;
+            amplitude *= 0.5f;
+            frequency *= 2.0f;
+        }
+
+        return total / maxValue;
+    }
+
+    private int GenerateHeight(int wx, int wz)
+    {
+        // Base terrain (large features)
+        float baseScale = 0.005f;  // 1/200
+        float baseNoise = MultiOctaveNoise(wx * baseScale, wz * baseScale, (uint)seed, 4);
+
+        // Detail noise (small features)
+        float detailScale = 0.02f;  // 1/50
+        float detailNoise = MultiOctaveNoise(wx * detailScale, wz * detailScale, (uint)seed + 1000u, 3);
+
+        // Combine: base terrain + 30% detail
+        float combined = baseNoise + detailNoise * 0.3f;
+
+        // Map to height range: water level ±40 blocks = range of 80 blocks
+        float h01 = combined * 0.5f + 0.5f;  // Map [-1,1] to [0,1]
+        int height = (int)((float)VoxelHelper.WaterLevel + (h01 - 0.5f) * 80.0f);
+
+        // Clamp to valid range
+        return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
+    }
+
     /// <summary>
-    /// 
+    ///
     /// </summary>
     /// <param name="globalX"></param>
     /// <param name="globalZ"></param>
     /// <returns></returns>
     public int GetHeightNormalizedGlobal(int globalX, int globalZ)
     {
-        var h01 = Height01At(globalX, globalZ); // [0,1]
-        h01 = MathF.Round(h01 * (VoxelHelper.ChunkYSize - 1));
-        return Math.Clamp((int)h01, 0, VoxelHelper.MaxBlockPositionY);
+        return GenerateHeight(globalX, globalZ);
     }
 
     public int GetHeightNormalizedChunkLocal(int chunkIndex, int x, int z)

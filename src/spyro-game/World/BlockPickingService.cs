@@ -11,6 +11,7 @@ namespace SpyroGame.World;
 public class BlockPickingService
 {
     private readonly VoxelWorld world;
+    private readonly ChunkStreamingManager? streamingManager;
     private readonly VoxelTerrainRenderer terrainRenderer;
     
     // Timing
@@ -40,18 +41,17 @@ public class BlockPickingService
         // In GPU mode, we don't have direct access to VoxelWorld or VoxelTerrainRenderer in the same way
         // But since picking is disabled anyway, we just need to satisfy the constructor
         this.world = null!; 
+        this.streamingManager = streamingManager;
         this.terrainRenderer = streamingManager.GetTerrainRenderer();
     }
     
     /// <summary>
     /// Currently picked block (cached result).
-    /// Always returns null since picking is disabled.
     /// </summary>
-    public BlockState? PickedBlock => null;
+    public BlockState? PickedBlock => cachedPickedBlock;
     
     /// <summary>
     /// Update the picking service. Call this once per frame.
-    /// Currently a no-op since picking is disabled.
     /// </summary>
     /// <param name="currentTime">Current game time in seconds</param>
     /// <param name="camera">Current camera</param>
@@ -68,10 +68,30 @@ public class BlockPickingService
             lastCameraDirection = camera.Front;
         }
         
-        // Block picking disabled - FBO removed to eliminate jitter
-        // UI will display N/A for picked block
-        cachedPickedBlock = null;
-        terrainRenderer.PickedBlock = null;
+        // Only update if enough time passed or camera moved significantly
+        bool shouldUpdate = (currentTime - lastPickTime >= PickIntervalSeconds) || 
+                           HasCameraMoved(camera.Position, camera.Front);
+                           
+        if (shouldUpdate && streamingManager != null)
+        {
+            lastPickTime = currentTime;
+            lastCameraPosition = camera.Position;
+            lastCameraDirection = camera.Front;
+            
+            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockType blockType))
+            {
+                cachedPickedBlock = new BlockState(blockPos, blockType);
+            }
+            else
+            {
+                cachedPickedBlock = null;
+            }
+            
+            if (terrainRenderer != null)
+            {
+                terrainRenderer.PickedBlock = cachedPickedBlock;
+            }
+        }
     }
     
     /// <summary>

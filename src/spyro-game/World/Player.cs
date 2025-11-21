@@ -1,7 +1,10 @@
 ﻿using OpenRender.Core.Rendering;
+using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Input;
+using OpenRender.Core;
+using OpenRender;
 
 namespace SpyroGame.World;
 
@@ -12,7 +15,7 @@ public class Player
     private const float EyeHeight = 1.75f;
     private const float Gravity = -9.8f;
 
-    private const float MovementSpeed = 2.0f;
+    private const float MovementSpeed = 3.0f;
     private const float RotationSpeed = 10;
 
     private static readonly Vector3[] bottomCornerOffsets = [
@@ -24,7 +27,14 @@ public class Player
 
     private readonly ICamera camera;
     private readonly VoxelWorld world;
+    private ChunkStreamingManager? streamingManager;
     private Vector3 position;
+
+    public ChunkStreamingManager? StreamingManager
+    {
+        get => streamingManager;
+        set => streamingManager = value;
+    }
 
     private bool isGrounded;
     private bool isJumping;
@@ -49,10 +59,11 @@ public class Player
     private const float StepUpCooldownDuration = 0.08f;
     private const float StepUpImpulse = 3.6f;          // was 3.2f
 
-    public Player(ICamera camera, Vector3 position, VoxelWorld world)
+    public Player(ICamera camera, Vector3 position, VoxelWorld world, ChunkStreamingManager? streamingManager = null)
     {
         this.camera = camera;
         this.world = world;
+        this.streamingManager = streamingManager;
         Position = position;
         Direction = camera.Front;
 
@@ -91,9 +102,7 @@ public class Player
         set => pickedBlock = value;
     }
 
-    private float physicsAccumulator;
-
-    public void Update(double elapsedSeconds, KeyboardState keyboardState)
+    public void Update(double elapsedSeconds, KeyboardState keyboardState, MouseState mouseState)
     {
         // Update actions (e.g., toggle ghost mode)
         kbdActions.Update(keyboardState);
@@ -136,6 +145,12 @@ public class Player
 
         // CPU raycast for picked block - will be replaced by GPU picking in GameScene
         pickedBlock = world.PickBlock(camera.Position, camera.Front);
+
+        // Handle block breaking
+        if (mouseState.IsButtonPressed(MouseButton.Left))
+        {
+            BreakBlock();
+        }
     }
 
     /// <summary>
@@ -222,9 +237,22 @@ public class Player
     {
         if (pickedBlock is not null)
         {
-            world.BreakBlock(pickedBlock.Value);
+            if (streamingManager != null)
+            {
+                Log.Info($"Player breaking block at {pickedBlock.Value.GlobalPosition}");
+                streamingManager.ApplyBlockEdit(pickedBlock.Value.GlobalPosition, BlockType.None, true);
+            }
+            else
+            {
+                Log.Error("Player.BreakBlock: streamingManager is null!");
+            }
+
             pickedBlock = null;
             // NOTE: PickedBlock sync handled by GameScene
+        }
+        else
+        {
+            Log.Info("Player.BreakBlock: pickedBlock is null");
         }
     }
     #endregion
@@ -316,6 +344,18 @@ public class Player
 
         // Ground detection via local voxel query (respects caves/tunnels)
         var bellowBlock = world.GetBlockByPositionGlobalSafe((int)pos.X, (int)Math.Floor(pos.Y - 0.5f), (int)pos.Z);
+
+        // Safety check: if the chunk at our feet isn't ready for collision, suspend physics
+        // This prevents falling through the world when exiting ghost mode before the chunk is generated
+        if (world.GetChunkByGlobalPosition(pos, out var chunk))
+        {
+            if (!chunk.HasGpuSpans && !chunk.HasGpuColumns && chunk.Blocks == null)
+            {
+                velocityY = 0;
+                return;
+            }
+        }
+
         if (bellowBlock is null)
         {
             CurrentBlockBellow = null;
@@ -369,7 +409,7 @@ public class Player
         pos.X += step.X;
         pos.Z += step.Z;
 
-        var currentBlock = world.GetBlockByPositionGlobalSafe((int)pos.X, (int)(pos.Y) + 1, (int)pos.Z);
+        var currentBlock = world.GetBlockByPositionGlobalSafe((int)pos.X, (int)(pos.Y), (int)pos.Z);
         if (currentBlock is not null)
         {
             var neighbors = world.GetCollideCandidateBlocks(currentBlock.Value, 2);

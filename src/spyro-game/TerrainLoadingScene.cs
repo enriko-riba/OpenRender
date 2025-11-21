@@ -34,9 +34,7 @@ internal class TerrainLoadingScene : Scene
     private bool isQueueBuilt = false;
     
     private Vector3 startPosition;
-    private int surroundingChunkCount = 0;
-    private uint lastVertexCount = 0;
-    private uint lastIndexCount = 0;
+    private readonly int surroundingChunkCount = 0;
 
     public TerrainLoadingScene(ITextRenderer textRenderer, VoxelWorld world)
     {
@@ -79,9 +77,11 @@ internal class TerrainLoadingScene : Scene
         // Phase 1: Initialize ChunkStreamingManager
         operationQueue.Enqueue(("Initializing GPU streaming manager...", () =>
         {
-            streamingManager = new ChunkStreamingManager(world);
-            // Set reduced load distance for initial load
-            streamingManager.LoadDistance = INITIAL_LOAD_DISTANCE;
+            streamingManager = new ChunkStreamingManager(world)
+            {
+                // Set reduced load distance for initial load
+                LoadDistance = INITIAL_LOAD_DISTANCE
+            };
             Log.Info("ChunkStreamingManager created");
         }));
 
@@ -165,8 +165,8 @@ internal class TerrainLoadingScene : Scene
                 if (ready > 0 && pending == 0 && generating == 0)
                 {
                     isWaitingForTerrain = false;
-                    lastVertexCount = 0; // Not tracking exact counts anymore
-                    lastIndexCount = 0;
+                    //lastVertexCount = 0; // Not tracking exact counts anymore
+                    //lastIndexCount = 0;
                     Log.Info($"Initial terrain streaming complete. Ready: {ready}");
                 }
                 else
@@ -232,7 +232,7 @@ internal class TerrainLoadingScene : Scene
         var lineY = 20;
         const int lineHeight = 25;
         
-        void WriteLine(String text, Vector3 color)
+        void WriteLine(string text, Vector3 color)
         {
             textRenderer.Render(text, 22, 20, lineY, color);
             lineY += lineHeight;
@@ -266,41 +266,5 @@ internal class TerrainLoadingScene : Scene
         // Stats
         WriteLine($"Elapsed: {timer.Elapsed.TotalSeconds:F2}s", textColor);
         WriteLine($"Chunks: {surroundingChunkCount}", textColor);
-    }
-    
-    private int[] GenerateSurroundingChunkIndices(int centerX, int centerZ)
-    {
-        var indices = new List<int>();
-        // Use a reasonable radius for initial load to avoid GPU OOM.
-        // Full streaming radius (VoxelHelper.MaxDistanceInChunks = 26) would need ~88GB VRAM!
-        // 
-        // Calculation for 26 radius:
-        //   Chunks: 2,809
-        //   Voxels: 92,012,544
-        //   Worst-case (all solid): ~88GB VRAM (75GB vertices + 12GB indices)
-        //
-        // Using radius=4 (81 chunks) is much more reasonable:
-        //   ~2.5GB VRAM for worst-case
-        //
-        // TODO: Implement chunk streaming/batching to load more chunks progressively
-        var radius = 5; 
-        
-        for (var z = -radius; z <= radius; z++)
-        {
-            for (var x = -radius; x <= radius; x++)
-            {
-                var chunkX = centerX + x;
-                var chunkZ = centerZ + z;
-                
-                if (chunkX >= 0 && chunkX < VoxelHelper.WorldChunksXZ &&
-                    chunkZ >= 0 && chunkZ < VoxelHelper.WorldChunksXZ)
-                {
-                    var idx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
-                    indices.Add(idx);
-                }
-            }
-        }
-        
-        return [.. indices];
     }
 }

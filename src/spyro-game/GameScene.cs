@@ -39,6 +39,7 @@ internal class GameScene : Scene
     
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
+    private bool wasLeftButtonDown;
     private Sprite crosshair = default!;
     private DayNightCycle dayNightCycle = default!;
     private SkyBoxSun skyBox = default!;
@@ -81,7 +82,7 @@ internal class GameScene : Scene
         // Ideally Player should be refactored to use an interface or ChunkStreamingManager.
         // For now, we pass the world instance from streamingManager if available, or the scene's world.
         var playerWorld = streamingManager.World ?? world;
-        player = new Player(camera!, centerPos, playerWorld);
+        player = new Player(camera!, centerPos, playerWorld, streamingManager);
         
         // Initialize block picking service
         // Use the constructor that accepts ChunkStreamingManager
@@ -144,7 +145,12 @@ internal class GameScene : Scene
                 100,
                 VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
             );
-            player = new Player(camera!, startPos, world);
+            player = new Player(camera!, startPos, world, streamingManager);
+        }
+        else if (streamingManager != null)
+        {
+            // Ensure existing player has the streaming manager
+            player.StreamingManager = streamingManager;
         }
 
         player.IsGhostMode = true; // Start in ghost mode for easy exploration
@@ -205,7 +211,7 @@ internal class GameScene : Scene
         else
         {
             // Fallback to old renderer (shouldn't happen in normal flow)
-            AddNode(world.ChunkRenderer);
+            // AddNode(world.ChunkRenderer);
             Log.Warn("GameScene: No GPU terrain renderer, using fallback");
         }
         
@@ -237,6 +243,16 @@ internal class GameScene : Scene
 
         // Update day/night cycle
         dayNightCycle.Tick(elapsedSeconds);
+
+        // Handle block breaking
+        var mouseState = SceneManager.MouseState;
+        bool isLeftButtonDown = mouseState.IsButtonDown(MouseButton.Left);
+        if (isLeftButtonDown && !wasLeftButtonDown)
+        {
+            // Log.Debug("Left mouse button clicked");
+            // player.BreakBlock(); // Handled by Player.Update
+        }
+        wasLeftButtonDown = isLeftButtonDown;
 
         // Execute GPU frustum culling (throttled to ~6 times per second)
         if (streamingManager != null && terrainRenderer != null && camera != null)
@@ -286,7 +302,7 @@ internal class GameScene : Scene
         world.UpdateVisibilityFromCamera(camera!);
 
         // Update player (handles physics, collision, and WASD movement input)
-        player.Update(elapsedSeconds, SceneManager.KeyboardState);
+        player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
         
         // Update block picking service (decoupled from rendering)
         blockPickingService?.Update(
@@ -330,7 +346,7 @@ internal class GameScene : Scene
         lastMousePosition = mousePos;
         if (delta.LengthSquared > 0)
         {
-            const float mouseSensitivity = 0.2f; // Increased from 0.15f
+            const float mouseSensitivity = 0.18f; // Decreased by 10%
             player.AddRotation(delta.X * mouseSensitivity, delta.Y * mouseSensitivity, 0);
 
             // Re-center mouse when near edge
@@ -340,12 +356,6 @@ internal class GameScene : Scene
                 SceneManager.MousePosition = mouseCenter;
                 lastMousePosition = mouseCenter;
             }
-        }
-
-        // Handle block breaking
-        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
-        {
-            player.BreakBlock();
         }
 
         // Call base which updates all nodes
@@ -434,46 +444,54 @@ internal class GameScene : Scene
 
         // Player Stats
         WriteLine("Player:", highlightColor);
-        WriteLine($"  Position: {player.Position:F1}", textColor);
+
+        var pLocal = player.ChunkLocalPosition;
+        var pChunk = player.CurrentChunk?.Index ?? -1;
+        var pGlobal = player.Position;
+        var pBlock = world.GetBlockByPositionGlobalSafe((int)pGlobal.X, (int)pGlobal.Y, (int)pGlobal.Z);
+        
+        WriteLine($"  Position: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
+
+        if (player.CurrentBlockBellow.HasValue)
+        {
+            var bb = player.CurrentBlockBellow.Value;
+            var bbGlobal = bb.GlobalPosition;
+            var bbChunk = bb.ChunkIndex;
+            var bbChunkOrigin = VoxelHelper.GetChunkPositionGlobal(bbChunk);
+            var bbLocal = new Vector3(bbGlobal.X - bbChunkOrigin.X, bbGlobal.Y - bbChunkOrigin.Y, bbGlobal.Z - bbChunkOrigin.Z);
+            WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.BlockType}", textColor);
+        }
         WriteLine($"  Mode: {(player.IsGhostMode ? "Ghost (Fly)" : "Physics")} ", textColor);
         WriteLine($"  Grounded: {player.IsGrounded}", textColor);
         WriteLine($"  Jumping: {player.IsJumping}", textColor);
         WriteLine($"  Velocity Y: {player.VelocityY:F2}", textColor);
         WriteLine("", textColor);
-        
+
         // Picked Block (highlighted section)
         {
             var block = blockPickingService?.PickedBlock;
             WriteLine("Picked Block:", new Vector3(1.0f, 1.0f, 0.0f)); // Yellow
-            WriteLine($"  Type: {block?.BlockType.ToString() ?? "n/a"}", textColor);
-            
+
             if (block.HasValue)
             {
-                // Calculate local position within chunk
-                var globalPos = block.Value.GlobalPosition;
-                var chunkOrigin = VoxelHelper.GetChunkPositionGlobal(block.Value.ChunkIndex);
+                var b = block.Value;
+                var globalPos = b.GlobalPosition;
+                var chunkOrigin = VoxelHelper.GetChunkPositionGlobal(b.ChunkIndex);
                 var localPos = new Vector3i(
                     globalPos.X - chunkOrigin.X,
                     globalPos.Y - chunkOrigin.Y,
                     globalPos.Z - chunkOrigin.Z
                 );
-                WriteLine($"  Local: ({localPos.X}, {localPos.Y}, {localPos.Z})", textColor);
-                WriteLine($"  Global: ({globalPos.X}, {globalPos.Y}, {globalPos.Z})", textColor);
+                WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.BlockType}", textColor);
             }
             else
             {
-                WriteLine($"  Local: n/a", textColor);
-                WriteLine($"  Global: n/a", textColor);
+                WriteLine("  n/a", textColor);
             }
-            
-            WriteLine($"  Chunk: {block?.ChunkIndex.ToString() ?? "n/a"}", textColor);
             WriteLine("", textColor);
         }
         
-        if (player.CurrentBlockBellow is not null)
-        {
-            WriteLine($"Block Below: {player.CurrentBlockBellow.Value.BlockType}", textColor);
-        }
+        // Block Below moved to Player Stats
         WriteLine("", textColor);
 
         

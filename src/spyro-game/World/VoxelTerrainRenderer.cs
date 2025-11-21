@@ -121,6 +121,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.VertexArrayAttribIFormat(vao, 3, 1, VertexAttribIType.UnsignedInt, 24);
         GL.VertexArrayAttribBinding(vao, 3, 0);
 
+        if (buffers.VertexBuffer == 0 || buffers.IndexBuffer == 0)
+        {
+            Log.Error($"VoxelTerrainRenderer: Invalid buffers! VBO={buffers.VertexBuffer}, IBO={buffers.IndexBuffer}");
+            return;
+        }
+
         GL.VertexArrayVertexBuffer(vao, 0, buffers.VertexBuffer, IntPtr.Zero, stride);
         GL.VertexArrayElementBuffer(vao, buffers.IndexBuffer);
 

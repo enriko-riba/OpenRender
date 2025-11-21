@@ -310,9 +310,9 @@ public class Chunk(VoxelWorld world, int index)
     {
         if (columnHeights == null || columnHeights.Length != VoxelHelper.ChunkSideSizeSquare) return;
         var size = VoxelHelper.ChunkSideSize;
-        for (int z = 0; z < size; z++)
+        for (var z = 0; z < size; z++)
         {
-            for (int x = 0; x < size; x++)
+            for (var x = 0; x < size; x++)
             {
                 var idx = x + z * size;
                 maxHeights[x, z] = columnHeights[idx];
@@ -346,14 +346,41 @@ public class Chunk(VoxelWorld world, int index)
     // GPU-provided collision spans per XZ column: up to MaxSpans pairs (yStart,yEnd) per column
     // Flattened pairs array: length = ChunkSideSizeSquare * MaxSpans * 2
     private int[]? columnSpanPairs;
+    private byte[]? columnSpanTypes;
     private byte[]? columnSpanCounts;
     public bool HasGpuSpans { get; private set; }
 
-    internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts)
+    internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts, byte[] types)
     {
         columnSpanPairs = spansPairs;
         columnSpanCounts = counts;
+        columnSpanTypes = types;
         HasGpuSpans = true;
+
+        // Update maxHeights for compatibility with VoxelWorld.GetBlockByPositionGlobalSafe
+        var size = VoxelHelper.ChunkSideSize;
+        for (var z = 0; z < size; z++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var col = x + z * size;
+                var c = counts[col];
+                var maxH = 0;
+                var baseIdx = col * 16 * 2; // MaxSpansPerColumn = 16
+                for (var i = 0; i < c && i < 16; i++)
+                {
+                    var y1 = spansPairs[baseIdx + i * 2 + 1];
+                    if (y1 > maxH) maxH = y1;
+                }
+                // maxHeights stores the Y of the highest block, so maxH - 1
+                // If maxH is 0 (no blocks), maxHeights should be -1?
+                // GetTerrainHeightAt returns maxHeights + 1.
+                // So if maxH is 0, GetTerrainHeightAt should return 0.
+                // maxHeights = 0 - 1 = -1.
+                maxHeights[x, z] = maxH - 1;
+            }
+        }
+        HasGpuColumns = true;
     }
 
     internal bool IsSolidBySpans(int lx, int ly, int lz, int maxSpans)
@@ -364,7 +391,7 @@ public class Chunk(VoxelWorld world, int index)
         var c = columnSpanCounts[col];
         if (c == 0) return false;
         var baseIdx = col * maxSpans * 2;
-        for (int i = 0; i < c && i < maxSpans; i++)
+        for (var i = 0; i < c && i < maxSpans; i++)
         {
             var y0 = columnSpanPairs[baseIdx + i * 2 + 0];
             var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
@@ -372,6 +399,28 @@ public class Chunk(VoxelWorld world, int index)
         }
         return false;
     }
+
+    internal BlockType GetBlockTypeFromSpans(int lx, int ly, int lz, int maxSpans)
+    {
+        if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null) return BlockType.None;
+        var size = VoxelHelper.ChunkSideSize;
+        var col = lx + lz * size;
+        var c = columnSpanCounts[col];
+        if (c == 0) return BlockType.None;
+        var baseIdx = col * maxSpans * 2;
+        var typeBaseIdx = col * maxSpans;
+        for (var i = 0; i < c && i < maxSpans; i++)
+        {
+            var y0 = columnSpanPairs[baseIdx + i * 2 + 0];
+            var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
+            if (ly >= y0 && ly < y1) 
+            {
+                return (BlockType)columnSpanTypes[typeBaseIdx + i];
+            }
+        }
+        return BlockType.None;
+    }
+
 
     /// <summary>
     /// Initializes CPU Blocks[] from GPU-provided column heights so CPU-side systems (picking/edit) have a coherent view.
@@ -385,13 +434,13 @@ public class Chunk(VoxelWorld world, int index)
         var area = VoxelHelper.ChunkSideSizeSquare;
         Blocks = new BlockState[area * VoxelHelper.ChunkYSize];
 
-        for (int z = 0; z < size; z++)
+        for (var z = 0; z < size; z++)
         {
-            for (int x = 0; x < size; x++)
+            for (var x = 0; x < size; x++)
             {
                 var h = maxHeights[x, z];
                 var maxHeight = h - 1; // top solid local y
-                for (int y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
+                for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
                 {
                     var i = x + z * size + y * area;
                     var bt = TerrainBuilder.GenerateChunkBlockType(maxHeight, x, y, z);

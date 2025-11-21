@@ -31,7 +31,6 @@ void main(){
     // Use the allocated slot index instead of batch index 'i'
     uint slot = commandSlots[i];
     uint o = slot*5u;
-    
     cmd[o+0u] = countIdx;   // count
     cmd[o+1u] = 1u;         // instanceCount
     cmd[o+2u] = firstIndex; // firstIndex

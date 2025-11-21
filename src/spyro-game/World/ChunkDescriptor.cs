@@ -18,7 +18,7 @@ public struct ChunkDescriptor
     /// <summary>
     /// Offset into ChunkVoxels SSBO (in voxels, not bytes)
     /// </summary>
-    public int VoxelBufferOffset;
+    //public int VoxelBufferOffset;
 
     /// <summary>
     /// Offset into vertex buffer for compacted visible vertices (in vertices, not bytes)
@@ -55,29 +55,32 @@ public struct ChunkDescriptor
     public IntPtr Fence;
 
     /// <summary>
+    /// Frame number when generation started (for stuck detection)
+    /// </summary>
+    public long GenerationStartFrame;
+
+    /// <summary>
     /// Frame number when this chunk was last accessed (for LRU eviction)
     /// </summary>
-    public long LastAccessFrame;
+    //public long LastAccessFrame;
 
     /// <summary>
     /// Priority for generation (0=highest, based on distance to camera)
     /// </summary>
-    public int Priority;
+    //public int Priority;
 
     /// <summary>
     /// Get total vertex count for this chunk (4 vertices per face)
     /// </summary>
-    public int VertexCount => VisibleVoxelCount * 4;
+    //public readonly int VertexCount => VisibleVoxelCount * 4;
 
     /// <summary>
     /// Get total index count for this chunk (6 indices per face)
     /// </summary>
-    public int IndexCount => VisibleVoxelCount * 6;
+    //public readonly int IndexCount => VisibleVoxelCount * 6;
 
-    public override string ToString()
-    {
-        return $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
-    }
+    public override readonly string ToString() 
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
 }
 
 /// <summary>

@@ -56,6 +56,7 @@ public class Phase3BufferManager : IDisposable
     public uint PerChunkEmitBuffer => perChunkEmitBuffer; // NEW
     public uint ScanTotalsBuffer => scanTotalsBuffer;     // NEW
     public uint CommandSlotBuffer => commandSlotBuffer;   // NEW: Buffer to pass slots to shader
+    public uint ChunkInfoBuffer => chunkInfoBuffer;       // NEW: Buffer to store chunk info per slot
 
     public int MaxChunks => maxChunks;
     public int MaxVertices => maxVertices;
@@ -72,6 +73,7 @@ public class Phase3BufferManager : IDisposable
     public int FreeCommandSlotCount => freeCommandSlots.Count;    // NEW
 
     private uint commandSlotBuffer; // NEW: Buffer to pass slots to shader
+    private uint chunkInfoBuffer;   // NEW: Buffer to store chunk info per slot
 
     /// <summary>
     /// Allocate all Phase 3 buffers with explicit initialization.
@@ -160,9 +162,17 @@ public class Phase3BufferManager : IDisposable
 
         // NEW: Command Slot Buffer (to pass slots to shader)
         GL.CreateBuffers(1, out commandSlotBuffer);
+        if (commandSlotBuffer == 0) Log.Error("Phase3BufferManager: Failed to create commandSlotBuffer!");
         GL.NamedBufferStorage(commandSlotBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, commandSlotBuffer, -1, "command_slot_ssbo");
+
+        // NEW: Chunk Info Buffer (maps slot -> chunk index/info)
+        GL.CreateBuffers(1, out chunkInfoBuffer);
+        GL.NamedBufferStorage(chunkInfoBuffer, maxChunks * sizeof(int), IntPtr.Zero,
+            BufferStorageFlags.DynamicStorageBit);
+        ClearBufferUInt(chunkInfoBuffer, maxChunks * sizeof(int), 0xFFFFFFFF); // Initialize to -1
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, chunkInfoBuffer, -1, "chunk_info_ssbo");
 
         // Atomic counters (3 uints: vertex counter, index counter, face counter)
         GL.CreateBuffers(1, out atomicCounterBuffer);
@@ -304,6 +314,8 @@ public class Phase3BufferManager : IDisposable
         perChunkEmitBuffer = 0;
         scanTotalsBuffer = 0;
 
+        if (chunkInfoBuffer != 0) GL.DeleteBuffer(chunkInfoBuffer);
+        
         Log.Info("Phase3BufferManager: Disposed");
     }
 
@@ -610,7 +622,13 @@ public class Phase3BufferManager : IDisposable
         // Delete old buffer and replace
         GL.DeleteBuffer(indirectDrawBuffer);
         indirectDrawBuffer = newBuffer;
+        
+        // Also resize the command slot buffer and chunk info buffer to match
+        // This ensures they stay in sync with the indirect buffer capacity
+        ResizeCommandSlotBuffer(newCommandCount, (uint)maxChunks);
+        
         maxChunks = (int)newCommandCount;
+        commandSlotCapacity = newCommandCount;
 
         Log.CheckGlError();
     }
@@ -670,10 +688,7 @@ public class Phase3BufferManager : IDisposable
             var newCap = (uint)(commandSlotCapacity * 1.5);
             if (newCap == 0) newCap = 128;
             ResizeIndirectDrawBuffer(newCap);
-            commandSlotCapacity = newCap;
-            
-            // Also resize command slot buffer
-            ResizeCommandSlotBuffer(commandSlotCapacity);
+            // commandSlotCapacity is updated in ResizeIndirectDrawBuffer
         }
         
         return slot;
@@ -692,16 +707,35 @@ public class Phase3BufferManager : IDisposable
         // Command is 5 uints = 20 bytes
         var zeros = new uint[5]; // all zero
         GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 20), 20, zeros);
+
+        // Mark chunk info as invalid (-1)
+        int invalid = -1;
+        GL.NamedBufferSubData(chunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref invalid);
     }
 
-    private void ResizeCommandSlotBuffer(uint newCapacity)
+    private void ResizeCommandSlotBuffer(uint newCapacity, uint oldCapacity)
     {
         uint newBuffer;
         GL.CreateBuffers(1, out newBuffer);
+        if (newBuffer == 0) Log.Error("Phase3BufferManager: Failed to create resized commandSlotBuffer!");
         GL.NamedBufferStorage((int)newBuffer, (nint)(newCapacity * sizeof(uint)), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         // No need to copy old data as this buffer is write-only for the shader
         GL.DeleteBuffer(commandSlotBuffer);
         commandSlotBuffer = newBuffer;
+
+        // Also resize ChunkInfoBuffer
+        uint newInfoBuffer;
+        GL.CreateBuffers(1, out newInfoBuffer);
+        GL.NamedBufferStorage((int)newInfoBuffer, (nint)(newCapacity * sizeof(int)), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        
+        // Copy old data as it persists across frames
+        if (oldCapacity > 0)
+        {
+            GL.CopyNamedBufferSubData(chunkInfoBuffer, newInfoBuffer, IntPtr.Zero, IntPtr.Zero, (nint)(oldCapacity * sizeof(int)));
+        }
+        
+        GL.DeleteBuffer(chunkInfoBuffer);
+        chunkInfoBuffer = newInfoBuffer;
     }
 
     /// <summary>

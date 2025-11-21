@@ -12,9 +12,11 @@ const int WATER_LEVEL = 35;
 
 // Block types
 const uint BLOCK_NONE = 0u;
-const uint BLOCK_ROCK = 1u;
-const uint BLOCK_DIRT = 2u;
-const uint BLOCK_GRASS_DIRT = 3u;
+const uint BLOCK_WATER_LEVEL = 1u;
+const uint BLOCK_ROCK = 2u;
+const uint BLOCK_SAND = 3u;
+const uint BLOCK_DIRT = 4u;
+const uint BLOCK_GRASS_DIRT = 5u;
 
 // Uniforms
 uniform uint uSeed;
