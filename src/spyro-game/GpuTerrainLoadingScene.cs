@@ -41,7 +41,7 @@ internal class GpuTerrainLoadingScene : Scene
     public GpuTerrainLoadingScene(ITextRenderer textRenderer, int chunkCount = 16)
     {
         this.textRenderer = textRenderer;
-        this.testChunkCount = chunkCount;
+        testChunkCount = chunkCount;
         Name = "GpuTerrainLoadingScene";
     }
     
@@ -68,10 +68,7 @@ internal class GpuTerrainLoadingScene : Scene
         // Since VoxelWorld loads 9 textures synchronously in constructor,
         // we split it into: prepare → execute → complete for visual feedback
         
-        operationQueue.Enqueue(("Preparing to load textures...", () =>
-        {
-            Log.Info("Preparing VoxelWorld initialization");
-        }));
+        operationQueue.Enqueue(("Preparing to load textures...", () => Log.Info("Preparing VoxelWorld initialization")));
         
         operationQueue.Enqueue(("Loading terrain textures (this may take a few seconds)...", () =>
         {
@@ -83,7 +80,7 @@ internal class GpuTerrainLoadingScene : Scene
         // Phase 2: GPU Pipeline initialization
         operationQueue.Enqueue(("Initializing GPU generation...", () =>
         {
-            streamingManager!.InitializeGpuGeneration(1338, 20f, 40f, testMode: true);
+            streamingManager!.InitializeGpuGeneration(1338, testMode: true);
             Log.Info("GPU generation initialized");
         }));
         
@@ -128,10 +125,9 @@ internal class GpuTerrainLoadingScene : Scene
             operationQueue.Enqueue(("GPU Phase 3: Visibility & compaction + Setup", () =>
             {
                 streamingManager!.ExecuteCompletePipeline(chunkIndices);
-                var phase3Buffers = typeof(ChunkStreamingManager)
+                if (typeof(ChunkStreamingManager)
                     .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                    .GetValue(streamingManager) as Phase3BufferManager;
-                if (phase3Buffers != null)
+                    .GetValue(streamingManager) is Phase3BufferManager phase3Buffers)
                 {
                     timings.RecordPhase3Compaction(phase3Buffers.CurrentVertexBufferEnd, (phase3Buffers.CurrentVertexBufferEnd / 4) * 6);
                     timings.RecordPhase4Setup();
@@ -274,11 +270,5 @@ internal class GpuTerrainLoadingScene : Scene
         }
         
         return [.. indices];
-    }
-    
-    public override void Close()
-    {
-        // Don't dispose resources - they're passed to the test scene
-        base.Close();
     }
 }

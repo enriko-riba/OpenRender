@@ -16,11 +16,6 @@ public struct ChunkDescriptor
     public int ChunkIndex;
 
     /// <summary>
-    /// Offset into ChunkVoxels SSBO (in voxels, not bytes)
-    /// </summary>
-    //public int VoxelBufferOffset;
-
-    /// <summary>
     /// Offset into vertex buffer for compacted visible vertices (in vertices, not bytes)
     /// Phase 5.3: This is the baseVertex for indirect draw commands
     /// </summary>
@@ -58,16 +53,6 @@ public struct ChunkDescriptor
     /// Frame number when generation started (for stuck detection)
     /// </summary>
     public long GenerationStartFrame;
-
-    /// <summary>
-    /// Frame number when this chunk was last accessed (for LRU eviction)
-    /// </summary>
-    //public long LastAccessFrame;
-
-    /// <summary>
-    /// Priority for generation (0=highest, based on distance to camera)
-    /// </summary>
-    //public int Priority;
 
     /// <summary>
     /// Get total vertex count for this chunk (4 vertices per face)
@@ -133,28 +118,14 @@ public static class ChunkDescriptorExtensions
     /// <summary>
     /// Check if chunk is in a terminal state (ready or failed)
     /// </summary>
-    public static bool IsComplete(this ChunkDescriptor descriptor)
-    {
-        return descriptor.State == TerrainChunkState.Ready || 
-               descriptor.State == TerrainChunkState.Dirty;
-    }
+    public static bool IsComplete(this ChunkDescriptor descriptor) 
+        => descriptor.State is TerrainChunkState.Ready or
+               TerrainChunkState.Dirty;
 
     /// <summary>
     /// Check if chunk is currently processing on GPU
     /// </summary>
-    public static bool IsInFlight(this ChunkDescriptor descriptor)
-    {
-        return descriptor.State == TerrainChunkState.Generating ||
-               descriptor.State == TerrainChunkState.CountingVisibility ||
-               descriptor.State == TerrainChunkState.Compacting;
-    }
-
-    /// <summary>
-    /// Check if chunk needs GPU work
-    /// </summary>
-    public static bool NeedsProcessing(this ChunkDescriptor descriptor)
-    {
-        return descriptor.State == TerrainChunkState.Pending || 
-               descriptor.State == TerrainChunkState.Dirty;
-    }
+    public static bool IsInFlight(this ChunkDescriptor descriptor) => descriptor.State is TerrainChunkState.Generating or
+               TerrainChunkState.CountingVisibility or
+               TerrainChunkState.Compacting;
 }

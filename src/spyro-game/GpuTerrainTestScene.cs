@@ -49,7 +49,7 @@ internal class GpuTerrainTestScene : Scene
         this.streamingManager = streamingManager;
         this.terrainRenderer = terrainRenderer;
         this.initialTimings = initialTimings;
-        this.testChunkCount = chunkCount;
+        testChunkCount = chunkCount;
         Name = "GpuTerrainTestScene";
     }
 
@@ -75,8 +75,10 @@ internal class GpuTerrainTestScene : Scene
         // NOTE: GPU-generated terrain doesn't populate VoxelWorld chunks, so collision detection won't work.
         // Use Ghost mode (fly mode) for free movement without physics.
         // Press 'F' to toggle physics mode if needed (but collision won't work with GPU-only terrain).
-        player = new Player(camera, startPos, streamingManager.World);
-        player.IsGhostMode = true; // Enable ghost mode (fly) - no physics, no collision
+        player = new Player(camera, startPos, streamingManager.World)
+        {
+            IsGhostMode = true // Enable ghost mode (fly) - no physics, no collision
+        };
 
         // Mouse centering for FPS controls
         mouseCenter = new Vector2(Width, Height) / 2;
@@ -212,10 +214,9 @@ internal class GpuTerrainTestScene : Scene
 
                 // Phase 3+4: Complete pipeline (assign descriptors, setup renderer)
                 streamingManager.ExecuteCompletePipeline(chunkIndices);
-                var phase3Buffers = typeof(ChunkStreamingManager)
+                if (typeof(ChunkStreamingManager)
                     .GetField("phase3Buffers", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?
-                    .GetValue(streamingManager) as Phase3BufferManager;
-                if (phase3Buffers != null)
+                    .GetValue(streamingManager) is Phase3BufferManager phase3Buffers)
                 {
                     var vertexCount = phase3Buffers.CurrentVertexBufferEnd;
                     var faceCount = vertexCount / 4; // 4 vertices per face
@@ -235,7 +236,7 @@ internal class GpuTerrainTestScene : Scene
         }
     }
 
-    private int[] GenerateTestChunkIndices(int count)
+    private static int[] GenerateTestChunkIndices(int count)
     {
         var gridSize = (int)Math.Ceiling(Math.Sqrt(count));
         var indices = new List<int>();

@@ -10,7 +10,7 @@ using System.Diagnostics;
 
 namespace SpyroGame.World;
 
-public class VoxelWorld
+public class VoxelWorld(int seed)
 {
     // GPU compaction outputs (Stage 2)
     public volatile uint CompactedAtlasSSBO;
@@ -194,11 +194,11 @@ public class VoxelWorld
 
     internal Stopwatch stopwatch = Stopwatch.StartNew();
 
-    private readonly int seed;
+    private readonly int seed = seed;
     private readonly HashSet<int> surroundingChunkSet = [];
     // Multi-worker CPU generation
     private readonly List<Thread> workerThreads = [];
-    private readonly int workerCount;
+    private readonly int workerCount = 0;
     private long lastStreamingUpdateMs;
     private long lastCompactionRebuildMs;
     private long lastCompactionRepackMs;
@@ -208,7 +208,7 @@ public class VoxelWorld
     private const int CacheCapacity = 4096; // unified cap for active chunks (surrounding + cache)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
-    internal readonly TerrainBuilder terrainBuilder;
+    internal readonly TerrainBuilder terrainBuilder = new(seed);
     internal ChunkInitializer? ChunkInitializer { get; private set; }
     private readonly ConcurrentDictionary<int, long> pendingUploadSince = new();
     private readonly ConcurrentDictionary<int, long> pendingComputeSince = new();
@@ -242,18 +242,7 @@ public class VoxelWorld
 
     public int WorkerQueueLength => workQueue.Count;
 
-    private volatile bool isRunning;
-
-    public VoxelWorld(int seed)
-    {
-        this.seed = seed;
-
-        terrainBuilder = new TerrainBuilder(seed);
-
-        // GPU-first pipeline: disable CPU worker threads
-        workerCount = 0;
-        isRunning = false;
-    }
+    private volatile bool isRunning = false;
 
     /// <summary>
     /// Total number of chunks passing the culling test.
@@ -508,7 +497,7 @@ public class VoxelWorld
             if ((uint)lx2 < (uint)VoxelHelper.ChunkSideSize && (uint)lz2 < (uint)VoxelHelper.ChunkSideSize)
             {
                 // Use per-column max height; treat below as solid, above as air; water occupies air below water level
-                int terrainH = loaded.GetTerrainHeightAt(lx2, lz2);
+                var terrainH = loaded.GetTerrainHeightAt(lx2, lz2);
                 var y = globalPosition.Y - origin2.Y;
                 BlockType bt;
                 if (y < terrainH)
@@ -516,13 +505,9 @@ public class VoxelWorld
                     // choose a representative solid type; collision only needs solid vs non-solid
                     bt = BlockType.Rock;
                 }
-                else if (globalPosition.Y <= VoxelHelper.WaterLevel)
-                {
-                    bt = BlockType.WaterLevel;
-                }
                 else
                 {
-                    bt = BlockType.None;
+                    bt = globalPosition.Y <= VoxelHelper.WaterLevel ? BlockType.WaterLevel : BlockType.None;
                 }
                 borderQueryCache?[key] = bt;
                 return bt;
@@ -547,22 +532,22 @@ public class VoxelWorld
         var dir = direction;
         dir.Normalize();
 
-        int x = (int)MathF.Floor(origin.X);
-        int y = (int)MathF.Floor(origin.Y);
-        int z = (int)MathF.Floor(origin.Z);
-
-        int stepX = dir.X > 0 ? 1 : (dir.X < 0 ? -1 : 0);
-        int stepY = dir.Y > 0 ? 1 : (dir.Y < 0 ? -1 : 0);
-        int stepZ = dir.Z > 0 ? 1 : (dir.Z < 0 ? -1 : 0);
+        var x = (int)MathF.Floor(origin.X);
+        var y = (int)MathF.Floor(origin.Y);
+        var z = (int)MathF.Floor(origin.Z);
+        
+        var stepX = dir.X > 0 ? 1 : (dir.X < 0 ? -1 : 0);
+        var stepY = dir.Y > 0 ? 1 : (dir.Y < 0 ? -1 : 0);
+        var stepZ = dir.Z > 0 ? 1 : (dir.Z < 0 ? -1 : 0);
 
         float tMaxX, tMaxY, tMaxZ;
-        float tDeltaX = stepX != 0 ? MathF.Abs(1f / dir.X) : float.PositiveInfinity;
-        float tDeltaY = stepY != 0 ? MathF.Abs(1f / dir.Y) : float.PositiveInfinity;
-        float tDeltaZ = stepZ != 0 ? MathF.Abs(1f / dir.Z) : float.PositiveInfinity;
-
-        float fx = origin.X - MathF.Floor(origin.X);
-        float fy = origin.Y - MathF.Floor(origin.Y);
-        float fz = origin.Z - MathF.Floor(origin.Z);
+        var tDeltaX = stepX != 0 ? MathF.Abs(1f / dir.X) : float.PositiveInfinity;
+        var tDeltaY = stepY != 0 ? MathF.Abs(1f / dir.Y) : float.PositiveInfinity;
+        var tDeltaZ = stepZ != 0 ? MathF.Abs(1f / dir.Z) : float.PositiveInfinity;
+        
+        var fx = origin.X - MathF.Floor(origin.X);
+        var fy = origin.Y - MathF.Floor(origin.Y);
+        var fz = origin.Z - MathF.Floor(origin.Z);
 
         tMaxX = stepX > 0 ? (1f - fx) * (tDeltaX == float.PositiveInfinity ? 1f : tDeltaX) : (fx) * (tDeltaX == float.PositiveInfinity ? 1f : tDeltaX);
         tMaxY = stepY > 0 ? (1f - fy) * (tDeltaY == float.PositiveInfinity ? 1f : tDeltaY) : (fy) * (tDeltaY == float.PositiveInfinity ? 1f : tDeltaY);
@@ -575,9 +560,9 @@ public class VoxelWorld
             return startBlock;
         }
 
-        float t = 0f;
-        int maxSteps = (int)(pickingDistance * 4) + 4; // guard
-        for (int i = 0; i < maxSteps && t <= pickingDistance; i++)
+        var t = 0f;
+        var maxSteps = (int)(pickingDistance * 4) + 4; // guard
+        for (var i = 0; i < maxSteps && t <= pickingDistance; i++)
         {
             if (tMaxX <= tMaxY && tMaxX <= tMaxZ)
             {
@@ -769,10 +754,10 @@ public class VoxelWorld
                 var mask = GetBreakMask3D(chunkIndex);
                 if (mask is not null)
                 {
-                    int area = VoxelHelper.ChunkSideSizeSquare;
-                    int linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
-                    int byteIndex = linear >> 3; // 8 voxels per byte
-                    int bit = linear & 7;
+                    var area = VoxelHelper.ChunkSideSizeSquare;
+                    var linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
+                    var byteIndex = linear >> 3; // 8 voxels per byte
+                    var bit = linear & 7;
                     if ((uint)byteIndex < (uint)mask.Length)
                     {
                         if ((mask[byteIndex] & (byte)(1 << bit)) != 0)
@@ -970,7 +955,7 @@ public class VoxelWorld
                     if (CompactedChunkIndices != null && CompactedBases != null && CompactedCounts != null)
                     {
                         var desiredSet = new HashSet<int>(desiredArr);
-                        for (int i = 0; i < CompactedChunkIndices.Length; i++)
+                        for (var i = 0; i < CompactedChunkIndices.Length; i++)
                         {
                             var idxRes = CompactedChunkIndices[i];
                             if (!desiredSet.Contains(idxRes))
@@ -1452,7 +1437,7 @@ public class VoxelWorld
     // --- GPU streaming integration ---
     internal bool UseGpuStreaming { get; set; } = true;
 
-    internal void ProcessGpuStreamingOnGlThread(int submitMax = 32)
+    internal void ProcessGpuStreamingOnGlThread()
     {
         if (!UseGpuStreaming) return;
         EnsureChunkInitializer();
@@ -1623,11 +1608,11 @@ public class VoxelWorld
         var voxels = area * VoxelHelper.ChunkYSize;
         var bytesLen = (voxels + 7) / 8;
         var mask = breakMasks3D.GetOrAdd(chunkIndex, _ => new byte[bytesLen]);
-        int linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
-        int byteIndex = linear >> 3;
-        int bit = linear & 7;
-        byte b = mask[byteIndex];
-        if (hidden) b = (byte)(b | (1 << bit)); else b = (byte)(b & ~(1 << bit));
+        var linear = lx + lz * VoxelHelper.ChunkSideSize + ly * area;
+        var byteIndex = linear >> 3;
+        var bit = linear & 7;
+        var  b = mask[byteIndex];
+        b = hidden ? (byte)(b | (1 << bit)) : (byte)(b & ~(1 << bit));
         mask[byteIndex] = b;
     }
 }

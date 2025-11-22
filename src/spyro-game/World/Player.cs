@@ -1,10 +1,8 @@
-﻿using OpenRender.Core.Rendering;
-using OpenRender.SceneManagement;
+﻿using OpenRender;
+using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Input;
-using OpenRender.Core;
-using OpenRender;
 
 namespace SpyroGame.World;
 
@@ -199,9 +197,7 @@ public class Player
 
     #region Commands
     public void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees)
-    {
-        requestedRotation = new Vector3(yawDegrees, pitchDegrees, rollDegrees);
-    }
+        => requestedRotation = new Vector3(yawDegrees, pitchDegrees, rollDegrees);
 
     // Input layer always records intent; physics layer decides how much applies (air control).
     public void MoveBack() => requestedMovement -= new Vector3(camera.Front.X, 0, camera.Front.Z);
@@ -266,7 +262,7 @@ public class Player
 
     private void HandleMovement(double elapsedSeconds)
     {
-        float terrainHeight = float.NaN;
+        var terrainHeight = float.NaN;
         var pos = Position;
 
         // integrate Y
@@ -281,13 +277,13 @@ public class Player
             const float eps = 0.001f;
             var headTop = pos.Y + Height - 0.05f;
             var tileY = (int)MathF.Floor(headTop);
-            int minX = (int)MathF.Floor(pos.X - HalfWidth + eps);
-            int maxX = (int)MathF.Floor(pos.X + HalfWidth - eps);
-            int minZ = (int)MathF.Floor(pos.Z - HalfWidth + eps);
-            int maxZ = (int)MathF.Floor(pos.Z + HalfWidth - eps);
-            bool blocked = false;
-            for (int tz = minZ; tz <= maxZ && !blocked; tz++)
-                for (int tx = minX; tx <= maxX && !blocked; tx++)
+            var minX = (int)MathF.Floor(pos.X - HalfWidth + eps);
+            var maxX = (int)MathF.Floor(pos.X + HalfWidth - eps);
+            var minZ = (int)MathF.Floor(pos.Z - HalfWidth + eps);
+            var maxZ = (int)MathF.Floor(pos.Z + HalfWidth - eps);
+            var blocked = false;
+            for (var tz = minZ; tz <= maxZ && !blocked; tz++)
+                for (var tx = minX; tx <= maxX && !blocked; tx++)
                 {
                     var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
                     if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
@@ -454,9 +450,9 @@ public class Player
                 }
 
                 // side resolution & sliding (same as before, using 'step')
-                var aabb = neighbor.Value.Aabb;
-                var closestX = Math.Clamp(collidingSphereCenter.X, aabb.Min.X, aabb.Max.X);
-                var closestZ = Math.Clamp(collidingSphereCenter.Z, aabb.Min.Z, aabb.Max.Z);
+                var (Min, Max) = neighbor.Value.Aabb;
+                var closestX = Math.Clamp(collidingSphereCenter.X, Min.X, Max.X);
+                var closestZ = Math.Clamp(collidingSphereCenter.Z, Min.Z, Max.Z);
                 var nx = collidingSphereCenter.X - closestX;
                 var nz = collidingSphereCenter.Z - closestZ;
                 var len = MathF.Sqrt(nx * nx + nz * nz);
@@ -465,15 +461,15 @@ public class Player
                 if (len < 1e-4f)
                 {
                     // Fallback: choose nearest face outward normal
-                    var dLeft = MathF.Abs(collidingSphereCenter.X - aabb.Min.X);
-                    var dRight = MathF.Abs(aabb.Max.X - collidingSphereCenter.X);
-                    var dFront = MathF.Abs(collidingSphereCenter.Z - aabb.Min.Z);
-                    var dBack = MathF.Abs(aabb.Max.Z - collidingSphereCenter.Z);
+                    var dLeft = MathF.Abs(collidingSphereCenter.X - Min.X);
+                    var dRight = MathF.Abs(Max.X - collidingSphereCenter.X);
+                    var dFront = MathF.Abs(collidingSphereCenter.Z - Min.Z);
+                    var dBack = MathF.Abs(Max.Z - collidingSphereCenter.Z);
                     var minD = MathF.Min(MathF.Min(dLeft, dRight), MathF.Min(dFront, dBack));
-                    if (minD == dLeft) nXZ = new Vector2(-1, 0);
-                    else if (minD == dRight) nXZ = new Vector2(1, 0);
-                    else if (minD == dFront) nXZ = new Vector2(0, -1);
-                    else nXZ = new Vector2(0, 1);
+                    nXZ = minD == dLeft
+                        ? new Vector2(-1, 0) : minD == dRight ? new Vector2(1, 0) : 
+                        minD == dFront ? new Vector2(0, -1) : 
+                        new Vector2(0, 1);
                 }
                 else
                 {
@@ -519,12 +515,6 @@ public class Player
         }
     }
 
-    private static Vector3 ReflectVector(Vector3 vector, Vector3 normal)
-    {
-        // Calculate the reflection using vector arithmetic
-        return vector - 2 * Vector3.Dot(vector, normal) * normal;
-    }
-
     private bool IsUpBlocked()
     {
         if (IsGhostMode) return false;
@@ -550,18 +540,18 @@ public class Player
         const float eps = 0.001f;
         var headTop = position.Y + Height - 0.05f;
         var tileY = (int)MathF.Floor(headTop) + 1; // immediate block above head tile
-        int minX = (int)MathF.Floor(position.X - HalfWidth + eps);
-        int maxX = (int)MathF.Floor(position.X + HalfWidth - eps);
-        int minZ = (int)MathF.Floor(position.Z - HalfWidth + eps);
-        int maxZ = (int)MathF.Floor(position.Z + HalfWidth - eps);
+        var minX = (int)MathF.Floor(position.X - HalfWidth + eps);
+        var maxX = (int)MathF.Floor(position.X + HalfWidth - eps);
+        var minZ = (int)MathF.Floor(position.Z - HalfWidth + eps);
+        var maxZ = (int)MathF.Floor(position.Z + HalfWidth - eps);
 
-        for (int tz = minZ; tz <= maxZ; tz++)
-        for (int tx = minX; tx <= maxX; tx++)
-        {
-            var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
-            if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
-                return true; // ceiling within one block above head
-        }
+        for (var tz = minZ; tz <= maxZ; tz++)
+            for (var tx = minX; tx <= maxX; tx++)
+            {
+                var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
+                if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+                    return true; // ceiling within one block above head
+            }
         return false;
     }
 

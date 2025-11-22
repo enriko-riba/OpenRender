@@ -246,7 +246,7 @@ internal class GameScene : Scene
 
         // Handle block breaking
         var mouseState = SceneManager.MouseState;
-        bool isLeftButtonDown = mouseState.IsButtonDown(MouseButton.Left);
+        var isLeftButtonDown = mouseState.IsButtonDown(MouseButton.Left);
         if (isLeftButtonDown && !wasLeftButtonDown)
         {
             // Log.Debug("Left mouse button clicked");
@@ -292,7 +292,7 @@ internal class GameScene : Scene
             catch { }
 
             // Process queued batches
-            for (int i = 0; i < 5 && world.ChunkInitializer?.HasInFlightBatch == false; i++)
+            for (var i = 0; i < 5 && world.ChunkInitializer?.HasInFlightBatch == false; i++)
             {
                 try { world.UpdateStreamingFromCamera(); } catch { }
             }
@@ -399,13 +399,13 @@ internal class GameScene : Scene
         WriteLine("", textColor);
 
         // Chunk Stats (FIXED - Show actual generated chunks, not theoretical surrounding)
-        int loadedChunks = 0;
-        int generatedChunks = 0;  // Actually generated terrain
+        int loadedChunks;
+        int generatedChunks;  // Actually generated terrain
         
         if (streamingManager != null)
         {
             // GPU terrain - get stats from streaming manager
-            var (total, pending, generating, ready) = streamingManager.GetStats();
+            var (_, _, _, ready) = streamingManager.GetStats();
             loadedChunks = ready;  // Only count ready chunks as "loaded"
             generatedChunks = ready;  // Same as loaded for GPU terrain
         }
@@ -448,7 +448,7 @@ internal class GameScene : Scene
         var pLocal = player.ChunkLocalPosition;
         var pChunk = player.CurrentChunk?.Index ?? -1;
         var pGlobal = player.Position;
-        var pBlock = world.GetBlockByPositionGlobalSafe((int)pGlobal.X, (int)pGlobal.Y, (int)pGlobal.Z);
+        //var pBlock = world.GetBlockByPositionGlobalSafe((int)pGlobal.X, (int)pGlobal.Y, (int)pGlobal.Z);
         
         WriteLine($"  Position: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
 
