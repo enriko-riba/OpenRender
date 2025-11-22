@@ -261,7 +261,7 @@ public sealed class ChunkStreamingManager : IDisposable
                     lowPriorityPending.Enqueue(chunkIdx);
                 }
             }
-            Log.Debug($"ChunkStreamingManager: Queued {newChunks.Count} new chunks ({highPriorityPending.Count} high priority)");
+            //Log.Debug($"ChunkStreamingManager: Queued {newChunks.Count} new chunks ({highPriorityPending.Count} high priority)");
         }
 
         // Debug logging for stuck chunks
@@ -369,7 +369,7 @@ public sealed class ChunkStreamingManager : IDisposable
                         Log.Warn($"ChunkStreamingManager: Chunk {chunkIdx} not found in VoxelWorld during readback!");
                     }
                 }
-                Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
+               // Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
             }
         }
     }
@@ -482,7 +482,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 GL.DeleteSync(lastCompactionFence);
                 lastCompactionFence = IntPtr.Zero;
                 totalBatchesInPipeline--;
-                Log.Debug($"ChunkStreamingManager: Compaction complete. Pipeline batches: {totalBatchesInPipeline}");
+                //Log.Debug($"ChunkStreamingManager: Compaction complete. Pipeline batches: {totalBatchesInPipeline}");
             }
         }
 
@@ -769,7 +769,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Remove collision data
         CollisionManager.RemoveChunkData(chunkIndex);
 
-        Log.Debug($"Unloaded chunk {chunkIndex}");
+        //Log.Debug($"Unloaded chunk {chunkIndex}");
     }
 
     /// <summary>
@@ -1210,7 +1210,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Create fence to track completion (NON-BLOCKING)
         var fence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
 
-        Log.Debug($"Dispatched ASYNC GPU generation for {chunkIndices.Length} chunks (fence={fence}, buffer={bufferIndex})");
+        //Log.Debug($"Dispatched ASYNC GPU generation for {chunkIndices.Length} chunks (fence={fence}, buffer={bufferIndex})");
 
         return fence;
     }
@@ -1370,10 +1370,14 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
         // Bind the correct voxel data buffer for compaction
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
+        // Bind world edits buffer for neighbor lookup
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
+
         phase3Buffers.BindBuffersForCompaction();
         compactShader.Use();
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
+        GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed);
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
         GL.DispatchCompute((int)chunkCount, 128, 1);

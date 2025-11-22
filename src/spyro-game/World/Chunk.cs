@@ -84,9 +84,7 @@ public class Chunk(VoxelWorld world, int index)
                     return BlockType.Rock;
                 if (y < 0)
                     return BlockType.Rock;
-                if (y >= VoxelHelper.ChunkYSize)
-                    return BlockType.None;
-                return Blocks[x + z * size + y * area].BlockType;
+                return y >= VoxelHelper.ChunkYSize ? BlockType.None : Blocks[x + z * size + y * area].BlockType;
             }
             return SampleBlockTypeWithNeighbors(x, y, z);
         }
@@ -472,121 +470,6 @@ public class Chunk(VoxelWorld world, int index)
     }
 
     public override string ToString() => $"{ChunkPosition} ({State})";
-
-    private bool IsExternallyVisible(int x, int y, int z)
-    {
-        //----------------------------------------------------------------------
-        // Check if any neighboring block is destroyed, water level or none
-        //----------------------------------------------------------------------
-
-        //  y - 1 is the most common case, so check it first
-        if ((y > 0) && (y < VoxelHelper.MaxBlockPositionY) && (IsBlockTransparent(x, y + 1, z) || IsBlockTransparent(x, y - 1, z))) return true;
-        if ((x > 0) && (x < VoxelHelper.ChunkSizeXZMinusOne) && (IsBlockTransparent(x - 1, y, z) || IsBlockTransparent(x + 1, y, z))) return true;
-        if ((z > 0) && (z < VoxelHelper.ChunkSizeXZMinusOne) && (IsBlockTransparent(x, y, z - 1) || IsBlockTransparent(x, y, z + 1))) return true;
-
-        // Check if the block is at the chunk boundary
-        if (x == 0 || y == 0 || z == 0 || x == VoxelHelper.ChunkSizeXZMinusOne || y == VoxelHelper.MaxBlockPositionY || z == VoxelHelper.ChunkSizeXZMinusOne)
-        {
-            // make blocks on world edge visible except the bottom block layer
-            var worldPosition = Position + new Vector3i(x, y, z);
-            var isWorldEdge = VoxelHelper.IsGlobalPositionOnWorldBoundary(worldPosition.X, worldPosition.Y, worldPosition.Z);
-            if (isWorldEdge)
-            {
-                // check outward directions only
-                var outwardTransparent =
-                    (x == 0 && IsAdjacentChunkBlockTransparent(worldPosition.X - 1, worldPosition.Y, worldPosition.Z)) ||
-                    (x == VoxelHelper.ChunkSizeXZMinusOne && IsAdjacentChunkBlockTransparent(worldPosition.X + 1, worldPosition.Y, worldPosition.Z)) ||
-                    (z == 0 && IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z - 1)) ||
-                    (z == VoxelHelper.ChunkSizeXZMinusOne && IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z + 1)) ||
-                    (y == 0 && IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y - 1, worldPosition.Z)) ||
-                    (y == VoxelHelper.MaxBlockPositionY && IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y + 1, worldPosition.Z));
-                return outwardTransparent;
-            }
-
-            var isAdjacentBlockTransparent = false;
-            if (worldPosition.X > 0)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X - 1, worldPosition.Y, worldPosition.Z);
-            if (worldPosition.X < VoxelHelper.MaxBlockPositionXZ)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X + 1, worldPosition.Y, worldPosition.Z);
-
-            if (worldPosition.Y > 0)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y - 1, worldPosition.Z);
-            if (worldPosition.Y < VoxelHelper.MaxBlockPositionY)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y + 1, worldPosition.Z);
-
-            if (worldPosition.Z > 0)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z - 1);
-            if (worldPosition.Z < VoxelHelper.MaxBlockPositionXZ)
-                isAdjacentBlockTransparent |= IsAdjacentChunkBlockTransparent(worldPosition.X, worldPosition.Y, worldPosition.Z + 1);
-
-            return isAdjacentBlockTransparent;
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Based on the given blocks world position, checks if the adjacent chunk block is transparent.
-    /// </summary>
-    /// <param name="x"></param>
-    /// <param name="y"></param>
-    /// <param name="z"></param>
-    /// <returns></returns>
-    private bool IsAdjacentChunkBlockTransparent(int x, int y, int z)
-    {
-        // Find the world position of the neighboring block
-        var blockWorldPosition = new Vector3i(x, y, z);
-        if (x < 0 || x > VoxelHelper.MaxBlockPositionXZ ||
-            z < 0 || z > VoxelHelper.MaxBlockPositionXZ ||
-            y > VoxelHelper.MaxBlockPositionY)
-        {
-            return true;   // outward faces (sides/top) expose geometry
-        }
-        if (y < 0)
-        {
-            return false;  // keep bottom sealed
-        }
-
-        // Get the chunk index of the adjacent chunk
-        var adjacentChunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(blockWorldPosition);
-
-        var chunkWorldPosition = VoxelHelper.GetChunkPositionGlobal(adjacentChunkIndex);
-
-        // Get the block local position in its owner chunk
-        var (cx, cy, cz) = blockWorldPosition - chunkWorldPosition;
-        if (cx < 0 || cx >= VoxelHelper.ChunkSideSize ||
-            cz < 0 || cz >= VoxelHelper.ChunkSideSize ||
-            cy < 0 || cy > VoxelHelper.MaxBlockPositionY)
-        {
-            // outside valid local range → treat as non-transparent to avoid OOB
-            return false;
-        }
-
-        if (adjacentChunkIndex is >= 0 and < VoxelHelper.TotalChunks)
-        {
-            // Retrieve the adjacent chunk using the index
-            var adjacentChunk = world[adjacentChunkIndex];
-
-            //  if the chunk has been added above the Blocks is null
-            if (adjacentChunk?.Blocks is not null)
-            {
-                return adjacentChunk.IsBlockTransparent(cx, cy, cz);
-            }
-            else
-            {
-                var blockType = world.terrainBuilder.GenerateChunkBlockLocal(adjacentChunkIndex, cx, cy, cz);
-                return blockType is BlockType.WaterLevel or BlockType.None;
-            }
-        }
-
-        // The block is outside the world boundaries
-        return false;
-    }
-
-    /// <summary>
-    /// Returns true if the block is None or WaterLevel.
-    /// </summary>
-    private bool IsBlockTransparent(int x, int y, int z) => Blocks[x + z * VoxelHelper.ChunkSideSize + y * VoxelHelper.ChunkSideSizeSquare].IsTransparent;
 }
 
 public enum ChunkState

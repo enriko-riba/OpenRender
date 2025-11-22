@@ -6,7 +6,7 @@ namespace OpenRender.Core.Rendering;
 /// <summary>
 /// A simple shader program builder.
 /// </summary>
-public class Shader
+public partial class Shader
 {
     private static readonly Dictionary<string, Shader> shaderCache = [];
 
@@ -373,10 +373,24 @@ public class Shader
         }
     }
 
-    private static string ReadShaderText(string path)
+    private static string ReadShaderText(string path) => ReadShaderTextInternal(path, []);
+
+    private static string ReadShaderTextInternal(string path, HashSet<string> includedFiles)
     {
+        var fullPath = Path.GetFullPath(path);
+        if (includedFiles.Contains(fullPath))
+        {
+            return "";
+        }
+        includedFiles.Add(fullPath);
+
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException($"Shader include file not found: {fullPath}");
+        }
+
         // Read raw bytes
-        var bytes = File.ReadAllBytes(path);
+        var bytes = File.ReadAllBytes(fullPath);
 
         // Strip UTF-8 BOM if present
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
@@ -394,10 +408,83 @@ public class Shader
         // Remove any embedded NULs (can happen with copy/paste or toolchains)
         src = src.Replace("\0", string.Empty);
 
-        // Ensure the shader ends with a newline; some drivers misparse the last line otherwise
+        // Ensure the shader ends with a newline
         if (!src.EndsWith("\n"))
             src += "\n";
 
-        return src;
+        // Sanitize Unicode in comments
+        src = SanitizeComments(src);
+
+        // Process Includes
+        var sb = new System.Text.StringBuilder();
+        using (var reader = new StringReader(src))
+        {
+            string line;
+            var inBlockComment = false;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var trimmed = line.Trim();
+
+                // Simple block comment tracking
+                if (!inBlockComment && trimmed.StartsWith("/*"))
+                {
+                    inBlockComment = true;
+                }
+                
+                if (inBlockComment)
+                {
+                    if (trimmed.EndsWith("*/")) inBlockComment = false;
+                    sb.AppendLine(line);
+                    continue;
+                }
+
+                if (trimmed.StartsWith("//"))
+                {
+                    sb.AppendLine(line);
+                    continue;
+                }
+
+                if (trimmed.StartsWith("#include"))
+                {
+                    var match = IncludeFileRegex().Match(trimmed);
+                    if (match.Success)
+                    {
+                        var includeFile = match.Groups[1].Value;
+                        var dir = Path.GetDirectoryName(fullPath);
+                        var includePath = Path.Combine(dir ?? "", includeFile);
+                        sb.AppendLine(ReadShaderTextInternal(includePath, includedFiles));
+                    }
+                    else
+                    {
+                        sb.AppendLine(line);
+                    }
+                }
+                else
+                {
+                    sb.AppendLine(line);
+                }
+            }
+        }
+
+        return sb.ToString();
     }
+
+    private static string SanitizeComments(string src) =>
+        // Regex to find comments: //... or /* ... */
+        SanitizeRegex().Replace(src, match =>
+        {
+            var text = match.Value;
+            var sb = new System.Text.StringBuilder(text.Length);
+            foreach (var c in text)
+            {
+                // Keep ASCII characters, replace others with '?'
+                if (c <= 127) sb.Append(c);
+                else sb.Append('?');
+            }
+            return sb.ToString();
+        });
+    [System.Text.RegularExpressions.GeneratedRegex("#include\\s+\"([^\"]+)\"")]
+    private static partial System.Text.RegularExpressions.Regex IncludeFileRegex();
+    [System.Text.RegularExpressions.GeneratedRegex(@"(\/\/.*)|(\/\*[\s\S]*?\*\/)")]
+    private static partial System.Text.RegularExpressions.Regex SanitizeRegex();
 }

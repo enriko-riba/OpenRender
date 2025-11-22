@@ -33,9 +33,9 @@ public class Phase3BufferManager : IDisposable
         public uint Offset;
         public uint Size;
     }
-    private List<BufferRegion> freeVertexRegions = new();
-    private List<BufferRegion> freeIndexRegions = new();  // NEW: Track free index regions
-    private Queue<int> freeCommandSlots = new();          // NEW: Track free command slots
+    private List<BufferRegion> freeVertexRegions = [];
+    private List<BufferRegion> freeIndexRegions = [];  // NEW: Track free index regions
+    private readonly Queue<int> freeCommandSlots = new();          // NEW: Track free command slots
     private int nextCommandSlot = 0;                      // NEW: Next available command slot
     private uint currentVertexBufferEnd = 0;              // Renamed for clarity
     private uint currentIndexBufferEnd = 0;                // NEW: Track index buffer end
@@ -389,7 +389,7 @@ public class Phase3BufferManager : IDisposable
                     };
                 }
 
-                Log.Debug($"Reused vertex region: offset={offset}, size={requestedSize}");
+                //Log.Debug($"Reused vertex region: offset={offset}, size={requestedSize}");
                 return offset;
             }
         }
@@ -440,7 +440,7 @@ public class Phase3BufferManager : IDisposable
                     };
                 }
 
-                Log.Debug($"Reused index region: offset={offset}, size={requestedSize}");
+                //Log.Debug($"Reused index region: offset={offset}, size={requestedSize}");
                 return offset;
             }
         }
@@ -471,7 +471,7 @@ public class Phase3BufferManager : IDisposable
         freeVertexRegions.Add(new BufferRegion { Offset = baseOffset, Size = size });
 
         // Sort by offset to enable merging
-        freeVertexRegions = freeVertexRegions.OrderBy(r => r.Offset).ToList();
+        freeVertexRegions = [.. freeVertexRegions.OrderBy(r => r.Offset)];
 
         // Try to merge adjacent free regions
         MergeFreeRegions(ref freeVertexRegions);
@@ -491,7 +491,7 @@ public class Phase3BufferManager : IDisposable
         freeIndexRegions.Add(new BufferRegion { Offset = baseOffset, Size = size });
 
         // Sort by offset to enable merging
-        freeIndexRegions = freeIndexRegions.OrderBy(r => r.Offset).ToList();
+        freeIndexRegions = [.. freeIndexRegions.OrderBy(r => r.Offset)];
 
         // Try to merge adjacent free regions
         MergeFreeRegions(ref freeIndexRegions);
@@ -745,7 +745,7 @@ public class Phase3BufferManager : IDisposable
     public byte[] ReadVertices(uint baseOffset, uint vertexCount)
     {
         if (vertexCount == 0)
-            return Array.Empty<byte>();
+            return [];
 
         var byteOffset = (nint)(baseOffset * VERTEX_STRIDE);
         var byteSize = (nint)(vertexCount * VERTEX_STRIDE);

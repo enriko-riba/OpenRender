@@ -21,9 +21,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private uint actualFaceCount;           // Phase 5.1: Track face count instead
     private bool disposed;
 
-    // Debug frame counter for logging
-    private int frameCounter = 0;
-
     // Visibility tracking (for frustum culling)
     private int[]? visibilityFlags;
     private int[]? chunkIndices;

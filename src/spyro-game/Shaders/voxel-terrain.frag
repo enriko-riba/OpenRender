@@ -69,20 +69,23 @@ void main() {
     // Sample texture atlas
     vec3 texColor = texture(uBlockTexture, vTexCoord).rgb;
     
+    // Strengthen AO curve
+    float aoStrength = pow(vAO, 2.0); // Make dark areas darker
+
     // Ambient component (modulated by AO)
-    vec3 ambient = dirLight.ambient * texColor * vAO;
+    vec3 ambient = dirLight.ambient * texColor * aoStrength;
     
-    // Diffuse component (Lambertian)
+    // Diffuse component (Lambertian) - Apply AO here too for stronger effect!
     float NdotL = max(dot(N, L), 0.0);
-    vec3 diffuse = dirLight.diffuse * texColor * NdotL;
+    vec3 diffuse = dirLight.diffuse * texColor * NdotL * aoStrength;
     
-    // Specular component (Blinn-Phong)
+    // Specular component (Blinn-Phong) - Apply AO to specular too (occluded areas shouldn't shine)
     vec3 specular = vec3(0.0);
     if (NdotL > 0.0) {
         vec3 H = normalize(L + V);
         float NdotH = max(dot(N, H), 0.0);
         float specPower = pow(NdotH, uMaterialShininess);
-        specular = dirLight.specular * uMaterialSpecular * specPower;
+        specular = dirLight.specular * uMaterialSpecular * specPower * aoStrength;
     }
     
     // Combine components

@@ -251,7 +251,7 @@ internal class GpuTerrainLoadingScene : Scene
         }
     }
     
-    private int[] GenerateTestChunkIndices(int count)
+    private static int[] GenerateTestChunkIndices(int count)
     {
         var gridSize = (int)Math.Ceiling(Math.Sqrt(count));
         var indices = new List<int>();

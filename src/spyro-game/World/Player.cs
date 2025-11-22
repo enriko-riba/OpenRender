@@ -398,7 +398,7 @@ public class Player
     }
 
 
-    private void TravelXZStep(ref Vector3 pos, Vector3 step)
+    private void TravelXZStep(ref Vector3 pos, in Vector3 step)
     {
         if (step.X == 0 && step.Z == 0) return;
 
@@ -440,7 +440,7 @@ public class Player
                         // gentle auto-step: single impulse + grace, no sticky snap
                         if (stepUpCooldown <= 0f)
                         {
-                            pos.Y += 0.02f; // tiny pre-lift to avoid immediate re-collide (reduced)
+                            pos.Y += 0.05f; // tiny pre-lift to avoid immediate re-collide (reduced)
                             isGrounded = false;
                             isJumping = true;
                             velocityY = MathF.Max(velocityY, StepUpImpulse);
