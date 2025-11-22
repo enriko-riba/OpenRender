@@ -869,6 +869,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
+        
+        // Save edits immediately to prevent data loss
+        SaveEdits();
     }
 
     /// <summary>

@@ -88,9 +88,11 @@ bool isAABBInFrustum(vec3 aabbMin, vec3 aabbMax)
         
         // Test if positive vertex is behind the plane
         float distance = dot(planeNormal, positiveVertex) + planeDistance;
-        
+
         // If the positive vertex is behind this plane, the entire AABB is outside the frustum
-        if (distance < 0.0)
+        // EXPANDED FRUSTUM: Allow chunks slightly behind the plane to be visible (margin)
+        // This prevents popping when rotating camera
+        if (distance < -32.0)
         {
             return false;
         }
