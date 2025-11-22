@@ -67,16 +67,6 @@ public static class VoxelHelper
         public const int COMMAND_SLOTS = 11;     // NEW: input buffer for build-indirect (slot indices)
     }
 
-    /// <summary>
-    /// Validates that shader constants match C# constants (Phase 3)
-    /// </summary>
-    public static void ValidateShaderConstants()
-    {
-        // Validation logic would go here - for now just log
-        // This ensures CHUNK_SIDE_SIZE in shaders matches ChunkSideSize constant
-        OpenRender.Log.Debug($"VoxelHelper: ChunkSideSize={ChunkSideSize}, ChunkYSize={ChunkYSize}");
-    }
-
     public static (Vertex[], uint[]) CreateVoxelCube()
     {
         Vertex[] vertices =
@@ -255,10 +245,10 @@ public static class VoxelHelper
 
         var result = new List<int>(8);
 
-        bool hasLeft = cx > 0;
-        bool hasRight = cx < side - 1;
-        bool hasTop = cz > 0;
-        bool hasBottom = cz < side - 1;
+        var hasLeft = cx > 0;
+        var hasRight = cx < side - 1;
+        var hasTop = cz > 0;
+        var hasBottom = cz < side - 1;
 
         if (hasTop && hasLeft)    result.Add(chunkIndex - side - 1);   // top-left
         if (hasTop)               result.Add(chunkIndex - side);       // top

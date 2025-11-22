@@ -397,6 +397,7 @@ public class Player
         requestedMovement.Z = 0;
     }
 
+
     private void TravelXZStep(ref Vector3 pos, Vector3 step)
     {
         if (step.X == 0 && step.Z == 0) return;
@@ -467,8 +468,8 @@ public class Player
                     var dBack = MathF.Abs(Max.Z - collidingSphereCenter.Z);
                     var minD = MathF.Min(MathF.Min(dLeft, dRight), MathF.Min(dFront, dBack));
                     nXZ = minD == dLeft
-                        ? new Vector2(-1, 0) : minD == dRight ? new Vector2(1, 0) : 
-                        minD == dFront ? new Vector2(0, -1) : 
+                        ? new Vector2(-1, 0) : minD == dRight ? new Vector2(1, 0) :
+                        minD == dFront ? new Vector2(0, -1) :
                         new Vector2(0, 1);
                 }
                 else

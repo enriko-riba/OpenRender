@@ -880,12 +880,13 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     private void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockType blockType, bool isBreaking)
     {
-        if (!chunkEdits.ContainsKey(chunkIdx))
+        if (!chunkEdits.TryGetValue(chunkIdx, out var value))
         {
-            chunkEdits[chunkIdx] = [];
+            value = [];
+            chunkEdits[chunkIdx] = value;
         }
 
-        chunkEdits[chunkIdx][voxelIdx] = blockType;
+        value[voxelIdx] = blockType;
 
         Log.Debug($"Voxel edit: chunk={chunkIdx} voxel={voxelIdx} type={blockType} breaking={isBreaking}");
     }
@@ -923,16 +924,6 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
-    /// Get active chunk count for UI/debugging (Phase 5)
-    /// </summary>
-    public int GetActiveChunkCount() => activeChunks.Count;
-
-    /// <summary>
-    /// Get pending generation count for UI/debugging (Phase 5)
-    /// </summary>
-    public int GetPendingGenerationCount() => highPriorityPending.Count + lowPriorityPending.Count;
-
-    /// <summary>
     /// Initialize GPU resources for terrain generation.
     /// Pre-allocates buffers for maximum view distance to eliminate progressive resizing.
     /// </summary>
@@ -946,9 +937,6 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             maxChunks = CalculateMaxViewChunks();
         }
-
-        // Validate shader constants match VoxelHelper
-        VoxelHelper.ValidateShaderConstants();
 
         // Create SSBOs FIRST (before loading shader)
         if (chunkIndicesBuffers[0] == 0)
