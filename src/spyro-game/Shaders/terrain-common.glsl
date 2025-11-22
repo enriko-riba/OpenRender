@@ -15,6 +15,7 @@ const uint BLOCK_ROCK = 2u;
 const uint BLOCK_SAND = 3u;
 const uint BLOCK_DIRT = 4u;
 const uint BLOCK_GRASS_DIRT = 5u;
+const uint BLOCK_BEDROCK = 8u; // Added BedRock
 
 // Simple hash function
 uint hash(uint x, uint seed) {
@@ -88,4 +89,51 @@ int generateHeight(int wx, int wz, uint seed) {
     
     // Clamp to valid range
     return clamp(height, 0, CHUNK_Y_SIZE - 1);
+}
+
+// Check if water is nearby (radius 3)
+bool isNearWater(int wx, int wz, uint seed) {
+    // Check neighbors in radius 3
+    // Optimization: check sparse points first
+    for (int dz = -3; dz <= 3; dz+=3) {
+        for (int dx = -3; dx <= 3; dx+=3) {
+            if (dx == 0 && dz == 0) continue;
+            int h = generateHeight(wx + dx, wz + dz, seed);
+            if (h <= WATER_LEVEL) return true;
+        }
+    }
+    // Check closer points if needed (optional for performance)
+    return false;
+}
+
+uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
+    if (y > height) {
+        if (y <= WATER_LEVEL) {
+            return BLOCK_WATER_LEVEL;
+        }
+        return BLOCK_NONE;
+    } 
+    
+    // Solid blocks (y <= height)
+    
+    // Surface block
+    if (y == height) {
+        if (y < WATER_LEVEL) {
+            // Underwater surface
+            if (y >= WATER_LEVEL - 1) return BLOCK_SAND; // 1 block below water
+            return BLOCK_BEDROCK; // Deep underwater
+        } else {
+            // Above water surface
+            if (y <= WATER_LEVEL + 2) {
+                // Shoreline check
+                if (isNearWater(wx, wz, seed)) return BLOCK_SAND;
+            }
+            return BLOCK_GRASS_DIRT;
+        }
+    }
+    
+    // Sub-surface
+    int depth = height - y;
+    if (depth <= 2) return BLOCK_DIRT;
+    return BLOCK_ROCK;
 }

@@ -1086,8 +1086,8 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.NamedBufferSubData(chunkIndicesBuffers[bufferIndex], IntPtr.Zero, chunkIndices.Length * sizeof(int), chunkIndices);
 
         // Bind SSBOs with correct bindings matching shader
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, chunkIndicesBuffers[bufferIndex]);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, voxelDataBuffers[bufferIndex]);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, chunkIndicesBuffers[bufferIndex]);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, columnHeightsBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnMetaBuffers[bufferIndex]);
 
@@ -1310,6 +1310,9 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Stage 3.2 Count
         phase3Buffers.BindBuffersForCount();
+        // Bind OpaqueCounts buffer (binding 12)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
+
         countShader.Use();
         GL.Uniform1(countShader.GetUniformLocation("uChunkCount"), chunkCount);
         var countWorkGroups = (chunkCount + 255) / 256;
@@ -1365,6 +1368,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Stage 3.4 Compaction
         phase3Buffers.ResetAtomicCounters();
         GL.ClearNamedBufferData(phase3Buffers.PerChunkEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+        GL.ClearNamedBufferData(phase3Buffers.WaterEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
         GL.NamedBufferData(compactionChunkIndicesBuffer, chunkIndices.Length * sizeof(int), chunkIndices, BufferUsageHint.DynamicDraw);
         GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
@@ -1374,10 +1378,16 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
 
         phase3Buffers.BindBuffersForCompaction();
+        // Bind OpaqueCounts buffer (binding 12)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
+        // Bind WaterEmit buffer (binding 14)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, (int)phase3Buffers.WaterEmitBuffer);
+
         compactShader.Use();
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
         GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed);
+        GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
         GL.DispatchCompute((int)chunkCount, 128, 1);
@@ -1409,8 +1419,8 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.COMMAND_SLOTS, (int)phase3Buffers.CommandSlotBuffer);
         // Bind chunk indices (reusing compaction buffer)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
-        // Bind chunk info buffer
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.ChunkInfoBuffer);
+        // Bind OpaqueCounts buffer (binding 12)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
 
         buildIndirectShader ??= new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
         buildIndirectShader.Use();

@@ -172,7 +172,7 @@ public class VoxelWorld(int seed)
     }
 
     /// <summary>
-    /// Prepares all materials for the voxel world.
+    /// Prepares all materials for the v There is also the oxel world.
     /// </summary>
     /// <param name="world"></param>
     /// <returns></returns>
@@ -209,31 +209,12 @@ public class VoxelWorld(int seed)
     private readonly Queue<int> cacheFifo = new();
     private readonly object cacheLock = new();
     internal readonly TerrainBuilder terrainBuilder = new(seed);
-    internal ChunkInitializer? ChunkInitializer { get; private set; }
     private readonly ConcurrentDictionary<int, long> pendingUploadSince = new();
     private readonly ConcurrentDictionary<int, long> pendingComputeSince = new();
     private Vector3 lastCameraPosition;
     private Quaternion lastCameraOrientation;
     private int lastCameraChunkX = int.MinValue;
     private int lastCameraChunkZ = int.MinValue;
-
-    internal void EnsureChunkInitializer()
-    {
-        if (ChunkInitializer is null)
-        {
-            ChunkInitializer = new ChunkInitializer(this);
-            // Preallocate buffers for the full surrounding set to avoid invalid dispatches during movement
-            try { ChunkInitializer.PreallocateForMaxSurrounding(); } catch { }
-        }
-    }
-
-    internal void OnChunkInitializerDisposed(ChunkInitializer initializer)
-    {
-        if (ReferenceEquals(ChunkInitializer, initializer))
-        {
-            ChunkInitializer = null;
-        }
-    }
 
     private ICamera camera = default!;
 
@@ -528,7 +509,7 @@ public class VoxelWorld(int seed)
             var bt = BlockType.None;
             if (ly <= maxSolid)
             {
-                bt = TerrainBuilder.GenerateChunkBlockType(maxSolid, lx, ly, lz);
+                bt = terrainBuilder.GenerateChunkBlockType(maxSolid, lx, ly, lz);
                 // Treat WaterLevel as air for CPU queries/HUD/collision
                 if (bt == BlockType.WaterLevel) bt = BlockType.None;
             }
@@ -620,8 +601,6 @@ public class VoxelWorld(int seed)
             SaveChangedChunkBlocks(chunk);
         }
         // unified: nothing else to do
-        ChunkInitializer?.Dispose();
-        ChunkInitializer = null;
         Log.Info("VoxelWorld.Close() all done!");
     }
 
@@ -694,46 +673,10 @@ public class VoxelWorld(int seed)
         const int RebuildDebounceMs = 120; // slightly tighter debounce
         if ((lastCameraChunkX != cameraChunkX || lastCameraChunkZ != cameraChunkZ) && (now - lastCompactionRebuildMs) >= RebuildDebounceMs)
         {
-            EnsureChunkInitializer();
-            if (ChunkInitializer is not null)
-            {
-                int[] desiredArr;
-                lock (surroundingChunkSet) { desiredArr = [.. surroundingChunkSet]; }
-                if (desiredArr.Length > 0 && !ChunkInitializer.HasInFlightBatch)
-                {
-                    var current = CompactedChunkIndices ?? [];
-                    var currentSet = new HashSet<int>(current);
-                    var toAdd = desiredArr.Where(i => !currentSet.Contains(i)).ToArray();
-                    // Harvest freelists from resident draws not in desired set
-                    FreeDrawSlots.Clear();
-                    FreeAtlasRanges.Clear();
-                    if (CompactedChunkIndices != null && CompactedBases != null && CompactedCounts != null)
-                    {
-                        var desiredSet = new HashSet<int>(desiredArr);
-                        for (var i = 0; i < CompactedChunkIndices.Length; i++)
-                        {
-                            var idxRes = CompactedChunkIndices[i];
-                            if (!desiredSet.Contains(idxRes))
-                            {
-                                FreeDrawSlots.Add(i);
-                                var cnt = CompactedCounts[i];
-                                if (cnt > 0) FreeAtlasRanges.Add((CompactedBases[i], cnt));
-                            }
-                        }
-                    }
-                    if (CompactedAtlasSSBO == 0 || current.Length == 0)
-                    {
-                        ChunkInitializer.ProcessChunkData(desiredArr);
-                    }
-                    else if (toAdd.Length > 0)
-                    {
-                        try { ChunkInitializer.AppendChunks(toAdd); } catch { }
-                    }
-                    lastCompactionRebuildMs = now;
-                    lastCameraChunkX = cameraChunkX;
-                    lastCameraChunkZ = cameraChunkZ;
-                }
-            }
+            // Legacy streaming logic removed
+            lastCompactionRebuildMs = now;
+            lastCameraChunkX = cameraChunkX;
+            lastCameraChunkZ = cameraChunkZ;
         }
 
         // Phase 2.5: periodic eviction/repack when resident overhead is high
@@ -748,11 +691,10 @@ public class VoxelWorld(int seed)
             var extra = resident.Length - desiredCountNow;
             if (extra > 0 && (resident.Length > desiredCountNow * OverheadFactor) && extra >= MinOverhead)
             {
-                if (now - lastCompactionRepackMs >= RepackDebounceMs && ChunkInitializer is not null && !ChunkInitializer.HasInFlightBatch)
+                if (now - lastCompactionRepackMs >= RepackDebounceMs)
                 {
-                    int[] desiredArr;
-                    lock (surroundingChunkSet) { desiredArr = [.. surroundingChunkSet]; }
-                    try { ChunkInitializer.ProcessChunkData(desiredArr); lastCompactionRepackMs = now; } catch { }
+                    // Legacy repack logic removed
+                    lastCompactionRepackMs = now; 
                 }
             }
         }
@@ -855,7 +797,7 @@ public class VoxelWorld(int seed)
         if (chunk.IsInitialized) return false;
 
         var generationData = terrainBuilder.BuildChunkData(chunkIndex);
-        chunk.ApplyGenerationData(terrainBuilder, generationData);
+        chunk.ApplyGenerationData(generationData);
         chunk.RecomputeLighting(force: true, includeNeighborData: true);
         return true;
     }
@@ -1054,33 +996,7 @@ public class VoxelWorld(int seed)
 
     internal void ProcessGpuStreamingOnGlThread()
     {
-        if (!UseGpuStreaming) return;
-        EnsureChunkInitializer();
-        if (ChunkInitializer is null) return;
-
-        // If a batch is in flight, try completing it quickly (non-blocking)
-        if (ChunkInitializer.HasInFlightBatch)
-        {
-            _ = ChunkInitializer.TryCompleteBatch(out var _);
-        }
-
-        // Periodic full rebuild disabled: publish only on camera tile change (CalculateTerrainStreamingChanges)
-
-        // Skip per-batch streaming submits for now; rely on frequent full rebuilds for coherence
-        // (reduces churn and avoids partial atlas publishes during movement)
-
-        // Try to complete any in-flight batch at the end of this call
-        if (ChunkInitializer.TryCompleteBatch(out var completed))
-        {
-            foreach (var idx in completed)
-            {
-                var chunk = GetOrCreateChunkContainer(idx);
-                if (chunk.State is ChunkState.SafeToRemove)
-                    chunk.State = ChunkState.Loaded;
-                chunk.Visible = true;
-                EnqueueChunkForUpload(chunk);
-            }
-        }
+        // Legacy GPU streaming logic removed
     }
 
     internal void EnqueueChunkForUpload(Chunk chunk)

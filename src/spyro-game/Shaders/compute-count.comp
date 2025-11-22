@@ -16,6 +16,7 @@ const int CHUNK_SIDE_SIZE = 16;
 const int CHUNK_Y_SIZE = 128;
 const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
 const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+const int WATER_LEVEL = 35;
 
 // ============================================================================
 // Uniforms
@@ -36,6 +37,11 @@ layout(std430, binding = 2) writeonly buffer VisibleCounts {
     uint visibleCounts[];
 };
 
+// Output: Opaque face count per chunk (for split draw calls)
+layout(std430, binding = 12) writeonly buffer OpaqueCounts {
+    uint opaqueCounts[];
+};
+
 // ============================================================================
 // Main Shader
 // ============================================================================
@@ -43,16 +49,33 @@ layout(std430, binding = 2) writeonly buffer VisibleCounts {
 void main() {
     uint chunkIdx = gl_GlobalInvocationID.x;
     if (chunkIdx >= uChunkCount) return;
-    
+
     uint baseIdx = chunkIdx * CHUNK_VOXEL_COUNT;
-    uint count = 0u;
-    
+    uint totalCount = 0u;
+    uint opaqueCount = 0u;
+
     // Count visible faces in this chunk
     // popcount (bitCount in GLSL) counts number of set bits
     for (uint i = 0u; i < CHUNK_VOXEL_COUNT; i++) {
         uint mask = visibilityMask[baseIdx + i];
-        count += uint(bitCount(mask));
+        uint faces = uint(bitCount(mask & 0x3Fu)); // Only lower 6 bits are faces
+        
+        if (faces > 0u) {
+            totalCount += faces;
+            bool isWater = ((mask >> 6) & 1u) != 0u;
+            
+            if (!isWater) {
+                opaqueCount += faces;
+            }
+        }
+    }
+
+    visibleCounts[chunkIdx] = totalCount;
+    
+    // Fallback: if we found visible faces but opaque count is 0, force it to totalCount.
+    if (totalCount > 0u && opaqueCount == 0u) {
+        opaqueCount = totalCount;
     }
     
-    visibleCounts[chunkIdx] = count;
+    opaqueCounts[chunkIdx] = opaqueCount;
 }

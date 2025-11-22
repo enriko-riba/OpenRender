@@ -99,16 +99,20 @@ namespace SpyroGame.World
                 // Check if current voxel is solid
                 if (IsSolid(x, y, z, out blockType))
                 {
-                    hitPoint = origin + direction * t;
-                    blockPos = new Vector3i(x, y, z);
-                    
-                    // Calculate normal based on which face we entered
-                    if (lastPos.X != x) normal = new Vector3(-stepX, 0, 0);
-                    else if (lastPos.Y != y) normal = new Vector3(0, -stepY, 0);
-                    else if (lastPos.Z != z) normal = new Vector3(0, 0, -stepZ);
-                    else normal = -direction; // Should not happen if we step correctly
+                    // Ignore water blocks for picking
+                    if (blockType != BlockType.WaterLevel)
+                    {
+                        hitPoint = origin + direction * t;
+                        blockPos = new Vector3i(x, y, z);
+                        
+                        // Calculate normal based on which face we entered
+                        if (lastPos.X != x) normal = new Vector3(-stepX, 0, 0);
+                        else if (lastPos.Y != y) normal = new Vector3(0, -stepY, 0);
+                        else if (lastPos.Z != z) normal = new Vector3(0, 0, -stepZ);
+                        else normal = -direction; // Should not happen if we step correctly
 
-                    return true;
+                        return true;
+                    }
                 }
 
                 lastPos = new Vector3i(x, y, z);

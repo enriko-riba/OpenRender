@@ -70,16 +70,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     }
 
     /// <summary>
-    /// Factory method to create a VoxelTerrainRenderer.
-    /// </summary>
-    public static VoxelTerrainRenderer Create(VoxelWorld world, ulong[] textureHandles, VoxelMaterial[] materials)
-    {
-        // Create renderer - texture handles and materials will be used by ChunkStreamingManager
-        // This renderer uses its own shader and material setup
-        return new VoxelTerrainRenderer();
-    }
-
-    /// <summary>
     /// Set up VAO to use Phase 3 compacted buffers.
     /// Phase 5.3: Builds multi-draw indirect commands (ONE per chunk).
     /// Phase 5.2: Uses optimized vertex layout without normals (28 bytes vs 36 bytes).
@@ -115,6 +105,20 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.VertexArrayAttribBinding(vao, 2, 0);
 
         GL.EnableVertexArrayAttrib(vao, 3);
+        // Phase 5.2: Face Index is stored as float (uintBitsToFloat) in the buffer.
+        // We want the raw bits in the shader (uint).
+        // VertexAttribType.Float tells GL to read 32-bit float and convert to float/int.
+        // If shader input is uint, GL converts float value to uint (e.g. 1.0f -> 1u).
+        // BUT we stored bits! uintBitsToFloat(1) is 1.4e-45. GL converts 1.4e-45 to 0u.
+        // FIX: Use VertexAttribPointer with type FLOAT but shader input as float, then floatBitsToUint.
+        // OR: Use VertexAttribIPointer with type UNSIGNED_INT?
+        // If we use VertexAttribIPointer(..., GL_UNSIGNED_INT, ...), GL reads 32 bits as uint.
+        // Since the buffer contains the raw bits of the uint (just cast to float for storage),
+        // reading them as uint will recover the original uint value!
+        // So VertexAttribIFormat with UnsignedInt is correct IF the buffer data is binary compatible.
+        // float and uint are both 32-bit. uintBitsToFloat preserves the bit pattern.
+        // So the buffer contains the bits of the uint.
+        // Reading as UnsignedInt retrieves the bits.
         GL.VertexArrayAttribIFormat(vao, 3, 1, VertexAttribIType.UnsignedInt, 24);
         GL.VertexArrayAttribBinding(vao, 3, 0);
 
@@ -147,14 +151,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         visibilityFlags = flags;
         chunkIndices = indices;
 
-        if (flags != null)
-        {
-            VisibleDraws = flags.Count(f => f == 1);
-        }
-        else
-        {
-            VisibleDraws = chunkIndices?.Length ?? 0;
-        }
+        VisibleDraws = flags != null ? flags.Count(f => f == 1) : chunkIndices?.Length ?? 0;
     }
 
     /// <summary>
@@ -284,13 +281,38 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // Bind the grass-dirt texture atlas
-        if (Material.Textures != null && Material.Textures.Length > 0 && Material.Textures[0] != null)
+        // Bind textures
+        if (Material.Textures != null)
         {
-            GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, Material.Textures[0].Handle);
-            shader.SetInt("uBlockTexture", 0);
+            // Only bind the first 6 textures as used by the shader
+            var count = Math.Min(Material.Textures.Length, 6);
+            for (var i = 0; i < count; i++)
+            {
+                if (Material.Textures[i] != null)
+                {
+                    GL.ActiveTexture(TextureUnit.Texture0 + i);
+                    GL.BindTexture(TextureTarget.Texture2D, Material.Textures[i].Handle);
+                    // Uniforms: uTextures[0], uTextures[1], etc.
+                    // Or individual names: uTexGrass, uTexWater, etc.
+                    // Let's use individual names for clarity in shader
+                    var uniformName = i switch
+                    {
+                        0 => "uTexGrass",
+                        1 => "uTexWater",
+                        2 => "uTexDirt",
+                        3 => "uTexRock",
+                        4 => "uTexSand",
+                        5 => "uTexBedRock",
+                        _ => $"uTex{i}"
+                    };
+                    shader.SetInt(uniformName, i);
+                }
+            }
         }
+
+        // Enable blending for water transparency
+        // GL.Enable(EnableCap.Blend);
+        // GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
 
         // Set material uniforms
         var matSpecular = new Vector3(0.1f, 0.1f, 0.1f);
@@ -315,18 +337,40 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // CRITICAL FIX: Use HighWaterMark as draw count, not active chunk count!
         // Slots are allocated sparsely/using free list, so we must draw up to the highest allocated slot.
         // Empty slots (freed) are zeroed out and will be skipped by GPU.
-        int drawCount = bufferManager.GetCommandSlotHighWaterMark();
+        var drawCount = bufferManager.GetCommandSlotHighWaterMark();
 
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
+        
+        // 1. Draw Opaque (Command 1 of each pair)
+        // Stride = 2 * sizeof(DrawElementsIndirectCommand) = 2 * 5 * 4 = 40 bytes
+        // Offset = 0
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
             IntPtr.Zero,
-            drawCount,             // Draw up to the highest allocated slot
-            0                      // Stride (tightly packed)
+            drawCount,
+            40 // Stride
         );
 
-        // Disable backface culling after rendering (restore default state)
+        // 2. Draw Transparent (Command 2 of each pair)
+        // Enable blending and disable depth write (optional, but good for water)
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        // GL.DepthMask(false); // Optional: Disable depth write for transparent objects if sorting is an issue
+
+        // Stride = 40 bytes
+        // Offset = 20 bytes (start of second command)
+        GL.MultiDrawElementsIndirect(
+            PrimitiveType.Triangles,
+            DrawElementsType.UnsignedInt,
+            (IntPtr)20, // Offset to second command
+            drawCount,
+            40 // Stride
+        );
+
+        // Restore state
+        // GL.DepthMask(true);
+        GL.Disable(EnableCap.Blend);
         GL.Disable(EnableCap.CullFace);
 
         // Render picked block outline (on top of terrain)
@@ -408,12 +452,69 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     {
         // Create material with the voxel terrain shader and grass-dirt texture atlas (3x2 layout)
         var shader = new Shader("Shaders/voxel-terrain.vert", "Shaders/voxel-terrain.frag");
-        var textureDesc = new TextureDescriptor("Resources/voxel/grass-dirt.png",
+        
+        // Get paths from VoxelWorld configuration
+        var grassPath = VoxelWorld.textures[BlockType.GrassDirt];
+        var waterPath = VoxelWorld.textures[BlockType.WaterLevel];
+        var dirtPath = VoxelWorld.textures[BlockType.Dirt];
+        var rockPath = VoxelWorld.textures[BlockType.Rock];
+        var sandPath = VoxelWorld.textures[BlockType.Sand];
+        var bedrockPath = VoxelWorld.textures[BlockType.BedRock];
+        
+        // Slot 0: GrassDirt
+        var grassDesc = new TextureDescriptor(grassPath,
             MinFilter: TextureMinFilter.Nearest,
             MagFilter: TextureMagFilter.Nearest,
-            TextureWrapS: TextureWrapMode.ClampToEdge,      // CRITICAL: Prevent atlas tile bleeding
-            TextureWrapT: TextureWrapMode.ClampToEdge,      // CRITICAL: Prevent atlas tile bleeding
+            TextureType: TextureType.Diffuse, // Slot 0
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
             GenerateMipMap: false);
-        return Material.Create(shader, textureDesc);
+
+        // Slot 1: Water
+        var waterDesc = new TextureDescriptor(waterPath,
+            MinFilter: TextureMinFilter.Nearest,
+            MagFilter: TextureMagFilter.Nearest,
+            TextureType: TextureType.Detail, // Slot 1
+            TextureWrapS: TextureWrapMode.Repeat,
+            TextureWrapT: TextureWrapMode.Repeat,
+            GenerateMipMap: true);
+
+        // Slot 2: Dirt
+        var dirtDesc = new TextureDescriptor(dirtPath,
+            MinFilter: TextureMinFilter.Nearest,
+            MagFilter: TextureMagFilter.Nearest,
+            TextureType: TextureType.Normal, // Slot 2
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
+            GenerateMipMap: false);
+
+        // Slot 3: Rock
+        var rockDesc = new TextureDescriptor(rockPath,
+            MinFilter: TextureMinFilter.Nearest,
+            MagFilter: TextureMagFilter.Nearest,
+            TextureType: TextureType.Specular, // Slot 3
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
+            GenerateMipMap: false);
+
+        // Slot 4: Sand
+        var sandDesc = new TextureDescriptor(sandPath,
+            MinFilter: TextureMinFilter.Nearest,
+            MagFilter: TextureMagFilter.Nearest,
+            TextureType: TextureType.Bump, // Slot 4
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
+            GenerateMipMap: false);
+
+        // Slot 5: BedRock
+        var bedrockDesc = new TextureDescriptor(bedrockPath,
+            MinFilter: TextureMinFilter.Nearest,
+            MagFilter: TextureMagFilter.Nearest,
+            TextureType: TextureType.Additional2, // Slot 5
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
+            GenerateMipMap: false);
+
+        return Material.Create(shader, [grassDesc, waterDesc, dirtDesc, rockDesc, sandDesc, bedrockDesc]);
     }
 }

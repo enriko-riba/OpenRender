@@ -48,7 +48,8 @@ uniform mat4 uChunkTransform = mat4(1.0);
 layout(location = 0) in vec3 aPosition;   // Voxel world position
 layout(location = 1) in vec2 aTexCoord;   // Texture UV
 layout(location = 2) in float aAO;        // Ambient occlusion [0,1]
-layout(location = 3) in uint aFaceIndex;  // Face direction index [0-5]
+// Note: aFaceIndex is read as uint via VertexAttribIFormat, so it gets the raw bits from the buffer
+layout(location = 3) in uint aFaceIndex;  // Face direction index [0-5] + blockType [8-15]
 
 // ============================================================================
 // Vertex Output (to fragment shader)
@@ -59,6 +60,7 @@ out vec3 vNormal;        // World-space normal (derived from face index)
 out vec2 vTexCoord;      // Texture coordinates
 out float vAO;           // Ambient occlusion
 out vec3 vViewDir;       // Direction to camera
+flat out uint vBlockType; // Block type for texture selection
 
 // ============================================================================
 // Main Shader
@@ -68,10 +70,14 @@ void main() {
     // Transform position to world space (chunk space = world space for now)
     vec4 worldPos = uChunkTransform * vec4(aPosition, 1.0);
     vWorldPos = worldPos.xyz;
-    
+
+    // Extract face index and block type
+    uint faceIndex = aFaceIndex & 0x7u; // 3 bits for face (0-5)
+    vBlockType = (aFaceIndex >> 8) & 0xFFu; // 8 bits for block type
+
     // Derive normal from face index (Phase 5.2 optimization!)
     // This replaces 12 bytes of stored normal data with a simple array lookup
-    vec3 normal = FACE_NORMALS[aFaceIndex];
+    vec3 normal = FACE_NORMALS[faceIndex];
     
     // Transform normal to world space
     // Note: For uniform scaling, we can use mat3(uChunkTransform)

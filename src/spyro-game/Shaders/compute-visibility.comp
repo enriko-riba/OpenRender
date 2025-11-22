@@ -15,10 +15,11 @@ const int WATER_LEVEL = 35;
 
 // Block types
 const uint BLOCK_NONE = 0u;
-const uint BLOCK_ROCK = 1u;
-const uint BLOCK_DIRT = 2u;
-const uint BLOCK_GRASS_DIRT = 3u;
-const uint BLOCK_WATER = 7u;
+const uint BLOCK_WATER_LEVEL = 1u;
+const uint BLOCK_ROCK = 2u;
+const uint BLOCK_SAND = 3u;
+const uint BLOCK_DIRT = 4u;
+const uint BLOCK_GRASS_DIRT = 5u;
 
 // Face bits (match order: +X, -X, +Y, -Y, +Z, -Z)
 const uint FACE_POS_X = (1u << 0);
@@ -149,16 +150,41 @@ int generateHeight(int wx, int wz) {
     return clamp(height, 0, CHUNK_Y_SIZE - 1);
 }
 
-uint generateBlockType(int height, int y) {
-    if (y > height) {
-        return BLOCK_NONE;
-    } else if (y == height) {
-        return BLOCK_GRASS_DIRT;
-    } else if (y >= height - 2) {
-        return BLOCK_DIRT;
-    } else {
-        return BLOCK_ROCK;
+// Check if water is nearby (radius 3)
+bool isNearWater(int wx, int wz) {
+    for (int dz = -3; dz <= 3; dz+=3) {
+        for (int dx = -3; dx <= 3; dx+=3) {
+            if (dx == 0 && dz == 0) continue;
+            int h = generateHeight(wx + dx, wz + dz);
+            if (h <= WATER_LEVEL) return true;
+        }
     }
+    return false;
+}
+
+uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
+    if (y > height) {
+        if (y <= WATER_LEVEL) {
+            return BLOCK_WATER_LEVEL;
+        }
+        return BLOCK_NONE;
+    } 
+    
+    if (y == height) {
+        if (y < WATER_LEVEL) {
+            if (y >= WATER_LEVEL - 1) return BLOCK_SAND;
+            return 8u; // BLOCK_BEDROCK (hardcoded here as constant is missing)
+        } else {
+            if (y <= WATER_LEVEL + 2) {
+                if (isNearWater(wx, wz)) return BLOCK_SAND;
+            }
+            return BLOCK_GRASS_DIRT;
+        }
+    }
+    
+    int depth = height - y;
+    if (depth <= 2) return BLOCK_DIRT;
+    return BLOCK_ROCK;
 }
 
 // ============================================================================
@@ -168,7 +194,12 @@ uint generateBlockType(int height, int y) {
 /// Check if voxel is transparent (air or water)
 bool isTransparent(uint voxel) {
     uint blockType = voxel & 0xFFu;
-    return blockType == BLOCK_NONE || blockType == BLOCK_WATER;
+    return blockType == BLOCK_NONE || blockType == BLOCK_WATER_LEVEL;
+}
+
+bool isWater(uint voxel) {
+    uint blockType = voxel & 0xFFu;
+    return blockType == BLOCK_WATER_LEVEL;
 }
 
 /// Get voxel at local coordinates (with bounds checking)
@@ -212,7 +243,18 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
         height = generateHeight(wx, wz);
     }
 
-    uint blockType = generateBlockType(height, ly);
+    // Note: compute-visibility doesn't include terrain-common.glsl directly but duplicates logic.
+    // I should probably update the duplicated logic or include the file.
+    // For now, I'll just update the call to match the signature if I can't include.
+    // Wait, compute-visibility DOES NOT include terrain-common.glsl. It has its own copy of noise functions.
+    // I need to update the local copy of generateBlockType or add the new one here.
+    // Since I just removed the old one, I must add the new one!
+    
+    // Re-adding the new generateBlockType locally to compute-visibility.comp
+    // But wait, I removed it in the previous step.
+    // Let's add it back with the new logic.
+    
+    uint blockType = generateBlockType(height, ly, wx, wz, uSeed);
     return blockType; // We only need the block type for transparency check
 }
 
@@ -241,26 +283,49 @@ void main() {
         return;
     }
 
+    bool currentIsWater = (blockType == BLOCK_WATER_LEVEL);
+    
     // Neighbor-based face visibility
     uint mask = 0u;
 
+    // Helper macro for face checking
+    #define CHECK_FACE(neighborVoxel, faceBit) \
+    { \
+        uint nv = neighborVoxel; \
+        bool neighborIsWater = isWater(nv); \
+        bool neighborIsTransparent = isTransparent(nv); \
+        if (currentIsWater) { \
+            /* Water only draws against Air (transparent but not water) */ \
+            /* Also draw against other water if we want to see water-water boundaries? No. */ \
+            if (neighborIsTransparent && !neighborIsWater) mask |= faceBit; \
+        } else { \
+            /* Solid blocks draw against any transparent block (Air OR Water) */ \
+            /* If neighbor is water, it is transparent, so we draw the solid face. */ \
+            if (neighborIsTransparent) mask |= faceBit; \
+        } \
+    }
+
     // +X
-    if (isTransparent(getVoxel(chunkIdx, lx + 1, int(ly), lz))) mask |= FACE_POS_X;
+    CHECK_FACE(getVoxel(chunkIdx, lx + 1, int(ly), lz), FACE_POS_X);
 
     // -X
-    if (isTransparent(getVoxel(chunkIdx, lx - 1, int(ly), lz))) mask |= FACE_NEG_X;
+    CHECK_FACE(getVoxel(chunkIdx, lx - 1, int(ly), lz), FACE_NEG_X);
 
     // +Y
-    if (isTransparent(getVoxel(chunkIdx, lx, int(ly) + 1, lz))) mask |= FACE_POS_Y;
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) + 1, lz), FACE_POS_Y);
 
     // -Y
-    if (isTransparent(getVoxel(chunkIdx, lx, int(ly) - 1, lz))) mask |= FACE_NEG_Y;
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) - 1, lz), FACE_NEG_Y);
 
     // +Z
-    if (isTransparent(getVoxel(chunkIdx, lx, int(ly), lz + 1))) mask |= FACE_POS_Z;
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz + 1), FACE_POS_Z);
 
     // -Z
-    if (isTransparent(getVoxel(chunkIdx, lx, int(ly), lz - 1))) mask |= FACE_NEG_Z;
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz - 1), FACE_NEG_Z);
+
+    if (currentIsWater) {
+        mask |= (1u << 6); // Bit 6 = IsWater
+    }
 
     visibilityMask[voxelIdx] = mask;
 }

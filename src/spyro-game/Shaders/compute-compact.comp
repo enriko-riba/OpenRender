@@ -43,6 +43,7 @@ const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
 uniform uint uChunkCount;
 uniform uint uWorldChunksXZ;  // For calculating chunk world position
 uniform uint uSeed;
+uniform int uTestMode;
 uniform uint uVertexRegionOffset; // start vertex index for this batch region
 uniform uint uIndexRegionOffset;  // start index for this batch region
 
@@ -85,6 +86,16 @@ layout(std430, binding = 7) writeonly buffer CompactIndices {
 layout(std430, binding = 8) buffer PerChunkEmit {
     uint perChunkEmit[];
 }; // per-chunk face emission counters
+
+// Input: Opaque counts (from compute-count)
+layout(std430, binding = 12) readonly buffer OpaqueCounts {
+    uint opaqueCounts[];
+};
+
+// Atomic counters for water emission
+layout(std430, binding = 14) buffer WaterEmit {
+    uint waterEmit[];
+};
 
 // Atomic counters
 layout(std430, binding = 5) buffer AtomicCounters {
@@ -200,7 +211,8 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
     if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
         uint voxel = voxelData[voxelIdx];
-        return (voxel & 0xFFu) != 0u;
+        // Water is NOT solid for AO purposes (it doesn't occlude solid blocks)
+        return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
     } 
     
     // Outside current chunk - try to find neighbor in current batch
@@ -229,7 +241,7 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
                 // Found neighbor in batch! Read its data.
                 uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
                 uint voxel = voxelData[voxelIdx];
-                return (voxel & 0xFFu) != 0u;
+                return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
             }
         }
     }
@@ -242,10 +254,27 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
     // Check edits first
     int editType = getBlockFromEdits(wx, wy, wz);
     if (editType != -1) {
-        return editType != 0;
+        return editType > int(BLOCK_WATER_LEVEL);
     }
 
-    int height = generateHeight(wx, wz, uSeed);
+    int height;
+    if (uTestMode == 1) {
+        int neighborChunkX = wx / CHUNK_SIDE_SIZE;
+        int neighborChunkZ = wz / CHUNK_SIDE_SIZE;
+        height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
+    } else {
+        height = generateHeight(wx, wz, uSeed);
+    }
+    
+    // Procedural: Solid if y <= height AND not water level
+    // generateBlockType returns WATER for y <= WATER_LEVEL.
+    // So if y <= WATER_LEVEL, it is water (not solid).
+    // If y > WATER_LEVEL and y <= height, it is solid.
+    // Wait, generateBlockType returns SAND for y < WATER_LEVEL - 2.
+    // So deep underwater is solid.
+    // But for simple AO, let's assume water level is water.
+    if (pos.y <= WATER_LEVEL) return false; // Water is not solid
+    
     return pos.y <= height;
 }
 
@@ -332,22 +361,49 @@ void main(){
     uint blockType = voxel & 0xFFu;
     uint mask = visibilityMask[voxelIdx];
     if(mask==0u||blockType==0u) return;
+
+    bool isWater = (blockType == BLOCK_WATER_LEVEL);
+
     uint vertexChunkBase = baseOffsets[chunkIdx];
     uint indexChunkBase  = (vertexChunkBase / 4u) * 6u;
+    
+    // Calculate base index offset for this face type
+    // Opaque starts at 0, Water starts after all opaque faces
+    uint opaqueCount = opaqueCounts[chunkIdx];
+    
     vec3 voxelPos = chunkWorldOffset + vec3(float(lx),float(ly),float(lz));
     for(uint face=0u; face<6u; face++){
         uint faceBit=1u<<face;
         if((mask & faceBit)==0u) continue;
-        uint localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
+        
+        uint localFaceIdx;
+        if (isWater) {
+            localFaceIdx = opaqueCount + atomicAdd(waterEmit[chunkIdx], 1u);
+        } else {
+            localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
+        }
+        
         uint vertBaseAbs = uVertexRegionOffset + vertexChunkBase + localFaceIdx*4u;
         uint idxWriteBase = uIndexRegionOffset + indexChunkBase + localFaceIdx*6u;
         atomicAdd(faceCounter,1u);
         vec3 corners[4];
         getFaceCorners(face, voxelPos, corners);
+        
+        // Pack blockType into face index (bits 8-15)
+        // Bit 8 was previously isWater, now we use 8 bits for type
+        uint facePacked = face | (blockType << 8);
+
         for(uint v=0u; v<4u; v++){
-            vec2 uv=getAtlasUV(face,v);
+            vec2 uv;
+            if (isWater) {
+                // Water uses full texture, not atlas
+                uv = flipV(getBaseUV(v));
+            } else {
+                uv = getAtlasUV(face,v);
+            }
+            
             float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz));
-            writeVertex(vertBaseAbs+v,corners[v],uv,ao,face);
+            writeVertex(vertBaseAbs+v,corners[v],uv,ao,facePacked);
         }
         uint localVertBase = localFaceIdx*4u;
         compactIndices[idxWriteBase+0u]=localVertBase+0u;

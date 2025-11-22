@@ -24,7 +24,7 @@ var nativeWindowSettings = new NativeWindowSettings()
     WindowState = WindowState.Maximized,
 };
 
-OpenRender.Log.MinimumLevel = OpenRender.Log.LevelDebug;
+OpenRender.Log.MinimumLevel = OpenRender.Log.LevelInfo;
 
 //  the one and only SceneManager
 using var scm = new SceneManager(GameWindowSettings.Default, nativeWindowSettings);

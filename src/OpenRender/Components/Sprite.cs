@@ -220,6 +220,10 @@ public class Sprite : SceneNode
 
     public override void OnDraw(double elapsed)
     {
+        // Enable blending for sprites (UI/Crosshair)
+        GL.Enable(EnableCap.Blend);
+        GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
         // Sprites in UI layer don't need depth testing - state should be managed at render layer level
         // Toggling GL state here causes shader recompilation warnings
         Material.Shader.SetUniform4("sourceFrame",

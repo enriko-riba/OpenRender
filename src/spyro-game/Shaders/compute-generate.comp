@@ -12,11 +12,11 @@ uniform uint uWorldChunksXZ;
 uniform int uTestMode = 0;
 
 // SSBOs
-layout(std430, binding = 0) readonly buffer ChunkIndicesBuffer {
+layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
     uint chunkIndices[];
 };
 
-layout(std430, binding = 1) writeonly buffer VoxelDataBuffer {
+layout(std430, binding = 0) writeonly buffer VoxelDataBuffer {
     uint voxelData[];
 };
 
@@ -27,18 +27,6 @@ layout(std430, binding = 2) writeonly buffer ColumnHeightsBuffer {
 layout(std430, binding = 3) writeonly buffer ColumnMetaBuffer {
     uvec4 columnMeta[];
 };
-
-uint generateBlockType(int height, int y) {
-    if (y > height) {
-        return BLOCK_NONE;
-    } else if (y == height) {
-        return BLOCK_GRASS_DIRT;
-    } else if (y >= height - 2) {
-        return BLOCK_DIRT;
-    } else {
-        return BLOCK_ROCK;
-    }
-}
 
 uint packVoxel(uint blockType) {
     return blockType | (0u << 8) | (15u << 16) | (0u << 24);
@@ -71,8 +59,11 @@ void main() {
     uint voxelBaseIdx = chunkIdx * CHUNK_VOXEL_COUNT + lz * CHUNK_SIDE_SIZE + lx;
 
     for (int y = 0; y < CHUNK_Y_SIZE; y++) {
-        uint blockType = generateBlockType(height, y);
+        uint blockType = generateBlockType(height, y, wx, wz, uSeed);
         uint voxelIdx = voxelBaseIdx + y * CHUNK_SIDE_SIZE_SQUARED;
         voxelData[voxelIdx] = packVoxel(blockType);
     }
 }
+
+// Remove local generateBlockType definition as it is now in terrain-common.glsl
+// (Wait, I need to remove the old function definition first)

@@ -20,6 +20,8 @@ public class Phase3BufferManager : IDisposable
     private uint indirectDrawBuffer;
     private uint perChunkEmitBuffer;   // NEW: per-chunk face emission counters
     private uint scanTotalsBuffer;     // NEW: 2 uints [totalVertices, totalIndices]
+    private uint opaqueCountsBuffer;   // NEW: per-chunk opaque counts
+    private uint waterEmitBuffer;      // NEW: per-chunk water emission counters
 
     // Buffer sizes
     private int maxChunks;
@@ -55,6 +57,8 @@ public class Phase3BufferManager : IDisposable
     public uint IndirectDrawBuffer => indirectDrawBuffer;
     public uint PerChunkEmitBuffer => perChunkEmitBuffer; // NEW
     public uint ScanTotalsBuffer => scanTotalsBuffer;     // NEW
+    public uint OpaqueCountsBuffer => opaqueCountsBuffer; // NEW
+    public uint WaterEmitBuffer => waterEmitBuffer;       // NEW
     public uint CommandSlotBuffer => commandSlotBuffer;   // NEW: Buffer to pass slots to shader
     public uint ChunkInfoBuffer => chunkInfoBuffer;       // NEW: Buffer to store chunk info per slot
 
@@ -153,8 +157,9 @@ public class Phase3BufferManager : IDisposable
 
         // Multi-draw indirect command buffer
         // Initial size is small, will be resized by ResizeIndirectDrawBuffer
+        // Phase 5.3: 2 commands per slot (Opaque + Transparent)
         GL.CreateBuffers(1, out indirectDrawBuffer);
-        var indirectSize = maxChunks * 5 * sizeof(uint);
+        var indirectSize = maxChunks * 2 * 5 * sizeof(uint);
         GL.NamedBufferStorage(indirectDrawBuffer, indirectSize, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indirectDrawBuffer, -1, "indirect_draw_commands");
@@ -183,29 +188,30 @@ public class Phase3BufferManager : IDisposable
 
         // NEW: totals buffer (2 uints)
         GL.CreateBuffers(1, out scanTotalsBuffer);
-        GL.NamedBufferStorage(scanTotalsBuffer, 2 * sizeof(uint), IntPtr.Zero, 
+        GL.NamedBufferStorage(scanTotalsBuffer, 2 * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, scanTotalsBuffer, -1, "scan_totals_ssbo");
+
+        // NEW: Opaque Counts (1 uint per chunk)
+        GL.CreateBuffers(1, out opaqueCountsBuffer);
+        GL.NamedBufferStorage(opaqueCountsBuffer, maxChunks * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        ClearBufferUInt(opaqueCountsBuffer, maxChunks * sizeof(uint), 0);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, opaqueCountsBuffer, -1, "opaque_counts_ssbo");
+
+        // NEW: Water Emit Counter (1 uint per chunk)
+        GL.CreateBuffers(1, out waterEmitBuffer);
+        GL.NamedBufferStorage(waterEmitBuffer, maxChunks * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        ClearBufferUInt(waterEmitBuffer, maxChunks * sizeof(uint), 0);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, waterEmitBuffer, -1, "water_emit_ssbo");
 
         Log.CheckGlError();
         Log.Info("Phase3BufferManager: All buffers allocated (Phase 5.3: One command per chunk!)");
     }
 
     /// <summary>
-    /// Clear buffer to known byte value.
-    /// Solves Problem 1: Garbage Data in Buffers.
-    /// </summary>
-    private void ClearBuffer(uint buffer, int sizeBytes, byte value)
-    {
-        var data = new byte[sizeBytes];
-        Array.Fill(data, value);
-        GL.NamedBufferSubData(buffer, IntPtr.Zero, sizeBytes, data);
-    }
-
-    /// <summary>
     /// Clear buffer of uints to known value.
     /// </summary>
-    private void ClearBufferUInt(uint buffer, int sizeBytes, uint value)
+    private static void ClearBufferUInt(uint buffer, int sizeBytes, uint value)
     {
         var count = sizeBytes / sizeof(uint);
         var data = new uint[count];
@@ -238,13 +244,11 @@ public class Phase3BufferManager : IDisposable
     /// Bind all Phase 3 buffers to their designated binding points.
     /// Uses centralized constants from VoxelHelper.SSBOBindings.
     /// </summary>
-    public void BindBuffersForVisibility()
-    {
+    public void BindBuffersForVisibility() =>
         // Visibility shader needs: voxel data (input), visibility mask (output)
         // Note: voxelData buffer bound by caller (from Phase 2)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
             VoxelHelper.SSBOBindings.VISIBILITY_MASK, visMaskBuffer);
-    }
 
     public void BindBuffersForCount()
     {
@@ -367,7 +371,7 @@ public class Phase3BufferManager : IDisposable
             return 0;
 
         // Try to find a free region that fits
-        for (int i = 0; i < freeVertexRegions.Count; i++)
+        for (var i = 0; i < freeVertexRegions.Count; i++)
         {
             var region = freeVertexRegions[i];
             if (region.Size >= requestedSize)
@@ -418,7 +422,7 @@ public class Phase3BufferManager : IDisposable
             return 0;
 
         // Try to find a free region that fits
-        for (int i = 0; i < freeIndexRegions.Count; i++)
+        for (var i = 0; i < freeIndexRegions.Count; i++)
         {
             var region = freeIndexRegions[i];
             if (region.Size >= requestedSize)
@@ -502,7 +506,7 @@ public class Phase3BufferManager : IDisposable
     /// <summary>
     /// Merge adjacent free regions to reduce fragmentation (Phase 5)
     /// </summary>
-    private void MergeFreeRegions(ref List<BufferRegion> regions)
+    private static void MergeFreeRegions(ref List<BufferRegion> regions)
     {
         if (regions.Count < 2)
             return;
@@ -510,7 +514,7 @@ public class Phase3BufferManager : IDisposable
         var merged = new List<BufferRegion>();
         var current = regions[0];
 
-        for (int i = 1; i < regions.Count; i++)
+        for (var i = 1; i < regions.Count; i++)
         {
             var next = regions[i];
 
@@ -547,8 +551,7 @@ public class Phase3BufferManager : IDisposable
         Log.Warn($"Resizing vertex buffer from {vertexBufferCapacity} to {newCapacity} vertices (expensive!)");
 
         // Create new buffer
-        uint newBuffer;
-        GL.CreateBuffers(1, out newBuffer);
+        GL.CreateBuffers(1, out uint newBuffer);
         GL.NamedBufferStorage(newBuffer, (nint)newCapacity * VERTEX_STRIDE, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "compact_vertices_vbo_resized");
@@ -574,8 +577,7 @@ public class Phase3BufferManager : IDisposable
         Log.Warn($"Resizing index buffer from {indexBufferCapacity} to {newCapacity} indices (expensive!)");
 
         // Create new buffer
-        uint newBuffer;
-        GL.CreateBuffers(1, out newBuffer);
+        GL.CreateBuffers(1, out uint newBuffer);
         GL.NamedBufferStorage(newBuffer, (nint)newCapacity * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "per_chunk_indices_ibo_resized");
@@ -598,17 +600,17 @@ public class Phase3BufferManager : IDisposable
     /// </summary>
     public void ResizeIndirectDrawBuffer(uint newCommandCount)
     {
-        var newSize = (int)(newCommandCount * 5 * sizeof(uint)); // 5 uints per command
-        var oldSize = maxChunks * 5 * sizeof(uint);
+        // Each slot now holds 2 commands (Opaque + Transparent)
+        var newSize = (int)(newCommandCount * 2 * 5 * sizeof(uint)); // 5 uints per command * 2
+        var oldSize = maxChunks * 2 * 5 * sizeof(uint);
 
         if (newSize <= oldSize)
             return; // Already big enough
 
-        Log.Info($"Resizing indirect draw buffer from {maxChunks} to {newCommandCount} commands");
+        Log.Info($"Resizing indirect draw buffer from {maxChunks} to {newCommandCount} slots (x2 commands)");
 
         // Create new buffer
-        uint newBuffer;
-        GL.CreateBuffers(1, out newBuffer);
+        GL.CreateBuffers(1, out uint newBuffer);
         GL.NamedBufferStorage(newBuffer, newSize, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "indirect_draw_commands_resized");
@@ -622,11 +624,11 @@ public class Phase3BufferManager : IDisposable
         // Delete old buffer and replace
         GL.DeleteBuffer(indirectDrawBuffer);
         indirectDrawBuffer = newBuffer;
-        
+
         // Also resize the command slot buffer and chunk info buffer to match
         // This ensures they stay in sync with the indirect buffer capacity
         ResizeCommandSlotBuffer(newCommandCount, (uint)maxChunks);
-        
+
         maxChunks = (int)newCommandCount;
         commandSlotCapacity = newCommandCount;
 
@@ -700,23 +702,22 @@ public class Phase3BufferManager : IDisposable
     public void FreeCommandSlot(int slot)
     {
         if (slot < 0) return;
-        
+
         freeCommandSlots.Enqueue(slot);
-        
+
         // Zero out the command in the buffer so it doesn't draw anything
-        // Command is 5 uints = 20 bytes
-        var zeros = new uint[5]; // all zero
-        GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 20), 20, zeros);
+        // Command is 5 uints = 20 bytes. We have 2 commands per slot = 40 bytes.
+        var zeros = new uint[10]; // all zero
+        GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 40), 40, zeros);
 
         // Mark chunk info as invalid (-1)
-        int invalid = -1;
+        var invalid = -1;
         GL.NamedBufferSubData(chunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref invalid);
     }
 
     private void ResizeCommandSlotBuffer(uint newCapacity, uint oldCapacity)
     {
-        uint newBuffer;
-        GL.CreateBuffers(1, out newBuffer);
+        GL.CreateBuffers(1, out uint newBuffer);
         if (newBuffer == 0) Log.Error("Phase3BufferManager: Failed to create resized commandSlotBuffer!");
         GL.NamedBufferStorage((int)newBuffer, (nint)(newCapacity * sizeof(uint)), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         // No need to copy old data as this buffer is write-only for the shader
@@ -724,8 +725,7 @@ public class Phase3BufferManager : IDisposable
         commandSlotBuffer = newBuffer;
 
         // Also resize ChunkInfoBuffer
-        uint newInfoBuffer;
-        GL.CreateBuffers(1, out newInfoBuffer);
+        GL.CreateBuffers(1, out uint newInfoBuffer);
         GL.NamedBufferStorage((int)newInfoBuffer, (nint)(newCapacity * sizeof(int)), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         
         // Copy old data as it persists across frames

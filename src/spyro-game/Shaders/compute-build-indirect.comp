@@ -10,6 +10,7 @@ layout(std430, binding = 2) readonly buffer Counts { uint counts[]; };
 layout(std430, binding = 3) readonly buffer Offsets { uint baseOffsets[]; };
 layout(std430, binding = 11) readonly buffer CommandSlots { uint commandSlots[]; };
 layout(std430, binding = 10) writeonly buffer Indirect { uint cmd[]; };
+layout(std430, binding = 12) readonly buffer OpaqueCounts { uint opaqueCounts[]; };
 
 uniform uint uChunkCount;
 uniform uint uVertexRegionOffset;
@@ -18,22 +19,34 @@ uniform uint uIndexRegionOffset;
 void main(){
     uint i = gl_GlobalInvocationID.x;
     if(i>=uChunkCount) return;
-    uint faces = counts[i];
+    
+    uint totalFaces = counts[i];
+    uint opaqueFaces = opaqueCounts[i];
+    uint waterFaces = totalFaces - opaqueFaces;
+    
     uint vBase = baseOffsets[i];            // vertices (relative to batch start)
     uint indexFirst = (vBase / 4u) * 6u;    // indices (relative to batch start)
-    uint countIdx = faces * 6u;             // indices to draw
-
+    
     // Compute absolute buffer offsets
     int baseVertex = int(uVertexRegionOffset + vBase);
     uint firstIndex = uIndexRegionOffset + indexFirst;
 
-    // Write 5 uints starting at commandSlots[i]*5
+    // Write 2 commands starting at commandSlots[i]*2*5
     // Use the allocated slot index instead of batch index 'i'
     uint slot = commandSlots[i];
-    uint o = slot*5u;
-    cmd[o+0u] = countIdx;   // count
-    cmd[o+1u] = 1u;         // instanceCount
-    cmd[o+2u] = firstIndex; // firstIndex
-    cmd[o+3u] = uint(baseVertex); // baseVertex as uint bits (reinterpreted in GL)
-    cmd[o+4u] = 0u;         // baseInstance
+    uint o = slot * 2u * 5u;
+    
+    // Command 1: Opaque
+    cmd[o+0u] = opaqueFaces * 6u;   // count
+    cmd[o+1u] = 1u;                 // instanceCount
+    cmd[o+2u] = firstIndex;         // firstIndex
+    cmd[o+3u] = uint(baseVertex);   // baseVertex
+    cmd[o+4u] = 0u;                 // baseInstance
+    
+    // Command 2: Water (Transparent)
+    cmd[o+5u] = waterFaces * 6u;    // count
+    cmd[o+6u] = 1u;                 // instanceCount
+    cmd[o+7u] = firstIndex + (opaqueFaces * 6u); // firstIndex (offset by opaque)
+    cmd[o+8u] = uint(baseVertex);   // baseVertex
+    cmd[o+9u] = 0u;                 // baseInstance
 }

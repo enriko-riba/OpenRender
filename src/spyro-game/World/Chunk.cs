@@ -12,9 +12,9 @@ public class Chunk(VoxelWorld world, int index)
     private readonly Dictionary<int, BlockState> changedBlocks = [];
 
     #region Initialization
-   
 
-    public void ApplyGenerationData(TerrainBuilder terrainBuilder, TerrainBuilder.ChunkGenerationData generationData)
+
+    public void ApplyGenerationData(TerrainBuilder.ChunkGenerationData generationData)
     {
         if (isInitialized) return;
 
@@ -61,7 +61,7 @@ public class Chunk(VoxelWorld world, int index)
         }
         isInitialized = true;
     }
-    
+
 
     /// <summary>
     /// Recomputes visibility and ambient occlusion for all blocks in the chunk.
@@ -74,7 +74,7 @@ public class Chunk(VoxelWorld world, int index)
         var area = VoxelHelper.ChunkSideSizeSquare;
 
         bool IsRenderable(BlockType type) => type != BlockType.None;
-        bool Occludes(BlockType type) => type != BlockType.None && type != BlockType.WaterLevel;
+        bool Occludes(BlockType type) => type is not BlockType.None and not BlockType.WaterLevel;
         bool IsTransparentNeighbor(int x, int y, int z) => !Occludes(GetBlockType(x, y, z));
         BlockType GetBlockType(int x, int y, int z)
         {
@@ -209,21 +209,6 @@ public class Chunk(VoxelWorld world, int index)
     }
     #endregion
 
-    internal void ApplyBlockAttributes(uint[] blockAttributes)
-    {
-        if (Blocks is null || blockAttributes.Length == 0) return;
-
-        var length = Math.Min(Blocks.Length, blockAttributes.Length);
-        for (var i = 0; i < length; i++)
-        {
-            ref var block = ref Blocks[i];
-            var attrib = blockAttributes[i];
-            block.IsVisible = (attrib & 1u) != 0;
-            block.PackedAO = attrib >> 1;
-        }
-        isProcessed = true;
-    }
-
     private BlockType SampleBlockTypeWithNeighbors(int x, int y, int z)
     {
         var size = VoxelHelper.ChunkSideSize;
@@ -245,16 +230,6 @@ public class Chunk(VoxelWorld world, int index)
 
         var global = Position + new Vector3i(x, y, z);
         return world.GetBlockTypeGlobal(global);
-    }
-
-    public void RefreshBorderLighting()
-    {
-        if (!isInitialized || Blocks is null)
-            return;
-
-        // Only recompute borders using neighbor data to fix edge seams
-        // without reprocessing the full chunk.
-        RecomputeLighting(force: true, includeNeighborData: true, bordersOnly: true);
     }
 
     /// <summary>
@@ -299,27 +274,9 @@ public class Chunk(VoxelWorld world, int index)
 
     public int Index => index;
 
-    /// <summary>
-    /// Bottom left chunk corner position in the world.
-    /// </summary>
-    
 
-    public void ApplyColumnHeightsForCollision(int[] columnHeights)
-    {
-        if (columnHeights == null || columnHeights.Length != VoxelHelper.ChunkSideSizeSquare) return;
-        var size = VoxelHelper.ChunkSideSize;
-        for (var z = 0; z < size; z++)
-        {
-            for (var x = 0; x < size; x++)
-            {
-                var idx = x + z * size;
-                maxHeights[x, z] = columnHeights[idx];
-            }
-        }
-    }
-
-        public Vector3i Position => Aabb.Min;
-#region Rendering data
+    public Vector3i Position => Aabb.Min;
+    #region Rendering data
     public volatile uint BlocksSSBO;
     public int SolidCount;
     public int SolidCapacity;
@@ -331,10 +288,6 @@ public class Chunk(VoxelWorld world, int index)
     internal volatile bool PendingUpload;
     internal volatile bool PendingCompute;
     internal volatile bool ComputeInProgress;
-
-    public IEnumerable<BlockState> VisibleBlocks => Blocks is null ? [] : Blocks.Where(x => x.IsVisible && !x.IsTransparent);
-    
-    public IEnumerable<BlockState> TransparentBlocks => Blocks is null ? [] : Blocks.Where(x => x.IsVisible && x.IsTransparent);
 
     internal ChunkState State { get; set; }
 
@@ -381,23 +334,6 @@ public class Chunk(VoxelWorld world, int index)
         HasGpuColumns = true;
     }
 
-    internal bool IsSolidBySpans(int lx, int ly, int lz, int maxSpans)
-    {
-        if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null) return false;
-        var size = VoxelHelper.ChunkSideSize;
-        var col = lx + lz * size;
-        var c = columnSpanCounts[col];
-        if (c == 0) return false;
-        var baseIdx = col * maxSpans * 2;
-        for (var i = 0; i < c && i < maxSpans; i++)
-        {
-            var y0 = columnSpanPairs[baseIdx + i * 2 + 0];
-            var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
-            if (ly >= y0 && ly < y1) return true;
-        }
-        return false;
-    }
-
     internal BlockType GetBlockTypeFromSpans(int lx, int ly, int lz, int maxSpans)
     {
         if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null) return BlockType.None;
@@ -411,7 +347,7 @@ public class Chunk(VoxelWorld world, int index)
         {
             var y0 = columnSpanPairs[baseIdx + i * 2 + 0];
             var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
-            if (ly >= y0 && ly < y1) 
+            if (ly >= y0 && ly < y1)
             {
                 return (BlockType)columnSpanTypes[typeBaseIdx + i];
             }
@@ -419,43 +355,6 @@ public class Chunk(VoxelWorld world, int index)
         return BlockType.None;
     }
 
-
-    /// <summary>
-    /// Initializes CPU Blocks[] from GPU-provided column heights so CPU-side systems (picking/edit) have a coherent view.
-    /// Uses the same material classification as the CPU generator.
-    /// </summary>
-    public void InitializeFromGpuColumns()
-    {
-        if (isInitialized) return;
-
-        var size = VoxelHelper.ChunkSideSize;
-        var area = VoxelHelper.ChunkSideSizeSquare;
-        Blocks = new BlockState[area * VoxelHelper.ChunkYSize];
-
-        for (var z = 0; z < size; z++)
-        {
-            for (var x = 0; x < size; x++)
-            {
-                var h = maxHeights[x, z];
-                var maxHeight = h - 1; // top solid local y
-                for (var y = 0; y <= VoxelHelper.MaxBlockPositionY; y++)
-                {
-                    var i = x + z * size + y * area;
-                    var bt = TerrainBuilder.GenerateChunkBlockType(maxHeight, x, y, z);
-                    Blocks[i] = new BlockState(i, this)
-                    {
-                        BlockType = bt,
-                        IsVisible = false,
-                        PackedAO = 0
-                    };
-                }
-            }
-        }
-
-        isInitialized = true;
-        // Compute basic visibility for CPU consumers (cheap path)
-        RecomputeLighting(force: true, includeNeighborData: true, bordersOnly: true);
-    }
     #endregion
 
     public BlockState GetBlockAtLocalPosition(Vector3 localPosition)

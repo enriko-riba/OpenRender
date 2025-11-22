@@ -43,7 +43,7 @@ internal class GameScene : Scene
     private Sprite crosshair = default!;
     private DayNightCycle dayNightCycle = default!;
     private SkyBoxSun skyBox = default!;
-    private WaterNode waterNode = default!;
+    //private WaterNode waterNode = default!;
 
     public GameScene(ITextRenderer textRenderer)
     {
@@ -219,8 +219,8 @@ internal class GameScene : Scene
         camera!.Invalidate();
 
         // Add water
-        waterNode = WaterNode.Create(dayNightCycle);
-        AddNode(waterNode);
+        // waterNode = WaterNode.Create(dayNightCycle);
+        // AddNode(waterNode);
 
         Log.Info($"GameScene: Loaded with procedural terrain");
     }
@@ -282,20 +282,6 @@ internal class GameScene : Scene
             // OLD system fallback - try to update streaming
             try { world.UpdateStreamingFromCamera(); } catch { }
             try { world.ProcessGpuStreamingOnGlThread(); } catch { }
-            try
-            {
-                if (world.ChunkInitializer?.TryCompleteBatch(out var completed) == true && completed.Length > 0)
-                {
-                    // Batch completed
-                }
-            }
-            catch { }
-
-            // Process queued batches
-            for (var i = 0; i < 5 && world.ChunkInitializer?.HasInFlightBatch == false; i++)
-            {
-                try { world.UpdateStreamingFromCamera(); } catch { }
-            }
         }
 
         // Update visibility

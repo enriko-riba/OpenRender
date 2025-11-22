@@ -135,8 +135,16 @@ void main()
     {
         // Indirect command structure: count, instanceCount, firstIndex, baseVertex, baseInstance
         // We update instanceCount (offset 1)
-        // 5 uints per command
-        uint offset = uint(slot) * 5u + 1u;
-        indirectDraws[offset] = isVisible ? 1u : 0u;
+        // Phase 5.3: 2 commands per slot (Opaque + Transparent)
+        // Each command is 5 uints. Total slot size = 10 uints.
+        
+        uint baseOffset = uint(slot) * 10u;
+        uint instanceCount = isVisible ? 1u : 0u;
+        
+        // Update Opaque command (offset 1)
+        indirectDraws[baseOffset + 1u] = instanceCount;
+        
+        // Update Transparent command (offset 6)
+        indirectDraws[baseOffset + 6u] = instanceCount;
     }
 }

@@ -131,6 +131,11 @@ void main() {
     float fresnel = 0.02 + 0.98 * pow(1.0 - dot(V, N), 5.0);
     float alpha = mix(minAlpha, 1.0, fresnel);
 
+    // Increase opacity with distance
+    float dist = distance(fragPos, cameraPos);
+    float distAlpha = clamp((dist - 20.0) / 100.0, 0.0, 1.0); // Fade to opaque between 20 and 120 units
+    alpha = max(alpha, distAlpha);
+
     // --- FOG (match terrain fog) ---
     float dCam = distance(fragPos, cameraPos);
     float fog = getFogFactor(dCam);

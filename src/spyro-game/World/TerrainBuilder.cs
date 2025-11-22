@@ -179,39 +179,6 @@ public class TerrainBuilder
         return (float)GenerateHeight(gx, gz) / (VoxelHelper.ChunkYSize - 1);
     }
 
-    // baseVal in [-1,1]; returns normalized height in [0,1]
-    private float Height01At(int wx, int wz, float baseVal)
-    {
-        var h = HeightRaw(wx, wz, baseVal);
-
-        // map [qLo..qHi] → [0..1], with gentle clipping
-        var h01 = Saturate((h - elevOffset) * elevScale);
-
-        //flatten near the waterline
-        float wl01 = VoxelHelper.WaterLevel / (float)(VoxelHelper.ChunkYSize - 1);
-        float d = h01 - wl01;                 // height above water
-        if (d < 0.08f)                        // ~10 blocks band
-        {
-            float k = Smooth01((d + 0.08f) / 0.08f); // 0 underwater .. 1 above band
-                                                     // pull towards a flat shelf near water; keeps gentle beaches & lake shores
-            h01 = wl01 + d * Lerp(0.20f, 1.0f, k);
-        }
-
-
-        // terraces (optional) operate on h01
-        if (P.TerraceStep > 0f)
-        {
-            var step = P.TerraceStep;
-            var baseT = MathF.Floor(h01 / step) * step;
-            var t = (h01 - baseT) / step;
-            var terraced = baseT + Smooth01(t) * step;
-            var strength = Lerp(P.TerraceStrength, 0f, 1f - /*erosion*/ 0.5f); // or use E if you want
-            h01 = Lerp(h01, terraced, strength);
-        }
-
-        return h01;
-    }
-
     public float EstimateSlope01(int gx, int gz)
     {
         var W = VoxelHelper.WorldChunksXZ * VoxelHelper.ChunkSideSize;
@@ -227,9 +194,6 @@ public class TerrainBuilder
         var dz = (hz1 - hz0) * 0.5f;
         return Math.Clamp(MathF.Sqrt(dx * dx + dz * dz), 0f, 1f); // 0 flat .. 1 steep
     }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float SampleHeight01Global(int gx, int gz) => Height01At(gx, gz);
 
     public readonly record struct ChunkGenerationData(BlockType[] BlockTypes, int[] ColumnHeights, ColumnInfo[] Columns, uint[] BlockAttributes);
 
@@ -271,58 +235,6 @@ public class TerrainBuilder
         return new ChunkGenerationData(blockTypes, columnHeights, columns, new uint[blockTypes.Length]);
     }
 
-    public void FillChunkHeight01(int chunkIndex, Span<float> destination)
-    {
-        if (destination.Length < VoxelHelper.ChunkSideSizeSquare)
-            throw new ArgumentException("Destination span is too small for chunk height data.", nameof(destination));
-
-        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
-        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        var baseX = worldX * VoxelHelper.ChunkSideSize;
-        var baseZ = worldZ * VoxelHelper.ChunkSideSize;
-
-        var index = 0;
-        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-        {
-            var gz = baseZ + z;
-            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++, index++)
-            {
-                destination[index] = Height01At(baseX + x, gz);
-            }
-        }
-    }
-
-    public void FillChunkColumnInfo(int chunkIndex, ReadOnlySpan<int> columnHeights, Span<ColumnInfo> destination)
-    {
-        if (columnHeights.Length < VoxelHelper.ChunkSideSizeSquare)
-            throw new ArgumentException("columnHeights span is too small.", nameof(columnHeights));
-        if (destination.Length < VoxelHelper.ChunkSideSizeSquare)
-            throw new ArgumentException("destination span is too small.", nameof(destination));
-
-        var worldX = chunkIndex % VoxelHelper.WorldChunksXZ;
-        var worldZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        var baseX = worldX * VoxelHelper.ChunkSideSize;
-        var baseZ = worldZ * VoxelHelper.ChunkSideSize;
-
-        var index = 0;
-        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-        {
-            var gz = baseZ + z;
-            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++, index++)
-            {
-                var gx = baseX + x;
-                var height = columnHeights[index];
-                SampleFields01(gx, gz, out float C, out float E, out float T, out float H);
-                var height01 = height / (float)(VoxelHelper.ChunkYSize - 1);
-                var slope01 = EstimateSlope01(gx, gz);
-                var biome = ClassifyBiome(C, E, T, H, height01, slope01);
-                destination[index] = new ColumnInfo(biome, C, E, T, H, (byte)height, height01);
-            }
-        }
-    }
-
-
-
     // ------------------------------------------------------------------------
     // CPU implementation of GPU noise functions to ensure collision consistency
     // ------------------------------------------------------------------------
@@ -340,39 +252,39 @@ public class TerrainBuilder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Noise2D(int x, int z, uint seed)
     {
-        uint n = Hash((uint)x + Hash((uint)z, seed), seed);
+        var n = Hash((uint)x + Hash((uint)z, seed), seed);
         return (float)n / uint.MaxValue * 2.0f - 1.0f;
     }
 
     private static float InterpolatedNoise(float x, float z, uint seed)
     {
-        int ix = (int)MathF.Floor(x);
-        int iz = (int)MathF.Floor(z);
-        float fx = x - ix;
-        float fz = z - iz;
+        var ix = (int)MathF.Floor(x);
+        var iz = (int)MathF.Floor(z);
+        var fx = x - ix;
+        var fz = z - iz;
 
         // Smooth the interpolation
         fx = fx * fx * (3.0f - 2.0f * fx);
         fz = fz * fz * (3.0f - 2.0f * fz);
 
-        float v00 = Noise2D(ix, iz, seed);
-        float v10 = Noise2D(ix + 1, iz, seed);
-        float v01 = Noise2D(ix, iz + 1, seed);
-        float v11 = Noise2D(ix + 1, iz + 1, seed);
+        var v00 = Noise2D(ix, iz, seed);
+        var v10 = Noise2D(ix + 1, iz, seed);
+        var v01 = Noise2D(ix, iz + 1, seed);
+        var v11 = Noise2D(ix + 1, iz + 1, seed);
 
-        float v0 = Lerp(v00, v10, fx);
-        float v1 = Lerp(v01, v11, fx);
+        var v0 = Lerp(v00, v10, fx);
+        var v1 = Lerp(v01, v11, fx);
         return Lerp(v0, v1, fz);
     }
 
     private static float MultiOctaveNoise(float x, float z, uint seed, int octaves)
     {
-        float total = 0.0f;
-        float frequency = 1.0f;
-        float amplitude = 1.0f;
-        float maxValue = 0.0f;
+        var total = 0.0f;
+        var frequency = 1.0f;
+        var amplitude = 1.0f;
+        var maxValue = 0.0f;
 
-        for (int i = 0; i < octaves; i++)
+        for (var i = 0; i < octaves; i++)
         {
             total += InterpolatedNoise(x * frequency, z * frequency, seed + (uint)(i * 100));
             maxValue += amplitude;
@@ -402,6 +314,20 @@ public class TerrainBuilder
 
         // Clamp to valid range
         return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
+    }
+
+    private bool IsNearWater(int wx, int wz)
+    {
+        for (var dz = -3; dz <= 3; dz += 3)
+        {
+            for (var dx = -3; dx <= 3; dx += 3)
+            {
+                if (dx == 0 && dz == 0) continue;
+                var h = GenerateHeight(wx + dx, wz + dz);
+                if (h <= VoxelHelper.WaterLevel) return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -451,55 +377,51 @@ public class TerrainBuilder
     /// <param name="y"></param>
     /// <param name="z"></param>
     /// <returns></returns>
-    public static BlockType GenerateChunkBlockType(int maxHeight, int x, int y, int z)
+    public BlockType GenerateChunkBlockType(int maxHeight, int x, int y, int z)
+    {
+        return GenerateChunkBlockType(maxHeight, x, y, z, 0, 0);
+    }
+
+    public BlockType GenerateChunkBlockType(int maxHeight, int x, int y, int z, int wx, int wz)
     {
         var blockAltitude = y;
 
-        BlockType bt;
         if (blockAltitude > maxHeight)
         {
-            bt = BlockType.None;
-        }
-        else if (blockAltitude == maxHeight)
-        {
-            bt = BlockType.GrassDirt;
-        }
-        else if (blockAltitude < maxHeight && blockAltitude >= maxHeight - 2)
-        {
-            bt = BlockType.Dirt;
-        }
-        else if (blockAltitude < maxHeight - 2)
-        {
-            bt = BlockType.Rock;
-        }
-        else
-        {
-            bt = BlockType.None;
+            if (blockAltitude <= (int)VoxelHelper.WaterLevel)
+            {
+                return BlockType.WaterLevel;
+            }
+            return BlockType.None;
         }
 
-        //  special cases
-        if (blockAltitude <= (int)VoxelHelper.WaterLevel)
+        // Solid blocks (y <= maxHeight)
+
+        // Surface block
+        if (blockAltitude == maxHeight)
         {
-            if ((bt == BlockType.None) && blockAltitude == (int)VoxelHelper.WaterLevel)
+            if (blockAltitude < (int)VoxelHelper.WaterLevel)
             {
-                bt = BlockType.WaterLevel;
+                // Underwater surface
+                if (blockAltitude >= (int)VoxelHelper.WaterLevel - 1) return BlockType.Sand;
+                return BlockType.BedRock;
             }
-            else if ((bt != BlockType.None) && (blockAltitude >= VoxelHelper.WaterLevel - 1))
+            else
             {
-                bt = BlockType.Sand;
-            }
-            else if ((bt != BlockType.None) && (blockAltitude < VoxelHelper.WaterLevel - 1))
-            {
-                //  replace top layer underwater solid blocks with bedrock
-                bt = BlockType.BedRock;
-            }
-            else if (blockAltitude < 3)
-            {
-                bt = BlockType.BedRock;
+                // Above water surface
+                if (blockAltitude <= (int)VoxelHelper.WaterLevel + 2)
+                {
+                    // Shoreline check
+                    if (IsNearWater(wx, wz)) return BlockType.Sand;
+                }
+                return BlockType.GrassDirt;
             }
         }
 
-        return bt;
+        // Sub-surface
+        int depth = maxHeight - blockAltitude;
+        if (depth <= 2) return BlockType.Dirt;
+        return BlockType.Rock;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
