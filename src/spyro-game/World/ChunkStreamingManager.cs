@@ -42,6 +42,7 @@ public sealed class ChunkStreamingManager : IDisposable
     // Phase 2.6: Edits
     private Shader? applyEditsShader;
     private uint editBuffer;
+    private uint worldEditsBuffer; // NEW: Buffer for neighbor edits
     private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
     
     private int generationSeed;
@@ -347,22 +348,23 @@ public sealed class ChunkStreamingManager : IDisposable
         if (chunkIndices.Length == 0) return;
 
         var sizeToRead = chunkIndices.Length * VoxelHelper.ChunkSideSizeSquare * 68;
-        
-        GL.BindBuffer(BufferTarget.ShaderStorageBuffer, columnSpansBuffers[bufferIndex]);
-        var ptr = GL.MapBufferRange(BufferTarget.ShaderStorageBuffer, IntPtr.Zero, sizeToRead, MapBufferAccessMask.MapReadBit);
-        
-        if (ptr != IntPtr.Zero)
+        var bufferData = new byte[sizeToRead];
+
+        // Read entire buffer to CPU memory in one go
+        // This is much faster than reading from mapped VRAM byte-by-byte
+        GL.GetNamedBufferSubData(columnSpansBuffers[bufferIndex], IntPtr.Zero, sizeToRead, bufferData);
+
+        unsafe
         {
-            unsafe
+            fixed (byte* bytePtr = bufferData)
             {
-                var bytePtr = (byte*)ptr;
                 int chunksUpdated = 0;
 
                 for (var i = 0; i < chunkIndices.Length; i++)
                 {
                     var chunkIdx = chunkIndices[i];
                     var data = new ChunkCollisionData();
-                    
+
                     // Prepare arrays for Chunk.cs
                     var chunkSpansPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
                     var chunkSpanTypes = new byte[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
@@ -375,7 +377,7 @@ public sealed class ChunkStreamingManager : IDisposable
                         var count = *(uint*)(bytePtr + offset);
                         data.SpanCounts[col] = (byte)count;
                         chunkSpanCounts[col] = (byte)count;
-                        
+
                         for (var s = 0; s < count; s++)
                         {
                             var packed = *(uint*)(bytePtr + offset + 4 + s * 4);
@@ -396,7 +398,7 @@ public sealed class ChunkStreamingManager : IDisposable
                             chunkSpanTypes[col * ChunkCollisionData.MaxSpansPerColumn + s] = blockType;
                         }
                     }
-                    
+
                     CollisionManager.UpdateChunkData(chunkIdx, data);
 
                     // Update Chunk object
@@ -413,13 +415,6 @@ public sealed class ChunkStreamingManager : IDisposable
                 }
                 Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
             }
-
-            GL.UnmapBuffer(BufferTarget.ShaderStorageBuffer);
-        }
-        else
-        {
-            var error = GL.GetError();
-            Log.Error($"ChunkStreamingManager: Failed to map column spans buffer! Error: {error}");
         }
     }
 
@@ -892,13 +887,29 @@ public sealed class ChunkStreamingManager : IDisposable
         
         // If edit is on chunk boundary, mark neighbors as dirty too
         if (localX == 0 && chunkX > 0)
-            MarkChunkDirty((chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1));
+        {
+            var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1);
+            Log.Info($"Block edit on -X boundary, marking neighbor {neighborIdx} dirty");
+            MarkChunkDirty(neighborIdx);
+        }
         if (localX == VoxelHelper.ChunkSideSize - 1 && chunkX < VoxelHelper.WorldChunksXZ - 1)
-            MarkChunkDirty((chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX + 1));
+        {
+            var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX + 1);
+            Log.Info($"Block edit on +X boundary, marking neighbor {neighborIdx} dirty");
+            MarkChunkDirty(neighborIdx);
+        }
         if (localZ == 0 && chunkZ > 0)
-            MarkChunkDirty((chunkZ - 1) * VoxelHelper.WorldChunksXZ + chunkX);
+        {
+            var neighborIdx = (chunkZ - 1) * VoxelHelper.WorldChunksXZ + chunkX;
+            Log.Info($"Block edit on -Z boundary, marking neighbor {neighborIdx} dirty");
+            MarkChunkDirty(neighborIdx);
+        }
         if (localZ == VoxelHelper.ChunkSideSize - 1 && chunkZ < VoxelHelper.WorldChunksXZ - 1)
-            MarkChunkDirty((chunkZ + 1) * VoxelHelper.WorldChunksXZ + chunkX);
+        {
+            var neighborIdx = (chunkZ + 1) * VoxelHelper.WorldChunksXZ + chunkX;
+            Log.Info($"Block edit on +Z boundary, marking neighbor {neighborIdx} dirty");
+            MarkChunkDirty(neighborIdx);
+        }
         
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
     }
@@ -988,6 +999,7 @@ public sealed class ChunkStreamingManager : IDisposable
             GL.CreateBuffers(2, columnMetaBuffers);
             GL.CreateBuffers(2, columnSpansBuffers);
             GL.CreateBuffers(1, out editBuffer);
+            GL.CreateBuffers(1, out worldEditsBuffer);
         }
         if (compactionChunkIndicesBuffer == 0)
         {
@@ -1015,7 +1027,8 @@ public sealed class ChunkStreamingManager : IDisposable
                 GL.DeleteBuffer(compactionChunkIndicesBuffer);
                 GL.DeleteBuffer(cullingChunkIndicesBuffer);
                 GL.DeleteBuffer(editBuffer);
-                
+                GL.DeleteBuffer(worldEditsBuffer);
+
                 GL.CreateBuffers(2, chunkIndicesBuffers);
                 GL.CreateBuffers(2, voxelDataBuffers);
                 GL.CreateBuffers(2, columnHeightsBuffers);
@@ -1024,6 +1037,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 GL.CreateBuffers(1, out compactionChunkIndicesBuffer);
                 GL.CreateBuffers(1, out cullingChunkIndicesBuffer);
                 GL.CreateBuffers(1, out editBuffer);
+                GL.CreateBuffers(1, out worldEditsBuffer);
             }
 
             // NOTE: Using int (not uint) to match C# int[] arrays used throughout the codebase
@@ -1039,7 +1053,13 @@ public sealed class ChunkStreamingManager : IDisposable
             
             // Allocate edit buffer (max 64k edits per batch should be enough)
             GL.NamedBufferStorage(editBuffer, 65536 * 8, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-            
+
+            // Allocate world edits buffer (max 64k edits)
+            // struct WorldEdit { int x; int y; int z; uint type; } = 16 bytes
+            // + uint count (4 bytes) -> padded to 16 bytes alignment? No, std430.
+            // Layout: count (4), padding (12), edits...
+            GL.NamedBufferStorage(worldEditsBuffer, 16 + 65536 * 16, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+
             // Allocate culling buffer
             GL.NamedBufferStorage(cullingChunkIndicesBuffer, maxChunks * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
 
@@ -1140,6 +1160,7 @@ public sealed class ChunkStreamingManager : IDisposable
         if (applyEditsShader != null && chunkEdits.Count > 0)
         {
             var editsToUpload = new List<uint>(); // voxelIndex, blockType
+            var worldEditsToUpload = new List<int>(); // x, y, z, type (as int/uint mixed)
             int voxelsPerChunk = VoxelHelper.ChunkSideSizeSquare * VoxelHelper.ChunkYSize;
             
             for (int i = 0; i < chunkIndices.Length; i++)
@@ -1156,6 +1177,47 @@ public sealed class ChunkStreamingManager : IDisposable
                         if (editsToUpload.Count <= 20) Log.Info($"Uploading edit: ChunkIdxInBatch={i}, LocalIdx={kvp.Key}, BatchIdx={batchVoxelIdx}, Type={kvp.Value}");
                     }
                 }
+            }
+
+            // Collect ALL world edits (for visibility shader neighbor correction)
+            foreach (var chunkKvp in chunkEdits)
+            {
+                var chunkIdx = chunkKvp.Key;
+                var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
+                
+                foreach (var voxelKvp in chunkKvp.Value)
+                {
+                    var voxelIdx = voxelKvp.Key;
+                    var blockType = voxelKvp.Value;
+                    
+                    var lx = voxelIdx % VoxelHelper.ChunkSideSize;
+                    var lz = (voxelIdx / VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+                    var ly = voxelIdx / VoxelHelper.ChunkSideSizeSquare;
+                    
+                    var wx = chunkPos.X + lx;
+                    var wz = chunkPos.Z + lz;
+                    var wy = ly; // Global Y is same as local Y
+                    
+                    worldEditsToUpload.Add(wx);
+                    worldEditsToUpload.Add(wy);
+                    worldEditsToUpload.Add(wz);
+                    worldEditsToUpload.Add((int)blockType);
+                }
+            }
+
+            // Upload world edits
+            if (worldEditsToUpload.Count > 0)
+            {
+                Log.Info($"Uploading {worldEditsToUpload.Count / 4} world edits for neighbor correction");
+                // Layout: count (4 bytes), padding (12 bytes), edits...
+                var header = new int[4] { worldEditsToUpload.Count / 4, 0, 0, 0 };
+                GL.NamedBufferSubData(worldEditsBuffer, IntPtr.Zero, 16, header);
+                GL.NamedBufferSubData(worldEditsBuffer, 16, worldEditsToUpload.Count * sizeof(int), worldEditsToUpload.ToArray());
+            }
+            else
+            {
+                var header = new int[4] { 0, 0, 0, 0 };
+                GL.NamedBufferSubData(worldEditsBuffer, IntPtr.Zero, 16, header);
             }
             
             if (editsToUpload.Count > 0)
@@ -1176,6 +1238,12 @@ public sealed class ChunkStreamingManager : IDisposable
                 GL.DispatchCompute(groups, 1, 1);
                 GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
             }
+        }
+        else
+        {
+            // Clear world edits count if no edits
+            var header = new int[4] { 0, 0, 0, 0 };
+            GL.NamedBufferSubData(worldEditsBuffer, IntPtr.Zero, 16, header);
         }
 
         // Phase 2.5: Generate Column Spans
@@ -1279,6 +1347,8 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
         // Bind chunk indices buffer for neighbor lookup (Phase 5.4 FIX)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, chunkIndicesBuffers[bufferIndex]);
+        // Bind world edits buffer for neighbor correction (Phase 5.5 FIX)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, worldEditsBuffer);
         
         phase3Buffers.BindBuffersForVisibility();
         visibilityShader.Use();
@@ -1329,17 +1399,6 @@ public sealed class ChunkStreamingManager : IDisposable
         // Fetch face counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
         GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-
-        // DEBUG: Log counts
-        var totalFaces = counts.Aggregate(0u, (a, c) => a + c);
-        if (totalFaces == 0)
-        {
-            Log.Warn($"ExecutePhase3_Part2: Total visible faces is 0 for {chunkCount} chunks! (First 5 counts: {string.Join(",", counts.Take(5))})");
-        }
-        else
-        {
-            Log.Info($"ExecutePhase3_Part2: Total visible faces: {totalFaces} for {chunkCount} chunks");
-        }
 
         // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
         // We only need to read 'counts'. Base offsets and totals are derived from it.

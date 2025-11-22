@@ -55,6 +55,22 @@ layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
     uint chunkIndices[];
 };
 
+struct WorldEdit {
+    int x;
+    int y;
+    int z;
+    uint type;
+};
+
+// Input: World edits for neighbor correction
+layout(std430, binding = 7) readonly buffer WorldEditsBuffer {
+    uint editCount;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    WorldEdit worldEdits[];
+};
+
 // ============================================================================
 // Noise Functions (Copied from compute-generate.comp)
 // ============================================================================
@@ -178,6 +194,13 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
     // Calculate global world coordinates
     int wx = int(chunkX * CHUNK_SIDE_SIZE) + lx;
     int wz = int(chunkZ * CHUNK_SIDE_SIZE) + lz;
+
+    // Check world edits first (linear scan - keep count low!)
+    for (uint i = 0; i < editCount; i++) {
+        if (worldEdits[i].x == wx && worldEdits[i].y == ly && worldEdits[i].z == wz) {
+            return worldEdits[i].type;
+        }
+    }
 
     int height;
     if (uTestMode == 1) {
