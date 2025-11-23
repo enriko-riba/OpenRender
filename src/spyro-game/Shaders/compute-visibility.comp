@@ -1,0 +1,331 @@
+#version 460
+#extension GL_ARB_gpu_shader_int64 : require
+
+// CRITICAL: Work group layout MUST match generation shader!
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+
+// ============================================================================
+// Constants (match VoxelHelper.cs)
+// ============================================================================
+const int CHUNK_SIDE_SIZE = 16;
+const int CHUNK_Y_SIZE = 128;
+const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
+const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+const int WATER_LEVEL = 35;
+
+// Block types
+const uint BLOCK_NONE = 0u;
+const uint BLOCK_WATER_LEVEL = 1u;
+const uint BLOCK_ROCK = 2u;
+const uint BLOCK_SAND = 3u;
+const uint BLOCK_DIRT = 4u;
+const uint BLOCK_GRASS_DIRT = 5u;
+
+// Face bits (match order: +X, -X, +Y, -Y, +Z, -Z)
+const uint FACE_POS_X = (1u << 0);
+const uint FACE_NEG_X = (1u << 1);
+const uint FACE_POS_Y = (1u << 2);
+const uint FACE_NEG_Y = (1u << 3);
+const uint FACE_POS_Z = (1u << 4);
+const uint FACE_NEG_Z = (1u << 5);
+
+// ============================================================================
+// Uniforms
+// ============================================================================
+uniform uint uChunkCount;
+uniform uint uSeed;
+uniform uint uWorldChunksXZ;
+uniform int uTestMode;
+
+// ============================================================================
+// SSBOs (using VoxelHelper.SSBOBindings constants)
+// ============================================================================
+
+// Input: Generated voxel data from Phase 2
+layout(std430, binding = 0) readonly buffer VoxelData {
+    uint voxelData[];  // Packed: blockType(8) | biomeID(8) | light(8) | flags(8)
+};
+
+// Output: Visibility mask (6 bits per voxel)
+layout(std430, binding = 1) writeonly buffer VisibilityMask {
+    uint visibilityMask[];  // lower 6 bits used
+};
+
+// Input: Chunk indices for neighbor calculation
+layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
+    uint chunkIndices[];
+};
+
+struct WorldEdit {
+    int x;
+    int y;
+    int z;
+    uint type;
+};
+
+// Input: World edits for neighbor correction
+layout(std430, binding = 7) readonly buffer WorldEditsBuffer {
+    uint editCount;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    WorldEdit worldEdits[];
+};
+
+// ============================================================================
+// Noise Functions (Copied from compute-generate.comp)
+// ============================================================================
+
+// Simple hash function
+uint hash(uint x, uint seed) {
+    x += seed;
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = ((x >> 16) ^ x) * 0x45d9f3bu;
+    x = (x >> 16) ^ x;
+    return x;
+}
+
+// Simple 2D noise
+float noise2D(int x, int z, uint seed) {
+    uint n = hash(uint(x) + hash(uint(z), seed), seed);
+    return float(n) / float(0xFFFFFFFFu) * 2.0 - 1.0;
+}
+
+// Bilinear interpolation
+float interpolatedNoise(float x, float z, uint seed) {
+    int ix = int(floor(x));
+    int iz = int(floor(z));
+    float fx = fract(x);
+    float fz = fract(z);
+
+    // Smooth the interpolation
+    fx = fx * fx * (3.0 - 2.0 * fx);
+    fz = fz * fz * (3.0 - 2.0 * fz);
+
+    float v00 = noise2D(ix, iz, seed);
+    float v10 = noise2D(ix + 1, iz, seed);
+    float v01 = noise2D(ix, iz + 1, seed);
+    float v11 = noise2D(ix + 1, iz + 1, seed);
+
+    float v0 = mix(v00, v10, fx);
+    float v1 = mix(v01, v11, fx);
+    return mix(v0, v1, fz);
+}
+
+// Multi-octave noise
+float multiOctaveNoise(float x, float z, uint seed, int octaves) {
+    float total = 0.0;
+    float frequency = 1.0;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+
+    for (int i = 0; i < octaves; i++) {
+        total += interpolatedNoise(x * frequency, z * frequency, seed + uint(i * 100)) * amplitude;
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    return total / maxValue;
+}
+
+// Generate terrain height
+int generateHeight(int wx, int wz) {
+    // Base terrain (large features)
+    float baseScale = 0.005;  // 1/200
+    float baseNoise = multiOctaveNoise(float(wx) * baseScale, float(wz) * baseScale, uSeed, 4);
+
+    // Detail noise (small features)
+    float detailScale = 0.02;  // 1/50
+    float detailNoise = multiOctaveNoise(float(wx) * detailScale, float(wz) * detailScale, uSeed + 1000u, 3);
+
+    // Combine: base terrain + 30% detail
+    float combined = baseNoise + detailNoise * 0.3;
+
+    // Map to height range: water level ±40 blocks = range of 80 blocks
+    float h01 = combined * 0.5 + 0.5;  // Map [-1,1] to [0,1]
+    int height = int(float(WATER_LEVEL) + (h01 - 0.5) * 80.0);
+
+    // Clamp to valid range
+    return clamp(height, 0, CHUNK_Y_SIZE - 1);
+}
+
+// Check if water is nearby (radius 3)
+bool isNearWater(int wx, int wz) {
+    for (int dz = -3; dz <= 3; dz+=3) {
+        for (int dx = -3; dx <= 3; dx+=3) {
+            if (dx == 0 && dz == 0) continue;
+            int h = generateHeight(wx + dx, wz + dz);
+            if (h <= WATER_LEVEL) return true;
+        }
+    }
+    return false;
+}
+
+uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
+    if (y > height) {
+        if (y <= WATER_LEVEL) {
+            return BLOCK_WATER_LEVEL;
+        }
+        return BLOCK_NONE;
+    } 
+    
+    if (y == height) {
+        if (y < WATER_LEVEL) {
+            if (y >= WATER_LEVEL - 1) return BLOCK_SAND;
+            return 8u; // BLOCK_BEDROCK (hardcoded here as constant is missing)
+        } else {
+            if (y <= WATER_LEVEL + 2) {
+                if (isNearWater(wx, wz)) return BLOCK_SAND;
+            }
+            return BLOCK_GRASS_DIRT;
+        }
+    }
+    
+    int depth = height - y;
+    if (depth <= 2) return BLOCK_DIRT;
+    return BLOCK_ROCK;
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Check if voxel is transparent (air or water)
+bool isTransparent(uint voxel) {
+    uint blockType = voxel & 0xFFu;
+    return blockType == BLOCK_NONE || blockType == BLOCK_WATER_LEVEL;
+}
+
+bool isWater(uint voxel) {
+    uint blockType = voxel & 0xFFu;
+    return blockType == BLOCK_WATER_LEVEL;
+}
+
+/// Get voxel at local coordinates (with bounds checking)
+/// If out of bounds, calculate procedurally
+uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
+    // Check Y bounds first (always air above/below world)
+    if (ly < 0 || ly >= CHUNK_Y_SIZE) return 0u; // Air
+
+    // Check if inside current chunk
+    if (lx >= 0 && lx < CHUNK_SIDE_SIZE && lz >= 0 && lz < CHUNK_SIDE_SIZE) {
+        uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                        uint(lx) +
+                        uint(lz) * CHUNK_SIDE_SIZE +
+                        uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
+        return voxelData[voxelIdx];
+    }
+
+    // Out of bounds: Calculate procedurally
+    uint chunkIndexGlobal = chunkIndices[chunkIdx];
+    uint chunkX = chunkIndexGlobal % uWorldChunksXZ;
+    uint chunkZ = chunkIndexGlobal / uWorldChunksXZ;
+    
+    // Calculate global world coordinates
+    int wx = int(chunkX * CHUNK_SIDE_SIZE) + lx;
+    int wz = int(chunkZ * CHUNK_SIDE_SIZE) + lz;
+
+    // Check world edits first (linear scan - keep count low!)
+    for (uint i = 0; i < editCount; i++) {
+        if (worldEdits[i].x == wx && worldEdits[i].y == ly && worldEdits[i].z == wz) {
+            return worldEdits[i].type;
+        }
+    }
+
+    int height;
+    if (uTestMode == 1) {
+        // Replicate test mode logic
+        int neighborChunkX = wx / CHUNK_SIDE_SIZE;
+        int neighborChunkZ = wz / CHUNK_SIDE_SIZE;
+        height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
+    } else {
+        height = generateHeight(wx, wz);
+    }
+
+    // Note: compute-visibility doesn't include terrain-common.glsl directly but duplicates logic.
+    // I should probably update the duplicated logic or include the file.
+    // For now, I'll just update the call to match the signature if I can't include.
+    // Wait, compute-visibility DOES NOT include terrain-common.glsl. It has its own copy of noise functions.
+    // I need to update the local copy of generateBlockType or add the new one here.
+    // Since I just removed the old one, I must add the new one!
+    
+    // Re-adding the new generateBlockType locally to compute-visibility.comp
+    // But wait, I removed it in the previous step.
+    // Let's add it back with the new logic.
+    
+    uint blockType = generateBlockType(height, ly, wx, wz, uSeed);
+    return blockType; // We only need the block type for transparency check
+}
+
+// ============================================================================
+// Main Shader
+// ============================================================================
+
+void main() {
+    uint chunkIdx = gl_WorkGroupID.x;
+    uint ly = gl_WorkGroupID.y;  // Y slice
+    if (chunkIdx >= uChunkCount || ly >= CHUNK_Y_SIZE) return;
+
+    int lx = int(gl_LocalInvocationID.x);
+    int lz = int(gl_LocalInvocationID.z);
+
+    uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                    uint(lx) +
+                    uint(lz) * CHUNK_SIDE_SIZE +
+                    ly * CHUNK_SIDE_SIZE_SQUARED;
+
+    uint voxel = voxelData[voxelIdx];
+    uint blockType = voxel & 0xFFu;
+
+    if (blockType == BLOCK_NONE) {
+        visibilityMask[voxelIdx] = 0u;
+        return;
+    }
+
+    bool currentIsWater = (blockType == BLOCK_WATER_LEVEL);
+    
+    // Neighbor-based face visibility
+    uint mask = 0u;
+
+    // Helper macro for face checking
+    #define CHECK_FACE(neighborVoxel, faceBit) \
+    { \
+        uint nv = neighborVoxel; \
+        bool neighborIsWater = isWater(nv); \
+        bool neighborIsTransparent = isTransparent(nv); \
+        if (currentIsWater) { \
+            /* Water only draws against Air (transparent but not water) */ \
+            /* Also draw against other water if we want to see water-water boundaries? No. */ \
+            if (neighborIsTransparent && !neighborIsWater) mask |= faceBit; \
+        } else { \
+            /* Solid blocks draw against any transparent block (Air OR Water) */ \
+            /* If neighbor is water, it is transparent, so we draw the solid face. */ \
+            if (neighborIsTransparent) mask |= faceBit; \
+        } \
+    }
+
+    // +X
+    CHECK_FACE(getVoxel(chunkIdx, lx + 1, int(ly), lz), FACE_POS_X);
+
+    // -X
+    CHECK_FACE(getVoxel(chunkIdx, lx - 1, int(ly), lz), FACE_NEG_X);
+
+    // +Y
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) + 1, lz), FACE_POS_Y);
+
+    // -Y
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) - 1, lz), FACE_NEG_Y);
+
+    // +Z
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz + 1), FACE_POS_Z);
+
+    // -Z
+    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz - 1), FACE_NEG_Z);
+
+    if (currentIsWater) {
+        mask |= (1u << 6); // Bit 6 = IsWater
+    }
+
+    visibilityMask[voxelIdx] = mask;
+}

@@ -13,7 +13,8 @@ namespace SpyroGame.World;
 internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
 {
     private Matrix4 projectionMatrix = Matrix4.Identity;
-    private Matrix4 invProjectionMatrix = Matrix4.Identity;
+    
+    public bool IsCameraUnderwater { get; set; }
 
     public static SkyBoxSun Create(IDayNightTimeProvider dayNightTimeProvider)
     {
@@ -34,11 +35,11 @@ internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, 
         return skybox;
     }
 
-    public override void OnResize(Scene scene, ResizeEventArgs e)
-    {
-        projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
-        Matrix4.Invert(projectionMatrix, out invProjectionMatrix);
-    }
+    //public override void OnResize(Scene scene, ResizeEventArgs e)
+    //{
+    //    projectionMatrix = Matrix4.CreatePerspectiveFieldOfView(MathHelper.PiOver4, scene.Camera?.AspectRatio ?? 1f, 0.0001f, 5000);
+    //    Matrix4.Invert(projectionMatrix, out invProjectionMatrix);
+    //}
 
     public override void OnDraw(double elapsed)
     {
@@ -59,13 +60,14 @@ internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, 
         GL.GetInteger(GetPName.Viewport, viewport);
         var viewportSize = new Vector2(viewport[2], viewport[3]);
         Material.Shader.SetVector2("uViewportSize", ref viewportSize);
-        Material.Shader.SetMatrix4("uInvProjection", ref invProjectionMatrix);
+        //Material.Shader.SetMatrix4("uInvProjection", ref invProjectionMatrix);
 
         var view = Scene!.Camera!.ViewMatrix;
         view.Row3.Xyz = Vector3.Zero;
         Material.Shader.SetMatrix4("view", ref view);
         Material.Shader.SetMatrix4("projection", ref projectionMatrix);
         Material.Shader.SetFloat("uTime", (float)dayNightTimeProvider.TimeOfDay.TotalSeconds);
+        Material.Shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
         
         base.OnDraw(elapsed);
 

@@ -1,0 +1,69 @@
+#version 460
+#extension GL_ARB_gpu_shader_int64 : require
+
+#include "terrain-common.glsl"
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+
+// Uniforms
+uniform uint uSeed;
+uniform uint uChunkCount;
+uniform uint uWorldChunksXZ;
+uniform int uTestMode = 0;
+
+// SSBOs
+layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
+    uint chunkIndices[];
+};
+
+layout(std430, binding = 0) writeonly buffer VoxelDataBuffer {
+    uint voxelData[];
+};
+
+layout(std430, binding = 2) writeonly buffer ColumnHeightsBuffer {
+    int columnHeights[];
+};
+
+layout(std430, binding = 3) writeonly buffer ColumnMetaBuffer {
+    uvec4 columnMeta[];
+};
+
+uint packVoxel(uint blockType) {
+    return blockType | (0u << 8) | (15u << 16) | (0u << 24);
+}
+
+void main() {
+    uint chunkIdx = gl_WorkGroupID.x;
+    if (chunkIdx >= uChunkCount) return;
+    
+    uint lx = gl_LocalInvocationID.x;
+    uint lz = gl_LocalInvocationID.z;
+    uint chunkIndexGlobal = chunkIndices[chunkIdx];
+    uint chunkX = chunkIndexGlobal % uWorldChunksXZ;
+    uint chunkZ = chunkIndexGlobal / uWorldChunksXZ;
+    int wx = int(chunkX * CHUNK_SIDE_SIZE + lx);
+    int wz = int(chunkZ * CHUNK_SIDE_SIZE + lz);
+
+    int height;
+    
+    if (uTestMode == 1) {
+        height = 40 + int((chunkX + chunkZ) % 8u);
+    } else {
+        height = generateHeight(wx, wz, uSeed);
+    }
+
+    uint columnIdx = chunkIdx * CHUNK_SIDE_SIZE_SQUARED + lz * CHUNK_SIDE_SIZE + lx;
+    columnHeights[columnIdx] = height;
+    columnMeta[columnIdx] = uvec4(0, 0, 0, 0);
+
+    uint voxelBaseIdx = chunkIdx * CHUNK_VOXEL_COUNT + lz * CHUNK_SIDE_SIZE + lx;
+
+    for (int y = 0; y < CHUNK_Y_SIZE; y++) {
+        uint blockType = generateBlockType(height, y, wx, wz, uSeed);
+        uint voxelIdx = voxelBaseIdx + y * CHUNK_SIDE_SIZE_SQUARED;
+        voxelData[voxelIdx] = packVoxel(blockType);
+    }
+}
+
+// Remove local generateBlockType definition as it is now in terrain-common.glsl
+// (Wait, I need to remove the old function definition first)

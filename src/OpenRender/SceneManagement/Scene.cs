@@ -160,7 +160,7 @@ public class Scene
             GL.Enable(EnableCap.DebugOutput);
             GL.Enable(EnableCap.DebugOutputSynchronous);
         }
-#endif        
+#endif
     }
 
     /// <summary>

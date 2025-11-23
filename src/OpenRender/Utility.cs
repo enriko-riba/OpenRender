@@ -21,10 +21,33 @@ public static class Utility
         IntPtr pUserParam)      // The pointer you gave to OpenGL
     {
         var message = Marshal.PtrToStringUTF8(pMessage, length);
+        var formattedMessage = $"[GL source={source} type={type} id={id}] {message}";
 
-        if (severity > DebugSeverity.DebugSeverityNotification)
+        // Suppress shader recompilation warnings (id=131218) - these are driver optimizations, not errors
+        // The driver recompiles shaders based on GL state for better performance, this is expected behavior
+        if (id == 131218 && type == DebugType.DebugTypePerformance)
         {
-            Console.WriteLine("[{0} source={1} type={2} id={3}] {4}", severity, source, type, id, message);
+            return; // Silently ignore shader recompilation notifications
+        }
+
+        // Map OpenGL debug severity to Log levels
+        switch (severity)
+        {
+            case DebugSeverity.DebugSeverityNotification:
+                Log.Debug(formattedMessage);
+                break;
+            
+            case DebugSeverity.DebugSeverityLow:
+                Log.Info(formattedMessage);
+                break;
+            
+            case DebugSeverity.DebugSeverityMedium:
+                Log.Warn(formattedMessage);
+                break;
+            
+            case DebugSeverity.DebugSeverityHigh:
+                Log.Error(formattedMessage);
+                break;
         }
 
         if (type == DebugType.DebugTypeError)

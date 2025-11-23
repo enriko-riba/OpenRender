@@ -5,7 +5,7 @@ namespace OpenRender;
 
 public static class Log
 {
-    private static readonly object @lock = new();
+    private static readonly Lock @lock = new();
     public const int LevelDebug = 0;
     public const int LevelInfo = 1;
     public const int LevelHighlight = 3;
@@ -43,7 +43,7 @@ public static class Log
     {
         if (level >= MinimumLevel)
         {
-            lock (@lock)
+            using (@lock.EnterScope())
             {
                 var textColor = ConsoleColor.DarkGray;
                 switch (level)
@@ -76,8 +76,7 @@ public static class Log
 
     private static void WriteWithTimeStamp(ConsoleColor color, string message)
     {
-        WriteColored(ConsoleColor.DarkCyan, $"{DateTime.Now.ToLocalTime()} ");
-        //Console.Write($"{DateTime.Now.ToLocalTime()} ");
+        WriteColored(ConsoleColor.DarkCyan, $"{DateTime.Now:MM/dd/yyyy HH:mm:ss.fff} ");
         WriteColored(color, message);
     }
 

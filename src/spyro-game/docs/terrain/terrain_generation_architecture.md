@@ -258,3 +258,130 @@ These metrics should stay below ~1 ms per chunk on development hardware; use t
 ## 9. Summary
 
 This architecture provides a high-performance, modular, noise-driven world generation system suitable for voxel terrain. Each terrain layer is independent yet compositionally consistent through normalization and calibration, yielding natural-looking continents, ridges, and coastlines while maintaining performance across large (300×300) chunk worlds.
+## TODO: Incremental GPU Compaction & Streaming
+
+Goal: Eliminate full-atlas rebuilds on every tile change; only process new tiles and their border dependencies to reduce churn and jitter.
+
+- Track per-tile sets
+  - Keep `prevSet` and `newSet` of surrounding chunks (by camera tile).
+  - Compute `added = newSet − prevSet`, `removed = prevSet − newSet`.
+
+- Border AO dependencies
+  - For `added`, build a padded subset `added ∪ 4‑neighbors` (neighbors must be in `newSet`).
+  - Dispatch `compute-chunk` + `compute-borders` for this subset only.
+
+- Incremental compaction
+  - Append compacted data for `added` into the existing atlas; maintain `chunkIndex -> (base,count)`.
+  - For `removed`, mark counts=0 and push regions to a free‑list (soft delete).
+  - Periodic defrag: when fragmentation > threshold (e.g., 25%) or on a coarse timer, do a full rebuild.
+
+- Draw arrays maintenance
+  - Keep `CompactedChunkIndices/Bases/Counts` synced; update only touched chunks.
+  - Optionally re‑emit a compact index array to keep draw index stable.
+
+- Publish policy
+  - Publish only on tile change with non‑empty delta; rate limit (≥150–200 ms) to remove jitter.
+  - Edits: update only the edited chunk (plus borders if needed) and patch its draw in place — no full rebuild.
+
+- Synchronization & swap
+  - Retain fences after count/write; swap atlas only after issuing draws for the current frame.
+## 9. GPU-First Terrain, Streaming, and Collision (Planned Refactor)
+
+This section captures the refactor plan to make terrain generation, visibility/AO, culling, block edits, and streaming predominantly GPU-driven, while keeping CPU collision responsive and low-bandwidth. It also outlines configurability, biomes, water, and multiplayer hooks. The goal is zero jitter and delta-only recomputation.
+
+### 9.1 Design Objectives
+- GPU drives: generation, initialization, visibility/AO, frustum culling, block breaking/building.
+- CPU fetches only compact collision data, minimally and asynchronously.
+- Streaming is incremental: append new chunks and repair only cardinals; avoid full rebuilds.
+- Fewer compute shaders with clear responsibilities; prefer maintainability.
+- World/chunk sizes are configurable; biomes decouple “role” from material.
+
+### 9.2 GPU Data Model (SSBOs)
+- `chunkIndices[]` (int): primary chunk indices for current batch.
+- `blockType[]` (uint): per-voxel geo role (surface, subsurface, bedrock, etc.).
+- `blockAttrib[]` (uint): per-voxel visibility + packed AO bits.
+- `columnHeights[]` (uint): top solid per column for fast snap; optional.
+- `columnSpans[]` (struct): per-column vertical solid spans (see 9.4) for CPU collision.
+- `editMask3D[]` (uint bitset): per-voxel break/build mask; applied inline by generation.
+- `drawIndices[]`, `drawBases[]`, `drawCounts[]`: per-draw compacted mapping.
+- `atlas[]` (GpuBlockState): compacted visible blocks for MDI.
+- `drawVisible[]` (int): per-draw visibility mask from GPU frustum.
+
+### 9.3 Compute Passes
+- G0: Terrain Generate (`compute-chunk`)
+  - Inputs: `chunkIndices`, noise/biome config, `editMask3D`.
+  - Outputs: `blockType`, initial `blockAttrib` (vis/AO), `columnHeights`, `columnSpans`.
+  - Modular internal pipeline (9.6).
+- G1: Border Fix (`compute-borders`)
+  - Inputs: neighbor map for each primary (W/E/N/S), `blockType`.
+  - Output: corrected `blockAttrib` on chunk borders.
+- G2a: Compact Count (`compute-compact-count`)
+  - Inputs: `blockAttrib` (+edits if needed).
+  - Output: per-chunk visible voxel counts.
+- G2b: Compact Write (`compute-compact-write`)
+  - Inputs: `blockType`, `blockAttrib`, `drawBases`.
+  - Output: `atlas[]` writes; per-chunk cursor verification.
+- C0: Frustum (`compute-frustum-chunks`)
+  - Inputs: `drawIndices`, frustum planes.
+  - Output: `drawVisible[]` (optionally applied to indirect commands in a tiny pass).
+
+### 9.4 CPU Collision via Column Spans
+Single heights are insufficient with caves/overhangs. Use column spans per XZ:
+- For each column, record up to K solid spans `[yStart, yEnd)` plus a small count/overflow flag.
+- Built on GPU during G0 by scanning transitions (air<->solid) after edits.
+- Typical memory (16×128×16, K=3): ~3–6 KB per chunk (small and cache-friendly).
+- CPU queries:
+  - Ground snap: top of highest span ≤ player Y across footprint columns.
+  - Ceiling clamp: bottom of lowest span ≥ head within a threshold.
+  - Lateral collision: test span overlap with player vertical range in neighbor columns.
+- Overflow columns (rare): fallback to a tiny local 3D mask readback or a per-chunk bitset.
+
+### 9.5 Streaming & Delta-Only Updates
+- Determine Desired set (configurable radius around camera). Diff with Active set.
+- To-add primaries: build a padded batch = primaries + their cardinals for border correctness.
+- Run G0/G1/G2 only for the padded batch; append results to `draw*` arrays. Do not rebuild the full set.
+- For cardinals that were already active, run G1 and then G2 only on those cardinals to refresh their borders/slices.
+- Jitter control:
+  - Double-buffer draw arrays (`drawData/indirect/drawVisible`). Build next frame’s arrays fully; swap at frame start.
+  - Never swap compaction mid-draw; defer to pre-frame.
+  - Apply minimum completeness threshold before replacing resident atlas.
+
+### 9.6 Terrain Pipeline (Inside G0)
+Modular stages, each toggled by uniforms while prototyping; can split into 2 shaders if register pressure grows:
+- Stage 1: Solid vs air base field (domain-warped noise; configurable frequency/seed).
+- Stage 2: Carve caves (3D noise masks).
+- Stage 3: Carve rivers/valleys (distance/flow fields).
+- Stage 4: Erosion/cliffs/peaks (filters or approximations).
+- Stage 5: Biome selection (temperature/moisture/height/slope).
+- Stage 6: Geo role tagging (surface, top-below-water, subsurface, bedrock, water, etc.).
+- Stage 7: Visibility + AO prepass (6-neighbor transparency, per-face AO).
+- Stage 8: Column products: `columnHeights`, `columnSpans`.
+
+### 9.7 Biomes & Materials
+- `blockType` encodes a geo role, not a final material.
+- VS/FS maps `(role, biomeId) -> material/texture` via a biome table.
+- This allows the same “surface” role to resolve to sand in deserts and snow in alpine.
+
+### 9.8 Water Evolution
+- Replace single Y-level water with water voxel roles so rivers/lakes can appear above sea.
+- Render water in a separate node; terrain compaction skips water voxels.
+
+### 9.9 Multiplayer & Edits
+- Treat remote edits like local: update `editMask3D` (and optional 2D column edits), mark chunks dirty, and run G0/G1/G2 for the touched set + their cardinals.
+- Deterministic ordering and append‑only draw update keeps frames coherent across clients.
+
+### 9.10 Configurability
+- Config exposes: `ChunkSideSize`, `ChunkYSize`, `WorldChunksXZ`, streaming radius, guard band, pipeline toggles, erosion/biome parameters.
+- All SSBO sizes/strides are derived from config; sanity logs and clamps guard extremes.
+
+### 9.11 Migration Phases
+1. Stabilize compaction and pre‑frame swap; remove legacy (done).
+2. Append‑only streaming: append new draws; refresh only cardinals (G1/G2); freelist for evictions.
+3. Save integration: apply per‑chunk edits on activation (`editMask3D` upload); verify `columnSpans/heights` reflect edits.
+4. Terrain modularization: fold stages into G0; add biome role->material indirection.
+5. Water voxels: promote water to roles; render separately.
+6. Performance polish: allocator for atlas slices, optional clustered culling.
+
+### 9.12 Notes on Minimizing Shaders
+- Keep the set at: compute‑chunk (G0), compute‑borders (G1), compact‑count (G2a), compact‑write (G2b), frustum (C0).
+- Prefer clarity and ease of change over micro‑consolidation; split G0 if needed.

@@ -246,8 +246,17 @@ public class Renderer
         renderList = renderLayers[RenderGroup.DistanceSorted];
         RenderNodeList(renderList, elapsedSeconds);
 
+        // UI layer - disable depth test for 2D overlays
         renderList = renderLayers[RenderGroup.UI];
-        RenderNodeList(renderList, elapsedSeconds);
+        if (renderList.Count > 0)
+        {
+            var depthTestWasEnabled = GL.IsEnabled(EnableCap.DepthTest);
+            if (depthTestWasEnabled) GL.Disable(EnableCap.DepthTest);
+            
+            RenderNodeList(renderList, elapsedSeconds);
+            
+            if (depthTestWasEnabled) GL.Enable(EnableCap.DepthTest);
+        }
     }
 
     public void RenderDefaultLayer(double elapsedSeconds)

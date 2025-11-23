@@ -16,6 +16,18 @@ public struct BlockState
         Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
     }
 
+    public BlockState(Vector3i globalPosition, BlockType blockType)
+    {
+        GlobalPosition = globalPosition;
+        BlockType = blockType;
+        // Calculate local position and chunk index from global position
+        ChunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(globalPosition);
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(ChunkIndex);
+        LocalPosition = globalPosition - chunkPos;
+        Index = LocalPosition.X + LocalPosition.Z * VoxelHelper.ChunkSideSize + LocalPosition.Y * VoxelHelper.ChunkSideSizeSquare;
+        Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
+    }
+
     public int Index { get; private set; }
 
     public int ChunkIndex { get; private set; }

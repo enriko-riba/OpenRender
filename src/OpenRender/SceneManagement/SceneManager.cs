@@ -39,6 +39,7 @@ public class SceneManager : GameWindow
     {
         var existing = sceneList.FirstOrDefault(s => s.Name == scene.Name);
         if (existing != null) throw new ArgumentException($"Scene {existing.Name} is already added to the scene manager!", nameof(scene));
+        scene.scm = this; // Initialize the back-reference immediately
         sceneList.Add(scene);
     }
 
