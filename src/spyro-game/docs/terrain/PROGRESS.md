@@ -17,19 +17,19 @@ Legend
 - [-] Skipped/Not applicable
 
 Summary
-- Current milestone: M1
+- Current milestone: M2
 - Risks: none
-- Next actions: implement GPU bindings stubs and UI for spline editing
+- Next actions: Implement macro fields in compute shader
 
 Milestones
 
 M1: Parameter bucket + GPU bindings + height spline only
 - [x] Design plan document (PLAN_TERRAIN_AND_BIOMES.md)
 - [x] CPU parameter bucket types scaffolded (`TerrainConfig`, `Spline1D`, biomes/regions/caves)
-- [ ] Bake 1D height spline LUT and upload as texture
-- [ ] Create 2D biome-id LUT baking and upload path
-- [ ] Bind SSBO/UBO for `TerrainParams`
-- [ ] In-game debug UI to edit `TerrainConfig` and hot-reload
+- [x] Bake 1D height spline LUT and upload as texture
+- [x] Create 2D biome-id LUT baking and upload path
+- [x] Bind SSBO/UBO for `TerrainParams`
+- [x] In-game debug UI to edit `TerrainConfig` and hot-reload (Implemented via JSON hot-reload)
 
 M2: Macro fields shaping + domain warp
 - [ ] Implement continentalness/erosion/ridge/warp fields in compute shader

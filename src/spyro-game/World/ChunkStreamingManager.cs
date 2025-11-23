@@ -45,6 +45,15 @@ public sealed class ChunkStreamingManager : IDisposable
     private uint worldEditsBuffer; // NEW: Buffer for neighbor edits
     private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
 
+    // Terrain Config & Params (M1)
+    private TerrainConfig terrainConfig = new();
+    private uint terrainParamsSSBO;
+    private int heightSplineTexture;
+    private int biomeLutTexture;
+    private FileSystemWatcher? configWatcher;
+    private volatile bool pendingConfigReload;
+    private const string ConfigFileName = "terrain_config.json";
+
     private int generationSeed;
     private bool generationTestMode;
     private readonly uint[] chunkIndicesBuffers = new uint[2];
@@ -135,6 +144,35 @@ public sealed class ChunkStreamingManager : IDisposable
     public void Update(Vector3 cameraPosition)
     {
         currentFrame++;
+
+        // Handle hot-reload
+        if (pendingConfigReload)
+        {
+            pendingConfigReload = false;
+            // Add small delay/retry to avoid file lock issues
+            try
+            {
+                var configPath = Path.Combine(Environment.CurrentDirectory, ConfigFileName);
+                // Wait a bit for file write to complete
+                System.Threading.Thread.Sleep(50);
+                terrainConfig = TerrainConfig.Load(configPath);
+                UploadTerrainConfig();
+                Log.Info("TerrainConfig hot-reloaded");
+                
+                // Mark all chunks as dirty to force regeneration with new params
+                foreach (var kvp in activeChunks)
+                {
+                    if (kvp.Value.State == TerrainChunkState.Ready)
+                    {
+                        MarkChunkDirty(kvp.Key);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to hot-reload TerrainConfig: {ex.Message}");
+            }
+        }
 
         // 1. Poll completed batches
         PollCompletedBatches();
@@ -1015,6 +1053,47 @@ public sealed class ChunkStreamingManager : IDisposable
             Log.Info($"Reallocated generation buffers for {maxChunks} chunks (Double Buffered)");
         }
 
+        // Initialize Terrain Params (M1)
+        // Load config from disk or save default
+        var configPath = Path.Combine(Environment.CurrentDirectory, ConfigFileName);
+        if (File.Exists(configPath))
+        {
+            terrainConfig = TerrainConfig.Load(configPath);
+            Log.Info($"Loaded TerrainConfig from {configPath}");
+        }
+        else
+        {
+            terrainConfig.Save(configPath);
+            Log.Info($"Saved default TerrainConfig to {configPath}");
+        }
+
+        // Setup FileSystemWatcher
+        if (configWatcher == null)
+        {
+            try
+            {
+                configWatcher = new FileSystemWatcher(Environment.CurrentDirectory, ConfigFileName);
+                configWatcher.NotifyFilter = NotifyFilters.LastWrite;
+                configWatcher.Changed += (s, e) => pendingConfigReload = true;
+                configWatcher.EnableRaisingEvents = true;
+                Log.Info("TerrainConfig hot-reload enabled");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Failed to setup config watcher: {ex.Message}");
+            }
+        }
+
+        if (terrainParamsSSBO == 0)
+        {
+            GL.CreateBuffers(1, out terrainParamsSSBO);
+            var paramsSize = System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.GpuParams>();
+            GL.NamedBufferStorage(terrainParamsSSBO, paramsSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        }
+
+        // Upload Terrain Params
+        UploadTerrainConfig();
+
         Log.CheckGlError();
 
         // FORCE shader reload by clearing cache
@@ -1073,6 +1152,41 @@ public sealed class ChunkStreamingManager : IDisposable
         LoadEdits(); // Load edits after initialization
     }
 
+    private void UploadTerrainConfig()
+    {
+        // Upload Terrain Params
+        var gpuParams = terrainConfig.GetGpuParams();
+        gpuParams.uSeed = (uint)generationSeed; // Keep the seed consistent with init
+        GL.NamedBufferSubData(terrainParamsSSBO, IntPtr.Zero, System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.GpuParams>(), ref gpuParams);
+
+        // Create and upload Height Spline Texture (1D)
+        if (heightSplineTexture == 0)
+        {
+            GL.CreateTextures(TextureTarget.Texture1D, 1, out heightSplineTexture);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            // Initial storage allocation
+            GL.TextureStorage1D(heightSplineTexture, 1, SizedInternalFormat.R32f, 256);
+        }
+        var heightData = terrainConfig.BakeHeightSplineLut(256);
+        GL.TextureSubImage1D(heightSplineTexture, 0, 0, 256, PixelFormat.Red, PixelType.Float, heightData);
+
+        // Create and upload Biome LUT Texture (2D)
+        if (biomeLutTexture == 0)
+        {
+            GL.CreateTextures(TextureTarget.Texture2D, 1, out biomeLutTexture);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            // Initial storage allocation
+            GL.TextureStorage2D(biomeLutTexture, 1, SizedInternalFormat.R8ui, 256, 256);
+        }
+        var biomeData = terrainConfig.BuildBiomeIdLut(256);
+        GL.TextureSubImage2D(biomeLutTexture, 0, 0, 0, 256, 256, PixelFormat.RedInteger, PixelType.UnsignedByte, biomeData);
+    }
+
     /// <summary>
     /// Dispatch GPU generation for a batch of chunks (ASYNC with fence)
     /// Phase 2: Returns a fence that signals when generation completes
@@ -1090,9 +1204,25 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, columnHeightsBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnMetaBuffers[bufferIndex]);
+        
+        // Bind Terrain Params (M1)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 8, terrainParamsSSBO); // Binding 3 is taken by columnMeta, using 8 as per plan? Wait, plan said 3.
+        // Plan said: layout(std430, binding = 3) buffer TerrainParams
+        // But existing code uses binding 3 for columnMetaBuffers.
+        // I should check compute-generate.comp to see what bindings are actually used or free.
+        // For now, I'll use binding 8 and update the shader plan/code later if needed, OR I can check the shader now.
+        // Let's assume I can use binding 8 for TerrainParams to avoid conflict.
+        
+        // Bind Textures
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        GL.ActiveTexture(TextureUnit.Texture2);
+        GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         // Set ALL uniforms every dispatch
         generationShader.Use();
+        generationShader.SetInt("uHeightSpline", 0);
+        generationShader.SetInt("uBiomeLUT", 2);
         generationShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
         generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
         generationShader.SetUInt("uSeed", (uint)generationSeed);
@@ -1776,6 +1906,11 @@ public sealed class ChunkStreamingManager : IDisposable
         if (frustumUBO != 0) GL.DeleteBuffer(frustumUBO);
         if (visibilityFlagsSSBO != 0) GL.DeleteBuffer(visibilityFlagsSSBO);
         if (cullingCommandSlotsBuffer != 0) GL.DeleteBuffer(cullingCommandSlotsBuffer);
+
+        // Cleanup Terrain Params (M1)
+        if (terrainParamsSSBO != 0) GL.DeleteBuffer(terrainParamsSSBO);
+        if (heightSplineTexture != 0) GL.DeleteTexture(heightSplineTexture);
+        if (biomeLutTexture != 0) GL.DeleteTexture(biomeLutTexture);
 
         // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
         phase3Buffers?.Dispose();

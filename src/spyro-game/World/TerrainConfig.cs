@@ -45,6 +45,37 @@ public sealed class TerrainConfig
     // Optional sea level for climate lapse calculations (world units)
     public float SeaLevel { get; set; } = 70f;
 
+    public static TerrainConfig Default() => new();
+
+    public static TerrainConfig Load(string path)
+    {
+        if (!System.IO.File.Exists(path)) return Default();
+        try
+        {
+            var json = System.IO.File.ReadAllText(path);
+            return System.Text.Json.JsonSerializer.Deserialize<TerrainConfig>(json) ?? Default();
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"Failed to load TerrainConfig: {e.Message}");
+            return Default();
+        }
+    }
+
+    public void Save(string path)
+    {
+        try
+        {
+            var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+            var json = System.Text.Json.JsonSerializer.Serialize(this, options);
+            System.IO.File.WriteAllText(path, json);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"Failed to save TerrainConfig: {e.Message}");
+        }
+    }
+
     // --- Helper baking functions for GPU uploads ---
 
     /// <summary>
@@ -75,6 +106,58 @@ public sealed class TerrainConfig
             }
         }
         return data;
+    }
+
+    /// <summary>
+    /// Struct matching the std430 layout in the shader.
+    /// </summary>
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    public struct GpuParams
+    {
+        public uint uSeed;
+        public float uWorldScale;
+        public float uMacroScale; // Unused in C# config but present in shader plan
+        public float uContScale; public float uErodeScale; public float uRidgeScale;
+        public float uWarpScale; public float uWarpStrength;
+        public float uBaseTemp; public float uLapseRate; public float uBaseHum; public float uCoastDry;
+        public float uClimateScale; public float uClimateWarp;
+        public float uRegionCellSize; public float uRegionJitter; public float uRegionFeather; public uint uMaxRegionMix;
+        // Cave params
+        public float uCheeseFreq; public float uCheeseAmp; public float uSpaghettiFreq; public float uSpaghettiAmp;
+        public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; public float pad0;
+    }
+
+    public GpuParams GetGpuParams()
+    {
+        return new GpuParams
+        {
+            uSeed = (uint)Seed,
+            uWorldScale = WorldScale,
+            uMacroScale = 1.0f, // Default
+            uContScale = ContinentalnessScale,
+            uErodeScale = ErosionScale,
+            uRidgeScale = RidgeScale,
+            uWarpScale = WarpScale,
+            uWarpStrength = WarpStrength,
+            uBaseTemp = BaseTemperature,
+            uLapseRate = LapseRate,
+            uBaseHum = BaseHumidity,
+            uCoastDry = CoastDrying,
+            uClimateScale = ClimateScale,
+            uClimateWarp = ClimateWarp,
+            uRegionCellSize = BiomeRegions.CellSizeChunks,
+            uRegionJitter = BiomeRegions.JitterStrength,
+            uRegionFeather = BiomeRegions.FeatherWidth,
+            uMaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
+            uCheeseFreq = Caves.CheeseFrequency,
+            uCheeseAmp = Caves.CheeseAmplitude,
+            uSpaghettiFreq = Caves.SpaghettiFrequency,
+            uSpaghettiAmp = Caves.SpaghettiAmplitude,
+            uCaveThreshold = Caves.CarveThreshold,
+            uCurlScale = Caves.CurlScale,
+            uCurlStrength = Caves.CurlStrength,
+            pad0 = 0
+        };
     }
 }
 
