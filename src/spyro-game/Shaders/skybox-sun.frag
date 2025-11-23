@@ -29,6 +29,7 @@ uniform float uSunIntensity;
 uniform float uCosSunAngularRadius;
 uniform float uTime;
 uniform vec2  uViewportSize;
+uniform int   uIsUnderwater;
 
 out vec4 FragColor;
 
@@ -144,7 +145,27 @@ void main(){
     // Directional fog blend for sky
     float fogK   = getSkyFogFactor(dir);
     vec3  fogCol = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
+    
+    // Darken horizon fog at night to avoid unnatural glow
+    // Use sun elevation to determine day/night
+    float dayFactor = smoothstep(-0.1, 0.1, elevation);
+    // At night (dayFactor=0), darken the fog significantly to match the dark sky
+    fogCol *= (0.1 + 0.9 * dayFactor);
+    
     vec3  finalC = mix(base, fogCol, fogK);
+
+    // Underwater Override
+    if (uIsUnderwater == 1) {
+        // Match voxel-terrain.frag fog color (dirLight.ambient * vec3(0.2, 0.5, 0.8))
+        vec3 deepColor = dirLight.ambient * vec3(0.2, 0.5, 0.8);
+        // Surface color can be a bit lighter/different, but deep color (horizon) must match fog.
+        vec3 surfaceColor = dirLight.ambient * vec3(0.4, 0.7, 1.0);
+        
+        // Gradient: Deep color at horizon and below, fading to surface color at zenith
+        // This ensures seamless blending with the underwater fog which uses deepColor
+        float t = smoothstep(0.0, 1.0, dir.y); 
+        finalC = mix(deepColor, surfaceColor, t);
+    }
 
     // Subtle dithering
     finalC += (random(gl_FragCoord.xy) - 0.5) / 255.0;

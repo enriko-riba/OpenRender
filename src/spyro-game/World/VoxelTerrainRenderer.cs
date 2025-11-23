@@ -53,6 +53,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// </summary>
     public BlockState? PickedBlock { get; set; }
 
+    /// <summary>
+    /// Whether the camera is currently submerged in water.
+    /// Controls underwater fog and lighting effects.
+    /// </summary>
+    public bool IsCameraUnderwater { get; set; }
+
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
     {
         // Create VAO
@@ -318,6 +324,8 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         var matSpecular = new Vector3(0.1f, 0.1f, 0.1f);
         shader.SetVector3("uMaterialSpecular", ref matSpecular);
         shader.SetFloat("uMaterialShininess", 8.0f);
+        shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
+        shader.SetFloat("uTime", (float)Scene!.SceneManager.Time);
 
         // Chunk transform (identity for now - chunks in world space)
         var identity = Matrix4.Identity;
@@ -356,6 +364,8 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Enable blending and disable depth write (optional, but good for water)
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        // Disable culling for water to see surface from below
+        GL.Disable(EnableCap.CullFace);
         // GL.DepthMask(false); // Optional: Disable depth write for transparent objects if sorting is an issue
 
         // Stride = 40 bytes

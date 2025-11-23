@@ -73,8 +73,8 @@ internal class DayNightCycle : IDayNightTimeProvider
         dirLight.Direction = -sunDir;
 
         // Ambient: darker at night, brighter midday
-        var ambientDay = new Vector3(0.35f);
-        var ambientNight = new Vector3(0.15f);
+        var ambientDay = new Vector3(0.45f, 0.45f, 0.45f); // Slightly brighter day
+        var ambientNight = new Vector3(0.05f, 0.05f, 0.08f); // Playable night (moonlight)
         var dayAmt = MathUtil.SmoothStep(0.0f, 0.15f, sunDir.Y);
         DayFactor = dayAmt;
         dirLight.Ambient = Vector3.Lerp(ambientNight, ambientDay, dayAmt);

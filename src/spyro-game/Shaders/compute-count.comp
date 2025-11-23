@@ -71,11 +71,5 @@ void main() {
     }
 
     visibleCounts[chunkIdx] = totalCount;
-    
-    // Fallback: if we found visible faces but opaque count is 0, force it to totalCount.
-    if (totalCount > 0u && opaqueCount == 0u) {
-        opaqueCount = totalCount;
-    }
-    
     opaqueCounts[chunkIdx] = opaqueCount;
 }

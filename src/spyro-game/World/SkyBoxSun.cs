@@ -13,6 +13,8 @@ namespace SpyroGame.World;
 internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
 {
     private Matrix4 projectionMatrix = Matrix4.Identity;
+    
+    public bool IsCameraUnderwater { get; set; }
 
     public static SkyBoxSun Create(IDayNightTimeProvider dayNightTimeProvider)
     {
@@ -65,6 +67,7 @@ internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, 
         Material.Shader.SetMatrix4("view", ref view);
         Material.Shader.SetMatrix4("projection", ref projectionMatrix);
         Material.Shader.SetFloat("uTime", (float)dayNightTimeProvider.TimeOfDay.TotalSeconds);
+        Material.Shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
         
         base.OnDraw(elapsed);
 

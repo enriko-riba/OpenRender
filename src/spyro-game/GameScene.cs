@@ -287,6 +287,20 @@ internal class GameScene : Scene
         // Update visibility
         world.UpdateVisibilityFromCamera(camera!);
 
+        // Check if camera is underwater (for visual effects)
+        if (camera != null)
+        {
+            var camPos = camera.Position;
+            var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
+            bool isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
+            
+            if (terrainRenderer != null) 
+            {
+                terrainRenderer.IsCameraUnderwater = isUnderwater;
+            }
+            if (skyBox != null) skyBox.IsCameraUnderwater = isUnderwater;
+        }
+
         // Update player (handles physics, collision, and WASD movement input)
         player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
         

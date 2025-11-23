@@ -137,9 +137,21 @@ void main() {
     alpha = max(alpha, distAlpha);
 
     // --- FOG (match terrain fog) ---
-    float dCam = distance(fragPos, cameraPos);
-    float fog = getFogFactor(dCam);
-    vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
-    vec3 fogged = mix(finalColor, fogColor, fog);
-    outputColor = vec4(fogged, alpha);
+    if (cameraPos.y < 35.0) {
+        // Underwater fog
+        float dist = distance(fragPos, cameraPos);
+        float fogEnd = 30.0;
+        float fog = clamp(dist / fogEnd, 0.0, 1.0);
+        vec3 waterFogColor = vec3(0.0, 0.2, 0.4);
+        vec3 fogged = mix(finalColor, waterFogColor, fog);
+        fogged *= vec3(0.5, 0.7, 1.0); // Tint
+        outputColor = vec4(fogged, alpha);
+    } else {
+        // Normal atmospheric fog
+        float dCam = distance(fragPos, cameraPos);
+        float fog = getFogFactor(dCam);
+        vec3 fogColor = (fogParams.z > 0.5) ? fogColor4.rgb : dirLight.ambient;
+        vec3 fogged = mix(finalColor, fogColor, fog);
+        outputColor = vec4(fogged, alpha);
+    }
 }
