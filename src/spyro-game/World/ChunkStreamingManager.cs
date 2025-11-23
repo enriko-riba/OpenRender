@@ -153,12 +153,10 @@ public sealed class ChunkStreamingManager : IDisposable
             try
             {
                 var configPath = Path.Combine(Environment.CurrentDirectory, ConfigFileName);
-                // Wait a bit for file write to complete
-                System.Threading.Thread.Sleep(50);
                 terrainConfig = TerrainConfig.Load(configPath);
                 UploadTerrainConfig();
                 Log.Info("TerrainConfig hot-reloaded");
-                
+
                 // Mark all chunks as dirty to force regeneration with new params
                 foreach (var kvp in activeChunks)
                 {
@@ -407,7 +405,7 @@ public sealed class ChunkStreamingManager : IDisposable
                         Log.Warn($"ChunkStreamingManager: Chunk {chunkIdx} not found in VoxelWorld during readback!");
                     }
                 }
-               // Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
+                // Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
             }
         }
     }
@@ -907,9 +905,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
-        
+
         // Save edits immediately to prevent data loss
-        SaveEdits();
+        SaveChunkEdits(chunkIdx);
     }
 
     /// <summary>
@@ -1063,7 +1061,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
         else
         {
-            terrainConfig.Save(configPath);
+            // terrainConfig.Save(configPath); // Disabled auto-save to prevent overwriting with defaults
             Log.Info($"Saved default TerrainConfig to {configPath}");
         }
 
@@ -1072,8 +1070,10 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             try
             {
-                configWatcher = new FileSystemWatcher(Environment.CurrentDirectory, ConfigFileName);
-                configWatcher.NotifyFilter = NotifyFilters.LastWrite;
+                configWatcher = new FileSystemWatcher(Environment.CurrentDirectory, ConfigFileName)
+                {
+                    NotifyFilter = NotifyFilters.LastWrite
+                };
                 configWatcher.Changed += (s, e) => pendingConfigReload = true;
                 configWatcher.EnableRaisingEvents = true;
                 Log.Info("TerrainConfig hot-reload enabled");
@@ -1154,9 +1154,15 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void UploadTerrainConfig()
     {
+        // Ensure seed is not 0 (which might cause issues or be uninitialized)
+        if (generationSeed == 0) generationSeed = 1337;
+
         // Upload Terrain Params
         var gpuParams = terrainConfig.GetGpuParams();
         gpuParams.uSeed = (uint)generationSeed; // Keep the seed consistent with init
+
+        Log.Info($"Uploading TerrainParams: Seed={gpuParams.uSeed}, ContScale={gpuParams.uContScale}, WarpScale={gpuParams.uWarpScale}");
+
         GL.NamedBufferSubData(terrainParamsSSBO, IntPtr.Zero, System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.GpuParams>(), ref gpuParams);
 
         // Create and upload Height Spline Texture (1D)
@@ -1204,10 +1210,10 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, columnHeightsBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnMetaBuffers[bufferIndex]);
-        
+
         // Bind Terrain Params (M1/M2) - Binding 10 as per terrain-common.glsl
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
-        
+
         // Bind Textures
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
@@ -1220,7 +1226,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // generationShader.SetInt("uBiomeLUT", 1);     // Using layout(binding=1)
         generationShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
         generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
-        generationShader.SetUInt("uSeed", (uint)generationSeed);
+        // generationShader.SetUInt("uSeed", (uint)generationSeed); // Removed
         generationShader.SetInt("uTestMode", generationTestMode ? 1 : 0);
 
         // Dispatch: one work-group per chunk, matching layout (16,1,16)
@@ -1422,10 +1428,10 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, chunkIndicesBuffers[bufferIndex]);
         // Bind world edits buffer for neighbor correction (Phase 5.5 FIX)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, worldEditsBuffer);
-        
+
         // Bind Terrain Params (M1/M2) - Binding 10
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
-        
+
         // Bind Textures
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
@@ -1437,7 +1443,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // GL.Uniform1(visibilityShader.GetUniformLocation("uHeightSpline"), 0); // Using layout(binding=0)
         // GL.Uniform1(visibilityShader.GetUniformLocation("uBiomeLUT"), 1);     // Using layout(binding=1)
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
-        GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed);
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
         GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
         GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
 
@@ -1503,13 +1509,13 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Stage 3.4 Compaction
         phase3Buffers.ResetAtomicCounters();
-        
+
         // Clear counters with SubData instead of ClearNamedBufferData to avoid format errors
         // We only need to clear the first chunkCount entries as the shader uses gl_WorkGroupID.x
         var zeros = new uint[chunkCount];
         GL.NamedBufferSubData(phase3Buffers.PerChunkEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
         GL.NamedBufferSubData(phase3Buffers.WaterEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
-        
+
         GL.NamedBufferData(compactionChunkIndicesBuffer, chunkIndices.Length * sizeof(int), chunkIndices, BufferUsageHint.DynamicDraw);
         GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
@@ -1517,10 +1523,10 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
         // Bind world edits buffer for neighbor lookup
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
-        
+
         // Bind Terrain Params (M1/M2) - Binding 10
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
-        
+
         // Bind Textures
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
@@ -1539,7 +1545,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // GL.Uniform1(compactShader.GetUniformLocation("uBiomeLUT"), 1);     // Using layout(binding=1)
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
-        GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed);
+        // GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
         GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
@@ -1846,62 +1852,84 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    public void SaveEdits()
+    public void SaveChunkEdits(int chunkIdx)
     {
-        var fileName = $"world-{generationSeed}_edits.bin";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", fileName);
+        if (!chunkEdits.TryGetValue(chunkIdx, out var edits) || edits.Count == 0) return;
+
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
+
+        var folderName = $"{worldName}_{seed}";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.bin";
+        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+
         var dirName = Path.GetDirectoryName(path);
         if (dirName is not null) Directory.CreateDirectory(dirName);
 
         using var stream = File.Create(path);
         using var writer = new BinaryWriter(stream);
 
-        writer.Write(chunkEdits.Count);
-        foreach (var chunkKvp in chunkEdits)
+        writer.Write(edits.Count);
+        foreach (var kvp in edits)
         {
-            writer.Write(chunkKvp.Key);
-            writer.Write(chunkKvp.Value.Count);
-            foreach (var voxelKvp in chunkKvp.Value)
-            {
-                writer.Write(voxelKvp.Key);
-                writer.Write((byte)voxelKvp.Value);
-            }
+            writer.Write(kvp.Key);
+            writer.Write((byte)kvp.Value);
         }
-        Log.Info($"Saved edits for {chunkEdits.Count} chunks to {path}");
+    }
+
+    public void SaveEdits()
+    {
+        foreach (var chunkIdx in chunkEdits.Keys)
+        {
+            SaveChunkEdits(chunkIdx);
+        }
+        Log.Info($"Saved edits for {chunkEdits.Count} chunks");
     }
 
     public void LoadEdits()
     {
-        var fileName = $"world-{generationSeed}_edits.bin";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", fileName);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
+        var folderName = $"{worldName}_{seed}";
+        var dirPath = Path.Combine(Environment.CurrentDirectory, "save", folderName);
 
-        if (!File.Exists(path)) return;
+        if (!Directory.Exists(dirPath)) return;
 
-        try
+        var files = Directory.GetFiles(dirPath, "chunk_*.bin");
+        foreach (var file in files)
         {
-            using var stream = File.OpenRead(path);
-            using var reader = new BinaryReader(stream);
-
-            var chunkCount = reader.ReadInt32();
-            for (var i = 0; i < chunkCount; i++)
+            try
             {
-                var chunkIdx = reader.ReadInt32();
-                var voxelCount = reader.ReadInt32();
-                var edits = new Dictionary<int, BlockType>(voxelCount);
-                for (var j = 0; j < voxelCount; j++)
+                var name = Path.GetFileNameWithoutExtension(file);
+                var parts = name.Split('_');
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var x) && int.TryParse(parts[2], out var z))
                 {
-                    var voxelIdx = reader.ReadInt32();
-                    var type = (BlockType)reader.ReadByte();
-                    edits[voxelIdx] = type;
+                    if (x >= 0 && x < VoxelHelper.WorldChunksXZ && z >= 0 && z < VoxelHelper.WorldChunksXZ)
+                    {
+                        var chunkIdx = z * VoxelHelper.WorldChunksXZ + x;
+
+                        using var stream = File.OpenRead(file);
+                        using var reader = new BinaryReader(stream);
+
+                        var count = reader.ReadInt32();
+                        var edits = new Dictionary<int, BlockType>(count);
+                        for (var k = 0; k < count; k++)
+                        {
+                            var voxelIdx = reader.ReadInt32();
+                            var type = (BlockType)reader.ReadByte();
+                            edits[voxelIdx] = type;
+                        }
+                        chunkEdits[chunkIdx] = edits;
+                    }
                 }
-                chunkEdits[chunkIdx] = edits;
             }
-            Log.Info($"Loaded edits for {chunkCount} chunks from {path}");
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to load edits from {file}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
-        {
-            Log.Error($"Failed to load edits: {ex.Message}");
-        }
+        Log.Info($"Loaded edits for {chunkEdits.Count} chunks from {dirPath}");
     }
 
     public void Dispose()

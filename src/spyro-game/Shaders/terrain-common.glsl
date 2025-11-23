@@ -118,7 +118,8 @@ float getHeight(vec2 p) {
     
     // Apply Erosion and Peaks
     // Simple shaping for M2
-    float height = baseHeight;
+    // FIX: Add WATER_LEVEL because spline is relative to sea level (0 = coast)
+    float height = baseHeight + float(WATER_LEVEL);
     
     // Add some variation based on PV and E
     // If erosion is low (rugged), add peaks
@@ -174,7 +175,7 @@ float multiOctaveNoise(float x, float z, uint seed, int octaves) {
 }
 
 // Generate terrain height
-int generateHeight(int wx, int wz, uint seed) {
+int generateHeight(int wx, int wz) {
     // M2: Use new height generation
     float h = getHeight(vec2(wx, wz));
     int height = int(h);
@@ -182,13 +183,13 @@ int generateHeight(int wx, int wz, uint seed) {
 }
 
 // Check if water is nearby (radius 3)
-bool isNearWater(int wx, int wz, uint seed) {
+bool isNearWater(int wx, int wz) {
     // Check neighbors in radius 3
     // Optimization: check sparse points first
     for (int dz = -3; dz <= 3; dz+=3) {
         for (int dx = -3; dx <= 3; dx+=3) {
             if (dx == 0 && dz == 0) continue;
-            int h = generateHeight(wx + dx, wz + dz, seed);
+            int h = generateHeight(wx + dx, wz + dz);
             if (h <= WATER_LEVEL) return true;
         }
     }
@@ -196,7 +197,7 @@ bool isNearWater(int wx, int wz, uint seed) {
     return false;
 }
 
-uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
+uint generateBlockType(int height, int y, int wx, int wz) {
     if (y > height) {
         if (y <= WATER_LEVEL) {
             return BLOCK_WATER_LEVEL;
@@ -216,7 +217,7 @@ uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
             // Above water surface
             if (y <= WATER_LEVEL + 2) {
                 // Shoreline check
-                if (isNearWater(wx, wz, seed)) return BLOCK_SAND;
+                if (isNearWater(wx, wz)) return BLOCK_SAND;
             }
             return BLOCK_GRASS_DIRT;
         }

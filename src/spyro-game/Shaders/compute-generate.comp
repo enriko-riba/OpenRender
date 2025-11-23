@@ -6,7 +6,6 @@
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
 // Uniforms
-uniform uint uSeed;
 uniform uint uChunkCount;
 uniform uint uWorldChunksXZ;
 uniform int uTestMode = 0;
@@ -49,7 +48,7 @@ void main() {
     if (uTestMode == 1) {
         height = 40 + int((chunkX + chunkZ) % 8u);
     } else {
-        height = generateHeight(wx, wz, uSeed);
+        height = generateHeight(wx, wz);
     }
 
     uint columnIdx = chunkIdx * CHUNK_SIDE_SIZE_SQUARED + lz * CHUNK_SIDE_SIZE + lx;
@@ -59,7 +58,7 @@ void main() {
     uint voxelBaseIdx = chunkIdx * CHUNK_VOXEL_COUNT + lz * CHUNK_SIDE_SIZE + lx;
 
     for (int y = 0; y < CHUNK_Y_SIZE; y++) {
-        uint blockType = generateBlockType(height, y, wx, wz, uSeed);
+        uint blockType = generateBlockType(height, y, wx, wz);
         uint voxelIdx = voxelBaseIdx + y * CHUNK_SIDE_SIZE_SQUARED;
         voxelData[voxelIdx] = packVoxel(blockType);
     }

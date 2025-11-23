@@ -16,7 +16,7 @@ internal class DayNightCycle : IDayNightTimeProvider
 {
     private readonly Scene scene;
     private LightUniform dirLight;
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(6));
+    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(7));
     private bool isInitialized = false;
 
     public DayNightCycle(Scene scene)

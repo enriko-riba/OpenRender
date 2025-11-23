@@ -34,6 +34,11 @@ M1: Parameter bucket + GPU bindings + height spline only
 M2: Macro fields shaping + domain warp
 - [x] Implement continentalness/erosion/ridge/warp fields in compute shader
 - [x] Sample height via 1D LUT and compute base density
+- [x] Implement visibility culling and mesh compaction shaders.
+- [x] Integrate with `ChunkStreamingManager` and `VoxelTerrainRenderer`.
+- [x] Fix terrain flatness and water rendering issues.
+- [x] Refactor save system to use per-chunk files.
+- [ ] **Note:** Auto-saving of `TerrainConfig` is currently disabled to prevent overwriting with defaults. Re-enable in `ChunkStreamingManager.InitializeGpuGeneration` once pipeline is stable.
 
 M3: Caves (cheese + spaghetti)
 - [ ] Add 3D noises and subtract from density

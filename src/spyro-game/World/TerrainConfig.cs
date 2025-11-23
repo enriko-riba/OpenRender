@@ -8,6 +8,7 @@ namespace SpyroGame.World;
 public sealed class TerrainConfig
 {
     // World & seeds
+    public string WorldName { get; set; } = "default";
     public int Seed { get; set; } = 1337;
     public float WorldScale { get; set; } = 1.0f;
 
@@ -92,13 +93,13 @@ public sealed class TerrainConfig
         if (resolution <= 1) resolution = 2;
         var data = new byte[resolution * resolution];
 
-        for (int y = 0; y < resolution; y++)
+        for (var y = 0; y < resolution; y++)
         {
-            float h = y / (float)(resolution - 1); // humidity in [0,1]
-            for (int x = 0; x < resolution; x++)
+            var h = y / (float)(resolution - 1); // humidity in [0,1]
+            for (var x = 0; x < resolution; x++)
             {
-                float t = x / (float)(resolution - 1); // temperature in [0,1]
-                int id = BiomeDefinition.SelectBestBiomeId(Biomes, t, h);
+                var t = x / (float)(resolution - 1); // temperature in [0,1]
+                var id = BiomeDefinition.SelectBestBiomeId(Biomes, t, h);
                 if (id < 0) id = 0;
                 data[x + y * resolution] = (byte)id;
             }
@@ -188,18 +189,18 @@ public readonly record struct Range(float Min, float Max)
 /// </summary>
 public sealed class BiomeTextureSet
 {
-    private readonly int[] indices;
+    public int[] Indices { get; set; }
 
     public BiomeTextureSet()
     {
-        indices = new int[Enum.GetValues(typeof(GeologyLayer)).Length];
-        for (int i = 0; i < indices.Length; i++) indices[i] = -1; // -1 = not set
+        Indices = new int[Enum.GetValues<GeologyLayer>().Length];
+        for (var i = 0; i < Indices.Length; i++) Indices[i] = -1; // -1 = not set
     }
 
     public int this[GeologyLayer layer]
     {
-        get => indices[(int)layer];
-        set => indices[(int)layer] = value;
+        get => Indices[(int)layer];
+        set => Indices[(int)layer] = value;
     }
 }
 
@@ -222,14 +223,14 @@ public sealed class BiomeDefinition
         if (biomes.Count == 0) return -1;
 
         // Prefer those where both temp and humidity are inside; otherwise nearest by L1 to centers
-        int best = -1;
-        float bestScore = float.MaxValue;
-        for (int i = 0; i < biomes.Count; i++)
+        var best = -1;
+        var bestScore = float.MaxValue;
+        for (var i = 0; i < biomes.Count; i++)
         {
             var b = biomes[i];
-            bool tIn = b.Temperature.Contains(temperature01);
-            bool hIn = b.Humidity.Contains(humidity01);
-            float score = tIn && hIn ? 0f : MathF.Abs(b.Temperature.Center - temperature01) + MathF.Abs(b.Humidity.Center - humidity01);
+            var tIn = b.Temperature.Contains(temperature01);
+            var hIn = b.Humidity.Contains(humidity01);
+            var score = tIn && hIn ? 0f : MathF.Abs(b.Temperature.Center - temperature01) + MathF.Abs(b.Humidity.Center - humidity01);
             if (score < bestScore)
             {
                 bestScore = score;
@@ -314,8 +315,8 @@ public sealed class Spline1D
 {
     public struct Point
     {
-        public float X; // input in [0,1]
-        public float Y; // output value (units defined by usage)
+        public float X { get; set; } // input in [0,1]
+        public float Y { get; set; } // output value (units defined by usage)
         public Point(float x, float y) { X = x; Y = y; }
     }
 

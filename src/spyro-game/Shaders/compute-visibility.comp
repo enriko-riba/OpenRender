@@ -119,7 +119,7 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
         int neighborChunkZ = wz / CHUNK_SIDE_SIZE;
         height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
     } else {
-        height = generateHeight(wx, wz, uSeed);
+        height = generateHeight(wx, wz);
     }
 
     // Note: compute-visibility doesn't include terrain-common.glsl directly but duplicates logic.
@@ -133,7 +133,7 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
     // But wait, I removed it in the previous step.
     // Let's add it back with the new logic.
     
-    uint blockType = generateBlockType(height, ly, wx, wz, uSeed);
+    uint blockType = generateBlockType(height, ly, wx, wz);
     return blockType; // We only need the block type for transparency check
 }
 

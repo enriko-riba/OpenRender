@@ -42,7 +42,6 @@ const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
 // ============================================================================
 uniform uint uChunkCount;
 uniform uint uWorldChunksXZ;  // For calculating chunk world position
-uniform uint uSeed;
 uniform int uTestMode;
 uniform uint uVertexRegionOffset; // start vertex index for this batch region
 uniform uint uIndexRegionOffset;  // start index for this batch region
@@ -263,7 +262,7 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
         int neighborChunkZ = int(floor(float(wz) / float(CHUNK_SIDE_SIZE)));
         height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
     } else {
-        height = generateHeight(wx, wz, uSeed);
+        height = generateHeight(wx, wz);
     }
     
     // Procedural: Solid if y <= height AND not water level
