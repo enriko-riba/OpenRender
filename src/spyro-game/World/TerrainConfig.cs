@@ -179,10 +179,10 @@ public sealed class BiomeDefinition
     private static BiomeTextureSet DefaultTextures(bool water=false, bool sand=false, bool grass=false, bool snow=false, bool rock=false)
     {
         var t = new BiomeTextureSet();
-        if (water) { t[GeologyLayer.Water] = 0; t[GeologyLayer.Shore] = 1; }
+        if (water) { t[GeologyLayer.Water] = 0; t[GeologyLayer.ShoreLine] = 1; }
         if (sand)  { t[GeologyLayer.Surface] = 2; t[GeologyLayer.Subsurface] = 3; }
         if (grass) { t[GeologyLayer.Surface] = 4; t[GeologyLayer.Subsurface] = 5; }
-        if (rock)  { t[GeologyLayer.Surface] = 6; t[GeologyLayer.Deep] = 7; }
+        if (rock)  { t[GeologyLayer.Surface] = 6; t[GeologyLayer.DeepSubsurface] = 7; }
         if (snow)  { t[GeologyLayer.Surface] = 8; }
         return t;
     }
