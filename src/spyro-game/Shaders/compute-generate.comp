@@ -8,7 +8,7 @@ layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 // Uniforms
 uniform uint uChunkCount;
 uniform uint uWorldChunksXZ;
-uniform int uTestMode = 0;
+// uniform int uTestMode = 0; // Removed
 
 // SSBOs
 layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
@@ -44,12 +44,7 @@ void main() {
     int wz = int(chunkZ * CHUNK_SIDE_SIZE + lz);
 
     int height;
-    
-    if (uTestMode == 1) {
-        height = 40 + int((chunkX + chunkZ) % 8u);
-    } else {
-        height = generateHeight(wx, wz);
-    }
+    height = generateHeight(wx, wz);
 
     uint columnIdx = chunkIdx * CHUNK_SIDE_SIZE_SQUARED + lz * CHUNK_SIDE_SIZE + lx;
     columnHeights[columnIdx] = height;

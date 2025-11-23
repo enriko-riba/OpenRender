@@ -59,6 +59,16 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// </summary>
     public bool IsCameraUnderwater { get; set; }
 
+    public uint TerrainParamsSSBO { get; set; }
+    public int BiomeLutTexture { get; set; }
+    public bool ShowBiomes { get; set; }
+
+    /// <summary>
+    /// Custom texture storage to bypass Material system limits (8 slots) and rigid TextureType slots.
+    /// Mapped by GeologyLayer for clarity.
+    /// </summary>
+    public Dictionary<GeologyLayer, Texture> Textures { get; } = new();
+
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
     {
         // Create VAO
@@ -71,6 +81,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Don't cull this node - we handle culling internally with GPU frustum culling
         DisableCulling = true;
         RenderGroup = RenderGroup.Default;
+
+        // Populate Textures dictionary from Material to support custom binding in OnDraw
+        // Mapping Material slots (TextureType) to GeologyLayer
+        if (Material.Textures[(int)TextureType.Diffuse] != null) Textures[GeologyLayer.Surface] = Material.Textures[(int)TextureType.Diffuse];
+        if (Material.Textures[(int)TextureType.Detail] != null) Textures[GeologyLayer.Water] = Material.Textures[(int)TextureType.Detail];
+        if (Material.Textures[(int)TextureType.Additional3] != null) Textures[GeologyLayer.Subsurface] = Material.Textures[(int)TextureType.Additional3]; // Dirt
+        if (Material.Textures[(int)TextureType.Specular] != null) Textures[GeologyLayer.DeepSubsurface] = Material.Textures[(int)TextureType.Specular]; // Rock
+        if (Material.Textures[(int)TextureType.Bump] != null) Textures[GeologyLayer.ShoreLine] = Material.Textures[(int)TextureType.Bump]; // Sand
+        if (Material.Textures[(int)TextureType.Additional2] != null) Textures[GeologyLayer.UnderwaterSubsurface] = Material.Textures[(int)TextureType.Additional2]; // Bedrock
 
         Log.Info("VoxelTerrainRenderer: Initialized");
     }
@@ -287,33 +306,26 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // Bind textures
-        if (Material.Textures != null)
+        // Bind textures from custom dictionary
+        // This bypasses the Material system's 8-texture limit and TextureType slot restrictions.
+        if (Textures.Count > 0)
         {
-            // Only bind the first 6 textures as used by the shader
-            var count = Math.Min(Material.Textures.Length, 6);
-            for (var i = 0; i < count; i++)
+            void Bind(GeologyLayer layer, string uniformName, int unit)
             {
-                if (Material.Textures[i] != null)
+                if (Textures.TryGetValue(layer, out var tex))
                 {
-                    GL.ActiveTexture(TextureUnit.Texture0 + i);
-                    GL.BindTexture(TextureTarget.Texture2D, Material.Textures[i].Handle);
-                    // Uniforms: uTextures[0], uTextures[1], etc.
-                    // Or individual names: uTexGrass, uTexWater, etc.
-                    // Let's use individual names for clarity in shader
-                    var uniformName = i switch
-                    {
-                        0 => "uTexGrass",
-                        1 => "uTexWater",
-                        2 => "uTexDirt",
-                        3 => "uTexRock",
-                        4 => "uTexSand",
-                        5 => "uTexBedRock",
-                        _ => $"uTex{i}"
-                    };
-                    shader.SetInt(uniformName, i);
+                    GL.ActiveTexture(TextureUnit.Texture0 + unit);
+                    GL.BindTexture(TextureTarget.Texture2D, tex.Handle);
+                    shader.SetInt(uniformName, unit);
                 }
             }
+
+            Bind(GeologyLayer.Surface, "uTexSurface", 0);
+            Bind(GeologyLayer.Water, "uTexWater", 1);
+            Bind(GeologyLayer.Subsurface, "uTexSubSurface", 2);
+            Bind(GeologyLayer.DeepSubsurface, "uTexDeep", 3);
+            Bind(GeologyLayer.ShoreLine, "uTexShore", 4);
+            Bind(GeologyLayer.UnderwaterSubsurface, "uTexUnderwaterSubsurface", 5);
         }
 
         // Enable blending for water transparency
@@ -326,6 +338,20 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         shader.SetFloat("uMaterialShininess", 8.0f);
         shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
         shader.SetFloat("uTime", (float)Scene!.SceneManager.Time);
+        shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
+
+        // Bind Terrain Params (M4)
+        if (TerrainParamsSSBO != 0)
+        {
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
+        }
+
+        // Bind Biome LUT (M4)
+        if (BiomeLutTexture != 0)
+        {
+            GL.ActiveTexture(TextureUnit.Texture7);
+            GL.BindTexture(TextureTarget.Texture2D, BiomeLutTexture);
+        }
 
         // Chunk transform (identity for now - chunks in world space)
         var identity = Matrix4.Identity;
@@ -493,7 +519,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         var dirtDesc = new TextureDescriptor(dirtPath,
             MinFilter: TextureMinFilter.Nearest,
             MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Normal, // Slot 2
+            TextureType: TextureType.Additional3, // Slot 6 (Avoid Normal=2 which forces Linear)
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
             GenerateMipMap: false);

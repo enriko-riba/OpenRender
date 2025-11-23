@@ -185,26 +185,6 @@ public readonly record struct Range(float Min, float Max)
 }
 
 /// <summary>
-/// Mapping from geology layer to texture index inside a texture array/atlas.
-/// </summary>
-public sealed class BiomeTextureSet
-{
-    public int[] Indices { get; set; }
-
-    public BiomeTextureSet()
-    {
-        Indices = new int[Enum.GetValues<GeologyLayer>().Length];
-        for (var i = 0; i < Indices.Length; i++) Indices[i] = -1; // -1 = not set
-    }
-
-    public int this[GeologyLayer layer]
-    {
-        get => Indices[(int)layer];
-        set => Indices[(int)layer] = value;
-    }
-}
-
-/// <summary>
 /// Defines a biome: name, climate comfort ranges, and texture set mapping.
 /// </summary>
 public sealed class BiomeDefinition
@@ -216,7 +196,22 @@ public sealed class BiomeDefinition
     public Range Temperature { get; set; } = new(0.4f, 0.6f);
     public Range Humidity { get; set; } = new(0.4f, 0.6f);
 
-    public BiomeTextureSet Textures { get; set; } = new();
+    /// <summary>
+    /// Texture paths indexed by GeologyLayer enum.
+    /// Index 0 = Air (unused), 1 = Water, 2 = Surface, etc.
+    /// </summary>
+    public List<string> TexturePaths { get; set; } = new();
+
+    public BiomeDefinition() { }
+
+    public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths)
+    {
+        Id = id;
+        Name = name;
+        Temperature = temperature;
+        Humidity = humidity;
+        TexturePaths = texturePaths;
+    }
 
     public static int SelectBestBiomeId(List<BiomeDefinition> biomes, float temperature01, float humidity01)
     {
@@ -242,31 +237,30 @@ public sealed class BiomeDefinition
 
     public static List<BiomeDefinition> DefaultSet()
     {
-        // Minimal default set; texture indices are placeholders
+        // Default texture paths (currently shared across all biomes)
+        // Index mapping:
+        // 0: Air (unused)
+        // 1: Water
+        // 2: Surface
+        // 3: Subsurface
+        // 4: DeepSubsurface
+        // 5: UnderwaterSurface
+        // 6: UnderwaterSubsurface
+        // 7: ShoreLine
+
         return new List<BiomeDefinition>
         {
-            new BiomeDefinition{ Id=0, Name="Ocean",      Temperature=new(0.55f,0.75f), Humidity=new(0.7f,1.0f),    Textures = DefaultTextures(water:true)},
-            new BiomeDefinition{ Id=1, Name="Beach",      Temperature=new(0.55f,0.75f), Humidity=new(0.35f,0.65f),   Textures = DefaultTextures(sand:true)},
-            new BiomeDefinition{ Id=2, Name="Plains",     Temperature=new(0.45f,0.65f), Humidity=new(0.4f,0.65f),    Textures = DefaultTextures(grass:true)},
-            new BiomeDefinition{ Id=3, Name="Savanna",    Temperature=new(0.6f,0.8f),   Humidity=new(0.25f,0.55f),   Textures = DefaultTextures(grass:true)},
-            new BiomeDefinition{ Id=4, Name="Desert",     Temperature=new(0.65f,1.0f),  Humidity=new(0.0f,0.35f),    Textures = DefaultTextures(sand:true)},
-            new BiomeDefinition{ Id=5, Name="Rainforest", Temperature=new(0.55f,0.8f),  Humidity=new(0.7f,1.0f),     Textures = DefaultTextures(grass:true)},
-            new BiomeDefinition{ Id=6, Name="Taiga",      Temperature=new(0.2f,0.45f),  Humidity=new(0.45f,0.75f),   Textures = DefaultTextures(snow:false, grass:true)},
-            new BiomeDefinition{ Id=7, Name="Tundra",     Temperature=new(0.0f,0.35f),  Humidity=new(0.2f,0.6f),     Textures = DefaultTextures(snow:true)},
-            new BiomeDefinition{ Id=8, Name="Highlands",  Temperature=new(0.25f,0.6f),  Humidity=new(0.25f,0.75f),   Textures = DefaultTextures(rock:true)},
-            new BiomeDefinition{ Id=9, Name="Alpine",     Temperature=new(0.0f,0.3f),   Humidity=new(0.2f,0.7f),     Textures = DefaultTextures(snow:true, rock:true)},
+            new BiomeDefinition(0, "Ocean",      new(0.55f,0.75f), new(0.7f,1.0f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(1, "Beach",      new(0.55f,0.75f), new(0.35f,0.65f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(3, "Savanna",    new(0.6f,0.8f),   new(0.25f,0.55f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(4, "Desert",     new(0.65f,1.0f),  new(0.0f,0.35f),   new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(5, "Rainforest", new(0.55f,0.8f),  new(0.7f,1.0f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(6, "Taiga",      new(0.2f,0.45f),  new(0.45f,0.75f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(7, "Tundra",     new(0.0f,0.35f),  new(0.2f,0.6f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(8, "Highlands",  new(0.25f,0.6f),  new(0.25f,0.75f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
+            new BiomeDefinition(9, "Alpine",     new(0.0f,0.3f),   new(0.2f,0.7f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
         };
-    }
-
-    private static BiomeTextureSet DefaultTextures(bool water = false, bool sand = false, bool grass = false, bool snow = false, bool rock = false)
-    {
-        var t = new BiomeTextureSet();
-        if (water) { t[GeologyLayer.Water] = 0; t[GeologyLayer.ShoreLine] = 1; }
-        if (sand) { t[GeologyLayer.Surface] = 2; t[GeologyLayer.Subsurface] = 3; }
-        if (grass) { t[GeologyLayer.Surface] = 4; t[GeologyLayer.Subsurface] = 5; }
-        if (rock) { t[GeologyLayer.Surface] = 6; t[GeologyLayer.DeepSubsurface] = 7; }
-        if (snow) { t[GeologyLayer.Surface] = 8; }
-        return t;
     }
 }
 

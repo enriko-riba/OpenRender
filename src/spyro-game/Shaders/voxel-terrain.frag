@@ -36,15 +36,18 @@ uniform vec3 uMaterialSpecular = vec3(0.2, 0.2, 0.2);
 uniform float uMaterialShininess = 16.0;
 
 // Texture samplers
-uniform sampler2D uTexGrass;   // Slot 0
-uniform sampler2D uTexWater;   // Slot 1
-uniform sampler2D uTexDirt;    // Slot 2
-uniform sampler2D uTexRock;    // Slot 3
-uniform sampler2D uTexSand;    // Slot 4
-uniform sampler2D uTexBedRock; // Slot 5
+uniform sampler2D uTexSurface;      // Slot 0 (was Grass)
+uniform sampler2D uTexWater;        // Slot 1
+uniform sampler2D uTexSubSurface;   // Slot 2 (was Dirt)
+uniform sampler2D uTexDeep;         // Slot 3 (was Rock)
+uniform sampler2D uTexShore;        // Slot 4 (was Sand)
+uniform sampler2D uTexUnderwaterSubsurface; // Slot 5 (was BedRock)
 
 uniform int uIsUnderwater; // 1 if camera is inside a water block, 0 otherwise
 uniform float uTime;
+uniform int uShowBiomes;
+
+#include "terrain-common.glsl"
 
 // ============================================================================
 // Fragment Input (from vertex shader)
@@ -66,12 +69,7 @@ layout(location = 0) out vec4 FragColor;
 // ============================================================================
 // Constants
 // ============================================================================
-const uint BLOCK_WATER_LEVEL = 1u;
-const uint BLOCK_ROCK = 2u;
-const uint BLOCK_SAND = 3u;
-const uint BLOCK_DIRT = 4u;
-const uint BLOCK_GRASS_DIRT = 5u;
-const uint BLOCK_BEDROCK = 8u;
+// Constants defined in terrain-common.glsl
 
 // ============================================================================
 // Main Shader
@@ -163,23 +161,23 @@ void main() {
         }
 
     } else if (vBlockType == BLOCK_GRASS_DIRT) {
-        baseColor = texture(uTexGrass, vTexCoord);
+        baseColor = texture(uTexSurface, vTexCoord);
         baseColor.a = 1.0;
     } else if (vBlockType == BLOCK_DIRT) {
-        baseColor = texture(uTexDirt, vTexCoord);
+        baseColor = texture(uTexSubSurface, vTexCoord);
         baseColor.a = 1.0;
     } else if (vBlockType == BLOCK_ROCK) {
-        baseColor = texture(uTexRock, vTexCoord);
+        baseColor = texture(uTexDeep, vTexCoord);
         baseColor.a = 1.0;
     } else if (vBlockType == BLOCK_SAND) {
-        baseColor = texture(uTexSand, vTexCoord);
+        baseColor = texture(uTexShore, vTexCoord);
         baseColor.a = 1.0;
     } else if (vBlockType == BLOCK_BEDROCK) {
-        baseColor = texture(uTexBedRock, vTexCoord);
+        baseColor = texture(uTexUnderwaterSubsurface, vTexCoord);
         baseColor.a = 1.0;
     } else {
         // Fallback
-        baseColor = texture(uTexGrass, vTexCoord);
+        baseColor = texture(uTexSurface, vTexCoord);
         baseColor.a = 1.0;
         baseColor.rgb = vec3(1.0, 0.0, 1.0); // Magenta for error
     }
@@ -244,6 +242,30 @@ void main() {
     // Combine components
     vec3 finalColor = ambient + diffuse + specular;
     
+    // M4: Biome Visualization (Debug)
+    if (uShowBiomes == 1) {
+        RegionMix regionMix = getBiomeWeights(vWorldPos);
+        
+        // Visualize primary biome
+        uint biomeId = regionMix.biomeIds[0];
+        vec3 biomeColor = vec3(0.5);
+        
+        switch(biomeId) {
+            case 0u: biomeColor = vec3(0.0, 0.0, 1.0); break; // Ocean
+            case 1u: biomeColor = vec3(1.0, 1.0, 0.0); break; // Beach
+            case 2u: biomeColor = vec3(0.0, 1.0, 0.0); break; // Plains
+            case 3u: biomeColor = vec3(1.0, 0.5, 0.0); break; // Savanna
+            case 4u: biomeColor = vec3(1.0, 0.0, 0.0); break; // Desert
+            case 5u: biomeColor = vec3(0.0, 0.5, 0.0); break; // Rainforest
+            case 6u: biomeColor = vec3(0.0, 1.0, 1.0); break; // Taiga
+            case 7u: biomeColor = vec3(1.0, 1.0, 1.0); break; // Tundra
+            case 8u: biomeColor = vec3(0.5, 0.5, 0.5); break; // Highlands
+            case 9u: biomeColor = vec3(0.5, 0.0, 0.5); break; // Alpine
+        }
+        
+        finalColor = mix(finalColor, biomeColor, 0.5);
+    }
+
     // --- ATMOSPHERIC FOG (Above water) ---
     if (!isCameraUnderwater) {
         float dist = length(vWorldPos - cameraPos);
@@ -254,6 +276,11 @@ void main() {
         float fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
         // Smooth the transition
         fogFactor = smoothstep(0.0, 1.0, fogFactor);
+        
+        // Disable fog in biome debug mode
+        if (uShowBiomes == 1) {
+            fogFactor = 0.0;
+        }
         
         // Fog color based on ambient light (unified system)
         vec3 fogColor = dirLight.ambient;
@@ -284,6 +311,11 @@ void main() {
         // Exponential fog for denser, more natural underwater feel
         float fogDensity = 0.15; // High density for short visibility (~20m)
         float fogFactor = 1.0 - exp(-dist * fogDensity);
+        
+        // Disable fog in biome debug mode
+        if (uShowBiomes == 1) {
+            fogFactor = 0.0;
+        }
         
         // Darker fog at night
         // Use ambient light for fog color (unified system)

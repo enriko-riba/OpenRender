@@ -17,9 +17,19 @@ Legend
 - [-] Skipped/Not applicable
 
 Summary
-- Current milestone: M4
+- Current milestone: M5
 - Risks: none
-- Next actions: Implement climate fields and biome LUT sampling
+- Next actions: Implement shading with biome textures
+
+Recent Updates (M4)
+- Implemented climate fields (temperature, humidity), biome LUT, and biome visualization.
+- Added `F3` debug toggle for biome visualization.
+- Updated shaders to use `GeologyLayer` naming convention.
+- Fixed texture tinting issues (sRGB vs Linear).
+- Refactored renderer to use custom texture binding, preparing for >8 textures.
+- Mapped Bedrock texture to `GeologyLayer.UnderwaterSubsurface` to avoid naming confusion.
+- Removed `uTestMode` and legacy test scene logic.
+- Refactored `TerrainConfig` to use explicit texture paths per biome instead of shared defaults.
 
 Milestones
 
@@ -45,10 +55,11 @@ M3: Caves (cheese + spaghetti)
 - [x] Param-drive thresholds and amplitudes from `CaveParams`
 
 M4: Climate + biome LUT + regionization
-- [ ] Compute temperature/humidity fields
-- [ ] Sample biome LUT for base biome id
-- [ ] Regionization with Worley-style mix across K neighbors
-- [ ] Fragment-side recomputation of biome weights (preferred)
+- [x] Compute temperature/humidity fields
+- [x] Sample biome LUT for base biome id
+- [x] Regionization with Worley-style mix across K neighbors
+- [x] Fragment-side recomputation of biome weights (preferred)
+- [x] Refactor `TerrainConfig` to support per-biome texture paths (List<string>)
 
 M5: Shading with biome textures
 - [ ] Tri-planar sampling per geology layer

@@ -23,7 +23,7 @@ const uint FACE_NEG_Z = (1u << 5);
 uniform uint uChunkCount;
 // uniform uint uSeed; // Removed - using TerrainParams
 uniform uint uWorldChunksXZ;
-uniform int uTestMode;
+// uniform int uTestMode; // Removed
 
 // ============================================================================
 // SSBOs (using VoxelHelper.SSBOBindings constants)
@@ -113,14 +113,7 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
     }
 
     int height;
-    if (uTestMode == 1) {
-        // Replicate test mode logic
-        int neighborChunkX = wx / CHUNK_SIDE_SIZE;
-        int neighborChunkZ = wz / CHUNK_SIDE_SIZE;
-        height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
-    } else {
-        height = generateHeight(wx, wz);
-    }
+    height = generateHeight(wx, wz);
 
     // Note: compute-visibility doesn't include terrain-common.glsl directly but duplicates logic.
     // I should probably update the duplicated logic or include the file.

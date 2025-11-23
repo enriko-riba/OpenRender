@@ -93,8 +93,7 @@ internal class TerrainLoadingScene : Scene
             // Elevation parameters calibrated for procedural noise range
             // Pre-allocates buffers for max view distance automatically
             streamingManager!.InitializeGpuGeneration(
-                world.Seed,
-                testMode: false);      // PROCEDURAL MODE - full terrain generation
+                world.Seed);      // PROCEDURAL MODE - full terrain generation
                                        // maxChunks=0 (default) uses CalculateMaxViewChunks()
             Log.Info($"GPU generation initialized (PROCEDURAL MODE) with pre-allocated buffers");
         }

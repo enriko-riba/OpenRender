@@ -18,8 +18,8 @@ const uint BLOCK_GRASS_DIRT = 5u;
 const uint BLOCK_BEDROCK = 8u; // Added BedRock
 
 // Bindings (M1/M2)
-layout(binding = 0) uniform sampler1D uHeightSpline;
-layout(binding = 1) uniform usampler2D uBiomeLUT;
+layout(binding = 6) uniform sampler1D uHeightSpline;
+layout(binding = 7) uniform usampler2D uBiomeLUT;
 
 layout(std430, binding = 10) readonly buffer TerrainParams {
     uint uSeed;
@@ -328,4 +328,140 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     int depth = height - y;
     if (depth <= 2) return BLOCK_DIRT;
     return BLOCK_ROCK;
+}
+
+// ============================================================================
+// M4: Climate and Biomes
+// ============================================================================
+
+struct RegionMix {
+    uint biomeIds[4];
+    float weights[4];
+};
+
+// Simple hash for region cells
+uint hashRegion(ivec2 p, uint seed) {
+    return hash(uint(p.x) + hash(uint(p.y), seed), seed);
+}
+
+float getTemperature(vec3 p) {
+    // Start from uBaseTemp
+    float temp = params.uBaseTemp;
+    
+    // Subtract altitude lapse: T -= uLapseRate * max(0, y - seaLevel)
+    float altitude = max(0.0, p.y - float(WATER_LEVEL));
+    temp -= params.uLapseRate * altitude;
+    
+    // Add low-freq noise and domain warp
+    vec2 wp = p.xz * params.uClimateWarp;
+    vec2 warp = domainWarp(wp, params.uSeed + 600u);
+    float noise = fbm((p.xz + warp) * params.uClimateScale, params.uSeed + 700u, 2, 0.5, 2.0);
+    
+    // Add noise to temp (range [-1, 1] -> scale to e.g. +/- 0.2)
+    temp += noise * 0.2;
+    
+    return clamp(temp, 0.0, 1.0);
+}
+
+float getHumidity(vec3 p) {
+    // Start from uBaseHum
+    float hum = params.uBaseHum;
+    
+    // Reduce by coast drying proportional to |C - coastValue| (distance from ocean)
+    float C = getContinentalness(p.xz);
+    float coastVal = 0.35; // Approx coast
+    float distFromCoast = max(0.0, C - coastVal);
+    
+    hum -= distFromCoast * params.uCoastDry;
+    
+    // Add low-freq noise and warp
+    vec2 wp = p.xz * params.uClimateWarp;
+    vec2 warp = domainWarp(wp, params.uSeed + 800u);
+    float noise = fbm((p.xz + warp) * params.uClimateScale, params.uSeed + 900u, 2, 0.5, 2.0);
+    
+    hum += noise * 0.2;
+    
+    return clamp(hum, 0.0, 1.0);
+}
+
+uint getBiomeId(vec3 p) {
+    float t = getTemperature(p);
+    float h = getHumidity(p);
+    
+    // Sample LUT (texture returns normalized float [0,1], scale to 255 for ID?)
+    // R8UI texture returns uint directly if using usampler2D and texture()
+    // Wait, texture() on usampler2D returns uvec4.
+    // The value in R8UI is 0..255.
+    return texture(uBiomeLUT, vec2(t, h)).r;
+}
+
+RegionMix getBiomeWeights(vec3 p) {
+    float cellSize = params.uRegionCellSize * float(CHUNK_SIDE_SIZE); // Convert chunks to meters
+    vec2 uv = p.xz / cellSize;
+    vec2 cell = floor(uv);
+    
+    // Worley noise: find K nearest centers
+    uint ids[4] = uint[](0,0,0,0);
+    float dists[4] = float[](1e9, 1e9, 1e9, 1e9);
+    
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 neighbor = cell + vec2(x, y);
+            
+            // Jitter the center
+            uint h = hashRegion(ivec2(neighbor), params.uSeed + 1000u);
+            vec2 jitter = vec2(
+                float(h & 0xFFFFu) / 65535.0,
+                float((h >> 16) & 0xFFFFu) / 65535.0
+            ) - 0.5;
+            jitter *= params.uRegionJitter;
+            
+            vec2 center = neighbor + 0.5 + jitter;
+            float d = distance(uv, center);
+            
+            // Insert into sorted list (closest first)
+            // Determine biome at this cell center
+            vec3 centerPos = vec3(center.x * cellSize, p.y, center.y * cellSize);
+            uint id = getBiomeId(centerPos);
+            
+            // Insert
+            for (int i = 0; i < 4; i++) {
+                if (d < dists[i]) {
+                    // Shift down
+                    for (int j = 3; j > i; j--) {
+                        dists[j] = dists[j-1];
+                        ids[j] = ids[j-1];
+                    }
+                    dists[i] = d;
+                    ids[i] = id;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Convert distances to weights
+    float feather = params.uRegionFeather / cellSize;
+    float totalWeight = 0.0;
+    float weights[4] = float[](0.0, 0.0, 0.0, 0.0);
+    
+    float d0 = dists[0];
+    
+    for (int i = 0; i < 4; i++) {
+        float diff = dists[i] - d0;
+        if (diff < feather) {
+            float w = 1.0 - (diff / feather);
+            w = w * w * (3.0 - 2.0 * w); // Smoothstep
+            weights[i] = w;
+            totalWeight += w;
+        }
+    }
+    
+    if (totalWeight > 0.0) {
+        for (int i = 0; i < 4; i++) weights[i] /= totalWeight;
+    } else {
+        weights[0] = 1.0;
+    }
+    
+    return RegionMix(ids, weights);
 }

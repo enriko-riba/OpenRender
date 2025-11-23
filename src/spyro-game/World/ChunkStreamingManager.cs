@@ -50,12 +50,16 @@ public sealed class ChunkStreamingManager : IDisposable
     private uint terrainParamsSSBO;
     private int heightSplineTexture;
     private int biomeLutTexture;
+
+    public uint TerrainParamsSSBO => terrainParamsSSBO;
+    public int BiomeLutTexture => biomeLutTexture;
+
     private FileSystemWatcher? configWatcher;
     private volatile bool pendingConfigReload;
     private const string ConfigFileName = "terrain_config.json";
 
     private int generationSeed;
-    private bool generationTestMode;
+    // private bool generationTestMode; // Removed
     private readonly uint[] chunkIndicesBuffers = new uint[2];
     private readonly uint[] voxelDataBuffers = new uint[2];
     private readonly uint[] columnHeightsBuffers = new uint[2];
@@ -963,10 +967,10 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Initialize GPU resources for terrain generation.
     /// Pre-allocates buffers for maximum view distance to eliminate progressive resizing.
     /// </summary>
-    public void InitializeGpuGeneration(int seed, bool testMode = false, int maxChunks = 0)
+    public void InitializeGpuGeneration(int seed, int maxChunks = 0)
     {
         generationSeed = seed;
-        generationTestMode = testMode;
+        // generationTestMode = testMode; // Removed
 
         // Pre-allocate for max view distance if not specified
         if (maxChunks == 0)
@@ -1136,7 +1140,7 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             // generationShader.SetUInt("uSeed", (uint)seed); // Removed - using TerrainParams
             generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
-            generationShader.SetInt("uTestMode", testMode ? 1 : 0);
+            // generationShader.SetInt("uTestMode", testMode ? 1 : 0); // Removed
             // Skip uElevOffset and uElevScale - they're not used in shader anymore (hardcoded in height01At)
             Log.Info("Shader uniforms set successfully");
         }
@@ -1147,7 +1151,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         Log.CheckGlError();
-        Log.Info($"GPU terrain generation initialized (testMode={testMode})");
+        Log.Info($"GPU terrain generation initialized");
 
         LoadEdits(); // Load edits after initialization
     }
@@ -1215,19 +1219,19 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
 
         // Bind Textures
-        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.ActiveTexture(TextureUnit.Texture6); // Changed to 6
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
-        GL.ActiveTexture(TextureUnit.Texture1); // Changed to 1
+        GL.ActiveTexture(TextureUnit.Texture7); // Changed to 7
         GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         // Set ALL uniforms every dispatch
         generationShader.Use();
-        // generationShader.SetInt("uHeightSpline", 0); // Using layout(binding=0)
-        // generationShader.SetInt("uBiomeLUT", 1);     // Using layout(binding=1)
+        // generationShader.SetInt("uHeightSpline", 6); // Using layout(binding=6)
+        // generationShader.SetInt("uBiomeLUT", 7);     // Using layout(binding=7)
         generationShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
         generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
         // generationShader.SetUInt("uSeed", (uint)generationSeed); // Removed
-        generationShader.SetInt("uTestMode", generationTestMode ? 1 : 0);
+        // generationShader.SetInt("uTestMode", generationTestMode ? 1 : 0); // Removed
 
         // Dispatch: one work-group per chunk, matching layout (16,1,16)
         GL.DispatchCompute(chunkIndices.Length, 1, 1);
@@ -1445,7 +1449,7 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
         // GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
         GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
-        GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
 
         GL.DispatchCompute((int)chunkCount, 128, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
@@ -1546,7 +1550,7 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
         // GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
-        GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
+        // GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
         GL.DispatchCompute((int)chunkCount, 128, 1);

@@ -64,6 +64,10 @@ internal class GameScene : Scene
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
         
+        // Pass M4 resources to renderer
+        terrainRenderer.TerrainParamsSSBO = streamingManager.TerrainParamsSSBO;
+        terrainRenderer.BiomeLutTexture = streamingManager.BiomeLutTexture;
+        
         // Add renderer to scene
         AddNode(terrainRenderer);
         
@@ -239,6 +243,16 @@ internal class GameScene : Scene
         {
             SceneManager.Close();
             return;
+        }
+
+        // Toggle Biome Debug (F3)
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F3))
+        {
+            if (terrainRenderer != null)
+            {
+                terrainRenderer.ShowBiomes = !terrainRenderer.ShowBiomes;
+                Log.Info($"Biome Debug Mode: {terrainRenderer.ShowBiomes}");
+            }
         }
 
         // Update day/night cycle

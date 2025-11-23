@@ -195,6 +195,20 @@ Milestones
 - M5: Shading with biome texture sets and blending
 - M6: Polish transitions, add debug UI, tune performance
 
+Biome Debug Colors (F3)
+| ID | Biome | Color (RGB) | Description |
+| :--- | :--- | :--- | :--- |
+| **0** | Ocean | `(0.0, 0.0, 1.0)` | Blue |
+| **1** | Beach | `(1.0, 1.0, 0.0)` | Yellow |
+| **2** | Plains | `(0.0, 1.0, 0.0)` | Green |
+| **3** | Savanna | `(1.0, 0.5, 0.0)` | Orange |
+| **4** | Desert | `(1.0, 0.0, 0.0)` | Red |
+| **5** | Rainforest | `(0.0, 0.5, 0.0)` | Dark Green |
+| **6** | Taiga | `(0.0, 1.0, 1.0)` | Cyan |
+| **7** | Tundra | `(1.0, 1.0, 1.0)` | White |
+| **8** | Highlands | `(0.5, 0.5, 0.5)` | Grey |
+| **9** | Alpine | `(0.5, 0.0, 0.5)` | Purple |
+
 Appendix: minimal GLSL for continentalness→height
 ```glsl
 float continentalness(vec3 p) {
