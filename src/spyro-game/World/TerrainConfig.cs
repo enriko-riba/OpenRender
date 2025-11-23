@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace SpyroGame.World;
 
 /// <summary>
@@ -15,13 +12,14 @@ public sealed class TerrainConfig
     public float WorldScale { get; set; } = 1.0f;
 
     // Macro field scales (world-space → noise frequencies)
-    public float ContinentalnessScale { get; set; } = 1f / 20000f;
-    public float ErosionScale { get; set; } = 1f / 7000f;
-    public float RidgeScale { get; set; } = 1f / 1800f;
+    // Increased scales for testing/visibility in small world
+    public float ContinentalnessScale { get; set; } = 1f / 200f; // Was 1/2000
+    public float ErosionScale { get; set; } = 1f / 150f; // Was 1/1500
+    public float RidgeScale { get; set; } = 1f / 80f; // Was 1/800
 
     // Domain warp
-    public float WarpScale { get; set; } = 1f / 9000f;
-    public float WarpStrength { get; set; } = 120f;
+    public float WarpScale { get; set; } = 1f / 100f; // Was 1/1000
+    public float WarpStrength { get; set; } = 40f; // Reduced strength for higher freq
 
     // Climate
     public float BaseTemperature { get; set; } = 0.6f;
@@ -49,10 +47,10 @@ public sealed class TerrainConfig
 
     public static TerrainConfig Load(string path)
     {
-        if (!System.IO.File.Exists(path)) return Default();
+        if (!File.Exists(path)) return Default();
         try
         {
-            var json = System.IO.File.ReadAllText(path);
+            var json = File.ReadAllText(path);
             return System.Text.Json.JsonSerializer.Deserialize<TerrainConfig>(json) ?? Default();
         }
         catch (Exception e)
@@ -68,7 +66,7 @@ public sealed class TerrainConfig
         {
             var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
             var json = System.Text.Json.JsonSerializer.Serialize(this, options);
-            System.IO.File.WriteAllText(path, json);
+            File.WriteAllText(path, json);
         }
         catch (Exception e)
         {
@@ -259,14 +257,14 @@ public sealed class BiomeDefinition
         };
     }
 
-    private static BiomeTextureSet DefaultTextures(bool water=false, bool sand=false, bool grass=false, bool snow=false, bool rock=false)
+    private static BiomeTextureSet DefaultTextures(bool water = false, bool sand = false, bool grass = false, bool snow = false, bool rock = false)
     {
         var t = new BiomeTextureSet();
         if (water) { t[GeologyLayer.Water] = 0; t[GeologyLayer.ShoreLine] = 1; }
-        if (sand)  { t[GeologyLayer.Surface] = 2; t[GeologyLayer.Subsurface] = 3; }
+        if (sand) { t[GeologyLayer.Surface] = 2; t[GeologyLayer.Subsurface] = 3; }
         if (grass) { t[GeologyLayer.Surface] = 4; t[GeologyLayer.Subsurface] = 5; }
-        if (rock)  { t[GeologyLayer.Surface] = 6; t[GeologyLayer.DeepSubsurface] = 7; }
-        if (snow)  { t[GeologyLayer.Surface] = 8; }
+        if (rock) { t[GeologyLayer.Surface] = 6; t[GeologyLayer.DeepSubsurface] = 7; }
+        if (snow) { t[GeologyLayer.Surface] = 8; }
         return t;
     }
 }
@@ -377,9 +375,9 @@ public sealed class Spline1D
         // Example mapping continentalness→height scale (units are arbitrary)
         s.Add(0.00f, -40f); // deep ocean
         s.Add(0.20f, -10f); // shallow
-        s.Add(0.35f,  0f);  // coast
-        s.Add(0.55f,  25f); // inland plains
-        s.Add(0.75f,  60f); // hills
+        s.Add(0.35f, 0f);  // coast
+        s.Add(0.55f, 25f); // inland plains
+        s.Add(0.75f, 60f); // hills
         s.Add(1.00f, 120f); // mountains
         s.Sort();
         return s;

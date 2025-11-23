@@ -17,9 +17,9 @@ Legend
 - [-] Skipped/Not applicable
 
 Summary
-- Current milestone: M2
+- Current milestone: M3
 - Risks: none
-- Next actions: Implement macro fields in compute shader
+- Next actions: Implement 3D noise for caves
 
 Milestones
 
@@ -32,8 +32,8 @@ M1: Parameter bucket + GPU bindings + height spline only
 - [x] In-game debug UI to edit `TerrainConfig` and hot-reload (Implemented via JSON hot-reload)
 
 M2: Macro fields shaping + domain warp
-- [ ] Implement continentalness/erosion/ridge/warp fields in compute shader
-- [ ] Sample height via 1D LUT and compute base density
+- [x] Implement continentalness/erosion/ridge/warp fields in compute shader
+- [x] Sample height via 1D LUT and compute base density
 
 M3: Caves (cheese + spaghetti)
 - [ ] Add 3D noises and subtract from density

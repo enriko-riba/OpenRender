@@ -1205,24 +1205,19 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, columnHeightsBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnMetaBuffers[bufferIndex]);
         
-        // Bind Terrain Params (M1)
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 8, terrainParamsSSBO); // Binding 3 is taken by columnMeta, using 8 as per plan? Wait, plan said 3.
-        // Plan said: layout(std430, binding = 3) buffer TerrainParams
-        // But existing code uses binding 3 for columnMetaBuffers.
-        // I should check compute-generate.comp to see what bindings are actually used or free.
-        // For now, I'll use binding 8 and update the shader plan/code later if needed, OR I can check the shader now.
-        // Let's assume I can use binding 8 for TerrainParams to avoid conflict.
+        // Bind Terrain Params (M1/M2) - Binding 10 as per terrain-common.glsl
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
         
         // Bind Textures
         GL.ActiveTexture(TextureUnit.Texture0);
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
-        GL.ActiveTexture(TextureUnit.Texture2);
+        GL.ActiveTexture(TextureUnit.Texture1); // Changed to 1
         GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         // Set ALL uniforms every dispatch
         generationShader.Use();
-        generationShader.SetInt("uHeightSpline", 0);
-        generationShader.SetInt("uBiomeLUT", 2);
+        // generationShader.SetInt("uHeightSpline", 0); // Using layout(binding=0)
+        // generationShader.SetInt("uBiomeLUT", 1);     // Using layout(binding=1)
         generationShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
         generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
         generationShader.SetUInt("uSeed", (uint)generationSeed);
@@ -1427,9 +1422,20 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, chunkIndicesBuffers[bufferIndex]);
         // Bind world edits buffer for neighbor correction (Phase 5.5 FIX)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, worldEditsBuffer);
+        
+        // Bind Terrain Params (M1/M2) - Binding 10
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+        
+        // Bind Textures
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        GL.ActiveTexture(TextureUnit.Texture1);
+        GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         phase3Buffers.BindBuffersForVisibility();
         visibilityShader.Use();
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uHeightSpline"), 0); // Using layout(binding=0)
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uBiomeLUT"), 1);     // Using layout(binding=1)
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed);
         GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
@@ -1497,8 +1503,13 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Stage 3.4 Compaction
         phase3Buffers.ResetAtomicCounters();
-        GL.ClearNamedBufferData(phase3Buffers.PerChunkEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
-        GL.ClearNamedBufferData(phase3Buffers.WaterEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+        
+        // Clear counters with SubData instead of ClearNamedBufferData to avoid format errors
+        // We only need to clear the first chunkCount entries as the shader uses gl_WorkGroupID.x
+        var zeros = new uint[chunkCount];
+        GL.NamedBufferSubData(phase3Buffers.PerChunkEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
+        GL.NamedBufferSubData(phase3Buffers.WaterEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
+        
         GL.NamedBufferData(compactionChunkIndicesBuffer, chunkIndices.Length * sizeof(int), chunkIndices, BufferUsageHint.DynamicDraw);
         GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
@@ -1506,6 +1517,16 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
         // Bind world edits buffer for neighbor lookup
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
+        
+        // Bind Terrain Params (M1/M2) - Binding 10
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+        
+        // Bind Textures
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        // uBiomeLUT is unused in M2 compact shader, skipping to avoid warnings
+        // GL.ActiveTexture(TextureUnit.Texture1);
+        // GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         phase3Buffers.BindBuffersForCompaction();
         // Bind OpaqueCounts buffer (binding 12)
@@ -1514,6 +1535,8 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, (int)phase3Buffers.WaterEmitBuffer);
 
         compactShader.Use();
+        // GL.Uniform1(compactShader.GetUniformLocation("uHeightSpline"), 0); // Using layout(binding=0)
+        // GL.Uniform1(compactShader.GetUniformLocation("uBiomeLUT"), 1);     // Using layout(binding=1)
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
         GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed);

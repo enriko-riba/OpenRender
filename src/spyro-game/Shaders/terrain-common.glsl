@@ -17,6 +17,23 @@ const uint BLOCK_DIRT = 4u;
 const uint BLOCK_GRASS_DIRT = 5u;
 const uint BLOCK_BEDROCK = 8u; // Added BedRock
 
+// Bindings (M1/M2)
+layout(binding = 0) uniform sampler1D uHeightSpline;
+layout(binding = 1) uniform usampler2D uBiomeLUT;
+
+layout(std430, binding = 10) readonly buffer TerrainParams {
+    uint uSeed;
+    float uWorldScale;
+    float uMacroScale;
+    float uContScale; float uErodeScale; float uRidgeScale;
+    float uWarpScale; float uWarpStrength;
+    float uBaseTemp; float uLapseRate; float uBaseHum; float uCoastDry;
+    float uClimateScale; float uClimateWarp;
+    float uRegionCellSize; float uRegionJitter; float uRegionFeather; uint uMaxRegionMix;
+    float uCheeseFreq; float uCheeseAmp; float uSpaghettiFreq; float uSpaghettiAmp;
+    float uCaveThreshold; float uCurlScale; float uCurlStrength; float pad0;
+} params;
+
 // Simple hash function
 uint hash(uint x, uint seed) {
     x += seed;
@@ -26,13 +43,99 @@ uint hash(uint x, uint seed) {
     return x;
 }
 
-// Simple 2D noise  
+// Float Noise Functions
+float noise2D_float(vec2 p, uint seed) {
+    // FIX: Cast to int first to handle negative coordinates correctly (2's complement)
+    // uint(float) is undefined for negative values.
+    uint n = hash(uint(int(p.x)) + hash(uint(int(p.y)), seed), seed);
+    return float(n) / 4294967295.0 * 2.0 - 1.0;
+}
+
+float smoothNoise(vec2 p, uint seed) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    
+    float a = noise2D_float(i, seed);
+    float b = noise2D_float(i + vec2(1.0, 0.0), seed);
+    float c = noise2D_float(i + vec2(0.0, 1.0), seed);
+    float d = noise2D_float(i + vec2(1.0, 1.0), seed);
+    
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float fbm(vec2 p, uint seed, int octaves, float persistence, float lacunarity) {
+    float total = 0.0;
+    float frequency = 1.0;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+    for(int i=0; i<octaves; i++) {
+        total += smoothNoise(p * frequency, seed + uint(i*132)) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return total / maxValue;
+}
+
+// Domain Warp
+vec2 domainWarp(vec2 p, uint seed) {
+    vec2 q = vec2(
+        fbm(p + vec2(0.0, 0.0), seed, 2, 0.5, 2.0),
+        fbm(p + vec2(5.2, 1.3), seed, 2, 0.5, 2.0)
+    );
+    return q * params.uWarpStrength;
+}
+
+// Macro Fields
+float getContinentalness(vec2 p) {
+    vec2 wp = p * params.uWarpScale;
+    vec2 warp = domainWarp(wp, params.uSeed);
+    return fbm((p + warp) * params.uContScale, params.uSeed, 3, 0.5, 2.0);
+}
+
+float getErosion(vec2 p) {
+    return fbm(p * params.uErodeScale, params.uSeed + 100u, 3, 0.5, 2.0);
+}
+
+float getPeaksValleys(vec2 p) {
+    // Ridged noise
+    float n = fbm(p * params.uRidgeScale, params.uSeed + 200u, 3, 0.5, 2.0);
+    return 1.0 - abs(n);
+}
+
+// Height Calculation
+float getHeight(vec2 p) {
+    float C = getContinentalness(p); // [-1, 1]
+    float E = getErosion(p);         // [-1, 1]
+    float PV = getPeaksValleys(p);   // [0, 1]
+    
+    // Remap C to [0, 1] for spline sampling
+    float tC = C * 0.5 + 0.5;
+    
+    // Sample Spline
+    float baseHeight = texture(uHeightSpline, tC).r;
+    
+    // Apply Erosion and Peaks
+    // Simple shaping for M2
+    float height = baseHeight;
+    
+    // Add some variation based on PV and E
+    // If erosion is low (rugged), add peaks
+    // If erosion is high (flat), reduce peaks
+    float ruggedness = (1.0 - E * 0.5 - 0.5); // [0, 1] roughly
+    height += PV * 20.0 * ruggedness;
+    
+    return height;
+}
+
+// Simple 2D noise (Legacy)
 float noise2D(int x, int z, uint seed) {
     uint n = hash(uint(x) + hash(uint(z), seed), seed);
     return float(n) / float(0xFFFFFFFFu) * 2.0 - 1.0;
 }
 
-// Bilinear interpolation
+// Bilinear interpolation (Legacy)
 float interpolatedNoise(float x, float z, uint seed) {
     int ix = int(floor(x));
     int iz = int(floor(z));
@@ -53,7 +156,7 @@ float interpolatedNoise(float x, float z, uint seed) {
     return mix(v0, v1, fz);
 }
 
-// Multi-octave noise
+// Multi-octave noise (Legacy)
 float multiOctaveNoise(float x, float z, uint seed, int octaves) {
     float total = 0.0;
     float frequency = 1.0;
@@ -72,22 +175,9 @@ float multiOctaveNoise(float x, float z, uint seed, int octaves) {
 
 // Generate terrain height
 int generateHeight(int wx, int wz, uint seed) {
-    // Base terrain (large features)
-    float baseScale = 0.005;  // 1/200
-    float baseNoise = multiOctaveNoise(float(wx) * baseScale, float(wz) * baseScale, seed, 4);
-    
-    // Detail noise (small features)
-    float detailScale = 0.02;  // 1/50
-    float detailNoise = multiOctaveNoise(float(wx) * detailScale, float(wz) * detailScale, seed + 1000u, 3);
-    
-    // Combine: base terrain + 30% detail
-    float combined = baseNoise + detailNoise * 0.3;
-    
-    // Map to height range: water level ±40 blocks = range of 80 blocks
-    float h01 = combined * 0.5 + 0.5;  // Map [-1,1] to [0,1]
-    int height = int(float(WATER_LEVEL) + (h01 - 0.5) * 80.0);
-    
-    // Clamp to valid range
+    // M2: Use new height generation
+    float h = getHeight(vec2(wx, wz));
+    int height = int(h);
     return clamp(height, 0, CHUNK_Y_SIZE - 1);
 }
 
