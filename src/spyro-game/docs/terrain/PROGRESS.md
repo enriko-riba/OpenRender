@@ -17,9 +17,9 @@ Legend
 - [-] Skipped/Not applicable
 
 Summary
-- Current milestone: M3
+- Current milestone: M4
 - Risks: none
-- Next actions: Implement 3D noise for caves
+- Next actions: Implement climate fields and biome LUT sampling
 
 Milestones
 
@@ -41,8 +41,8 @@ M2: Macro fields shaping + domain warp
 - [ ] **Note:** Auto-saving of `TerrainConfig` is currently disabled to prevent overwriting with defaults. Re-enable in `ChunkStreamingManager.InitializeGpuGeneration` once pipeline is stable.
 
 M3: Caves (cheese + spaghetti)
-- [ ] Add 3D noises and subtract from density
-- [ ] Param-drive thresholds and amplitudes from `CaveParams`
+- [x] Add 3D noises and subtract from density
+- [x] Param-drive thresholds and amplitudes from `CaveParams`
 
 M4: Climate + biome LUT + regionization
 - [ ] Compute temperature/humidity fields

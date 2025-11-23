@@ -1134,7 +1134,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Use Shader class methods instead of direct GL calls - they handle type checking
         try
         {
-            generationShader.SetUInt("uSeed", (uint)seed);
+            // generationShader.SetUInt("uSeed", (uint)seed); // Removed - using TerrainParams
             generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
             generationShader.SetInt("uTestMode", testMode ? 1 : 0);
             // Skip uElevOffset and uElevScale - they're not used in shader anymore (hardcoded in height01At)

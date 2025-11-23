@@ -78,6 +78,68 @@ float fbm(vec2 p, uint seed, int octaves, float persistence, float lacunarity) {
     return total / maxValue;
 }
 
+// 3D Noise Functions
+float noise3D_float(vec3 p, uint seed) {
+    uint n = hash(uint(int(p.x)) + hash(uint(int(p.y)) + hash(uint(int(p.z)), seed), seed), seed);
+    return float(n) / 4294967295.0 * 2.0 - 1.0;
+}
+
+float smoothNoise3D(vec3 p, uint seed) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    
+    float v000 = noise3D_float(i, seed);
+    float v100 = noise3D_float(i + vec3(1.0, 0.0, 0.0), seed);
+    float v010 = noise3D_float(i + vec3(0.0, 1.0, 0.0), seed);
+    float v110 = noise3D_float(i + vec3(1.0, 1.0, 0.0), seed);
+    float v001 = noise3D_float(i + vec3(0.0, 0.0, 1.0), seed);
+    float v101 = noise3D_float(i + vec3(1.0, 0.0, 1.0), seed);
+    float v011 = noise3D_float(i + vec3(0.0, 1.0, 1.0), seed);
+    float v111 = noise3D_float(i + vec3(1.0, 1.0, 1.0), seed);
+    
+    return mix(
+        mix(mix(v000, v100, f.x), mix(v010, v110, f.x), f.y),
+        mix(mix(v001, v101, f.x), mix(v011, v111, f.x), f.y),
+        f.z
+    );
+}
+
+float fbm3D(vec3 p, uint seed, int octaves, float persistence, float lacunarity) {
+    float total = 0.0;
+    float frequency = 1.0;
+    float amplitude = 1.0;
+    float maxValue = 0.0;
+    for(int i=0; i<octaves; i++) {
+        total += smoothNoise3D(p * frequency, seed + uint(i*132)) * amplitude;
+        maxValue += amplitude;
+        amplitude *= persistence;
+        frequency *= lacunarity;
+    }
+    return total / maxValue;
+}
+
+// Cave Density Functions
+float getCheeseDensity(vec3 p) {
+    // Cheese caves: 3D noise threshold
+    return fbm3D(p * params.uCheeseFreq, params.uSeed + 300u, 2, 0.5, 2.0);
+}
+
+float getSpaghettiDensity(vec3 p) {
+    // Spaghetti caves: Ridged 3D noise (worms)
+    // We want long, thin tunnels. Ridged noise produces "veins".
+    // We use two noise fields to create "worms" where both are close to 0.
+    float n1 = fbm3D(p * params.uSpaghettiFreq, params.uSeed + 400u, 2, 0.5, 2.0);
+    float n2 = fbm3D(p * params.uSpaghettiFreq, params.uSeed + 500u, 2, 0.5, 2.0);
+    
+    // Combine: density is high when both n1 and n2 are close to 0
+    // This creates a tube-like structure
+    float dist = sqrt(n1*n1 + n2*n2);
+    // Invert so high density = cave
+    // Map [0, 1] -> [1, 0] roughly
+    return 1.0 - dist * 4.0; // Scale to control thickness
+}
+
 // Domain Warp
 vec2 domainWarp(vec2 p, uint seed) {
     vec2 q = vec2(
@@ -130,56 +192,60 @@ float getHeight(vec2 p) {
     return height;
 }
 
-// Simple 2D noise (Legacy)
-float noise2D(int x, int z, uint seed) {
-    uint n = hash(uint(x) + hash(uint(z), seed), seed);
-    return float(n) / float(0xFFFFFFFFu) * 2.0 - 1.0;
-}
-
-// Bilinear interpolation (Legacy)
-float interpolatedNoise(float x, float z, uint seed) {
-    int ix = int(floor(x));
-    int iz = int(floor(z));
-    float fx = fract(x);
-    float fz = fract(z);
-    
-    // Smooth the interpolation
-    fx = fx * fx * (3.0 - 2.0 * fx);
-    fz = fz * fz * (3.0 - 2.0 * fz);
-    
-    float v00 = noise2D(ix, iz, seed);
-    float v10 = noise2D(ix + 1, iz, seed);
-    float v01 = noise2D(ix, iz + 1, seed);
-    float v11 = noise2D(ix + 1, iz + 1, seed);
-    
-    float v0 = mix(v00, v10, fx);
-    float v1 = mix(v01, v11, fx);
-    return mix(v0, v1, fz);
-}
-
-// Multi-octave noise (Legacy)
-float multiOctaveNoise(float x, float z, uint seed, int octaves) {
-    float total = 0.0;
-    float frequency = 1.0;
-    float amplitude = 1.0;
-    float maxValue = 0.0;
-    
-    for (int i = 0; i < octaves; i++) {
-        total += interpolatedNoise(x * frequency, z * frequency, seed + uint(i * 100)) * amplitude;
-        maxValue += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    
-    return total / maxValue;
-}
-
 // Generate terrain height
 int generateHeight(int wx, int wz) {
     // M2: Use new height generation
     float h = getHeight(vec2(wx, wz));
     int height = int(h);
     return clamp(height, 0, CHUNK_Y_SIZE - 1);
+}
+
+// Helper to calculate local slope
+float getSlope(int wx, int wz) {
+    float h0 = float(generateHeight(wx, wz));
+    float h1 = float(generateHeight(wx + 1, wz));
+    float h2 = float(generateHeight(wx, wz + 1));
+    float h3 = float(generateHeight(wx - 1, wz));
+    float h4 = float(generateHeight(wx, wz - 1));
+    
+    // Average slope magnitude
+    float dx = max(abs(h1 - h0), abs(h3 - h0));
+    float dz = max(abs(h2 - h0), abs(h4 - h0));
+    return sqrt(dx*dx + dz*dz);
+}
+
+bool isCave(int wx, int wy, int wz, int depth, float slope) {
+    vec3 p = vec3(wx, wy, wz);
+    
+    // Surface attenuation: reduce cave probability near surface
+    // Ramp from 0.0 at depth 0 to 1.0 at depth 10
+    // This tapers the cave from the inside as it approaches surface
+    float depthAtten = smoothstep(0.0, 10.0, float(depth));
+    
+    // Allow entrances on slopes (cliffs/hills)
+    // Stricter slope threshold: 0.75 (approx 37 deg) to 1.5 (approx 56 deg)
+    // This prevents entrances on gentle noise bumps (the "sieve" effect)
+    float slopeAtten = smoothstep(0.75, 1.5, slope);
+    
+    // Cap slope attenuation at 0.85 to force tapering at the breach point
+    // This ensures only the "core" of the cave (high density) breaches,
+    // eliminating ragged edges and small holes.
+    slopeAtten *= 0.85;
+    
+    // Use the best of both: if deep OR steep, allow cave
+    float attenuation = max(depthAtten, slopeAtten);
+    
+    // Cheese caves
+    float cheese = getCheeseDensity(p);
+    // Threshold: if cheese > threshold, it's a cave
+    // Apply attenuation to the density (or increase threshold)
+    if (cheese * attenuation > params.uCaveThreshold) return true;
+    
+    // Spaghetti caves
+    float spaghetti = getSpaghettiDensity(p);
+    if (spaghetti * attenuation > params.uCaveThreshold) return true;
+    
+    return false;
 }
 
 // Check if water is nearby (radius 3)
@@ -206,6 +272,41 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     } 
     
     // Solid blocks (y <= height)
+    
+    // M3: Cave Carving
+    // Don't carve bedrock (y=0) or water (y > height)
+    if (y > 0) {
+        int depth = height - y;
+        // Calculate slope only if near surface to save perf?
+        // Or just calculate it. It requires 4 extra height samples.
+        // Optimization: Only calculate if depth < 10 (where attenuation matters)
+        float slope = 0.0;
+        if (depth < 12) {
+            slope = getSlope(wx, wz);
+        }
+        
+        if (isCave(wx, y, wz, depth, slope)) {
+            // If it's a cave, it's Air (unless it's below water level, then it might be flooded?)
+            // For now, standard caves are Air.
+            // If we want flooded caves, we check if y <= WATER_LEVEL.
+            if (y <= WATER_LEVEL) {
+                // Flooded cave logic:
+                // If the terrain column is underwater (ocean), flood the cave.
+                // This prevents "water portals" on the ocean floor.
+                // Caves under land (height > WATER_LEVEL) remain dry (Air), preserving "air pockets".
+                // FIX: Extend flooding slightly inland (height <= WATER_LEVEL + 8)
+                // This pushes the "water wall" deep into the cave where the floor might rise above water level,
+                // creating a natural shoreline inside the cave instead of a vertical wall at the coast.
+                if (y <= WATER_LEVEL) {
+                    return BLOCK_WATER_LEVEL;
+                }
+                
+                // Dry cave under land
+                return BLOCK_NONE;
+            }
+            return BLOCK_NONE;
+        }
+    }
     
     // Surface block
     if (y == height) {

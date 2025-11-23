@@ -21,7 +21,7 @@ const uint FACE_NEG_Z = (1u << 5);
 // Uniforms
 // ============================================================================
 uniform uint uChunkCount;
-uniform uint uSeed;
+// uniform uint uSeed; // Removed - using TerrainParams
 uniform uint uWorldChunksXZ;
 uniform int uTestMode;
 

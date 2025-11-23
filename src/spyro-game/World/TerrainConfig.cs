@@ -292,13 +292,13 @@ public sealed class BiomeRegionParams
 /// </summary>
 public sealed class CaveParams
 {
-    public float CheeseFrequency { get; set; } = 1f / 40f;
+    public float CheeseFrequency { get; set; } = 1f / 100f; // Much smoother (was 1/50)
     public float CheeseAmplitude { get; set; } = 1.0f;
 
-    public float SpaghettiFrequency { get; set; } = 1f / 28f;
+    public float SpaghettiFrequency { get; set; } = 1f / 80f; // Much smoother (was 1/35)
     public float SpaghettiAmplitude { get; set; } = 0.8f;
 
-    public float CarveThreshold { get; set; } = 0.55f;
+    public float CarveThreshold { get; set; } = 0.75f; // Reduced density (was 0.72)
 
     public float CurlScale { get; set; } = 1f / 120f;
     public float CurlStrength { get; set; } = 12f;

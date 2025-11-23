@@ -277,6 +277,20 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
     // generateBlockType logic:
     // y > height -> Water (if y<=WL) or Air. Both non-solid.
     // y <= height -> Sand/Bedrock/Grass. All solid.
+    
+    // M3: Check for caves in procedural fallback
+    // This fixes AO artifacts at chunk boundaries where caves cross chunks
+    if (pos.y <= height && pos.y > 0) {
+        int depth = height - pos.y;
+        float slope = 0.0;
+        if (depth < 12) {
+            slope = getSlope(wx, wz);
+        }
+        if (isCave(wx, pos.y, wz, depth, slope)) {
+            return false; // Cave is air (not solid)
+        }
+    }
+
     return pos.y <= height;
 }
 
