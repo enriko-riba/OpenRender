@@ -32,6 +32,6 @@ void main() {
     VoxelEdit edit = edits[idx];
 
     // Apply edit to voxel data
-    // Pack the block type to match generation shader format
-    voxelData[edit.voxelIndex] = packVoxel(edit.blockType);
+    // UNPACKED: Direct write
+    voxelData[edit.voxelIndex] = edit.blockType;
 }

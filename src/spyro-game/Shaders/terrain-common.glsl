@@ -3,9 +3,10 @@
 
 // Constants
 const int CHUNK_SIDE_SIZE = 16;
-const int CHUNK_Y_SIZE = 128;
+const int CHUNK_Y_SIZE = 384;
 const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
 const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+const int PACKED_CHUNK_VOXEL_COUNT = CHUNK_VOXEL_COUNT; // UNPACKED
 const int WATER_LEVEL = 35;
 
 // Block types
@@ -16,6 +17,18 @@ const uint BLOCK_SAND = 3u;
 const uint BLOCK_DIRT = 4u;
 const uint BLOCK_GRASS_DIRT = 5u;
 const uint BLOCK_BEDROCK = 8u; // Added BedRock
+
+// Helper to read packed voxel (UNPACKED: 1 voxel per uint)
+#define getPackedVoxel(idx, buf) (buf[idx] & 0xFFu)
+
+// Helper to read packed visibility mask (UNPACKED: 1 mask per uint)
+#define getPackedVisMask(idx, buf) (buf[idx] & 0xFFu)
+
+// Helper to write packed voxel (UNPACKED: 1 voxel per uint)
+#define setPackedVoxel(idx, val, buf) { buf[idx] = val; }
+
+// Atomic write for packed voxel (UNPACKED: 1 voxel per uint)
+#define atomicSetPackedVoxel(idx, val, buf) { buf[idx] = val; }
 
 // Bindings (M1/M2)
 layout(binding = 6) uniform sampler1D uHeightSpline;

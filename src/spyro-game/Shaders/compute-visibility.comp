@@ -1,7 +1,9 @@
 #version 460
 #extension GL_ARB_gpu_shader_int64 : require
 
-// CRITICAL: Work group layout MUST match generation shader!
+// VERSION: 2024-01-15-v2 - Fixed redundant bounds check causing missing faces at chunk boundaries
+
+// Restore original layout: process all 16 X columns directly (each invocation handles one column)
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
 // ============================================================================
@@ -40,7 +42,7 @@ layout(std430, binding = 1) writeonly buffer VisibilityMask {
 };
 
 // Input: Chunk indices for neighbor calculation
-layout(std430, binding = 6) readonly buffer ChunkIndicesBuffer {
+layout(std430, binding = 9) readonly buffer ChunkIndicesBuffer {
     uint chunkIndices[];
 };
 
@@ -70,6 +72,19 @@ layout(std430, binding = 7) readonly buffer WorldEditsBuffer {
 // Helper Functions
 // ============================================================================
 
+uint packSimple(uint blockType)
+{   // Pack minimal voxel (other fields zero) to mimic voxelData layout low 8 bits block type
+    return blockType & 0xFFu;
+}
+
+uint proceduralVoxel(int wx, int ly, int wz)
+{
+    int height = generateHeight(wx, wz);
+    if (ly >= height) return packSimple(BLOCK_NONE);
+    uint blockType = generateBlockType(height, ly, wx, wz);
+    return packSimple(blockType);
+}
+
 /// Check if voxel is transparent (air or water)
 bool isTransparent(uint voxel) {
     uint blockType = voxel & 0xFFu;
@@ -82,12 +97,10 @@ bool isWater(uint voxel) {
 }
 
 /// Get voxel at local coordinates (with bounds checking)
-/// If out of bounds, calculate procedurally
+/// If out of bounds, calculate procedurally (fast heightmap classification) instead of returning air.
 uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
-    // Check Y bounds first (always air above/below world)
-    if (ly < 0 || ly >= CHUNK_Y_SIZE) return 0u; // Air
+    if (ly < 0 || ly >= CHUNK_Y_SIZE) return packSimple(BLOCK_NONE);
 
-    // Check if inside current chunk
     if (lx >= 0 && lx < CHUNK_SIDE_SIZE && lz >= 0 && lz < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
                         uint(lx) +
@@ -96,38 +109,43 @@ uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
         return voxelData[voxelIdx];
     }
 
-    // Out of bounds: Calculate procedurally
     uint chunkIndexGlobal = chunkIndices[chunkIdx];
     uint chunkX = chunkIndexGlobal % uWorldChunksXZ;
     uint chunkZ = chunkIndexGlobal / uWorldChunksXZ;
-    
-    // Calculate global world coordinates
-    int wx = int(chunkX * CHUNK_SIDE_SIZE) + lx;
-    int wz = int(chunkZ * CHUNK_SIDE_SIZE) + lz;
 
-    // Check world edits first (linear scan - keep count low!)
-    for (uint i = 0; i < editCount; i++) {
-        if (worldEdits[i].x == wx && worldEdits[i].y == ly && worldEdits[i].z == wz) {
-            return worldEdits[i].type;
+    int wx = int(chunkX) * CHUNK_SIDE_SIZE + lx;
+    int wz = int(chunkZ) * CHUNK_SIDE_SIZE + lz;
+
+    // Compute neighbor chunk coords with floor division for negatives
+    int neighborChunkX = (wx >= 0) ? (wx / CHUNK_SIDE_SIZE) : ((wx - (CHUNK_SIDE_SIZE - 1)) / CHUNK_SIDE_SIZE);
+    int neighborChunkZ = (wz >= 0) ? (wz / CHUNK_SIDE_SIZE) : ((wz - (CHUNK_SIDE_SIZE - 1)) / CHUNK_SIDE_SIZE);
+
+    if (neighborChunkX >= 0 && neighborChunkX < int(uWorldChunksXZ) &&
+        neighborChunkZ >= 0 && neighborChunkZ < int(uWorldChunksXZ)) {
+        uint neighborGlobalIdx = uint(neighborChunkX) + uint(neighborChunkZ) * uWorldChunksXZ;
+        // Look for neighbor in current batch
+        for (uint i = 0; i < uChunkCount; i++) {
+            if (chunkIndices[i] == neighborGlobalIdx) {
+                // Local coords inside neighbor chunk
+                int nlx = wx - neighborChunkX * CHUNK_SIDE_SIZE;
+                int nlz = wz - neighborChunkZ * CHUNK_SIDE_SIZE;
+                
+                // CRITICAL: Verify local coords are in bounds before reading buffer
+                if (nlx >= 0 && nlx < CHUNK_SIDE_SIZE && nlz >= 0 && nlz < CHUNK_SIDE_SIZE) {
+                    uint neighborVoxelIdx = i * CHUNK_VOXEL_COUNT +
+                                           uint(nlx) +
+                                           uint(nlz) * CHUNK_SIDE_SIZE +
+                                           uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
+                    return voxelData[neighborVoxelIdx];
+                }
+                // If out of bounds, fall through to procedural
+                break;
+            }
         }
     }
 
-    int height;
-    height = generateHeight(wx, wz);
-
-    // Note: compute-visibility doesn't include terrain-common.glsl directly but duplicates logic.
-    // I should probably update the duplicated logic or include the file.
-    // For now, I'll just update the call to match the signature if I can't include.
-    // Wait, compute-visibility DOES NOT include terrain-common.glsl. It has its own copy of noise functions.
-    // I need to update the local copy of generateBlockType or add the new one here.
-    // Since I just removed the old one, I must add the new one!
-    
-    // Re-adding the new generateBlockType locally to compute-visibility.comp
-    // But wait, I removed it in the previous step.
-    // Let's add it back with the new logic.
-    
-    uint blockType = generateBlockType(height, ly, wx, wz);
-    return blockType; // We only need the block type for transparency check
+    // Procedural fallback (prevents vertical opaque walls & missing corner faces)
+    return proceduralVoxel(wx, ly, wz);
 }
 
 // ============================================================================

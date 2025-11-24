@@ -1,75 +1,75 @@
-// compute-count.comp - Phase 3.2: Count Visible Faces
-// Purpose: Count total visible faces per chunk for prefix sum calculation
-// Version: 1.0
-//
-// This shader performs a simple reduction: sum the popcount of all visibility
-// masks in each chunk to determine how many faces will be rendered.
-
 #version 460
+#include "terrain-common.glsl"
 
-layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+// Expect dispatch groups (chunkCount, CHUNK_Y_SIZE, 1). If Y dimension < CHUNK_Y_SIZE counts will be truncated.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-// ============================================================================
-// Constants
-// ============================================================================
-const int CHUNK_SIDE_SIZE = 16;
-const int CHUNK_Y_SIZE = 128;
-const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
-const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
-const int WATER_LEVEL = 35;
-
-// ============================================================================
-// Uniforms
-// ============================================================================
 uniform uint uChunkCount;
 
-// ============================================================================
-// SSBOs (using VoxelHelper.SSBOBindings constants)
-// ============================================================================
+layout(std430, binding = 0) readonly buffer VoxelData { uint voxelData[]; };
+layout(std430, binding = 1) readonly buffer VisibilityMask { uint visibilityMask[]; };
+layout(std430, binding = 2) buffer VisibleCounts { uint visibleCounts[]; };
+layout(std430, binding = 12) buffer OpaqueCounts { uint opaqueCounts[]; };
 
-// Input: Visibility mask from Stage 3.1
-layout(std430, binding = 1) readonly buffer VisibilityMask {
-    uint visibilityMask[];
-};
-
-// Output: Visible face count per chunk
-layout(std430, binding = 2) writeonly buffer VisibleCounts {
-    uint visibleCounts[];
-};
-
-// Output: Opaque face count per chunk (for split draw calls)
-layout(std430, binding = 12) writeonly buffer OpaqueCounts {
-    uint opaqueCounts[];
-};
-
-// ============================================================================
-// Main Shader
-// ============================================================================
+shared uint s_TotalCount;
+shared uint s_OpaqueCount;
 
 void main() {
-    uint chunkIdx = gl_GlobalInvocationID.x;
-    if (chunkIdx >= uChunkCount) return;
-
-    uint baseIdx = chunkIdx * CHUNK_VOXEL_COUNT;
-    uint totalCount = 0u;
-    uint opaqueCount = 0u;
-
-    // Count visible faces in this chunk
-    // popcount (bitCount in GLSL) counts number of set bits
-    for (uint i = 0u; i < CHUNK_VOXEL_COUNT; i++) {
-        uint mask = visibilityMask[baseIdx + i];
-        uint faces = uint(bitCount(mask & 0x3Fu)); // Only lower 6 bits are faces
+    uint chunkIdx = gl_WorkGroupID.x;
+    uint ly = gl_WorkGroupID.y; // 0..383
+    
+    if (chunkIdx >= uChunkCount || ly >= uint(CHUNK_Y_SIZE)) return;
+    
+    // Initialize shared
+    if (gl_LocalInvocationIndex == 0u) {
+        s_TotalCount = 0u;
+        s_OpaqueCount = 0u;
+    }
+    barrier();
+    
+    // Each thread processes one voxel in this layer
+    // Layer size = 16*16 voxels = 256 voxels.
+    // local_size_x = 64.
+    // So each thread processes 4 voxels (256/64 = 4).
+    
+    uint lx_base = gl_LocalInvocationID.x * 4u; // 0, 4, 8... 252
+    
+    uint tCount = 0u;
+    uint oCount = 0u;
+    
+    for (uint i = 0u; i < 4u; i++) {
+        uint lx = lx_base + i;
+        // Calculate global voxel index
+        // voxelIdx = chunk * VOXELS + ly * SIDE*SIDE + lx (where lx is 0..255 linear index in layer)
+        // Wait, lx here is linear index in layer (0..255).
+        // But lx in other shaders is X coordinate (0..15).
+        // Here we treat the layer as a linear array of 256 voxels.
         
-        if (faces > 0u) {
-            totalCount += faces;
-            bool isWater = ((mask >> 6) & 1u) != 0u;
+        uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + ly * uint(CHUNK_SIDE_SIZE_SQUARED) + lx;
+        
+        uint mask = visibilityMask[voxelIdx];
+        
+        if (mask != 0u) {
+            uint faces = uint(bitCount(mask & 0x3Fu));
+            tCount += faces;
             
-            if (!isWater) {
-                opaqueCount += faces;
+            uint voxel = voxelData[voxelIdx];
+            uint blockType = voxel & 0xFFu;
+            
+            if (blockType != BLOCK_WATER_LEVEL) {
+                oCount += faces;
             }
         }
     }
-
-    visibleCounts[chunkIdx] = totalCount;
-    opaqueCounts[chunkIdx] = opaqueCount;
+    
+    if (tCount > 0u) atomicAdd(s_TotalCount, tCount);
+    if (oCount > 0u) atomicAdd(s_OpaqueCount, oCount);
+    
+    barrier();
+    
+    // Leader adds to global counts
+    if (gl_LocalInvocationIndex == 0u) {
+        if (s_TotalCount > 0u) atomicAdd(visibleCounts[chunkIdx], s_TotalCount);
+        if (s_OpaqueCount > 0u) atomicAdd(opaqueCounts[chunkIdx], s_OpaqueCount);
+    }
 }

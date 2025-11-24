@@ -258,28 +258,7 @@ public class VoxelWorld(int seed)
     public IReadOnlyCollection<int> SurroundingChunkIndices => surroundingChunkSet;
 
     public int LoadedChunksCount => loadedChunks.Count;
-    // Number of chunks currently in active set but outside the surrounding area.
-    public int CachedChunksCount
-    {
-        get
-        {
-            lock (surroundingChunkSet)
-            {
-                return loadedChunks.Count - surroundingChunkSet.Count;
-            }
-        }
-    }
-
-    public IEnumerable<Chunk> SurroundingChunks
-    {
-        get
-        {
-            var sc = loadedChunks.Where(x => surroundingChunkSet.Contains(x.Value.Index));
-            return sc.Select(x => x.Value);
-        }
-    }
-
-
+    
     /// <summary>
     /// Gets a loaded chunk containing the given global XZ position.
     /// Note: the globalPosition.Y is ignored.
@@ -451,22 +430,6 @@ public class VoxelWorld(int seed)
             }
         }
         return null;
-    }
-
-    public static bool IsSphereBlockCollision(in AABB aabb, in Vector3 spherePosition, float sphereRadius)
-    {
-        // Calculate the closest point to the sphere on the AABB
-        var closestX = Math.Max(aabb.Min.X, Math.Min(spherePosition.X, aabb.Max.X));
-        var closestY = Math.Max(aabb.Min.Y, Math.Min(spherePosition.Y, aabb.Max.Y));
-        var closestZ = Math.Max(aabb.Min.Z, Math.Min(spherePosition.Z, aabb.Max.Z));
-
-        // Calculate the distance between the closest point and the sphere's center
-        var distanceSquared = (closestX - spherePosition.X) * (closestX - spherePosition.X) +
-                              (closestY - spherePosition.Y) * (closestY - spherePosition.Y) +
-                              (closestZ - spherePosition.Z) * (closestZ - spherePosition.Z);
-
-        // Check if the distance is less than the sphere's radius squared
-        return distanceSquared <= (sphereRadius * sphereRadius);
     }
 
     public BlockState? GetBlockByPositionGlobalSafe(int x, int y, int z)
@@ -783,25 +746,6 @@ public class VoxelWorld(int seed)
         ChunksInFrustum = inFrustumCount;
     }
 
-    /// <summary>
-    /// If chunk not already loaded or in cache, creates a new chunk, initializes it and adds to loaded collection.
-    /// </summary>
-    /// <param name="chunkIndex"></param>
-    /// <returns></returns>
-    private bool CreateChunkInitializeAndAddToLoaded(int chunkIndex, out Chunk chunk)
-    {
-        //  first check cache
-        chunk = CreateChunkContainer(chunkIndex);
-
-        //  chunk must be either previously loaded or newly created, if loaded and initialized bail out
-        if (chunk.IsInitialized) return false;
-
-        var generationData = terrainBuilder.BuildChunkData(chunkIndex);
-        chunk.ApplyGenerationData(generationData);
-        chunk.RecomputeLighting(force: true, includeNeighborData: true);
-        return true;
-    }
-
     //private void WorkQueueProcessor()
     //{
     //    if (UseGpuStreaming)
@@ -911,25 +855,6 @@ public class VoxelWorld(int seed)
     {
         var planes = (Vector4[])cam.Frustum.Planes.Clone();
         UpdateChunkVisibility(planes);
-    }
-
-    /// <summary>
-    /// Public hook for the GL thread to drive terrain streaming when the camera moves.
-    /// Triggers a streaming recompute on camera tile change and updates the debounce timer.
-    /// </summary>
-    public void UpdateStreamingFromCamera()
-    {
-        if (camera is null) return;
-        // Detect tile change without mutating lastCameraChunk* beforehand,
-        // so CalculateTerrainStreamingChanges() can see the delta and publish.
-        var camPos = camera.Position;
-        var camChunkX = (int)((camPos.X + 0.5f) / VoxelHelper.ChunkSideSize);
-        var camChunkZ = (int)((camPos.Z + 0.5f) / VoxelHelper.ChunkSideSize);
-        if (camChunkX != lastCameraChunkX || camChunkZ != lastCameraChunkZ)
-        {
-            CalculateTerrainStreamingChanges();
-            lastStreamingUpdateMs = stopwatch.ElapsedMilliseconds;
-        }
     }
     #endregion
 

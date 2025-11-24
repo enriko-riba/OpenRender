@@ -115,11 +115,12 @@ public class Phase3BufferManager : IDisposable
         Log.Info($"  Max indices: {maxIndices:N0} ({indexMB:F2} MB)");
         Log.Info($"  Total mesh memory: {totalMB:F2} MB");
 
-        // Visibility mask (1 uint per voxel, lower 6 bits used)
+        // Visibility mask (1 uint per 4 voxels, 8 bits per voxel)
+        // We only use 6 bits per voxel, so 8 bits is plenty.
         GL.CreateBuffers(1, out visMaskBuffer);
-        GL.NamedBufferStorage(visMaskBuffer, maxVoxels * sizeof(uint), IntPtr.Zero,
+        GL.NamedBufferStorage(visMaskBuffer, maxChunks * VoxelHelper.PackedChunkVoxelCount * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
-        ClearBufferUInt(visMaskBuffer, maxVoxels * sizeof(uint), 0);
+        ClearBufferUInt(visMaskBuffer, maxChunks * VoxelHelper.PackedChunkVoxelCount * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, visMaskBuffer, -1, "vis_mask_ssbo");
 
         // Visible counts (1 uint per chunk)
@@ -330,8 +331,8 @@ public class Phase3BufferManager : IDisposable
     {
         long total = 0;
         
-        // Visibility mask: 1 uint per voxel
-        total += maxVoxels * sizeof(uint);
+        // Visibility mask: 1 uint per 4 voxels
+        total += maxChunks * VoxelHelper.PackedChunkVoxelCount * sizeof(uint);
         
         // Count buffer: 1 uint per chunk
         total += maxChunks * sizeof(uint);

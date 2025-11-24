@@ -1,12 +1,11 @@
 using OpenTK.Mathematics;
-using SpyroGame.World;
 
 namespace SpyroGame.World;
 
 public struct ColumnSpan
 {
-    public byte StartY;
-    public byte EndY;
+    public short StartY;
+    public short EndY;
     public byte BlockType;
 }
 
@@ -14,7 +13,7 @@ public class ChunkCollisionData
 {
     public const int ColumnsPerChunk = 16 * 16;
     public const int MaxSpansPerColumn = 16;
-    
+
     // Flattened array of spans for all columns
     // Indexing: columnIdx * MaxSpansPerColumn + spanIdx
     public ColumnSpan[] Spans;
@@ -66,7 +65,7 @@ public class CollisionManager
 
         direction = Vector3.Normalize(direction);
         var t = 0.0f;
-        
+
         // Current voxel position
         var x = (int)Math.Floor(origin.X);
         var y = (int)Math.Floor(origin.Y);
@@ -104,7 +103,7 @@ public class CollisionManager
                 {
                     hitPoint = origin + direction * t;
                     blockPos = new Vector3i(x, y, z);
-                    
+
                     // Calculate normal based on which face we entered
                     if (lastPos.X != x) normal = new Vector3(-stepX, 0, 0);
                     else if (lastPos.Y != y) normal = new Vector3(0, -stepY, 0);
@@ -156,7 +155,7 @@ public class CollisionManager
     private bool IsSolid(int x, int y, int z, out BlockType blockType)
     {
         blockType = BlockType.None;
-        if (y < 0 || y >= 128) return false;
+        if (y < 0 || y >= VoxelHelper.ChunkYSize) return false;
 
         var chunkX = (int)Math.Floor((float)x / 16.0f);
         var chunkZ = (int)Math.Floor((float)z / 16.0f);
@@ -183,7 +182,7 @@ public class CollisionManager
                 }
             }
         }
-        
+
         return false;
     }
 }

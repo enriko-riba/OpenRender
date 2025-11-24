@@ -2,12 +2,12 @@
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
 const int CHUNK_SIDE_SIZE = 16;
-const int CHUNK_Y_SIZE = 128;
+const int CHUNK_Y_SIZE = 384;
 const int MAX_SPANS = 16;
 
 struct ColumnSpans {
     uint count;
-    uint spans[MAX_SPANS]; // Packed: Start(8) | End(8) | Type(8) | Unused(8)
+    uint spans[MAX_SPANS]; // Packed: Start(9) | End(9) | Type(8) | Unused(6)
 };
 
 layout(std430, binding = 1) readonly buffer VoxelDataBuffer {
@@ -55,10 +55,10 @@ void main() {
             } else if (type != currentType) {
                 // End current span, start new one
                 if (spanCount < MAX_SPANS) {
-                    uint start = currentStart & 0xFF;
-                    uint end = uint(y - 1) & 0xFF;
+                    uint start = currentStart & 0x1FF;
+                    uint end = uint(y - 1) & 0x1FF;
                     uint bType = currentType & 0xFF;
-                    uint packedSpan = start | (end << 8) | (bType << 16);
+                    uint packedSpan = start | (end << 9) | (bType << 18);
                     columnSpans[columnIdx].spans[spanCount] = packedSpan;
                     spanCount++;
                 }
@@ -69,10 +69,10 @@ void main() {
             if (inSpan) {
                 // End span
                 if (spanCount < MAX_SPANS) {
-                    uint start = currentStart & 0xFF;
-                    uint end = uint(y - 1) & 0xFF;
+                    uint start = currentStart & 0x1FF;
+                    uint end = uint(y - 1) & 0x1FF;
                     uint bType = currentType & 0xFF;
-                    uint packedSpan = start | (end << 8) | (bType << 16);
+                    uint packedSpan = start | (end << 9) | (bType << 18);
                     columnSpans[columnIdx].spans[spanCount] = packedSpan;
                     spanCount++;
                 }
@@ -83,10 +83,10 @@ void main() {
     
     // Close final span
     if (inSpan && spanCount < MAX_SPANS) {
-        uint start = currentStart & 0xFF;
-        uint end = uint(CHUNK_Y_SIZE - 1) & 0xFF;
+        uint start = currentStart & 0x1FF;
+        uint end = uint(CHUNK_Y_SIZE - 1) & 0x1FF;
         uint bType = currentType & 0xFF;
-        uint packedSpan = start | (end << 8) | (bType << 16);
+        uint packedSpan = start | (end << 9) | (bType << 18);
         columnSpans[columnIdx].spans[spanCount] = packedSpan;
         spanCount++;
     }

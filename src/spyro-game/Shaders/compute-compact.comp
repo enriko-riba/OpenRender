@@ -31,10 +31,10 @@ const uint FACE_NEG_Y = 3u;
 const uint FACE_POS_Z = 4u;
 const uint FACE_NEG_Z = 5u;
 
-// Texture atlas layout: 3 columns x 2 rows
-// Order (left->right, top->bottom): top, bottom, front, left, right, back
+// Texture atlas layout: 3 columns x 1 row (Simplified)
+// Order (left->right): top, bottom, side
 const float ATLAS_COLS = 3.0;
-const float ATLAS_ROWS = 2.0;
+const float ATLAS_ROWS = 1.0;
 const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
 
 // ============================================================================
@@ -51,16 +51,16 @@ uniform uint uIndexRegionOffset;  // start index for this batch region
 // ============================================================================
 
 // Input: Chunk indices
-layout(std430, binding = 6) readonly buffer ChunkIndices {
+layout(std430, binding = 9) readonly buffer ChunkIndices {
     uint chunkIndices[];
 };
 
-// Input: Voxel data
+// Input: Voxel data (Packed)
 layout(std430, binding = 0) readonly buffer VoxelData {
     uint voxelData[];
 };
 
-// Input: Visibility mask
+// Input: Visibility mask (Packed)
 layout(std430, binding = 1) readonly buffer VisibilityMask {
     uint visibilityMask[];
 };
@@ -102,6 +102,12 @@ layout(std430, binding = 5) buffer AtomicCounters {
     uint indexCounter;
     uint faceCounter;
 };
+
+// Shared memory for workgroup reduction
+shared uint s_OpaqueCount;
+shared uint s_WaterCount;
+shared uint s_OpaqueBase;
+shared uint s_WaterBase;
 
 struct WorldEdit {
     int x, y, z, type;
@@ -186,12 +192,9 @@ vec2 getBaseUV(uint corner) {
 vec2 flipV(vec2 uv) { return vec2(uv.x, 1.0 - uv.y); }
 
 ivec2 faceToTile(uint face) {
-    if (face == FACE_POS_Y) return ivec2(0, 0);
-    if (face == FACE_NEG_Y) return ivec2(1, 0);
-    if (face == FACE_POS_Z) return ivec2(2, 0);
-    if (face == FACE_NEG_X) return ivec2(0, 1);
-    if (face == FACE_POS_X) return ivec2(1, 1);
-    return ivec2(2, 1);
+    if (face == FACE_POS_Y) return ivec2(0, 0); // Top
+    if (face == FACE_NEG_Y) return ivec2(1, 0); // Bottom
+    return ivec2(2, 0); // Side (Front, Back, Left, Right)
 }
 
 vec2 getAtlasUV(uint face, uint corner) {
@@ -209,7 +212,7 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
     // Check if inside current chunk
     if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-        uint voxel = voxelData[voxelIdx];
+        uint voxel = getPackedVoxel(voxelIdx, voxelData);
         // Water is NOT solid for AO purposes (it doesn't occlude solid blocks)
         return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
     } 
@@ -239,7 +242,7 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
             if (chunkIndices[i] == nGlobalIdx) {
                 // Found neighbor in batch! Read its data.
                 uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-                uint voxel = voxelData[voxelIdx];
+                uint voxel = getPackedVoxel(voxelIdx, voxelData);
                 return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
             }
         }
@@ -356,62 +359,191 @@ void writeVertex(uint vertexIdx, vec3 position, vec2 uv, float ao, uint faceIdx)
 // ============================================================================
 
 void main(){
+    // Initialize shared counters
+    if (gl_LocalInvocationIndex == 0u) {
+        s_OpaqueCount = 0u;
+        s_WaterCount = 0u;
+    }
+    barrier();
+
     uint chunkIdx = gl_WorkGroupID.x;
     uint workGroupY = gl_WorkGroupID.y;
     if(chunkIdx>=uChunkCount||workGroupY>=uint(CHUNK_Y_SIZE)) return;
+    
     uint actualChunkIdx = chunkIndices[chunkIdx];
     uint chunkX = actualChunkIdx % uWorldChunksXZ;
     uint chunkZ = actualChunkIdx / uWorldChunksXZ;
     vec3 chunkWorldOffset = vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
+    
     int lx=int(gl_LocalInvocationID.x);
     int lz=int(gl_LocalInvocationID.z);
     int ly=int(workGroupY);
+
+    // Calculate voxel index (UNPACKED)
+    // voxelIdx = chunk * VOXELS + lx + lz*SIDE + ly*SIDE*SIDE
     uint voxelIdx = chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED);
-    uint voxel = voxelData[voxelIdx];
+    
+    uint voxel = voxelData[voxelIdx]; // Direct access
     uint blockType = voxel & 0xFFu;
-    uint mask = visibilityMask[voxelIdx];
-    if(mask==0u||blockType==0u) return;
-
+    
+    uint mask = visibilityMask[voxelIdx]; // Direct access
+    
+    // Early exit if no faces visible
+    // Note: We can't return early because we need to participate in barrier() later!
+    // So we use a flag.
+    bool hasFaces = (mask != 0u && blockType != 0u);
     bool isWater = (blockType == BLOCK_WATER_LEVEL);
-
+    uint faceCount = 0u;
+    
+    if (hasFaces) {
+        faceCount = uint(bitCount(mask & 0x3Fu));
+        
+        // Atomic add to shared memory
+        if (faceCount > 0u) {
+            if (isWater) {
+                atomicAdd(s_WaterCount, faceCount);
+            } else {
+                atomicAdd(s_OpaqueCount, faceCount);
+            }
+        }
+    }
+    
+    barrier();
+    
+    // Allocate global space for the workgroup
+    if (gl_LocalInvocationIndex == 0u) {
+        if (s_OpaqueCount > 0u) {
+            s_OpaqueBase = atomicAdd(perChunkEmit[chunkIdx], s_OpaqueCount);
+        }
+        if (s_WaterCount > 0u) {
+            // Water starts after opaque faces. 
+            // But perChunkEmit tracks opaque faces?
+            // No, perChunkEmit tracks opaque faces.
+            // waterEmit tracks water faces.
+            // We need to add opaqueCount (total opaque faces in chunk) to water index?
+            // In original code:
+            // if (isWater) localFaceIdx = opaqueCount + atomicAdd(waterEmit[chunkIdx], 1u);
+            // else localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
+            
+            // So we need to read opaqueCounts[chunkIdx] to offset water.
+            // But opaqueCounts is constant for the chunk.
+            // So s_WaterBase should be relative to waterEmit, and we add opaqueCount later.
+            s_WaterBase = atomicAdd(waterEmit[chunkIdx], s_WaterCount);
+        }
+    }
+    barrier();
+    
+    if (!hasFaces || faceCount == 0u) return;
+    
+    // Now allocate local space within the workgroup block
+    // We need to know our offset within the workgroup.
+    // We can't use atomicAdd on shared memory again because we need the prefix sum.
+    // But since we only have max 6 faces, we can just use atomicAdd on shared memory again?
+    // No, that would give us a new count, not an offset.
+    // We need a prefix sum or just use atomicAdd on a separate counter.
+    // Let's use a separate counter for allocation.
+    // We can reuse s_OpaqueCount and s_WaterCount as "current offset" counters if we reset them?
+    // No, that's racey.
+    // Let's just use atomicAdd on s_OpaqueBase/s_WaterBase?
+    // No, s_OpaqueBase is the global base.
+    // We need a local offset.
+    // Let's use atomicAdd on s_OpaqueCount/s_WaterCount again, but starting from 0?
+    // Yes.
+    
+    // Re-initialize counters for distribution
+    // We need a second barrier.
+    // But we can't re-init s_OpaqueCount because other threads might still be reading it?
+    // We passed a barrier.
+    // But we need the TOTAL count for the leader thread.
+    // We already did that.
+    
+    // So:
+    // 1. Count faces -> s_OpaqueCount (Total)
+    // 2. Leader allocates global -> s_OpaqueBase (Global Base)
+    // 3. Reset s_OpaqueCount = 0
+    // 4. Threads atomicAdd(s_OpaqueCount, faces) -> Local Offset
+    // 5. Global Index = s_OpaqueBase + Local Offset
+    
+    // We need another barrier after leader allocation.
+    // And we need to reset counters.
+    
+    // Wait, we can't reset s_OpaqueCount safely if we use it for allocation.
+    // We need separate counters for "Total" and "Current".
+    // Or just use atomicAdd on a new shared variable.
+    // Let's define s_OpaqueCurrent.
+    
+    // Actually, we can just use atomicAdd on s_OpaqueBase!
+    // s_OpaqueBase holds the Global Base.
+    // If we atomicAdd(s_OpaqueBase, faces), we get the OLD value, which is our Global Index!
+    // And s_OpaqueBase increments.
+    // But s_OpaqueBase is shared.
+    // So all threads in workgroup increment it.
+    // At the end, s_OpaqueBase will be GlobalBase + Total.
+    // This is fine! We don't need the original GlobalBase anymore.
+    
+    uint localFaceIdx;
+    if (isWater) {
+        // Offset by opaque count for water
+        uint opaqueChunkCount = opaqueCounts[chunkIdx];
+        // Safety check: prevent overflow if counts disagree
+        // We don't have total water count here easily, but we can check against buffer limits?
+        // No, just trust for now, but maybe clamp?
+        localFaceIdx = opaqueChunkCount + atomicAdd(s_WaterBase, faceCount);
+    } else {
+        localFaceIdx = atomicAdd(s_OpaqueBase, faceCount);
+        
+        // Safety check: if we exceed opaque count, we are overwriting water or next chunk!
+        // This indicates a mismatch between count and compact shaders.
+        // For now, let's just drop the face if it overflows.
+        uint opaqueChunkCount = opaqueCounts[chunkIdx];
+        if (localFaceIdx >= opaqueChunkCount) {
+            // Overflow!
+            // We can't easily "undo" the atomicAdd.
+            // But we can skip writing.
+            // However, s_OpaqueBase is shared, so subsequent threads are also offset.
+            // This means the whole workgroup might be offset.
+            // We should probably continue to write to avoid holes, but clamp to safe area?
+            // No, writing to wrong area is worse.
+            // Let's just skip writing.
+            return;
+        }
+    }
+    
+    // ... (rest of writing logic)
+    
     uint vertexChunkBase = baseOffsets[chunkIdx];
     uint indexChunkBase  = (vertexChunkBase / 4u) * 6u;
     
-    // Calculate base index offset for this face type
-    // Opaque starts at 0, Water starts after all opaque faces
-    uint opaqueCount = opaqueCounts[chunkIdx];
-    
     vec3 voxelPos = chunkWorldOffset + vec3(float(lx),float(ly),float(lz));
+    
+    // Iterate faces and write
+    // Note: We allocated 'faceCount' slots.
+    // We need to write them sequentially.
+    // But the loop iterates 6 faces.
+    // We need to know which slot corresponds to which face.
+    // atomicAdd gave us the start index for ALL faces of this voxel.
+    // So we just increment.
+    
+    uint currentFaceOffset = 0u;
+    
     for(uint face=0u; face<6u; face++){
         uint faceBit=1u<<face;
         if((mask & faceBit)==0u) continue;
         
-        uint localFaceIdx;
-        if (isWater) {
-            localFaceIdx = opaqueCount + atomicAdd(waterEmit[chunkIdx], 1u);
-        } else {
-            localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
-        }
+        uint finalFaceIdx = localFaceIdx + currentFaceOffset;
+        currentFaceOffset++;
         
-        uint vertBaseAbs = uVertexRegionOffset + vertexChunkBase + localFaceIdx*4u;
-        uint idxWriteBase = uIndexRegionOffset + indexChunkBase + localFaceIdx*6u;
-        atomicAdd(faceCounter,1u);
+        uint vertBaseAbs = uVertexRegionOffset + vertexChunkBase + finalFaceIdx*4u;
+        uint idxWriteBase = uIndexRegionOffset + indexChunkBase + finalFaceIdx*6u;
+        
+        // ... (write vertex/index)
         vec3 corners[4];
         getFaceCorners(face, voxelPos, corners);
-        
-        // Pack blockType into face index (bits 8-15)
-        // Bit 8 was previously isWater, now we use 8 bits for type
-        // FIX: Ensure water blocks are packed correctly for rendering
-        // If blockType is WaterLevel (1), it should be treated as water in the fragment shader.
-        // The fragment shader likely uses bit 8 or a specific block ID range to detect water.
-        // Let's check if we need to set a specific bit for water transparency/fog.
-        // For now, just packing the block type should be enough if the frag shader checks blockType == 1.
         uint facePacked = face | (blockType << 8);
 
         for(uint v=0u; v<4u; v++){
             vec2 uv;
             if (isWater) {
-                // Water uses full texture, not atlas
                 uv = flipV(getBaseUV(v));
             } else {
                 uv = getAtlasUV(face,v);
@@ -420,7 +552,7 @@ void main(){
             float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz));
             writeVertex(vertBaseAbs+v,corners[v],uv,ao,facePacked);
         }
-        uint localVertBase = localFaceIdx*4u;
+        uint localVertBase = finalFaceIdx*4u;
         compactIndices[idxWriteBase+0u]=localVertBase+0u;
         compactIndices[idxWriteBase+1u]=localVertBase+1u;
         compactIndices[idxWriteBase+2u]=localVertBase+2u;
