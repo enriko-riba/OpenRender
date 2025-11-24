@@ -252,7 +252,14 @@ public sealed class BiomeDefinition
         [
             new(0, "Ocean",      new(0.55f,0.75f), new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
             new(1, "Beach",      new(0.55f,0.75f), new(0.35f,0.65f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   ["",
+                "Resources/voxel/water.png",                // 1 - water
+                "Resources/voxel/Plains/grass.png",         // 2 - surface
+                "Resources/voxel/Plains/dirt.png",          // 3 - subsurface
+                "Resources/voxel/rock.png",                 // 4 - deep subsurface
+                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
+                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
+                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
             new (3, "Savanna",    new(0.6f,0.8f),   new(0.25f,0.55f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
             new (4, "Desert",     new(0.65f,1.0f),  new(0.0f,0.35f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
             new (5, "Rainforest", new(0.55f,0.8f),  new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
