@@ -45,7 +45,6 @@
     <Folder Include="Resources\voxel\Tundra\" />
     <Folder Include="Resources\voxel\Rainforest\" />
     <Folder Include="Resources\voxel\Savana\" />
-    <Folder Include="Resources\voxel\Plains\" />
   </ItemGroup>
 
 </Project>

@@ -65,34 +65,34 @@ public class CollisionManager
         blockType = BlockType.None;
 
         direction = Vector3.Normalize(direction);
-        float t = 0.0f;
+        var t = 0.0f;
         
         // Current voxel position
-        int x = (int)Math.Floor(origin.X);
-        int y = (int)Math.Floor(origin.Y);
-        int z = (int)Math.Floor(origin.Z);
+        var x = (int)Math.Floor(origin.X);
+        var y = (int)Math.Floor(origin.Y);
+        var z = (int)Math.Floor(origin.Z);
 
         // Step direction
-        int stepX = Math.Sign(direction.X);
-        int stepY = Math.Sign(direction.Y);
-        int stepZ = Math.Sign(direction.Z);
+        var stepX = Math.Sign(direction.X);
+        var stepY = Math.Sign(direction.Y);
+        var stepZ = Math.Sign(direction.Z);
 
         // tMax: distance to next voxel boundary
-        float tMaxX = (stepX > 0) ? (x + 1 - origin.X) / direction.X : (origin.X - x) / -direction.X;
-        float tMaxY = (stepY > 0) ? (y + 1 - origin.Y) / direction.Y : (origin.Y - y) / -direction.Y;
-        float tMaxZ = (stepZ > 0) ? (z + 1 - origin.Z) / direction.Z : (origin.Z - z) / -direction.Z;
+        var tMaxX = (stepX > 0) ? (x + 1 - origin.X) / direction.X : (origin.X - x) / -direction.X;
+        var tMaxY = (stepY > 0) ? (y + 1 - origin.Y) / direction.Y : (origin.Y - y) / -direction.Y;
+        var tMaxZ = (stepZ > 0) ? (z + 1 - origin.Z) / direction.Z : (origin.Z - z) / -direction.Z;
 
         // tDelta: distance to traverse one voxel
-        float tDeltaX = Math.Abs(1.0f / direction.X);
-        float tDeltaY = Math.Abs(1.0f / direction.Y);
-        float tDeltaZ = Math.Abs(1.0f / direction.Z);
-        
+        var tDeltaX = Math.Abs(1.0f / direction.X);
+        var tDeltaY = Math.Abs(1.0f / direction.Y);
+        var tDeltaZ = Math.Abs(1.0f / direction.Z);
+
         // Avoid division by zero issues
         if (Math.Abs(direction.X) < 1e-6) { tMaxX = float.MaxValue; tDeltaX = float.MaxValue; }
         if (Math.Abs(direction.Y) < 1e-6) { tMaxY = float.MaxValue; tDeltaY = float.MaxValue; }
         if (Math.Abs(direction.Z) < 1e-6) { tMaxZ = float.MaxValue; tDeltaZ = float.MaxValue; }
 
-        Vector3i lastPos = new Vector3i(x, y, z);
+        var lastPos = new Vector3i(x, y, z);
 
         while (t < maxDistance)
         {
@@ -158,22 +158,22 @@ public class CollisionManager
         blockType = BlockType.None;
         if (y < 0 || y >= 128) return false;
 
-        int chunkX = (int)Math.Floor((float)x / 16.0f);
-        int chunkZ = (int)Math.Floor((float)z / 16.0f);
-        int chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
-        
+        var chunkX = (int)Math.Floor((float)x / 16.0f);
+        var chunkZ = (int)Math.Floor((float)z / 16.0f);
+        var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
+
         if (TryGetChunkData(chunkIdx, out var data))
         {
-            int localX = x % 16;
-            int localZ = z % 16;
+            var localX = x % 16;
+            var localZ = z % 16;
             if (localX < 0) localX += 16;
             if (localZ < 0) localZ += 16;
-            
-            int colIdx = localZ * 16 + localX;
-            int count = data.SpanCounts[colIdx];
-            int offset = colIdx * 16; // MaxSpansPerColumn
-            
-            for (int i = 0; i < count; i++)
+
+            var colIdx = localZ * 16 + localX;
+            var count = data.SpanCounts[colIdx];
+            var offset = colIdx * 16; // MaxSpansPerColumn
+
+            for (var i = 0; i < count; i++)
             {
                 var span = data.Spans[offset + i];
                 if (y >= span.StartY && y <= span.EndY)
