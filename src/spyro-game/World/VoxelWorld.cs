@@ -991,13 +991,6 @@ public class VoxelWorld(int seed)
         return hasChanges;
     }
 
-    // --- GPU streaming integration ---
-    internal bool UseGpuStreaming { get; set; } = true;
-
-    internal void ProcessGpuStreamingOnGlThread()
-    {
-        // Legacy GPU streaming logic removed
-    }
 
     internal void EnqueueChunkForUpload(Chunk chunk)
     {

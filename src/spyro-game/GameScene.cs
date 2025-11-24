@@ -291,12 +291,7 @@ internal class GameScene : Scene
             // Call streaming manager every frame to handle chunk loading/unloading
             streamingManager.Update(camera.Position);
         }
-        else
-        {
-            // OLD system fallback - try to update streaming
-            try { world.UpdateStreamingFromCamera(); } catch { }
-            try { world.ProcessGpuStreamingOnGlThread(); } catch { }
-        }
+        
 
         // Update visibility
         world.UpdateVisibilityFromCamera(camera!);
@@ -306,7 +301,7 @@ internal class GameScene : Scene
         {
             var camPos = camera.Position;
             var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
-            bool isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
+            var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
             
             if (terrainRenderer != null) 
             {
