@@ -251,13 +251,13 @@ public class Player
 
     private void HandleMovement(double elapsedSeconds)
     {
-        float dt = (float)elapsedSeconds;
+        var dt = (float)elapsedSeconds;
 
         // Apply gravity
         velocity.Y += Gravity * dt;
 
         // Calculate wish direction
-        Vector3 wishDir = Vector3.Zero;
+        var wishDir = Vector3.Zero;
         if (requestedMovement.LengthSquared > 0.001f)
         {
             wishDir = requestedMovement.Normalized();
@@ -280,7 +280,7 @@ public class Player
 
         // Clamp horizontal velocity
         var maxSpeed = _isSprinting ? MoveSpeed * 1.5f : (_isCrouching ? MoveSpeed * 0.5f : MoveSpeed);
-        Vector2 hVel = new Vector2(velocity.X, velocity.Z);
+        var hVel = new Vector2(velocity.X, velocity.Z);
         if (hVel.LengthSquared > maxSpeed * maxSpeed)
         {
             hVel = hVel.Normalized() * maxSpeed;
@@ -297,11 +297,11 @@ public class Player
 
     private void Accelerate(Vector3 wishDir, float wishSpeed, float accel, float dt)
     {
-        float currentSpeed = Vector3.Dot(velocity, wishDir);
-        float addSpeed = wishSpeed - currentSpeed;
+        var currentSpeed = Vector3.Dot(velocity, wishDir);
+        var addSpeed = wishSpeed - currentSpeed;
         if (addSpeed <= 0) return;
 
-        float accelSpeed = accel * dt * wishSpeed;
+        var accelSpeed = accel * dt * wishSpeed;
         if (accelSpeed > addSpeed) accelSpeed = addSpeed;
 
         velocity.X += accelSpeed * wishDir.X;
@@ -311,8 +311,8 @@ public class Player
     private void Move(Vector3 delta)
     {
         // Separate XZ and Y movement for stability
-        Vector3 deltaXZ = new Vector3(delta.X, 0, delta.Z);
-        Vector3 deltaY = new Vector3(0, delta.Y, 0);
+        var deltaXZ = new Vector3(delta.X, 0, delta.Z);
+        var deltaY = new Vector3(0, delta.Y, 0);
 
         // Move XZ
         position += deltaXZ;
@@ -340,17 +340,17 @@ public class Player
             if (position.Y >= Max.Y || position.Y + Height <= Min.Y) continue;
 
             // Closest point on AABB to cylinder axis
-            float closestX = Math.Clamp(position.X, Min.X, Max.X);
-            float closestZ = Math.Clamp(position.Z, Min.Z, Max.Z);
+            var closestX = Math.Clamp(position.X, Min.X, Max.X);
+            var closestZ = Math.Clamp(position.Z, Min.Z, Max.Z);
 
-            float dx = position.X - closestX;
-            float dz = position.Z - closestZ;
-            float distSq = dx * dx + dz * dz;
+            var dx = position.X - closestX;
+            var dz = position.Z - closestZ;
+            var distSq = dx * dx + dz * dz;
 
             if (distSq < HalfWidth * HalfWidth)
             {
-                float dist = MathF.Sqrt(distSq);
-                float penetration = HalfWidth - dist;
+                var dist = MathF.Sqrt(distSq);
+                var penetration = HalfWidth - dist;
 
                 Vector3 normal;
                 if (dist < 1e-4f)
@@ -365,7 +365,7 @@ public class Player
                 }
 
                 // Auto-jump check
-                bool autoJumpTriggered = false;
+                var autoJumpTriggered = false;
                 if (isGrounded)
                 {
                     autoJumpTriggered = CheckAutoJump(neighbor.Value, normal);
@@ -373,9 +373,9 @@ public class Player
                 else
                 {
                     // Airborne collision logic
-                    float obstacleTop = Max.Y;
-                    float stepHeight = obstacleTop - position.Y;
-                    
+                    var obstacleTop = Max.Y;
+                    var stepHeight = obstacleTop - position.Y;
+
                     // Allow penetration for 1-block high obstacles while jumping
                     if (stepHeight <= 1.1f && velocity.Y > 0)
                     {
@@ -395,7 +395,7 @@ public class Player
                         else
                         {
                             // Slide instead of stop to allow movement along walls while jumping/rising
-                            float dot = Vector3.Dot(velocity, normal);
+                            var dot = Vector3.Dot(velocity, normal);
                             velocity -= normal * dot;
                         }
                     }
@@ -409,7 +409,7 @@ public class Player
                     // Slide velocity (only if grounded)
                     if (isGrounded)
                     {
-                        float dot = Vector3.Dot(velocity, normal);
+                        var dot = Vector3.Dot(velocity, normal);
                         if (dot < 0)
                         {
                             velocity -= normal * dot;
@@ -429,7 +429,7 @@ public class Player
             {
                 velocity.Y = 0;
                 // Push down slightly to avoid sticking
-                float ceilingY = MathF.Floor(position.Y + Height);
+                var ceilingY = MathF.Floor(position.Y + Height);
                 position.Y = ceilingY - Height - 0.001f;
             }
         }
@@ -443,20 +443,21 @@ public class Player
     private bool IsHeadHittingCeiling()
     {
         if (IsGhostMode) return false;
-        
-        float topY = position.Y + Height;
-        float checkRadius = HalfWidth - 0.05f; // Slightly smaller to avoid wall friction
-        
-        Vector3[] offsets = [
+
+        var topY = position.Y + Height;
+        var checkRadius = HalfWidth - 0.05f; // Slightly smaller to avoid wall friction
+
+        var offsets = new[]
+        {
             new Vector3(-checkRadius, 0, -checkRadius),
             new Vector3(-checkRadius, 0, +checkRadius),
             new Vector3(+checkRadius, 0, -checkRadius),
             new Vector3(+checkRadius, 0, +checkRadius)
-        ];
+        };
 
         foreach (var off in offsets)
         {
-            Vector3 p = position + off;
+            var p = position + off;
             var block = world.GetBlockByPositionGlobalSafe((int)p.X, (int)topY, (int)p.Z);
             if (block != null && block.Value.BlockType != BlockType.None && block.Value.BlockType != BlockType.WaterLevel)
                 return true;
@@ -469,8 +470,8 @@ public class Player
         if (!isGrounded) return false; // Only auto-jump from ground
 
         // Check height
-        float obstacleTop = obstacle.Aabb.Max.Y;
-        float stepHeight = obstacleTop - position.Y;
+        var obstacleTop = obstacle.Aabb.Max.Y;
+        var stepHeight = obstacleTop - position.Y;
 
         if (stepHeight > 0 && stepHeight <= 1.1f)
         {
@@ -483,8 +484,8 @@ public class Player
 
             // Check clearance above obstacle at the landing spot
             // We project where we would land
-            Vector3 moveDir = new Vector3(velocity.X, 0, velocity.Z).Normalized();
-            Vector3 landPos = position + moveDir * 0.5f; // Look slightly ahead
+            var moveDir = new Vector3(velocity.X, 0, velocity.Z).Normalized();
+            var landPos = position + moveDir * 0.5f; // Look slightly ahead
             landPos.Y = obstacleTop + 0.01f;
 
             // Check for headroom at landing position
@@ -495,15 +496,15 @@ public class Player
             }
             
             // Angle check
-            float dot = Vector3.Dot(moveDir, -wallNormal);
+            var dot = Vector3.Dot(moveDir, -wallNormal);
             
             if (dot > 0.7f)
             {
                 // Trigger auto-jump with velocity impulse
                 // v = sqrt(2 * g * h)
-                float jumpHeight = stepHeight + 0.2f; // Clear the edge
-                float jumpVel = MathF.Sqrt(2 * MathF.Abs(Gravity) * jumpHeight);
-                
+                var jumpHeight = stepHeight + 0.2f; // Clear the edge
+                var jumpVel = MathF.Sqrt(2 * MathF.Abs(Gravity) * jumpHeight);
+
                 velocity.Y = jumpVel;
                 isGrounded = false;
                 return true;
@@ -514,18 +515,18 @@ public class Player
 
     private bool IsBoxBlocked(Vector3 pos)
     {
-        int minX = (int)MathF.Floor(pos.X - HalfWidth + 0.1f);
-        int maxX = (int)MathF.Floor(pos.X + HalfWidth - 0.1f);
-        int minZ = (int)MathF.Floor(pos.Z - HalfWidth + 0.1f);
-        int maxZ = (int)MathF.Floor(pos.Z + HalfWidth - 0.1f);
-        int minY = (int)MathF.Floor(pos.Y + 0.1f);
-        int maxY = (int)MathF.Floor(pos.Y + Height - 0.1f);
+        var minX = (int)MathF.Floor(pos.X - HalfWidth + 0.1f);
+        var maxX = (int)MathF.Floor(pos.X + HalfWidth - 0.1f);
+        var minZ = (int)MathF.Floor(pos.Z - HalfWidth + 0.1f);
+        var maxZ = (int)MathF.Floor(pos.Z + HalfWidth - 0.1f);
+        var minY = (int)MathF.Floor(pos.Y + 0.1f);
+        var maxY = (int)MathF.Floor(pos.Y + Height - 0.1f);
 
-        for (int y = minY; y <= maxY; y++)
+        for (var y = minY; y <= maxY; y++)
         {
-            for (int x = minX; x <= maxX; x++)
+            for (var x = minX; x <= maxX; x++)
             {
-                for (int z = minZ; z <= maxZ; z++)
+                for (var z = minZ; z <= maxZ; z++)
                 {
                     var b = world.GetBlockByPositionGlobalSafe(x, y, z);
                     if (b != null && b.Value.BlockType != BlockType.None && b.Value.BlockType != BlockType.WaterLevel)
@@ -542,19 +543,19 @@ public class Player
     {
         // Shape cast downwards
         // For simplicity, check blocks around feet
-        
-        int minX = (int)MathF.Floor(position.X - HalfWidth + 0.1f);
-        int maxX = (int)MathF.Floor(position.X + HalfWidth - 0.1f);
-        int minZ = (int)MathF.Floor(position.Z - HalfWidth + 0.1f);
-        int maxZ = (int)MathF.Floor(position.Z + HalfWidth - 0.1f);
-        int y = (int)MathF.Floor(position.Y - 0.1f); // Check block below feet
 
-        float maxY = -float.MaxValue;
-        bool foundGround = false;
+        var minX = (int)MathF.Floor(position.X - HalfWidth + 0.1f);
+        var maxX = (int)MathF.Floor(position.X + HalfWidth - 0.1f);
+        var minZ = (int)MathF.Floor(position.Z - HalfWidth + 0.1f);
+        var maxZ = (int)MathF.Floor(position.Z + HalfWidth - 0.1f);
+        var y = (int)MathF.Floor(position.Y - 0.1f); // Check block below feet
 
-        for (int x = minX; x <= maxX; x++)
+        var maxY = -float.MaxValue;
+        var foundGround = false;
+
+        for (var x = minX; x <= maxX; x++)
         {
-            for (int z = minZ; z <= maxZ; z++)
+            for (var z = minZ; z <= maxZ; z++)
             {
                 var block = world.GetBlockByPositionGlobalSafe(x, y, z);
                 if (block != null && block.Value.BlockType != BlockType.None && block.Value.BlockType != BlockType.WaterLevel)
@@ -573,7 +574,7 @@ public class Player
         {
             // Snap to ground if close enough (Step Down) or if we were already grounded/falling slightly
             // Allow snapping down up to 1.1m (step height) to handle stairs smoothly
-            float snapDist = 1.1f;
+            var snapDist = 1.1f;
             
             if (position.Y <= maxY + snapDist && velocity.Y <= 0)
             {
