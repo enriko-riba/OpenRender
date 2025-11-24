@@ -5,20 +5,12 @@ namespace SpyroGame.World;
 
 public class TerrainBuilder
 {
-    private readonly struct DomainWarpSettings
+    private readonly struct DomainWarpSettings(float baseFreq, float warpFreq, float warpAmp, int seed)
     {
-        public DomainWarpSettings(float baseFreq, float warpFreq, float warpAmp, int seed)
-        {
-            BaseFreq = baseFreq;
-            WarpFreq = warpFreq;
-            WarpAmp = warpAmp;
-            Seed = seed;
-        }
-
-        public float BaseFreq { get; }
-        public float WarpFreq { get; }
-        public float WarpAmp { get; }
-        public int Seed { get; }
+        public float BaseFreq { get; } = baseFreq;
+        public float WarpFreq { get; } = warpFreq;
+        public float WarpAmp { get; } = warpAmp;
+        public int Seed { get; } = seed;
     }
 
     private readonly DomainWarpSettings baseNoiseSettings;
@@ -110,25 +102,25 @@ public class TerrainBuilder
 
     private float HeightRaw(int wx, int wz, float baseVal)
     {
-        float C = 0.5f * (Fields.Sample(Fields.C, wx, wz) + 1f);
-        float E = 0.5f * (Fields.Sample(Fields.E, wx, wz) + 1f);
+        var C = 0.5f * (Fields.Sample(Fields.C, wx, wz) + 1f);
+        var E = 0.5f * (Fields.Sample(Fields.E, wx, wz) + 1f);
 
-        float fbm = 0.5f * (baseVal + 1f);                           // [0,1]
-        float rid = 1f - MathF.Abs(SampleRidgeNoise(wx, wz));   // [0,1]
+        var fbm = 0.5f * (baseVal + 1f);                      // [0,1]
+        var rid = 1f - MathF.Abs(SampleRidgeNoise(wx, wz));   // [0,1]
         rid = MathF.Pow(Saturate(rid), P.RidgePow);
 
-        float ruggedWeight = MathF.Pow(1f - E, 1.6f) * Lerp(0.5f, 1.2f, C);
-        float relief = Lerp(MathF.Pow(fbm, P.SmoothPow), rid, ruggedWeight);
+        var ruggedWeight = MathF.Pow(1f - E, 1.6f) * Lerp(0.5f, 1.2f, C);
+        var relief = Lerp(MathF.Pow(fbm, P.SmoothPow), rid, ruggedWeight);
 
-        float seaBias = Lerp(P.SeaMin, P.SeaMax, C);
-        float mountainK = Lerp(P.MtnLow, P.MtnHigh, C);
+        var seaBias = Lerp(P.SeaMin, P.SeaMax, C);
+        var mountainK = Lerp(P.MtnLow, P.MtnHigh, C);
 
-        float h = seaBias + (relief - 0.5f) * mountainK;
+        var h = seaBias + (relief - 0.5f) * mountainK;
 
         // --- Carve connected valleys (band near 0 of anisotropic noise) ---
-        float r = NoiseData.SampleGradientNoise2D(wx * 0.0009f, wz * 0.00045f, 1f, 1f, seed ^ 0xBEEF);
-        float band = 1f - Smooth01(MathF.Abs(r));                 // high near river "centerlines"
-        float riverDepth = Lerp(0.02f, 0.14f, C) * Lerp(1.0f, 0.5f, E); // inland & low erosion → deeper
+        var r = NoiseData.SampleGradientNoise2D(wx * 0.0009f, wz * 0.00045f, 1f, 1f, seed ^ 0xBEEF);
+        var band = 1f - Smooth01(MathF.Abs(r));                 // high near river "centerlines"
+        var riverDepth = Lerp(0.02f, 0.14f, C) * Lerp(1.0f, 0.5f, E); // inland & low erosion → deeper
         h -= band * riverDepth;                                    // carve elongated, connected valleys
 
         h += (rid - 0.5f) * (C * C) * 0.45f;          // peak boost
@@ -141,35 +133,35 @@ public class TerrainBuilder
     {
         // sample raw h sparsely
         var samples = new List<float>((worldSize / stride) * (worldSize / stride));
-        for (int z = 0; z < worldSize; z += stride)
-            for (int x = 0; x < worldSize; x += stride)
+        for (var z = 0; z < worldSize; z += stride)
+            for (var x = 0; x < worldSize; x += stride)
             {
-                float baseVal = SampleBaseNoise(x, z);
+                var baseVal = SampleBaseNoise(x, z);
                 samples.Add(HeightRaw(x, z, baseVal));
             }
 
         samples.Sort();
         // robust quantiles → map [qLo..qHi] → [0..1]
-        float qLo = samples[(int)(samples.Count * 0.10f)];  // 10th percentile
-        float qHi = samples[(int)(samples.Count * 0.98f)];  // 98th percentile
+        var qLo = samples[(int)(samples.Count * 0.10f)];  // 10th percentile
+        var qHi = samples[(int)(samples.Count * 0.98f)];  // 98th percentile
         elevOffset = qLo;
         elevScale = 1f / MathF.Max(qHi - qLo, 1e-6f);
 
         //  Ensure target ocean coverage
-        float targetWater01 = VoxelHelper.WaterLevel / (float)(VoxelHelper.ChunkYSize - 1); // ~0.275
-        float desiredOceanFrac = 0.40f;
+        var targetWater01 = VoxelHelper.WaterLevel / (float)(VoxelHelper.ChunkYSize - 1); // ~0.275
+        var desiredOceanFrac = 0.40f;
 
         // estimate current ocean fraction from the sampled set
-        int below = 0;
+        var below = 0;
         foreach (var s in samples)
         {
-            float s01 = Saturate((s - elevOffset) * elevScale);
+            var s01 = Saturate((s - elevOffset) * elevScale);
             if (s01 < targetWater01) below++;
         }
-        float frac = below / (float)samples.Count;
+        var frac = below / (float)samples.Count;
 
         // shift offset to hit desired
-        float deltaFrac = desiredOceanFrac - frac;
+        var deltaFrac = desiredOceanFrac - frac;
         // small proportional shift (tune 0.25f if needed)
         elevOffset -= deltaFrac * (1f / elevScale) * 0.25f;
     }
@@ -218,7 +210,7 @@ public class TerrainBuilder
                 var height = GetHeightNormalizedGlobal(gx, gz);
                 columnHeights[columnIndex] = height;
 
-                SampleFields01(gx, gz, out float C, out float E, out float T, out float H);
+                SampleFields01(gx, gz, out var C, out var E, out var T, out var H);
                 var height01 = height / (float)(VoxelHelper.ChunkYSize - 1);
                 var slope01 = EstimateSlope01(gx, gz);
                 var biome = ClassifyBiome(C, E, T, H, height01, slope01);
@@ -298,19 +290,19 @@ public class TerrainBuilder
     private int GenerateHeight(int wx, int wz)
     {
         // Base terrain (large features)
-        float baseScale = 0.005f;  // 1/200
-        float baseNoise = MultiOctaveNoise(wx * baseScale, wz * baseScale, (uint)seed, 4);
+        var baseScale = 0.005f;  // 1/200
+        var baseNoise = MultiOctaveNoise(wx * baseScale, wz * baseScale, (uint)seed, 4);
 
         // Detail noise (small features)
-        float detailScale = 0.02f;  // 1/50
-        float detailNoise = MultiOctaveNoise(wx * detailScale, wz * detailScale, (uint)seed + 1000u, 3);
+        var detailScale = 0.02f;  // 1/50
+        var detailNoise = MultiOctaveNoise(wx * detailScale, wz * detailScale, (uint)seed + 1000u, 3);
 
         // Combine: base terrain + 30% detail
-        float combined = baseNoise + detailNoise * 0.3f;
+        var combined = baseNoise + detailNoise * 0.3f;
 
         // Map to height range: water level ±40 blocks = range of 80 blocks
-        float h01 = combined * 0.5f + 0.5f;  // Map [-1,1] to [0,1]
-        int height = (int)((float)VoxelHelper.WaterLevel + (h01 - 0.5f) * 80.0f);
+        var h01 = combined * 0.5f + 0.5f;  // Map [-1,1] to [0,1]
+        var height = (int)(VoxelHelper.WaterLevel + (h01 - 0.5f) * 80.0f);
 
         // Clamp to valid range
         return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
@@ -419,7 +411,7 @@ public class TerrainBuilder
         }
 
         // Sub-surface
-        int depth = maxHeight - blockAltitude;
+        var depth = maxHeight - blockAltitude;
         if (depth <= 2) return BlockType.Dirt;
         return BlockType.Rock;
     }
@@ -507,11 +499,11 @@ public class TerrainBuilder
             return moisture > 0.45f ? "Taiga" : "Tundra";
 
         // fallback: nearest centroid by L1 distance
-        Biome best = Biomes[0];
-        float bestD = float.MaxValue;
+        var best = Biomes[0];
+        var bestD = float.MaxValue;
         foreach (var b in Biomes)
         {
-            float d = MathF.Abs(b.C - C) + MathF.Abs(b.E - E) + MathF.Abs(b.T - temperature) + MathF.Abs(b.H - moisture);
+            var d = MathF.Abs(b.C - C) + MathF.Abs(b.E - E) + MathF.Abs(b.T - temperature) + MathF.Abs(b.H - moisture);
             if (d < bestD) { bestD = d; best = b; }
         }
         return best.Name;
