@@ -37,5 +37,15 @@
     <ProjectReference Include="..\OpenRender\OpenRender.csproj" />
     <ProjectReference Include="..\TextRendering\TextRendering.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Resources\voxel\Beach\" />
+    <Folder Include="Resources\voxel\Desert\" />
+    <Folder Include="Resources\voxel\Highlands\" />
+    <Folder Include="Resources\voxel\Alpine\" />
+    <Folder Include="Resources\voxel\Tundra\" />
+    <Folder Include="Resources\voxel\Rainforest\" />
+    <Folder Include="Resources\voxel\Savana\" />
+    <Folder Include="Resources\voxel\Plains\" />
+  </ItemGroup>
 
 </Project>

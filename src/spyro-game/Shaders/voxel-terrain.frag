@@ -5,6 +5,7 @@
 // Implements basic Blinn-Phong lighting with ambient occlusion
 
 #version 460
+#extension GL_ARB_bindless_texture : require
 
 // ============================================================================
 // Uniforms
@@ -36,18 +37,42 @@ uniform vec3 uMaterialSpecular = vec3(0.2, 0.2, 0.2);
 uniform float uMaterialShininess = 16.0;
 
 // Texture samplers
-uniform sampler2D uTexSurface;      // Slot 0 (was Grass)
-uniform sampler2D uTexWater;        // Slot 1
-uniform sampler2D uTexSubSurface;   // Slot 2 (was Dirt)
-uniform sampler2D uTexDeep;         // Slot 3 (was Rock)
-uniform sampler2D uTexShore;        // Slot 4 (was Sand)
-uniform sampler2D uTexUnderwaterSubsurface; // Slot 5 (was BedRock)
+// M5: Bindless texture handles for biome blending
+// [BiomeID * 8 + GeologyLayer]
+uniform uvec2 uBiomeTextures[80];
 
 uniform int uIsUnderwater; // 1 if camera is inside a water block, 0 otherwise
 uniform float uTime;
 uniform int uShowBiomes;
 
+#define IS_FRAGMENT_SHADER
 #include "terrain-common.glsl"
+
+// Helper to map BlockType to GeologyLayer
+int getGeologyLayer(uint blockType) {
+    if (blockType == BLOCK_WATER_LEVEL) return 1; // Water
+    if (blockType == BLOCK_GRASS_DIRT) return 2; // Surface
+    if (blockType == BLOCK_DIRT) return 3; // Subsurface
+    if (blockType == BLOCK_ROCK) return 4; // DeepSubsurface
+    if (blockType == BLOCK_SAND) return 7; // ShoreLine
+    if (blockType == BLOCK_BEDROCK) return 6; // UnderwaterSubsurface
+    // Fallback
+    return 2; // Surface
+}
+
+// Helper to sample biome texture
+vec4 sampleBiomeTexture(uint biomeId, int layer, vec2 uv) {
+    if (biomeId >= 10) biomeId = 0; // Safety clamp
+    int index = int(biomeId) * 8 + layer;
+    uvec2 handle = uBiomeTextures[index];
+    
+    if (handle.x == 0u && handle.y == 0u) {
+        return vec4(1.0, 0.0, 1.0, 1.0); // Magenta error
+    }
+    
+    return texture(sampler2D(handle), uv);
+}
+
 
 // ============================================================================
 // Fragment Input (from vertex shader)
@@ -77,7 +102,7 @@ layout(location = 0) out vec4 FragColor;
 
 void main() {
     // Underwater State
-    float waterLevel = 36.0;
+    float waterLevel = float(WATER_LEVEL) + 1.0;
     bool isCameraUnderwater = uIsUnderwater == 1;
     bool isFragmentUnderwater = vWorldPos.y < waterLevel;
 
@@ -87,7 +112,7 @@ void main() {
     vec3 V = normalize(vViewDir);
 
     // Sample texture based on block type
-    vec4 baseColor;
+    vec4 baseColor = vec4(0.0);
     
     // Procedural Water Normal
     vec3 waterNormal = N;
@@ -113,9 +138,29 @@ void main() {
         waterNormal = normalize(N + waveOffset);
     }
     
+    // M5: Biome Blending
+    int layer = getGeologyLayer(vBlockType);
+
+    // Fix for greedy meshing artifacts: Calculate biome at voxel center
+    // This ensures the whole voxel gets a single biome assignment, preventing
+    // diagonal artifacts on faces and gradients across the block.
+    vec3 voxelCenter = floor(vWorldPos - N * 0.01) + 0.5;
+    RegionMix regionMix = getBiomeWeights(voxelCenter);
+
+    float totalWeight = 0.0;
+    for (int i = 0; i < 4; i++) {
+        if (regionMix.weights[i] > 0.001) {
+            baseColor += sampleBiomeTexture(regionMix.biomeIds[i], layer, vTexCoord) * regionMix.weights[i];
+            totalWeight += regionMix.weights[i];
+        }
+    }
+    
+    // Normalize just in case
+    if (totalWeight > 0.0) baseColor /= totalWeight;
+    else baseColor = vec4(1.0, 0.0, 1.0, 1.0); // Error
+    
+    // Water specific processing
     if (vBlockType == BLOCK_WATER_LEVEL) {
-        baseColor = texture(uTexWater, vTexCoord);
-        
         // Water opacity increases with distance to hide underwater culling artifacts
         float dist = length(vWorldPos - cameraPos);
         
@@ -159,27 +204,9 @@ void main() {
             // Add specular to base color
             baseColor.rgb += sunSpecular;
         }
-
-    } else if (vBlockType == BLOCK_GRASS_DIRT) {
-        baseColor = texture(uTexSurface, vTexCoord);
-        baseColor.a = 1.0;
-    } else if (vBlockType == BLOCK_DIRT) {
-        baseColor = texture(uTexSubSurface, vTexCoord);
-        baseColor.a = 1.0;
-    } else if (vBlockType == BLOCK_ROCK) {
-        baseColor = texture(uTexDeep, vTexCoord);
-        baseColor.a = 1.0;
-    } else if (vBlockType == BLOCK_SAND) {
-        baseColor = texture(uTexShore, vTexCoord);
-        baseColor.a = 1.0;
-    } else if (vBlockType == BLOCK_BEDROCK) {
-        baseColor = texture(uTexUnderwaterSubsurface, vTexCoord);
-        baseColor.a = 1.0;
     } else {
-        // Fallback
-        baseColor = texture(uTexSurface, vTexCoord);
+        // Solid blocks are opaque
         baseColor.a = 1.0;
-        baseColor.rgb = vec3(1.0, 0.0, 1.0); // Magenta for error
     }
     
     vec3 texColor = baseColor.rgb;
@@ -242,29 +269,6 @@ void main() {
     // Combine components
     vec3 finalColor = ambient + diffuse + specular;
     
-    // M4: Biome Visualization (Debug)
-    if (uShowBiomes == 1) {
-        RegionMix regionMix = getBiomeWeights(vWorldPos);
-        
-        // Visualize primary biome
-        uint biomeId = regionMix.biomeIds[0];
-        vec3 biomeColor = vec3(0.5);
-        
-        switch(biomeId) {
-            case 0u: biomeColor = vec3(0.0, 0.0, 1.0); break; // Ocean
-            case 1u: biomeColor = vec3(1.0, 1.0, 0.0); break; // Beach
-            case 2u: biomeColor = vec3(0.0, 1.0, 0.0); break; // Plains
-            case 3u: biomeColor = vec3(1.0, 0.5, 0.0); break; // Savanna
-            case 4u: biomeColor = vec3(1.0, 0.0, 0.0); break; // Desert
-            case 5u: biomeColor = vec3(0.0, 0.5, 0.0); break; // Rainforest
-            case 6u: biomeColor = vec3(0.0, 1.0, 1.0); break; // Taiga
-            case 7u: biomeColor = vec3(1.0, 1.0, 1.0); break; // Tundra
-            case 8u: biomeColor = vec3(0.5, 0.5, 0.5); break; // Highlands
-            case 9u: biomeColor = vec3(0.5, 0.0, 0.5); break; // Alpine
-        }
-        
-        finalColor = mix(finalColor, biomeColor, 0.5);
-    }
 
     // --- ATMOSPHERIC FOG (Above water) ---
     if (!isCameraUnderwater) {
@@ -335,6 +339,30 @@ void main() {
              // Mix in more fog color to hide the "crisp" outside world
              finalColor = mix(finalColor, waterFogColor, 0.9);
         }
+    }
+
+    // M4: Biome Visualization (Debug)
+    if (uShowBiomes == 1) {
+        // RegionMix regionMix = getBiomeWeights(vWorldPos); // Reused from above
+        
+        // Visualize primary biome
+        uint biomeId = regionMix.biomeIds[0];
+        vec3 biomeColor = vec3(0.5);
+        
+        switch(biomeId) {
+            case 0u: biomeColor = vec3(0.0, 0.0, 1.0); break; // Ocean
+            case 1u: biomeColor = vec3(1.0, 1.0, 0.0); break; // Beach
+            case 2u: biomeColor = vec3(0.0, 1.0, 0.0); break; // Plains
+            case 3u: biomeColor = vec3(1.0, 0.5, 0.0); break; // Savanna
+            case 4u: biomeColor = vec3(1.0, 0.0, 0.0); break; // Desert
+            case 5u: biomeColor = vec3(0.0, 0.5, 0.0); break; // Rainforest
+            case 6u: biomeColor = vec3(0.0, 1.0, 1.0); break; // Taiga
+            case 7u: biomeColor = vec3(1.0, 1.0, 1.0); break; // Tundra
+            case 8u: biomeColor = vec3(0.5, 0.5, 0.5); break; // Highlands
+            case 9u: biomeColor = vec3(0.5, 0.0, 0.5); break; // Alpine
+        }
+        
+        finalColor = mix(finalColor, biomeColor, 0.5);
     }
 
     // Output with opacity

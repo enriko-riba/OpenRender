@@ -63,11 +63,74 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public int BiomeLutTexture { get; set; }
     public bool ShowBiomes { get; set; }
 
+    // M5: Biome texture handles (bindless)
+    // Flattened array: [BiomeID * 8 + GeologyLayer]
+    private ulong[]? biomeTextureHandles;
+    private readonly Dictionary<string, Texture> textureCache = [];
+
     /// <summary>
     /// Custom texture storage to bypass Material system limits (8 slots) and rigid TextureType slots.
     /// Mapped by GeologyLayer for clarity.
     /// </summary>
-    public Dictionary<GeologyLayer, Texture> Textures { get; } = new();
+    public Dictionary<GeologyLayer, Texture> Textures { get; } = [];
+
+    public void LoadBiomeTextures(TerrainConfig config)
+    {
+        if (config.Biomes == null || config.Biomes.Count == 0) return;
+
+        // 10 biomes * 8 layers = 80 handles
+        var handleCount = 10 * 8;
+        if (biomeTextureHandles == null || biomeTextureHandles.Length != handleCount)
+        {
+            biomeTextureHandles = new ulong[handleCount];
+        }
+
+        // Create a sampler for all terrain textures
+        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapNearest, TextureMagFilter.Nearest, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
+
+        for (var i = 0; i < config.Biomes.Count; i++)
+        {
+            var biome = config.Biomes[i];
+            if (biome.Id >= 10) continue; // Max 10 biomes supported in shader for now
+
+            for (var layer = 0; layer < 8; layer++)
+            {
+                if (layer < biome.TexturePaths.Count)
+                {
+                    var path = biome.TexturePaths[layer];
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        biomeTextureHandles[biome.Id * 8 + layer] = 0;
+                        continue;
+                    }
+
+                    if (!textureCache.TryGetValue(path, out var tex))
+                    {
+                        try 
+                        {
+                            // Use TextureType.Diffuse for all to ensure sRGB if needed, or generic loading
+                            // Actually Texture.FromFile determines format. 
+                            // We want MipMaps for terrain.
+                            tex = Texture.FromFile([path]); 
+                            if (tex != null) textureCache[path] = tex;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"Failed to load texture '{path}': {ex.Message}");
+                        }
+                    }
+
+                    if (tex != null)
+                    {
+                        biomeTextureHandles[biome.Id * 8 + layer] = tex.GetBindlessHandle(sampler);
+                    }
+                }
+            }
+        }
+        
+        // Make handles resident? Texture.GetBindlessHandle usually makes it resident.
+        // OpenRender implementation detail: GetBindlessHandle calls MakeTextureHandleResidentARB.
+    }
 
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
     {
@@ -306,51 +369,43 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // Bind textures from custom dictionary
-        // This bypasses the Material system's 8-texture limit and TextureType slot restrictions.
-        if (Textures.Count > 0)
+        // M5: Bind Biome Texture Handles
+        if (biomeTextureHandles != null)
         {
-            void Bind(GeologyLayer layer, string uniformName, int unit)
+            // Try array syntax first, then flat
+            var loc = shader.GetUniformLocation("uBiomeTextures[0]");
+            if (loc == -1) loc = shader.GetUniformLocation("uBiomeTextures");
+
+            if (loc != -1)
             {
-                if (Textures.TryGetValue(layer, out var tex))
+                // Convert ulong[] to uint[] for uvec2 array
+                var uints = new uint[biomeTextureHandles.Length * 2];
+                for (var i = 0; i < biomeTextureHandles.Length; i++)
                 {
-                    GL.ActiveTexture(TextureUnit.Texture0 + unit);
-                    GL.BindTexture(TextureTarget.Texture2D, tex.Handle);
-                    shader.SetInt(uniformName, unit);
+                    var h = biomeTextureHandles[i];
+                    uints[i * 2] = (uint)(h & 0xFFFFFFFF);
+                    uints[i * 2 + 1] = (uint)(h >> 32);
                 }
+
+                // Set the uniform array
+                // Note: Some drivers/OpenTK versions might have issues with count > 1 if they don't detect array correctly
+                GL.Uniform2(loc, biomeTextureHandles.Length, uints);
             }
-
-            Bind(GeologyLayer.Surface, "uTexSurface", 0);
-            Bind(GeologyLayer.Water, "uTexWater", 1);
-            Bind(GeologyLayer.Subsurface, "uTexSubSurface", 2);
-            Bind(GeologyLayer.DeepSubsurface, "uTexDeep", 3);
-            Bind(GeologyLayer.ShoreLine, "uTexShore", 4);
-            Bind(GeologyLayer.UnderwaterSubsurface, "uTexUnderwaterSubsurface", 5);
         }
 
-        // Enable blending for water transparency
-        // GL.Enable(EnableCap.Blend);
-        // GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-
-        // Set material uniforms
-        var matSpecular = new Vector3(0.1f, 0.1f, 0.1f);
-        shader.SetVector3("uMaterialSpecular", ref matSpecular);
-        shader.SetFloat("uMaterialShininess", 8.0f);
-        shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
-        shader.SetFloat("uTime", (float)Scene!.SceneManager.Time);
-        shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
-
-        // Bind Terrain Params (M4)
-        if (TerrainParamsSSBO != 0)
-        {
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
-        }
-
-        // Bind Biome LUT (M4)
+        // M5: Bind Biome LUT (Unit 7)
         if (BiomeLutTexture != 0)
         {
             GL.ActiveTexture(TextureUnit.Texture7);
             GL.BindTexture(TextureTarget.Texture2D, BiomeLutTexture);
+            // Reset active texture to 0 to avoid side effects
+            GL.ActiveTexture(TextureUnit.Texture0);
+        }
+
+        // M5: Bind Terrain Params (Binding 10)
+        if (TerrainParamsSSBO != 0)
+        {
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
         }
 
         // Chunk transform (identity for now - chunks in world space)
@@ -359,6 +414,10 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // Bind VAO (has per-chunk IBO bound)
         GL.BindVertexArray(vao);
+
+        // Set debug uniforms
+        shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
+        shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
 
         // DEBUG: Verify buffer binding
         if (bufferManager.IndirectDrawBuffer == 0)
@@ -504,7 +563,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             TextureType: TextureType.Diffuse, // Slot 0
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
+            GenerateMipMap: true);
 
         // Slot 1: Water
         var waterDesc = new TextureDescriptor(waterPath,
@@ -522,7 +581,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             TextureType: TextureType.Additional3, // Slot 6 (Avoid Normal=2 which forces Linear)
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
+            GenerateMipMap: true);
 
         // Slot 3: Rock
         var rockDesc = new TextureDescriptor(rockPath,
@@ -531,7 +590,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             TextureType: TextureType.Specular, // Slot 3
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
+            GenerateMipMap: true);
 
         // Slot 4: Sand
         var sandDesc = new TextureDescriptor(sandPath,
@@ -540,7 +599,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             TextureType: TextureType.Bump, // Slot 4
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
+            GenerateMipMap: true);
 
         // Slot 5: BedRock
         var bedrockDesc = new TextureDescriptor(bedrockPath,
@@ -549,7 +608,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             TextureType: TextureType.Additional2, // Slot 5
             TextureWrapS: TextureWrapMode.ClampToEdge,
             TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
+            GenerateMipMap: true);
 
         return Material.Create(shader, [grassDesc, waterDesc, dirtDesc, rockDesc, sandDesc, bedrockDesc]);
     }

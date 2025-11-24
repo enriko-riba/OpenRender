@@ -200,7 +200,7 @@ public sealed class BiomeDefinition
     /// Texture paths indexed by GeologyLayer enum.
     /// Index 0 = Air (unused), 1 = Water, 2 = Surface, etc.
     /// </summary>
-    public List<string> TexturePaths { get; set; } = new();
+    public List<string> TexturePaths { get; set; } = [];
 
     public BiomeDefinition() { }
 
@@ -248,19 +248,26 @@ public sealed class BiomeDefinition
         // 6: UnderwaterSubsurface
         // 7: ShoreLine
 
-        return new List<BiomeDefinition>
-        {
-            new BiomeDefinition(0, "Ocean",      new(0.55f,0.75f), new(0.7f,1.0f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(1, "Beach",      new(0.55f,0.75f), new(0.35f,0.65f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(3, "Savanna",    new(0.6f,0.8f),   new(0.25f,0.55f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(4, "Desert",     new(0.65f,1.0f),  new(0.0f,0.35f),   new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(5, "Rainforest", new(0.55f,0.8f),  new(0.7f,1.0f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(6, "Taiga",      new(0.2f,0.45f),  new(0.45f,0.75f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(7, "Tundra",     new(0.0f,0.35f),  new(0.2f,0.6f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(8, "Highlands",  new(0.25f,0.6f),  new(0.25f,0.75f),  new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-            new BiomeDefinition(9, "Alpine",     new(0.0f,0.3f),   new(0.2f,0.7f),    new List<string> { "", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png" }),
-        };
+        return
+        [
+            new(0, "Ocean",      new(0.55f,0.75f), new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new(1, "Beach",      new(0.55f,0.75f), new(0.35f,0.65f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (3, "Savanna",    new(0.6f,0.8f),   new(0.25f,0.55f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (4, "Desert",     new(0.65f,1.0f),  new(0.0f,0.35f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (5, "Rainforest", new(0.55f,0.8f),  new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (6, "Taiga",      new(0.2f,0.45f),  new(0.45f,0.75f),  ["", 
+                "Resources/voxel/water.png",                // 1 - water
+                "Resources/voxel/Taiga/grass-dirt.png",     // 2 - surface
+                "Resources/voxel/Taiga/dirt.png",           // 3 - subsurface
+                "Resources/voxel/rock.png",                 // 4 - deep subsurface
+                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
+                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
+                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
+            new (7, "Tundra",     new(0.0f,0.35f),  new(0.2f,0.6f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (8, "Highlands",  new(0.25f,0.6f),  new(0.25f,0.75f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (9, "Alpine",     new(0.0f,0.3f),   new(0.2f,0.7f),    ["", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+        ];
     }
 }
 
@@ -307,14 +314,12 @@ public sealed class CaveParams
 /// </summary>
 public sealed class Spline1D
 {
-    public struct Point
+    public struct Point(float x, float y)
     {
-        public float X { get; set; } // input in [0,1]
-        public float Y { get; set; } // output value (units defined by usage)
-        public Point(float x, float y) { X = x; Y = y; }
+        public float X { get; set; } = x; public float Y { get; set; } = y;
     }
 
-    public List<Point> Points { get; } = new();
+    public List<Point> Points { get; } = [];
 
     public void Clear() => Points.Clear();
 
@@ -340,12 +345,12 @@ public sealed class Spline1D
         int lo = 0, hi = Points.Count - 1;
         while (lo + 1 < hi)
         {
-            int mid = (lo + hi) >> 1;
+            var mid = (lo + hi) >> 1;
             if (x < Points[mid].X) hi = mid; else lo = mid;
         }
         var a = Points[lo];
         var b = Points[hi];
-        float t = (x - a.X) / MathF.Max(1e-6f, (b.X - a.X));
+        var t = (x - a.X) / MathF.Max(1e-6f, (b.X - a.X));
         return a.Y + (b.Y - a.Y) * t;
     }
 
@@ -356,9 +361,9 @@ public sealed class Spline1D
         if (samples < 2) samples = 2;
         Sort();
         var arr = new float[samples];
-        for (int i = 0; i < samples; i++)
+        for (var i = 0; i < samples; i++)
         {
-            float x = i / (float)(samples - 1);
+            var x = i / (float)(samples - 1);
             arr[i] = Evaluate(x);
         }
         return arr;

@@ -17,19 +17,16 @@ Legend
 - [-] Skipped/Not applicable
 
 Summary
-- Current milestone: M5
+- Current milestone: M6
 - Risks: none
-- Next actions: Implement shading with biome textures
+- Next actions: Polish, debug, perf
+- Recent fix: Fixed texture filtering consistency (enable mipmaps for all textures)
 
-Recent Updates (M4)
-- Implemented climate fields (temperature, humidity), biome LUT, and biome visualization.
-- Added `F3` debug toggle for biome visualization.
-- Updated shaders to use `GeologyLayer` naming convention.
-- Fixed texture tinting issues (sRGB vs Linear).
-- Refactored renderer to use custom texture binding, preparing for >8 textures.
-- Mapped Bedrock texture to `GeologyLayer.UnderwaterSubsurface` to avoid naming confusion.
-- Removed `uTestMode` and legacy test scene logic.
-- Refactored `TerrainConfig` to use explicit texture paths per biome instead of shared defaults.
+Recent Updates (M5)
+- Implemented biome texture shading with blending.
+- Updated `VoxelTerrainRenderer` to use bindless textures for unlimited biome texture support.
+- Updated `voxel-terrain.frag` to blend textures based on biome weights and geology layer.
+- Refactored texture loading to support dynamic biome configuration.
 
 Milestones
 
@@ -62,9 +59,16 @@ M4: Climate + biome LUT + regionization
 - [x] Refactor `TerrainConfig` to support per-biome texture paths (List<string>)
 
 M5: Shading with biome textures
-- [ ] Tri-planar sampling per geology layer
-- [ ] Blend by biome weights
-- [ ] Texture array/atlas hookup and indices from `BiomeTextureSet`
+- [x] Tri-planar sampling per geology layer (Implemented via bindless texture array and biome blending)
+- [x] Blend by biome weights (Implemented in fragment shader)
+- [x] Texture array/atlas hookup and indices from `BiomeTextureSet` (Implemented via `uBiomeTextures` uniform array)
+- [x] Fixed `GL_INVALID_OPERATION` with `uBiomeTextures` uniform array setting.
+- [x] Optimized fragment shader performance by simplifying noise for visuals (approx. 6x fewer noise calls).
+- [x] Fixed F3 biome visualization (variable shadowing issue and missing uniform update).
+- [x] Fixed blue tint in F3 mode by binding `TerrainParams` SSBO (binding 10) in `VoxelTerrainRenderer`.
+- [x] Fixed underwater rendering regression (fog/tint) by updating `uIsUnderwater` uniform and shader logic.
+- [x] Fixed underwater block breaking rendering (glass block effect) by replacing broken blocks with Water instead of Air.
+- [x] Fixed texture filtering consistency (enable mipmaps for all textures)
 
 M6: Polish, debug, perf
 - [ ] Add debug views (C/E/R/T/Hm/biome)

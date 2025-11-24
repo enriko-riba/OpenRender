@@ -151,9 +151,14 @@ vec2 domainWarp(vec2 p, uint seed) {
 
 // Macro Fields
 float getContinentalness(vec2 p) {
+#ifdef IS_FRAGMENT_SHADER
+    // Fast approximation for visuals
+    return smoothNoise(p * params.uContScale, params.uSeed);
+#else
     vec2 wp = p * params.uWarpScale;
     vec2 warp = domainWarp(wp, params.uSeed);
     return fbm((p + warp) * params.uContScale, params.uSeed, 3, 0.5, 2.0);
+#endif
 }
 
 float getErosion(vec2 p) {
@@ -352,10 +357,15 @@ float getTemperature(vec3 p) {
     float altitude = max(0.0, p.y - float(WATER_LEVEL));
     temp -= params.uLapseRate * altitude;
     
+#ifdef IS_FRAGMENT_SHADER
+    // Fast noise for visuals
+    float noise = smoothNoise(p.xz * params.uClimateScale, params.uSeed + 700u);
+#else
     // Add low-freq noise and domain warp
     vec2 wp = p.xz * params.uClimateWarp;
     vec2 warp = domainWarp(wp, params.uSeed + 600u);
     float noise = fbm((p.xz + warp) * params.uClimateScale, params.uSeed + 700u, 2, 0.5, 2.0);
+#endif
     
     // Add noise to temp (range [-1, 1] -> scale to e.g. +/- 0.2)
     temp += noise * 0.2;
@@ -374,10 +384,15 @@ float getHumidity(vec3 p) {
     
     hum -= distFromCoast * params.uCoastDry;
     
+#ifdef IS_FRAGMENT_SHADER
+    // Fast noise for visuals
+    float noise = smoothNoise(p.xz * params.uClimateScale, params.uSeed + 900u);
+#else
     // Add low-freq noise and warp
     vec2 wp = p.xz * params.uClimateWarp;
     vec2 warp = domainWarp(wp, params.uSeed + 800u);
     float noise = fbm((p.xz + warp) * params.uClimateScale, params.uSeed + 900u, 2, 0.5, 2.0);
+#endif
     
     hum += noise * 0.2;
     

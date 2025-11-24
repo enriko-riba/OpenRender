@@ -877,6 +877,12 @@ public sealed class ChunkStreamingManager : IDisposable
         // Log.Debug($"ApplyBlockEdit: local({localX},{localY},{localZ}) -> voxelIdx {voxelIdx} (Y*256 + Z*16 + X)");
 
         // Mark voxel as edited in edit mask
+        // FIX: If breaking a block underwater, replace with Water instead of Air
+        if (isBreaking && (int)worldPosition.Y <= VoxelHelper.WaterLevel)
+        {
+            blockType = BlockType.WaterLevel;
+        }
+
         MarkVoxelEdited(chunkIdx, voxelIdx, blockType, isBreaking);
 
         // Mark chunk as dirty (needs regeneration)
@@ -1195,6 +1201,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
         var biomeData = terrainConfig.BuildBiomeIdLut(256);
         GL.TextureSubImage2D(biomeLutTexture, 0, 0, 0, 256, 256, PixelFormat.RedInteger, PixelType.UnsignedByte, biomeData);
+
+        // M5: Reload biome textures if renderer is active (hot reload)
+        terrainRenderer?.LoadBiomeTextures(terrainConfig);
     }
 
     /// <summary>
@@ -1609,6 +1618,8 @@ public sealed class ChunkStreamingManager : IDisposable
     public void InitializePhase4()
     {
         terrainRenderer = new VoxelTerrainRenderer();
+        // M5: Load biome textures
+        terrainRenderer.LoadBiomeTextures(terrainConfig);
         Log.Info("Phase 4 rendering initialized");
     }
 
