@@ -37,31 +37,33 @@ void main() {
     uint tCount = 0u;
     uint oCount = 0u;
     
+    // Calculate global voxel index base for this thread's 4 voxels
+    // voxelIdx = chunk * VOXELS + ly * SIDE*SIDE + lx_base
+    uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + ly * uint(CHUNK_SIDE_SIZE_SQUARED) + lx_base;
+    
+    // OPTIMIZATION: Read packed visibility mask once for 4 voxels
+    uint packedMask = visibilityMask[voxelIdx >> 2];
+    
     for (uint i = 0u; i < 4u; i++) {
-        uint lx = lx_base + i;
-        // Calculate global voxel index
-        // voxelIdx = chunk * VOXELS + ly * SIDE*SIDE + lx (where lx is 0..255 linear index in layer)
-        // Wait, lx here is linear index in layer (0..255).
-        // But lx in other shaders is X coordinate (0..15).
-        // Here we treat the layer as a linear array of 256 voxels.
-        
-        uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + ly * uint(CHUNK_SIDE_SIZE_SQUARED) + lx;
-        
-        uint mask = visibilityMask[voxelIdx];
-        
-        if (mask != 0u) {
-            uint faces = uint(bitCount(mask & 0x3Fu));
-            tCount += faces;
+            // Extract mask for this voxel
+            uint mask = (packedMask >> (i * 8u)) & 0xFFu;
             
-            uint voxel = voxelData[voxelIdx];
-            uint blockDescriptor = voxel & 0xFFu;
-            
-            // Count opaque faces (exclude water)
-            if (blockDescriptor != BD_WATER) {
-                oCount += faces;
+            if (mask != 0u) {
+                uint faces = uint(bitCount(mask & 0x3Fu));
+                tCount += faces;
+                
+                // We need to read voxel data to check for water
+                // Voxel data is NOT packed (still 32 bits per voxel)
+                uint currentVoxelIdx = voxelIdx + i;
+                uint voxel = voxelData[currentVoxelIdx];
+                uint blockDescriptor = voxel & 0xFFu;
+                
+                // Count opaque faces (exclude water)
+                if (blockDescriptor != BD_WATER) {
+                    oCount += faces;
+                }
             }
         }
-    }
     
     if (tCount > 0u) atomicAdd(s_TotalCount, tCount);
     if (oCount > 0u) atomicAdd(s_OpaqueCount, oCount);

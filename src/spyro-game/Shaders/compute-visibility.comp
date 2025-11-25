@@ -4,7 +4,8 @@
 // VERSION: 2024-01-15-v2 - Fixed redundant bounds check causing missing faces at chunk boundaries
 
 // Restore original layout: process all 16 X columns directly (each invocation handles one column)
-layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+// OPTIMIZATION: Process 4 voxels per thread to enable packed writes (1 uint = 4 masks)
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 16) in;
 
 // ============================================================================
 // Constants (match VoxelHelper.cs)
@@ -168,64 +169,85 @@ void main() {
     uint ly = gl_WorkGroupID.y;  // Y slice
     if (chunkIdx >= uChunkCount || ly >= CHUNK_Y_SIZE) return;
 
-    int lx = int(gl_LocalInvocationID.x);
+    // Each thread processes 4 voxels along X
+    int lx_base = int(gl_LocalInvocationID.x) * 4;
     int lz = int(gl_LocalInvocationID.z);
 
-    uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
-                    uint(lx) +
-                    uint(lz) * CHUNK_SIDE_SIZE +
-                    ly * CHUNK_SIDE_SIZE_SQUARED;
+    uint packedMask = 0u;
 
-    uint voxel = voxelData[voxelIdx];
-    uint blockDescriptor = voxel & 0xFFu;
+    // Unroll loop for 4 voxels
+    for (int i = 0; i < 4; i++) {
+        int lx = lx_base + i;
+        
+        uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                        uint(lx) +
+                        uint(lz) * CHUNK_SIDE_SIZE +
+                        ly * CHUNK_SIDE_SIZE_SQUARED;
 
-    if (blockDescriptor == BD_AIR) {
-        visibilityMask[voxelIdx] = 0u;
-        return;
+        uint voxel = voxelData[voxelIdx];
+        uint blockDescriptor = voxel & 0xFFu;
+
+        if (blockDescriptor == BD_AIR) {
+            // Mask is 0, no need to OR anything
+            continue;
+        }
+
+        bool currentIsWater = (blockDescriptor == BD_WATER);
+        
+        // Neighbor-based face visibility
+        uint mask = 0u;
+
+        // Helper macro for face checking
+        #define CHECK_FACE(neighborVoxel, faceBit) \
+        { \
+            uint nv = neighborVoxel; \
+            bool neighborIsWater = isWater(nv); \
+            bool neighborIsTransparent = isTransparent(nv); \
+            /* Water face culling: Water only renders faces against Air (not against other water) */ \
+            if (currentIsWater) { \
+                /* Only draw water face if neighbor is Air (transparent AND not water) */ \
+                if (neighborIsTransparent && !neighborIsWater) mask |= faceBit; \
+            } else { \
+                /* Solid blocks draw against any transparent block (Air OR Water) */ \
+                if (neighborIsTransparent) mask |= faceBit; \
+            } \
+        }
+
+        // +X
+        CHECK_FACE(getVoxel(chunkIdx, lx + 1, int(ly), lz), FACE_POS_X);
+
+        // -X
+        CHECK_FACE(getVoxel(chunkIdx, lx - 1, int(ly), lz), FACE_NEG_X);
+
+        // +Y
+        CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) + 1, lz), FACE_POS_Y);
+
+        // -Y
+        CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) - 1, lz), FACE_NEG_Y);
+
+        // +Z
+        CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz + 1), FACE_POS_Z);
+
+        // -Z
+        CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz - 1), FACE_NEG_Z);
+
+        if (currentIsWater) {
+            mask |= (1u << 6); // Bit 6 = IsWater
+        }
+
+        // Pack into uint (8 bits per voxel)
+        packedMask |= (mask << (i * 8));
     }
 
-    bool currentIsWater = (blockDescriptor == BD_WATER);
+    // Write packed mask (1 uint per 4 voxels)
+    // Calculate index of the packed uint
+    // Base voxel index for lx_base
+    uint baseVoxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
+                        uint(lx_base) +
+                        uint(lz) * CHUNK_SIDE_SIZE +
+                        ly * CHUNK_SIDE_SIZE_SQUARED;
     
-    // Neighbor-based face visibility
-    uint mask = 0u;
-
-    // Helper macro for face checking
-    #define CHECK_FACE(neighborVoxel, faceBit) \
-    { \
-        uint nv = neighborVoxel; \
-        bool neighborIsWater = isWater(nv); \
-        bool neighborIsTransparent = isTransparent(nv); \
-        /* Water face culling: Water only renders faces against Air (not against other water) */ \
-        if (currentIsWater) { \
-            /* Only draw water face if neighbor is Air (transparent AND not water) */ \
-            if (neighborIsTransparent && !neighborIsWater) mask |= faceBit; \
-        } else { \
-            /* Solid blocks draw against any transparent block (Air OR Water) */ \
-            if (neighborIsTransparent) mask |= faceBit; \
-        } \
-    }
-
-    // +X
-    CHECK_FACE(getVoxel(chunkIdx, lx + 1, int(ly), lz), FACE_POS_X);
-
-    // -X
-    CHECK_FACE(getVoxel(chunkIdx, lx - 1, int(ly), lz), FACE_NEG_X);
-
-    // +Y
-    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) + 1, lz), FACE_POS_Y);
-
-    // -Y
-    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly) - 1, lz), FACE_NEG_Y);
-
-    // +Z
-    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz + 1), FACE_POS_Z);
-
-    // -Z
-    CHECK_FACE(getVoxel(chunkIdx, lx, int(ly), lz - 1), FACE_NEG_Z);
-
-    if (currentIsWater) {
-        mask |= (1u << 6); // Bit 6 = IsWater
-    }
-
-    visibilityMask[voxelIdx] = mask;
+    // Since we pack 4 consecutive X values, and X is the fastest varying index (stride 1),
+    // the packed index is simply baseVoxelIdx / 4.
+    visibilityMask[baseVoxelIdx >> 2] = packedMask;
 }

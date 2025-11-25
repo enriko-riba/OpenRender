@@ -369,7 +369,8 @@ void main(){
     uint voxel = voxelData[voxelIdx]; // Direct access
     uint blockDescriptor = voxel & 0xFFu;
     
-    uint mask = visibilityMask[voxelIdx]; // Direct access
+    // Use helper to read packed mask
+    uint mask = getPackedVisMask(voxelIdx, visibilityMask);
     
     // Early exit if no faces visible
     // Note: We can't return early because we need to participate in barrier() later!

@@ -75,13 +75,13 @@ Implement Compute-based Occlusion Culling (Hi-Z Culling).
 
 ## 3. Implementation Plan & Effort
 
-### Phase 1: Visibility Mask Packing (Est. 4-6 hours)
-1.  Modify `Phase3BufferManager.cs` to allocate 1/4 size buffer.
-2.  Modify `compute-visibility.comp`:
+### Phase 1: Visibility Mask Packing (Completed 2025-11-25)
+1.  Modify `Phase3BufferManager.cs` to allocate 1/4 size buffer. (Done)
+2.  Modify `compute-visibility.comp`: (Done)
     *   Change dispatch to process 4 voxels per thread (reduce Y dimension of dispatch or handle loop inside).
     *   Pack 4 masks into one `uint`.
     *   Write to buffer.
-3.  Modify `compute-count.comp` & `compute-compact.comp`:
+3.  Modify `compute-count.comp` & `compute-compact.comp`: (Done)
     *   Update reading logic to unpack mask.
 
 ### Phase 2: Vertex Compression (Est. 8-12 hours)
@@ -105,4 +105,4 @@ Implement Compute-based Occlusion Culling (Hi-Z Culling).
 2.  Standardize binding points.
 
 ## 4. Immediate Next Steps
-Start with **Phase 1 (Visibility Mask Packing)** as it requires no changes to the rendering pipeline (vertex shader), only the compute pipeline.
+Start with **Phase 2 (Vertex Compression)** to further reduce memory usage and bandwidth.

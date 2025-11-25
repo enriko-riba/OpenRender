@@ -259,42 +259,36 @@ internal class TerrainLoadingScene : Scene
 
     private void RenderUI()
     {
-        var lineY = 30;
-        const int lineHeight = 40;
-
-        void WriteLine(string text, Vector3 color, int fontSize = 22)
+        void WriteLine(string text, Vector3 color, int fontSize, int x, int y)
         {
-            textRenderer.Render(text, fontSize, 30, lineY, color);
-            lineY += lineHeight;
+            textRenderer.Render(text, fontSize, x, y, color);
         }
 
-        void WriteLineCentered(string text, Vector3 color, int fontSize = 22)
+        void WriteLineCentered(string text, Vector3 color, int fontSize, int y)
         {
             var size = textRenderer.Measure(text, fontSize);
-            textRenderer.Render(text, fontSize, (Width - size.Width) / 2, lineY, color);
-            lineY += lineHeight;
+            textRenderer.Render(text, fontSize, (Width - size.Width) / 2, y, color);
         }
 
+        // Fixed positions for each section
+        var titleY = 50;
+        var stageY = 120;
+        var detailedStatusY = 160;
+        var progressBarY = 220;
+        var statsY = 300;
+        var spinnerY = Height - 60;
+
         // Title
-        lineY = 50;
-        WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28);
-        lineY += 60;
+        WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
 
         // Current Stage
-        WriteLineCentered(currentStage, progressColor, 20);
-        lineY += 15;
+        WriteLineCentered(currentStage, progressColor, 20, stageY);
 
         // Detailed Status (if available)
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
-            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 18);
+            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 18, detailedStatusY);
         }
-        else
-        {
-            lineY += 25; // Keep spacing consistent
-        }
-
-        lineY += 20;
 
         // Progress Bar
         var progress = progressTracker.Progress / 100f;
@@ -303,56 +297,61 @@ internal class TerrainLoadingScene : Scene
         const int barWidth = 500;
         const int barHeight = 35;
         var barX = (Width - barWidth) / 2;
-        var barY = lineY;
 
         // Draw progress bar background (dark)
-        DrawProgressBar(barX, barY, barWidth, barHeight, 0f, new Vector3(0.2f, 0.2f, 0.2f));
+        DrawProgressBar(barX, progressBarY, barWidth, barHeight, 0f, new Vector3(0.2f, 0.2f, 0.2f));
         
         // Draw progress bar fill (gradient)
-        DrawProgressBar(barX, barY, barWidth, barHeight, progress, progressColor);
+        DrawProgressBar(barX, progressBarY, barWidth, barHeight, progress, progressColor);
         
         // Draw progress bar border
-        DrawProgressBar(barX - 2, barY - 2, barWidth + 4, barHeight + 4, 0f, textColor, true);
+        DrawProgressBar(barX - 2, progressBarY - 2, barWidth + 4, barHeight + 4, 0f, textColor, true);
 
         // Progress percentage text (centered on bar)
-        lineY = barY + 5;
-        WriteLineCentered($"{progressPercent}%", textColor, 24);
+        var percentText = $"{progressPercent}%";
+        var percentSize = textRenderer.Measure(percentText, 24);
+        WriteLine(percentText, textColor, 24, (Width - percentSize.Width) / 2, progressBarY + 5);
 
-        lineY = barY + barHeight + 30;
-
-        // Stats
-        WriteLine("", textColor);
-        WriteLine($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor);
+        // Stats section with generous spacing to prevent overlap (left-aligned)
+        var statsX = (Width - barWidth) / 2;
         
+        // Line 1: Elapsed Time
+        var line1Y = statsY;
+        WriteLine($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor, 22, statsX, line1Y);
+        
+        // Line 2: Est. Remaining (always reserve space)
+        var line2Y = line1Y + 45; // Increased from 40 to 45
         if (progressTracker.Progress > 1f && progressTracker.Progress < 99f)
         {
             var eta = progressTracker.EstimatedTimeRemaining;
-            WriteLine($"Est. Remaining: {eta:mm\\:ss}", textColor);
+            WriteLine($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, statsX, line2Y);
         }
         
-        WriteLine("", textColor);
-        WriteLine($"Target Chunks: {targetChunkCount}", dimColor);
+        // Line 3: Target Chunks (with extra spacing)
+        var line3Y = line2Y + 60; // Increased from 55 to 60
+        WriteLine($"Target Chunks: {targetChunkCount}", dimColor, 22, statsX, line3Y);
         
+        // Line 4: Chunks Ready
+        var line4Y = line3Y + 45; // Increased from 40 to 45
         if (streamingManager != null)
         {
             var (_, _, _, ready) = streamingManager.GetStats();
-            WriteLine($"Chunks Ready: {ready}", dimColor);
+            WriteLine($"Chunks Ready: {ready}", dimColor, 22, statsX, line4Y);
         }
 
-        // Memory stats (optional)
+        // Line 5: GPU Memory (with generous extra spacing, smaller font)
+        var line5Y = line4Y + 60;
         if (streamingManager != null)
         {
             var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();
             var totalMB = totalBytes / (1024f * 1024f);
-            WriteLine("", textColor);
-            WriteLine($"GPU Memory: {totalMB:F1} MB", dimColor, 18);
+            WriteLine($"GPU Memory: {totalMB:F1} MB", dimColor, 22, statsX, line5Y);
         }
 
         // Animated spinner
-        lineY = Height - 60;
         var spinnerChars = new[] { '|', '/', '-', '\\' };
         var spinner = spinnerChars[(int)(timer.Elapsed.TotalSeconds * 4) % 4];
-        WriteLineCentered($"{spinner}", dimColor, 20);
+        WriteLineCentered($"{spinner}", dimColor, 20, spinnerY);
     }
 
     private void DrawProgressBar(int x, int y, int width, int height, float progress, Vector3 color, bool borderOnly = false)

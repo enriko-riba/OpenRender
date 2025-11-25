@@ -23,8 +23,9 @@ const uint BD_SHORELINE = 7u;              // Shoreline (beach sand)
 // Helper to read packed voxel (UNPACKED: 1 voxel per uint)
 #define getPackedVoxel(idx, buf) (buf[idx] & 0xFFu)
 
-// Helper to read packed visibility mask (UNPACKED: 1 mask per uint)
-#define getPackedVisMask(idx, buf) (buf[idx] & 0xFFu)
+// Helper to read packed visibility mask (PACKED: 4 masks per uint)
+// idx is the voxel index. We shift right by 2 to get uint index, and use bottom 2 bits for byte shift.
+#define getPackedVisMask(idx, buf) ((buf[idx >> 2] >> ((idx & 3u) * 8u)) & 0xFFu)
 
 // Helper to write packed voxel (UNPACKED: 1 voxel per uint)
 #define setPackedVoxel(idx, val, buf) { buf[idx] = val; }

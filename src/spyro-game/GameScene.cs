@@ -313,6 +313,9 @@ internal class GameScene : Scene
         // Update player (handles physics, collision, and WASD movement input)
         player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
         
+        // Update block below player - find highest solid block at player X/Z regardless of mode
+        UpdateBlockBelow();
+        
         // Update block picking service (decoupled from rendering)
         blockPickingService?.Update(
             currentTime: SceneManager.Time,
@@ -385,6 +388,33 @@ internal class GameScene : Scene
         RenderUI();
     }
 
+    /// <summary>
+    /// Updates the block below the player by finding the highest solid block at the player's X/Z coordinates.
+    /// Works in both ghost mode and physics mode.
+    /// </summary>
+    private void UpdateBlockBelow()
+    {
+        if (streamingManager == null) return;
+
+        var playerPos = player.Position;
+        var blockX = (int)playerPos.X;
+        var blockZ = (int)playerPos.Z;
+
+        // Search downward from player position to find highest solid block
+        BlockState? highestSolid = null;
+        for (var y = (int)playerPos.Y; y >= 0; y--)
+        {
+            var block = world.GetBlockByPositionGlobalSafe(blockX, y, blockZ);
+            if (block.HasValue && block.Value.IsSolid)
+            {
+                highestSolid = block.Value;
+                break;
+            }
+        }
+
+        player.CurrentBlockBellow = highestSolid;
+    }
+
     private void RenderUI()
     {
         var lineY = 20;
@@ -402,12 +432,6 @@ internal class GameScene : Scene
 
         // Performance
         WriteLine($"FPS: {SceneManager.Fps:F0} ({SceneManager.AvgFrameDuration:F2}ms)", textColor);
-        //WriteLine("", textColor);
-
-        // World Stats (FIXED - Use correct VoxelHelper constants)
-        //WriteLine("World:", highlightColor);
-       // WriteLine($"  Size: {VoxelHelper.WorldChunksXZ}x{VoxelHelper.WorldChunksXZ} chunks", textColor);
-        //WriteLine($"  Chunk Size: {VoxelHelper.ChunkSideSize}x{VoxelHelper.ChunkYSize}", textColor);
         WriteLine($"View Distance: {VoxelHelper.MaxDistanceInChunks} chunks", textColor);
         WriteLine("", textColor);
 
@@ -465,10 +489,10 @@ internal class GameScene : Scene
         var pLocal = player.ChunkLocalPosition;
         var pChunk = player.CurrentChunk?.Index ?? -1;
         var pGlobal = player.Position;
-        //var pBlock = world.GetBlockByPositionGlobalSafe((int)pGlobal.X, (int)pGlobal.Y, (int)pGlobal.Z);
         
         WriteLine($"  Position: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
 
+        // Block Below - Always displayed, shows highest solid block at player X/Z
         if (player.CurrentBlockBellow.HasValue)
         {
             var bb = player.CurrentBlockBellow.Value;
@@ -476,8 +500,17 @@ internal class GameScene : Scene
             var bbChunk = bb.ChunkIndex;
             var bbChunkOrigin = VoxelHelper.GetChunkPositionGlobal(bbChunk);
             var bbLocal = new Vector3(bbGlobal.X - bbChunkOrigin.X, bbGlobal.Y - bbChunkOrigin.Y, bbGlobal.Z - bbChunkOrigin.Z);
-            WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.BlockType}", textColor);
+            
+            // Get biome name for this block
+            var biomeName = GetBiomeNameForBlock(bb);
+            
+            WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.Descriptor} | {biomeName}", textColor);
         }
+        else
+        {
+            WriteLine($"  Block Below: n/a", textColor);
+        }
+        
         WriteLine($"  Mode: {(player.IsGhostMode ? "Ghost (Fly)" : "Physics")} ", textColor);
         WriteLine($"  Grounded: {player.IsGrounded}", textColor);
         WriteLine($"  Jumping: {player.IsJumping}", textColor);
@@ -499,7 +532,11 @@ internal class GameScene : Scene
                     globalPos.Y - chunkOrigin.Y,
                     globalPos.Z - chunkOrigin.Z
                 );
-                WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.BlockType}", textColor);
+                
+                // Get biome name for picked block
+                var biomeName = GetBiomeNameForBlock(b);
+                
+                WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.Descriptor} | {biomeName}", textColor);
             }
             else
             {
@@ -508,11 +545,6 @@ internal class GameScene : Scene
             WriteLine("", textColor);
         }
         
-        // Block Below moved to Player Stats
-        WriteLine("", textColor);
-
-        
-
         // Controls
         WriteLine("Controls:", highlightColor);
         WriteLine("  WASD - Move", textColor);
@@ -521,6 +553,57 @@ internal class GameScene : Scene
         WriteLine("  F - Toggle Ghost/Physics", textColor);
         WriteLine("  Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
+    }
+
+    /// <summary>
+    /// Gets the biome name for a given block by querying the terrain config's biome lookup.
+    /// </summary>
+    private string GetBiomeNameForBlock(BlockState block)
+    {
+        if (streamingManager == null)
+            return "Unknown";
+
+        // For now, we don't have direct biome ID stored in BlockState.
+        // We would need to re-query the terrain generation logic to get the biome.
+        // As a workaround, we can infer biome from descriptor and elevation:
+        
+        var elevation = block.GlobalPosition.Y;
+        var descriptor = block.Descriptor;
+
+        // Hardcoded biome inference based on descriptor and elevation
+        // This matches the shader logic in compute-generate.comp
+        
+        // Ocean biomes
+        if (descriptor == BlockDescriptor.Water)
+        {
+            return elevation < 0 ? "Ocean" : "Water";
+        }
+        
+        // Alpine biome
+        if (elevation > 200f)
+        {
+            return "Alpine";
+        }
+        
+        // Beach/shoreline
+        if (descriptor == BlockDescriptor.ShoreLine || 
+            (descriptor == BlockDescriptor.UnderwaterSurface && elevation <= 37f))
+        {
+            return "Beach";
+        }
+        
+        // For land biomes, we would need to query temperature/humidity which requires
+        // recalculating noise. For now, provide generic names based on descriptor.
+        return descriptor switch
+        {
+            BlockDescriptor.Air => "Sky",
+            BlockDescriptor.Surface => "Land (Surface)",
+            BlockDescriptor.Subsurface => "Land (Underground)",
+            BlockDescriptor.DeepSubsurface => "Land (Deep)",
+            BlockDescriptor.UnderwaterSurface => "Underwater",
+            BlockDescriptor.UnderwaterSubsurface => "Deep Ocean",
+            _ => "Unknown"
+        };
     }
 
     public override void Close()
