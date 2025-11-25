@@ -1,15 +1,9 @@
-// voxel-terrain.vert - Phase 4: Voxel Terrain Vertex Shader
-// Purpose: Transform and pass through voxel terrain vertices from Phase 3 compaction
-// Version: 2.0 (Phase 5.2: Optimized - derives normals from face index)
-//
-// Phase 5.2: Normals no longer stored per-vertex (saved 12 bytes = 33% reduction!)
-// Instead, we derive the normal from the face index (0-5) using a lookup table.
-// This works perfectly for axis-aligned voxel faces which have trivial normals.
-//
+// Phase 5.2: Compressed Vertex Format (8 bytes)
 // Input: Compacted vertices from compute-compact.comp
 // Output: Transformed vertices with lighting data for fragment shader
 
 #version 460
+#extension GL_ARB_shader_draw_parameters : require
 
 // ============================================================================
 // Constants
@@ -25,8 +19,21 @@ const vec3 FACE_NORMALS[6] = vec3[](
     vec3(0, 0, -1)   // 5: -Z (back)
 );
 
+// Face indices
+const uint FACE_POS_X = 0u;
+const uint FACE_NEG_X = 1u;
+const uint FACE_POS_Y = 2u;
+const uint FACE_NEG_Y = 3u;
+const uint FACE_POS_Z = 4u;
+const uint FACE_NEG_Z = 5u;
+
+// Texture atlas layout: 3 columns x 1 row (Simplified)
+const float ATLAS_COLS = 3.0;
+const float ATLAS_ROWS = 1.0;
+const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
+
 // ============================================================================
-// Uniforms
+// Uniforms & Buffers
 // ============================================================================
 
 // Camera matrices
@@ -37,19 +44,25 @@ layout(std140, binding = 0) uniform camera {
     vec3 cameraDir;
 };
 
+// Chunk Info Buffer (maps gl_DrawID -> ChunkIndex)
+layout(std430, binding = 13) readonly buffer ChunkInfo {
+    int chunkInfo[];
+};
+
+uniform uint uWorldChunksXZ;
+uniform int uIsUnderwater; // To flip UVs for water
+
 // Per-chunk transform (for now, identity - chunks are in world space)
 uniform mat4 uChunkTransform = mat4(1.0);
 
 // ============================================================================
-// Vertex Input (from compacted buffer)
+// Vertex Input (Compressed)
 // ============================================================================
 
-// Phase 5.2 optimized layout: position(12) + texCoord(8) + ao(4) + faceIndex(4) = 28 bytes
-layout(location = 0) in vec3 aPosition;   // Voxel world position
-layout(location = 1) in vec2 aTexCoord;   // Texture UV
-layout(location = 2) in float aAO;        // Ambient occlusion [0,1]
-// Note: aFaceIndex is read as uint via VertexAttribIFormat, so it gets the raw bits from the buffer
-layout(location = 3) in uint aFaceIndex;  // Face direction index [0-5] + blockType [8-15]
+// Phase 5.2 optimized layout: 2 uints (8 bytes)
+// Uint 0: Pos(X:5, Y:9, Z:5) | Face(3) | AO(3) | Corner(2)
+// Uint 1: BlockType(8) | Padding(24)
+layout(location = 0) in uvec2 aPackedData;
 
 // ============================================================================
 // Vertex Output (to fragment shader)
@@ -60,37 +73,100 @@ out vec3 vNormal;            // World-space normal (derived from face index)
 out vec2 vTexCoord;          // Texture coordinates
 out float vAO;               // Ambient occlusion
 out vec3 vViewDir;           // Direction to camera
-flat out uint vBlockDescriptor;  // Block descriptor for texture/geology layer selection (renamed from vBlockType)
+flat out uint vBlockDescriptor;  // Block descriptor for texture/geology layer selection
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+vec2 getBaseUV(uint corner) {
+    if (corner == 0u) return vec2(0, 1);
+    if (corner == 1u) return vec2(0, 0);
+    if (corner == 2u) return vec2(1, 0);
+    if (corner == 3u) return vec2(1, 1);
+    return vec2(0, 0);
+}
+
+vec2 flipV(vec2 uv) { return vec2(uv.x, 1.0 - uv.y); }
+
+ivec2 faceToTile(uint face) {
+    if (face == FACE_POS_Y) return ivec2(0, 0); // Top
+    if (face == FACE_NEG_Y) return ivec2(1, 0); // Bottom
+    return ivec2(2, 0); // Side (Front, Back, Left, Right)
+}
+
+vec2 getAtlasUV(uint face, uint corner) {
+    vec2 uv = getBaseUV(corner);
+    ivec2 tile = faceToTile(face);
+    vec2 offset = vec2(float(tile.x) / ATLAS_COLS, float(tile.y) / ATLAS_ROWS);
+    vec2 finalUv = offset + uv * TILE_SIZE;
+    return flipV(finalUv);
+}
+
+float unpackAO(uint aoIdx) {
+    if (aoIdx == 4u) return 1.0;
+    if (aoIdx == 3u) return 0.8;
+    if (aoIdx == 2u) return 0.6;
+    if (aoIdx == 1u) return 0.4;
+    return 0.33;
+}
 
 // ============================================================================
 // Main Shader
 // ============================================================================
 
 void main() {
-    // Transform position to world space (chunk space = world space for now)
-    vec4 worldPos = uChunkTransform * vec4(aPosition, 1.0);
-    vWorldPos = worldPos.xyz;
-
-    // Extract face index and block descriptor
-    uint faceIndex = aFaceIndex & 0x7u; // 3 bits for face (0-5)
-    vBlockDescriptor = (aFaceIndex >> 8) & 0xFFu; // 8 bits for block descriptor (geology layer)
-
-    // Derive normal from face index (Phase 5.2 optimization!)
-    // This replaces 12 bytes of stored normal data with a simple array lookup
-    vec3 normal = FACE_NORMALS[faceIndex];
+    // Unpack data
+    uint packed1 = aPackedData.x;
+    uint packed2 = aPackedData.y;
     
-    // Transform normal to world space
-    // Note: For uniform scaling, we can use mat3(uChunkTransform)
-    // For non-uniform scaling, use inverse transpose
+    uint lx = packed1 & 0x1Fu;
+    uint ly = (packed1 >> 5) & 0x1FFu;
+    uint lz = (packed1 >> 14) & 0x1Fu;
+    uint face = (packed1 >> 19) & 0x7u;
+    uint aoIdx = (packed1 >> 22) & 0x7u;
+    uint corner = (packed1 >> 25) & 0x3u;
+    
+    vBlockDescriptor = packed2 & 0xFFu;
+    
+    // Get Chunk Position
+    int chunkIdx = chunkInfo[gl_DrawIDARB]; // Use ARB extension for compatibility
+    
+    // Calculate Chunk World Position
+    // chunkIdx = z * width + x
+    int chunkX = chunkIdx % int(uWorldChunksXZ);
+    int chunkZ = chunkIdx / int(uWorldChunksXZ);
+    
+    // Assuming CHUNK_SIDE_SIZE is 16. We can pass it as uniform or hardcode.
+    // It's hardcoded in compute shaders as 16.
+    float chunkWorldX = float(chunkX * 16);
+    float chunkWorldZ = float(chunkZ * 16);
+    
+    vec3 localPos = vec3(float(lx), float(ly), float(lz));
+    vec3 worldPos = vec3(chunkWorldX, 0.0, chunkWorldZ) + localPos;
+    
+    // Transform to world space (uChunkTransform is usually identity)
+    vec4 finalPos = uChunkTransform * vec4(worldPos, 1.0);
+    vWorldPos = finalPos.xyz;
+    
+    // Normal
+    vec3 normal = FACE_NORMALS[face];
     vNormal = mat3(uChunkTransform) * normal;
     
-    // Pass through texture coordinates and AO
-    vTexCoord = aTexCoord;
-    vAO = aAO;
+    // UVs
+    bool isWater = (vBlockDescriptor == 1u); // BD_WATER = 1
+    if (isWater) {
+        vTexCoord = flipV(getBaseUV(corner));
+    } else {
+        vTexCoord = getAtlasUV(face, corner);
+    }
     
-    // Calculate view direction for specular lighting
+    // AO
+    vAO = unpackAO(aoIdx);
+    
+    // View Dir
     vViewDir = normalize(cameraPos - vWorldPos);
     
-    // Transform to clip space
-    gl_Position = projection * view * worldPos;
+    // Position
+    gl_Position = projection * view * finalPos;
 }

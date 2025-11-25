@@ -1635,8 +1635,10 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.COMMAND_SLOTS, (int)phase3Buffers.CommandSlotBuffer);
         // Bind chunk indices (reusing compaction buffer)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
-        // // Bind OpaqueCounts buffer (binding 12)
+        // Bind OpaqueCounts buffer (binding 12)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
+        // Bind ChunkInfo buffer (binding 13)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, (int)phase3Buffers.ChunkInfoBuffer);
 
         buildIndirectShader ??= new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
         buildIndirectShader.Use();

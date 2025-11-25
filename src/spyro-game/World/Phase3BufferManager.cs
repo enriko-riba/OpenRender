@@ -46,7 +46,8 @@ public class Phase3BufferManager : IDisposable
     private uint commandSlotCapacity = 0;                  // NEW: Track command buffer capacity
 
     // Vertex stride from VoxelHelper (position=12, normal=12, texCoord=8, ao=4 = 36 bytes)
-    private const int VERTEX_STRIDE = VoxelHelper.VERTEX_STRIDE_BYTES;
+    // Phase 5.2: Compressed to 8 bytes (PackedPos+Data=4, Padding=4)
+    private const int VERTEX_STRIDE = 8;
 
     public uint VisMaskBuffer => visMaskBuffer;
     public uint CountBuffer => countBuffer;

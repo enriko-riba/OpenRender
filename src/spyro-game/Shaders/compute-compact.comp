@@ -70,11 +70,9 @@ layout(std430, binding = 3) readonly buffer BaseOffsets {
     uint baseOffsets[];
 };
 
-// Output: Compacted vertices (Phase 5.2: position, texCoord, ao, faceIndex)
+// Output: Compacted vertices (Phase 5.2: Compressed 8 bytes)
 layout(std430, binding = 4) writeonly buffer CompactVertices {
-    // vec3 pos, vec2 uv, float ao, uint faceIdx = 7 floats = 28 bytes
-    // faceIndex stored as float via uintBitsToFloat for simpler buffer layout
-    float compactVertices[];
+    uint compactVertices[];
 };
 
 // PHASE 5.3: Per-chunk index buffer (restored for efficient batching)
@@ -326,15 +324,35 @@ float calculateAO(uint face, uint corner, uint chunkIdx, vec3 chunkWorldOffset, 
     return 0.4;
 }
 
-void writeVertex(uint vertexIdx, vec3 position, vec2 uv, float ao, uint faceIdx) {
-    uint baseIdx = vertexIdx * 7u;
-    compactVertices[baseIdx + 0u] = position.x;
-    compactVertices[baseIdx + 1u] = position.y;
-    compactVertices[baseIdx + 2u] = position.z;
-    compactVertices[baseIdx + 3u] = uv.x;
-    compactVertices[baseIdx + 4u] = uv.y;
-    compactVertices[baseIdx + 5u] = ao;
-    compactVertices[baseIdx + 6u] = uintBitsToFloat(faceIdx);
+uint mapAO(float ao) {
+    if (ao > 0.9) return 4u; // 1.0
+    if (ao > 0.7) return 3u; // 0.8
+    if (ao > 0.5) return 2u; // 0.6
+    if (ao > 0.35) return 1u; // 0.4
+    return 0u; // 0.33
+}
+
+void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint corner, uint blockType) {
+    // Pack into 2 uints (8 bytes)
+    // Uint 0: Pos(X:5, Y:9, Z:5) | Face(3) | AO(3) | Corner(2) = 27 bits
+    // Uint 1: BlockType(8) | Padding(24)
+    
+    uint x = uint(localPos.x) & 0x1Fu;
+    uint y = uint(localPos.y) & 0x1FFu;
+    uint z = uint(localPos.z) & 0x1Fu;
+    
+    uint packed1 = x | (y << 5) | (z << 14) | ((face & 0x7u) << 19) | ((aoIdx & 0x7u) << 22) | ((corner & 0x3u) << 25);
+    uint packed2 = blockType & 0xFFu;
+    
+    // Write 2 uints per vertex
+    // Stride is 8 bytes (2 uints)
+    // vertexIdx is absolute index in vertices (not bytes)
+    // But compactVertices is uint array.
+    // So index is vertexIdx * 2.
+    
+    uint baseIdx = vertexIdx * 2u;
+    compactVertices[baseIdx + 0u] = packed1;
+    compactVertices[baseIdx + 1u] = packed2;
 }
 
 // ============================================================================
@@ -523,18 +541,18 @@ void main(){
         // ... (write vertex/index)
         vec3 corners[4];
         getFaceCorners(face, voxelPos, corners);
-        uint facePacked = face | (blockDescriptor << 8);
+        // uint facePacked = face | (blockDescriptor << 8); // Removed
 
         for(uint v=0u; v<4u; v++){
-            vec2 uv;
-            if (isWater) {
-                uv = flipV(getBaseUV(v));
-            } else {
-                uv = getAtlasUV(face,v);
-            }
+            // Calculate local position
+            vec3 worldPos = corners[v];
+            vec3 localPosFloat = worldPos - chunkWorldOffset;
+            ivec3 localPos = ivec3(round(localPosFloat));
             
-            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz));
-            writeVertex(vertBaseAbs+v,corners[v],uv,ao,facePacked);
+            float ao = calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz));
+            uint aoIdx = mapAO(ao);
+            
+            writeVertex(vertBaseAbs+v, localPos, aoIdx, face, v, blockDescriptor);
         }
         uint localVertBase = finalFaceIdx*4u;
         compactIndices[idxWriteBase+0u]=localVertBase+0u;

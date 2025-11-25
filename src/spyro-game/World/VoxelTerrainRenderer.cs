@@ -166,34 +166,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
         GL.EnableVertexArrayAttrib(vao, 0);
-        GL.VertexArrayAttribFormat(vao, 0, 3, VertexAttribType.Float, false, 0);
+        // Phase 5.2: Compressed format (2 uints)
+        // Use VertexAttribIFormat for integer attributes
+        GL.VertexArrayAttribIFormat(vao, 0, 2, VertexAttribIType.UnsignedInt, 0);
         GL.VertexArrayAttribBinding(vao, 0, 0);
 
-        GL.EnableVertexArrayAttrib(vao, 1);
-        GL.VertexArrayAttribFormat(vao, 1, 2, VertexAttribType.Float, false, 12);
-        GL.VertexArrayAttribBinding(vao, 1, 0);
-
-        GL.EnableVertexArrayAttrib(vao, 2);
-        GL.VertexArrayAttribFormat(vao, 2, 1, VertexAttribType.Float, false, 20);
-        GL.VertexArrayAttribBinding(vao, 2, 0);
-
-        GL.EnableVertexArrayAttrib(vao, 3);
-        // Phase 5.2: Face Index is stored as float (uintBitsToFloat) in the buffer.
-        // We want the raw bits in the shader (uint).
-        // VertexAttribType.Float tells GL to read 32-bit float and convert to float/int.
-        // If shader input is uint, GL converts float value to uint (e.g. 1.0f -> 1u).
-        // BUT we stored bits! uintBitsToFloat(1) is 1.4e-45. GL converts 1.4e-45 to 0u.
-        // FIX: Use VertexAttribPointer with type FLOAT but shader input as float, then floatBitsToUint.
-        // OR: Use VertexAttribIPointer with type UNSIGNED_INT?
-        // If we use VertexAttribIPointer(..., GL_UNSIGNED_INT, ...), GL reads 32 bits as uint.
-        // Since the buffer contains the raw bits of the uint (just cast to float for storage),
-        // reading them as uint will recover the original uint value!
-        // So VertexAttribIFormat with UnsignedInt is correct IF the buffer data is binary compatible.
-        // float and uint are both 32-bit. uintBitsToFloat preserves the bit pattern.
-        // So the buffer contains the bits of the uint.
-        // Reading as UnsignedInt retrieves the bits.
-        GL.VertexArrayAttribIFormat(vao, 3, 1, VertexAttribIType.UnsignedInt, 24);
-        GL.VertexArrayAttribBinding(vao, 3, 0);
+        // Disable unused attributes
+        GL.DisableVertexArrayAttrib(vao, 1);
+        GL.DisableVertexArrayAttrib(vao, 2);
+        GL.DisableVertexArrayAttrib(vao, 3);
 
         if (buffers.VertexBuffer == 0 || buffers.IndexBuffer == 0)
         {
@@ -393,6 +374,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
         }
 
+        // Phase 5.2: Bind ChunkInfo Buffer (Binding 13)
+        if (bufferManager != null && bufferManager.ChunkInfoBuffer != 0)
+        {
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, bufferManager.ChunkInfoBuffer);
+        }
+
         // Chunk transform (identity for now - chunks in world space)
         var identity = Matrix4.Identity;
         shader.SetMatrix4("uChunkTransform", ref identity);
@@ -403,6 +390,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Set debug uniforms
         shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
         shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
+        shader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
 
         // DEBUG: Verify buffer binding
         if (bufferManager.IndirectDrawBuffer == 0)

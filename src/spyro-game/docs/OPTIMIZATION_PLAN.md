@@ -84,11 +84,11 @@ Implement Compute-based Occlusion Culling (Hi-Z Culling).
 3.  Modify `compute-count.comp` & `compute-compact.comp`: (Done)
     *   Update reading logic to unpack mask.
 
-### Phase 2: Vertex Compression (Est. 8-12 hours)
-1.  Define new vertex struct/layout.
-2.  Update `compute-compact.comp` to pack data.
-3.  Update `voxel-terrain.vert` to unpack data.
-4.  Implement `gl_DrawID` based chunk offset lookup (requires binding `ChunkInfoBuffer` to vertex shader).
+### Phase 2: Vertex Compression (Completed 2025-11-25)
+1.  Define new vertex struct/layout. (Done)
+2.  Update `compute-compact.comp` to pack data. (Done)
+3.  Update `voxel-terrain.vert` to unpack data. (Done)
+4.  Implement `gl_DrawID` based chunk offset lookup (requires binding `ChunkInfoBuffer` to vertex shader). (Done)
 
 ### Phase 3: Greedy Meshing (Est. 16-24 hours)
 1.  Prototype greedy meshing logic (likely on CPU first or simple compute shader).
@@ -105,4 +105,4 @@ Implement Compute-based Occlusion Culling (Hi-Z Culling).
 2.  Standardize binding points.
 
 ## 4. Immediate Next Steps
-Start with **Phase 2 (Vertex Compression)** to further reduce memory usage and bandwidth.
+Start with **Phase 3 (Greedy Meshing)** to further reduce vertex count.

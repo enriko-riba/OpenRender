@@ -276,21 +276,22 @@ internal class TerrainLoadingScene : Scene
         var detailedStatusY = 160;
         var progressBarY = 220;
         var statsY = 300;
+        var errorMessagesY = Height - 200; // Bottom half, leaving room for spinner
         var spinnerY = Height - 60;
 
-        // Title
+        // Title - Centered
         WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
 
-        // Current Stage
+        // Current Stage - Centered
         WriteLineCentered(currentStage, progressColor, 20, stageY);
 
-        // Detailed Status (if available)
+        // Detailed Status - Centered (if available)
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
             WriteLineCentered(progressTracker.DetailedStatus, dimColor, 18, detailedStatusY);
         }
 
-        // Progress Bar
+        // Progress Bar - Centered
         var progress = progressTracker.Progress / 100f;
         var progressPercent = (int)progressTracker.Progress;
         
@@ -307,48 +308,57 @@ internal class TerrainLoadingScene : Scene
         // Draw progress bar border
         DrawProgressBar(barX - 2, progressBarY - 2, barWidth + 4, barHeight + 4, 0f, textColor, true);
 
-        // Progress percentage text (centered on bar)
+        // Progress percentage text - Centered on bar
         var percentText = $"{progressPercent}%";
-        var percentSize = textRenderer.Measure(percentText, 24);
-        WriteLine(percentText, textColor, 24, (Width - percentSize.Width) / 2, progressBarY + 5);
+        WriteLineCentered(percentText, textColor, 24, progressBarY + 5);
 
-        // Stats section with generous spacing to prevent overlap (left-aligned)
-        var statsX = (Width - barWidth) / 2;
-        
-        // Line 1: Elapsed Time
+        // Stats section - Centered (changed from left-aligned)
         var line1Y = statsY;
-        WriteLine($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor, 22, statsX, line1Y);
+        WriteLineCentered($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor, 22, line1Y);
         
         // Line 2: Est. Remaining (always reserve space)
-        var line2Y = line1Y + 45; // Increased from 40 to 45
+        var line2Y = line1Y + 45;
         if (progressTracker.Progress > 1f && progressTracker.Progress < 99f)
         {
             var eta = progressTracker.EstimatedTimeRemaining;
-            WriteLine($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, statsX, line2Y);
+            WriteLineCentered($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, line2Y);
         }
         
         // Line 3: Target Chunks (with extra spacing)
-        var line3Y = line2Y + 60; // Increased from 55 to 60
-        WriteLine($"Target Chunks: {targetChunkCount}", dimColor, 22, statsX, line3Y);
+        var line3Y = line2Y + 60;
+        WriteLineCentered($"Target Chunks: {targetChunkCount}", dimColor, 22, line3Y);
         
-        // Line 4: Chunks Ready
-        var line4Y = line3Y + 45; // Increased from 40 to 45
+        // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
+        var line4Y = line3Y + 45; // Changed from 45 to match consistent spacing
         if (streamingManager != null)
         {
             var (_, _, _, ready) = streamingManager.GetStats();
-            WriteLine($"Chunks Ready: {ready}", dimColor, 22, statsX, line4Y);
+            WriteLineCentered($"Chunks Ready: {ready}", dimColor, 22, line4Y);
         }
 
-        // Line 5: GPU Memory (with generous extra spacing, smaller font)
-        var line5Y = line4Y + 60;
+        // Line 5: GPU Memory - SAME SPACING as other lines (45px)
+        var line5Y = line4Y + 60; // Changed from 60 to match consistent spacing
         if (streamingManager != null)
         {
             var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();
             var totalMB = totalBytes / (1024f * 1024f);
-            WriteLine($"GPU Memory: {totalMB:F1} MB", dimColor, 22, statsX, line5Y);
+            WriteLineCentered($"GPU Memory: {totalMB:F1} MB", dimColor, 22, line5Y);
         }
 
-        // Animated spinner
+        // Error messages - Bottom half, centered
+        if (!string.IsNullOrEmpty(currentStage) && currentStage.StartsWith("ERROR:"))
+        {
+            // Split error message into lines and render each centered
+            var errorLines = currentStage.Split('\n');
+            var errorY = errorMessagesY;
+            foreach (var errorLine in errorLines)
+            {
+                WriteLineCentered(errorLine, new Vector3(1.0f, 0.3f, 0.3f), 18, errorY);
+                errorY += 30;
+            }
+        }
+
+        // Animated spinner - Bottom
         var spinnerChars = new[] { '|', '/', '-', '\\' };
         var spinner = spinnerChars[(int)(timer.Elapsed.TotalSeconds * 4) % 4];
         WriteLineCentered($"{spinner}", dimColor, 20, spinnerY);
