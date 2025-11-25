@@ -68,12 +68,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private ulong[]? biomeTextureHandles;
     private readonly Dictionary<string, Texture> textureCache = [];
 
-    /// <summary>
-    /// Custom texture storage to bypass Material system limits (8 slots) and rigid TextureType slots.
-    /// Mapped by GeologyLayer for clarity.
-    /// </summary>
-    public Dictionary<GeologyLayer, Texture> Textures { get; } = [];
-
     public void LoadBiomeTextures(TerrainConfig config)
     {
         if (config.Biomes == null || config.Biomes.Count == 0) return;
@@ -144,15 +138,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Don't cull this node - we handle culling internally with GPU frustum culling
         DisableCulling = true;
         RenderGroup = RenderGroup.Default;
-
-        // Populate Textures dictionary from Material to support custom binding in OnDraw
-        // Mapping Material slots (TextureType) to GeologyLayer
-        if (Material.Textures[(int)TextureType.Diffuse] != null) Textures[GeologyLayer.Surface] = Material.Textures[(int)TextureType.Diffuse];
-        if (Material.Textures[(int)TextureType.Detail] != null) Textures[GeologyLayer.Water] = Material.Textures[(int)TextureType.Detail];
-        if (Material.Textures[(int)TextureType.Additional3] != null) Textures[GeologyLayer.Subsurface] = Material.Textures[(int)TextureType.Additional3]; // Dirt
-        if (Material.Textures[(int)TextureType.Specular] != null) Textures[GeologyLayer.DeepSubsurface] = Material.Textures[(int)TextureType.Specular]; // Rock
-        if (Material.Textures[(int)TextureType.Bump] != null) Textures[GeologyLayer.ShoreLine] = Material.Textures[(int)TextureType.Bump]; // Sand
-        if (Material.Textures[(int)TextureType.Additional2] != null) Textures[GeologyLayer.UnderwaterSubsurface] = Material.Textures[(int)TextureType.Additional2]; // Bedrock
 
         Log.Info("VoxelTerrainRenderer: Initialized");
     }
@@ -545,71 +530,13 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
     private static Material CreateDummyMaterial()
     {
-        // Create material with the voxel terrain shader and grass-dirt texture atlas (3x2 layout)
+        // Create material with the voxel terrain shader
+        // Textures are now loaded per-biome via LoadBiomeTextures() from TerrainConfig
         var shader = new Shader("Shaders/voxel-terrain.vert", "Shaders/voxel-terrain.frag");
         
-        // Get paths from VoxelWorld configuration
-        var grassPath = VoxelWorld.textures[BlockType.GrassDirt];
-        var waterPath = VoxelWorld.textures[BlockType.WaterLevel];
-        var dirtPath = VoxelWorld.textures[BlockType.Dirt];
-        var rockPath = VoxelWorld.textures[BlockType.Rock];
-        var sandPath = VoxelWorld.textures[BlockType.Sand];
-        var bedrockPath = VoxelWorld.textures[BlockType.BedRock];
-        
-        // Slot 0: GrassDirt
-        var grassDesc = new TextureDescriptor(grassPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Diffuse, // Slot 0
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        // Slot 1: Water
-        var waterDesc = new TextureDescriptor(waterPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Detail, // Slot 1
-            TextureWrapS: TextureWrapMode.Repeat,
-            TextureWrapT: TextureWrapMode.Repeat,
-            GenerateMipMap: true);
-
-        // Slot 2: Dirt
-        var dirtDesc = new TextureDescriptor(dirtPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Additional3, // Slot 6 (Avoid Normal=2 which forces Linear)
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        // Slot 3: Rock
-        var rockDesc = new TextureDescriptor(rockPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Specular, // Slot 3
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        // Slot 4: Sand
-        var sandDesc = new TextureDescriptor(sandPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Bump, // Slot 4
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        // Slot 5: BedRock
-        var bedrockDesc = new TextureDescriptor(bedrockPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Additional2, // Slot 5
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        return Material.Create(shader, [grassDesc, waterDesc, dirtDesc, rockDesc, sandDesc, bedrockDesc]);
+        // Use default placeholder textures (will be overridden by biome textures)
+        // NOTE: Actual terrain textures are loaded dynamically via LoadBiomeTextures()
+        // based on TerrainConfig biome definitions
+        return Material.Create(shader, (TextureDescriptor[]?)null);
     }
 }

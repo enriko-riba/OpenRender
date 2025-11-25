@@ -1877,11 +1877,17 @@ public sealed class ChunkStreamingManager : IDisposable
             {
                 var name = Path.GetFileNameWithoutExtension(file);
                 var parts = name.Split('_');
-                if (parts.Length >= 3 && int.TryParse(parts[1], out var x) && int.TryParse(parts[2], out var z))
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var worldX) && int.TryParse(parts[2], out var worldZ))
                 {
-                    if (x >= 0 && x < VoxelHelper.WorldChunksXZ && z >= 0 && z < VoxelHelper.WorldChunksXZ)
+                    // CRITICAL FIX: Convert world coordinates to chunk indices
+                    // SaveChunkEdits saves as world block coordinates (chunkPos.X, chunkPos.Z)
+                    // We must divide by ChunkSideSize to get chunk indices
+                    var chunkX = worldX / VoxelHelper.ChunkSideSize;
+                    var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+
+                    if (chunkX >= 0 && chunkX < VoxelHelper.WorldChunksXZ && chunkZ >= 0 && chunkZ < VoxelHelper.WorldChunksXZ)
                     {
-                        var chunkIdx = z * VoxelHelper.WorldChunksXZ + x;
+                        var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
 
                         using var stream = File.OpenRead(file);
                         using var reader = new BinaryReader(stream);
@@ -1895,6 +1901,11 @@ public sealed class ChunkStreamingManager : IDisposable
                             edits[voxelIdx] = type;
                         }
                         chunkEdits[chunkIdx] = edits;
+                        Log.Debug($"Loaded {count} edits for chunk {chunkIdx} (world coords {worldX},{worldZ} → chunk indices {chunkX},{chunkZ})");
+                    }
+                    else
+                    {
+                        Log.Warn($"Skipping edit file {name}: chunk indices ({chunkX},{chunkZ}) out of bounds");
                     }
                 }
             }

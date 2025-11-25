@@ -37,26 +37,10 @@ public struct BlockState
     public BlockType BlockType { get; set; }
 
     /// <summary>
-    /// 0 = South, 1 = East, 2 = North, 3 = West, 4 = Top, 5 = Bottom
-    /// </summary>
-    public BlockDirection FrontDirection { get; set; }
-
-
-    /// <summary>
     /// Gets or sets the blocks visibility.
     /// Note that only visible blocks are being rendered.
     /// </summary>
     public bool IsVisible { get; internal set; }
-
-    /// <summary>
-    /// Packed ambient occlusion values per face (3 bits per face).
-    /// </summary>
-    public uint PackedAO { get; internal set; }
-
-    /// <summary>
-    /// Returns true if the block is None or WaterLevel.
-    /// </summary>
-    public readonly bool IsTransparent => BlockType is BlockType.WaterLevel or BlockType.None;
 
     public Vector3i LocalPosition { get; private set; }
     public Vector3i GlobalPosition { get; private set; } 

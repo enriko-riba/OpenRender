@@ -90,7 +90,7 @@ internal class GameScene : Scene
         
         // Initialize block picking service
         // Use the constructor that accepts ChunkStreamingManager
-        blockPickingService = new BlockPickingService(streamingManager, camera!);
+        blockPickingService = new BlockPickingService(streamingManager);
         
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
@@ -125,7 +125,7 @@ internal class GameScene : Scene
         // Initialize block picking service NOW (after world and terrainRenderer are set)
         if (terrainRenderer != null && world != null && blockPickingService == null)
         {
-            blockPickingService = new BlockPickingService(world, terrainRenderer);
+            blockPickingService = new BlockPickingService(terrainRenderer);
             Log.Info("GameScene: Block picking service initialized");
         }
 

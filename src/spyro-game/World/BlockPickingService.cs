@@ -10,7 +10,6 @@ namespace SpyroGame.World;
 /// </summary>
 public class BlockPickingService
 {
-    private readonly VoxelWorld world;
     private readonly ChunkStreamingManager? streamingManager;
     private readonly VoxelTerrainRenderer terrainRenderer;
     
@@ -27,22 +26,20 @@ public class BlockPickingService
     // Cached result
     private BlockState? cachedPickedBlock = null;
     
-    public BlockPickingService(VoxelWorld world, VoxelTerrainRenderer terrainRenderer)
+    public BlockPickingService(VoxelTerrainRenderer terrainRenderer)
     {
-        this.world = world;
         this.terrainRenderer = terrainRenderer;
     }
 
     /// <summary>
     /// Constructor for GPU streaming mode.
     /// </summary>
-    public BlockPickingService(ChunkStreamingManager streamingManager, ICamera camera)
+    public BlockPickingService(ChunkStreamingManager streamingManager)
     {
         // In GPU mode, we don't have direct access to VoxelWorld or VoxelTerrainRenderer in the same way
         // But since picking is disabled anyway, we just need to satisfy the constructor
-        this.world = null!; 
         this.streamingManager = streamingManager;
-        this.terrainRenderer = streamingManager.GetTerrainRenderer();
+        terrainRenderer = streamingManager.GetTerrainRenderer()!;
     }
     
     /// <summary>
@@ -93,16 +90,7 @@ public class BlockPickingService
             }
         }
     }
-    
-    /// <summary>
-    /// Clear the cached picked block.
-    /// </summary>
-    public void Clear()
-    {
-        cachedPickedBlock = null;
-        terrainRenderer.PickedBlock = null;
-    }
-    
+   
     /// <summary>
     /// Check if camera moved significantly since last pick.
     /// </summary>

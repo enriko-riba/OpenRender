@@ -644,14 +644,11 @@ public class Player
 
     private bool HasBlockAbove(Vector3 globalPosition)
     {
-        var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(globalPosition);
-        var chunk = world[chunkIndex];
-        if (chunk is null) return false;
-
-        var localPosition = globalPosition - chunk.Position;
-        if (localPosition.Y is < 0 or >= VoxelHelper.ChunkYSize) return false;
-
-        var block = chunk.GetBlockAtLocalPosition(localPosition);
-        return block.BlockType is not BlockType.None and not BlockType.WaterLevel;
+        var x = (int)globalPosition.X;
+        var y = (int)globalPosition.Y;
+        var z = (int)globalPosition.Z;
+        
+        var block = world.GetBlockByPositionGlobalSafe(x, y, z);
+        return block is not null && block.Value.BlockType is not BlockType.None and not BlockType.WaterLevel;
     }
 }
