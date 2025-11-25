@@ -386,7 +386,7 @@ public sealed class ChunkStreamingManager : IDisposable
                             {
                                 StartY = startY,
                                 EndY = endY,
-                                BlockType = blockType
+                                BlockDescriptor = blockType // This is BlockDescriptor from GPU
                             };
 
                             // Populate Chunk.cs arrays (exclusive upper bound)
@@ -1095,7 +1095,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
         else
         {
-            // terrainConfig.Save(configPath); // Disabled auto-save to prevent overwriting with defaults
+            terrainConfig.Save(configPath);
             Log.Info($"Saved default TerrainConfig to {configPath}");
         }
 

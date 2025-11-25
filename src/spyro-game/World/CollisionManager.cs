@@ -6,7 +6,7 @@ public struct ColumnSpan
 {
     public short StartY;
     public short EndY;
-    public byte BlockType;
+    public byte BlockDescriptor; // Stores BlockDescriptor enum value from GPU
 }
 
 public class ChunkCollisionData
@@ -56,12 +56,12 @@ public class CollisionManager
     }
 
     // Raycasting and collision logic
-    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockType blockType)
+    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockDescriptor descriptor)
     {
         hitPoint = Vector3.Zero;
         blockPos = Vector3i.Zero;
         normal = Vector3.Zero;
-        blockType = BlockType.None;
+        descriptor = BlockDescriptor.Air;
 
         direction = Vector3.Normalize(direction);
         var t = 0.0f;
@@ -96,10 +96,10 @@ public class CollisionManager
         while (t < maxDistance)
         {
             // Check if current voxel is solid
-            if (IsSolid(x, y, z, out blockType))
+            if (IsSolid(x, y, z, out descriptor))
             {
-                // Ignore water blocks for picking
-                if (blockType != BlockType.WaterLevel)
+                // Ignore water blocks for picking (only solid blocks matter)
+                if (descriptor != BlockDescriptor.Water)
                 {
                     hitPoint = origin + direction * t;
                     blockPos = new Vector3i(x, y, z);
@@ -113,8 +113,6 @@ public class CollisionManager
                     return true;
                 }
             }
-
-            lastPos = new Vector3i(x, y, z);
 
             // Advance to next voxel
             if (tMaxX < tMaxY)
@@ -152,9 +150,9 @@ public class CollisionManager
         return false;
     }
 
-    private bool IsSolid(int x, int y, int z, out BlockType blockType)
+    private bool IsSolid(int x, int y, int z, out BlockDescriptor descriptor)
     {
-        blockType = BlockType.None;
+        descriptor = BlockDescriptor.Air;
         if (y < 0 || y >= VoxelHelper.ChunkYSize) return false;
 
         var chunkX = (int)Math.Floor((float)x / 16.0f);
@@ -170,15 +168,16 @@ public class CollisionManager
 
             var colIdx = localZ * 16 + localX;
             var count = data.SpanCounts[colIdx];
-            var offset = colIdx * 16; // MaxSpansPerColumn
+            var offset = colIdx * 16;       // MaxSpansPerColumn
 
             for (var i = 0; i < count; i++)
             {
                 var span = data.Spans[offset + i];
                 if (y >= span.StartY && y <= span.EndY)
                 {
-                    blockType = (BlockType)span.BlockType;
-                    return true;
+                    descriptor = (BlockDescriptor)span.BlockDescriptor;
+                    // Solid if not Air or Water
+                    return descriptor is not BlockDescriptor.Air and not BlockDescriptor.Water;
                 }
             }
         }

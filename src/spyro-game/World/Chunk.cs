@@ -59,7 +59,7 @@ public class Chunk(int index)
     {
         columnSpanPairs = spansPairs;
         columnSpanCounts = counts;
-        columnSpanTypes = types;
+        columnSpanTypes = types; // BlockDescriptor bytes from GPU
         HasGpuSpans = true;
 
         // Update maxHeights for compatibility with simple heightmap queries
@@ -84,17 +84,18 @@ public class Chunk(int index)
     }
 
     /// <summary>
-    /// Query block type from GPU collision spans (supports caves/overhangs).
+    /// Query block descriptor from GPU collision spans (supports caves/overhangs).
+    /// Returns the BlockDescriptor at the specified local position.
     /// </summary>
-    internal BlockType GetBlockTypeFromSpans(int lx, int ly, int lz, int maxSpans)
+    internal BlockDescriptor GetDescriptorFromSpans(int lx, int ly, int lz, int maxSpans)
     {
         if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null) 
-            return BlockType.None;
+            return BlockDescriptor.Air;
         
         var size = VoxelHelper.ChunkSideSize;
         var col = lx + lz * size;
         var c = columnSpanCounts[col];
-        if (c == 0) return BlockType.None;
+        if (c == 0) return BlockDescriptor.Air;
         
         var baseIdx = col * maxSpans * 2;
         var typeBaseIdx = col * maxSpans;
@@ -104,10 +105,42 @@ public class Chunk(int index)
             var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
             if (ly >= y0 && ly < y1)
             {
-                return (BlockType)columnSpanTypes[typeBaseIdx + i];
+                return (BlockDescriptor)columnSpanTypes[typeBaseIdx + i];
             }
         }
-        return BlockType.None;
+        return BlockDescriptor.Air;
+    }
+
+    /// <summary>
+    /// DEPRECATED: Legacy method for backward compatibility.
+    /// Use GetDescriptorFromSpans() instead.
+    /// </summary>
+    [Obsolete("Use GetDescriptorFromSpans() instead. GeologyLayer has been renamed to BlockDescriptor.")]
+    internal BlockDescriptor GetGeologyFromSpans(int lx, int ly, int lz, int maxSpans)
+    {
+        return GetDescriptorFromSpans(lx, ly, lz, maxSpans);
+    }
+
+    /// <summary>
+    /// DEPRECATED: Legacy method for backward compatibility.
+    /// Use GetDescriptorFromSpans() instead.
+    /// </summary>
+    [Obsolete("Use GetDescriptorFromSpans() instead. BlockType is being phased out in favor of BlockDescriptor.")]
+    internal BlockType GetBlockTypeFromSpans(int lx, int ly, int lz, int maxSpans)
+    {
+        var descriptor = GetDescriptorFromSpans(lx, ly, lz, maxSpans);
+        return descriptor switch
+        {
+            BlockDescriptor.Air => BlockType.None,
+            BlockDescriptor.Water => BlockType.WaterLevel,
+            BlockDescriptor.Surface => BlockType.GrassDirt,
+            BlockDescriptor.Subsurface => BlockType.Dirt,
+            BlockDescriptor.DeepSubsurface => BlockType.Rock,
+            BlockDescriptor.UnderwaterSurface => BlockType.Sand,
+            BlockDescriptor.UnderwaterSubsurface => BlockType.Sand,
+            BlockDescriptor.ShoreLine => BlockType.Sand,
+            _ => BlockType.Rock
+        };
     }
 
     #endregion

@@ -44,8 +44,31 @@ layout(std430, binding = 10) readonly buffer TerrainParams {
     float uClimateScale; float uClimateWarp;
     float uRegionCellSize; float uRegionJitter; float uRegionFeather; uint uMaxRegionMix;
     float uCheeseFreq; float uCheeseAmp; float uSpaghettiFreq; float uSpaghettiAmp;
-    float uCaveThreshold; float uCurlScale; float uCurlStrength; float pad0;
+    float uCaveThreshold; float uCurlScale; float uCurlStrength;
+    // Terrain shaping parameters
+    float uCoastThreshold;
+    float uMountainThreshold;
+    float uCliffFreq;
+    float uCliffAmp;
+    float uOverhangFreq;
+    float uOverhangAmp;
+    float uShorelineRange;
+    float uSubsurfaceDepth;
+    float uCaveDepthFade;
+    float uCaveSlopeFadeMin;
+    float uCaveSlopeFadeMax;
+    float uCaveFloodExt;
+    // NEW: Ocean/Land/Altitude thresholds for terrain-type-aware biome system
+    float uOceanThreshold;
+    float uDeepOceanThreshold;
+    float uAlpineElevation;
+    float uCoastRange;
 } params;
+
+// Hardcoded biome IDs (must match BiomeDefinition constants in C#)
+const uint OCEAN_BIOME_ID = 0u;
+const uint ALPINE_BIOME_ID = 9u;
+const uint DEFAULT_FALLBACK_BIOME_ID = 2u; // Plains
 
 // Simple hash function
 uint hash(uint x, uint seed) {
@@ -201,21 +224,25 @@ float getHeight(vec2 p) {
     // FIX: Add WATER_LEVEL because spline is relative to sea level (0 = coast)
     float height = baseHeight + float(WATER_LEVEL);
     
-    // Add some variation based on PV and E
-    // If erosion is low (rugged), add peaks
-    // If erosion is high (flat), reduce peaks
-    float ruggedness = (1.0 - E * 0.5 - 0.5); // [0, 1] roughly
-    height += PV * 20.0 * ruggedness;
-    
-    // Add dramatic cliff noise in mountainous regions (C > 0.7)
-    if (tC > 0.7) {
-        // High-frequency ridge noise for cliff faces
-        float cliffNoise = fbm(p * (1.0 / 40.0), params.uSeed + 1500u, 4, 0.6, 2.5);
-        // Make it ridged (abs creates sharp peaks)
-        cliffNoise = abs(cliffNoise);
-        // Scale by mountain intensity
-        float mountainness = smoothstep(0.7, 0.95, tC);
-        height += cliffNoise * 40.0 * mountainness;
+    // NEW: Only apply erosion and peaks on LAND areas (C >= OceanThreshold)
+    // Ocean floors should be smooth, not eroded
+    if (tC >= params.uOceanThreshold) {
+        // Add some variation based on PV and E
+        // If erosion is low (rugged), add peaks
+        // If erosion is high (flat), reduce peaks
+        float ruggedness = (1.0 - E * 0.5 - 0.5); // [0, 1] roughly
+        height += PV * 20.0 * ruggedness;
+        
+        // Add dramatic cliff noise in mountainous regions
+        if (tC > params.uMountainThreshold) {
+            // High-frequency ridge noise for cliff faces
+            float cliffNoise = fbm(p * params.uCliffFreq, params.uSeed + 1500u, 4, 0.6, 2.5);
+            // Make it ridged (abs creates sharp peaks)
+            cliffNoise = abs(cliffNoise);
+            // Scale by mountain intensity
+            float mountainness = smoothstep(params.uMountainThreshold, 0.95, tC);
+            height += cliffNoise * params.uCliffAmp * mountainness;
+        }
     }
     
     return height;
@@ -235,15 +262,15 @@ float getTerrainDensity(vec3 p) {
     // Simple density: positive below surface, negative above
     float density = baseHeight - y;
     
-    // Add 3D overhang noise in mountains (C > 0.75)
-    if (tC > 0.75 && y > baseHeight - 50.0 && y < baseHeight + 30.0) {
-        float mountainness = smoothstep(0.75, 1.0, tC);
+    // Add 3D overhang noise in mountains
+    if (tC > params.uMountainThreshold && y > baseHeight - 50.0 && y < baseHeight + 30.0) {
+        float mountainness = smoothstep(params.uMountainThreshold, 1.0, tC);
         // 3D noise for overhangs
-        float overhangNoise = fbm3D(p * (1.0 / 60.0), params.uSeed + 2000u, 3, 0.5, 2.0);
+        float overhangNoise = fbm3D(p * params.uOverhangFreq, params.uSeed + 2000u, 3, 0.5, 2.0);
         // Add overhang effect near the surface
         float heightFactor = 1.0 - abs((y - baseHeight) / 40.0);
         heightFactor = clamp(heightFactor, 0.0, 1.0);
-        density += overhangNoise * 15.0 * mountainness * heightFactor;
+        density += overhangNoise * params.uOverhangAmp * mountainness * heightFactor;
     }
     
     return density;
@@ -275,17 +302,12 @@ bool isCave(int wx, int wy, int wz, int depth, float slope) {
     vec3 p = vec3(wx, wy, wz);
     
     // Surface attenuation: reduce cave probability near surface
-    // Ramp from 0.0 at depth 0 to 1.0 at depth 5 (reduced from 10 for more breaches)
-    // This tapers the cave from the inside as it approaches surface
-    float depthAtten = smoothstep(0.0, 5.0, float(depth));
+    // Use config value for fade distance instead of hardcoded 5.0
+    float depthAtten = smoothstep(0.0, params.uCaveDepthFade, float(depth));
     
     // Allow entrances on slopes (cliffs/hills)
-    // More permissive slope threshold: 0.5 (gentle) to 2.0 (steep cliffs)
-    // This allows breaches on various terrain types
-    float slopeAtten = smoothstep(0.5, 2.0, slope);
-    
-    // Removed the 0.85 cap - allow full slope-based breach on steep terrain
-    // On very steep slopes (2.0+), caves can breach even at the surface (depth 0)
+    // Use config values for slope thresholds instead of hardcoded 0.5, 2.0
+    float slopeAtten = smoothstep(params.uCaveSlopeFadeMin, params.uCaveSlopeFadeMax, slope);
     
     // Use the best of both: if deep OR steep, allow cave
     // Favor steep slopes: weight slope more heavily
@@ -330,13 +352,16 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     
     // Solid blocks (y <= height)
     
-    // Check for 3D density overhangs in mountains
     vec2 xz = vec2(wx, wz);
     float C = getContinentalness(xz);
     float tC = C * 0.5 + 0.5;
     
-    // Use 3D density in mountainous regions
-    if (tC > 0.75 && y > height - 50 && y > WATER_LEVEL + 20) {
+    // NEW: Only carve caves in LAND areas (not in ocean floor)
+    // Ocean floors should be solid bedrock/sand, not have caves
+    bool isLand = (tC >= params.uOceanThreshold);
+    
+    // Check for 3D density overhangs in mountains (only on land)
+    if (isLand && tC > params.uMountainThreshold && y > height - 50 && y > WATER_LEVEL + 20) {
         vec3 p = vec3(wx, y, wz);
         float density = getTerrainDensity(p);
         if (density < 0.0) {
@@ -345,9 +370,9 @@ uint generateBlockType(int height, int y, int wx, int wz) {
         }
     }
     
-    // M3: Cave Carving
-    // Don't carve bedrock (y=0) or water (y > height)
-    if (y > 0) {
+    // Cave Carving (only on land, not in ocean)
+    // Don't carve bedrock (y=0) or ocean floor
+    if (isLand && y > 0) {
         int depth = height - y;
         // Calculate slope for breach logic
         // Extended range to depth < 15 (from 12) for better breach detection
@@ -357,18 +382,14 @@ uint generateBlockType(int height, int y, int wx, int wz) {
         }
         
         if (isCave(wx, y, wz, depth, slope)) {
-            // If it's a cave, it's Air (unless it's below water level, then it might be flooded?)
-            // For now, standard caves are Air.
-            // If we want flooded caves, we check if y <= WATER_LEVEL.
+            // If it's a cave, it's Air (unless it's below water level, then it might be flooded)
             if (y <= WATER_LEVEL) {
                 // Flooded cave logic:
                 // If the terrain column is underwater (ocean), flood the cave.
                 // This prevents "water portals" on the ocean floor.
                 // Caves under land (height > WATER_LEVEL) remain dry (Air), preserving "air pockets".
-                // FIX: Extend flooding slightly inland (height <= WATER_LEVEL + 8)
-                // This pushes the "water wall" deep into the cave where the floor might rise above water level,
-                // creating a natural shoreline inside the cave instead of a vertical wall at the coast.
-                if (y <= WATER_LEVEL) {
+                // Use config value for flooding extension instead of hardcoded 8
+                if (y <= WATER_LEVEL + int(params.uCaveFloodExt)) {
                     return BLOCK_WATER_LEVEL;
                 }
                 
@@ -382,12 +403,12 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     // Surface block
     if (y == height) {
         if (y < WATER_LEVEL) {
-            // Underwater surface
+            // Underwater surface (ocean floor or shallow water)
             if (y >= WATER_LEVEL - 1) return BLOCK_SAND; // 1 block below water
             return BLOCK_BEDROCK; // Deep underwater
         } else {
-            // Above water surface
-            if (y <= WATER_LEVEL + 2) {
+            // Above water surface (land)
+            if (y <= WATER_LEVEL + int(params.uShorelineRange)) {
                 // Shoreline check
                 if (isNearWater(wx, wz)) return BLOCK_SAND;
             }
@@ -397,7 +418,7 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     
     // Sub-surface
     int depth = height - y;
-    if (depth <= 2) return BLOCK_DIRT;
+    if (depth <= int(params.uSubsurfaceDepth)) return BLOCK_DIRT;
     return BLOCK_ROCK;
 }
 
@@ -445,7 +466,7 @@ float getHumidity(vec3 p) {
     
     // Reduce by coast drying proportional to |C - coastValue| (distance from ocean)
     float C = getContinentalness(p.xz);
-    float coastVal = 0.35; // Approx coast
+    float coastVal = params.uCoastThreshold; // Use config value instead of hardcoded 0.35
     float distFromCoast = max(0.0, C - coastVal);
     
     hum -= distFromCoast * params.uCoastDry;
@@ -465,15 +486,56 @@ float getHumidity(vec3 p) {
     return clamp(hum, 0.0, 1.0);
 }
 
+/// <summary>
+/// NEW ARCHITECTURE: Terrain-Type-Aware Biome Selection
+/// 
+/// Phase 1: Ocean/Land Check
+/// - If C < OceanThreshold: return OCEAN biome (hardcoded)
+/// 
+/// Phase 2: Altitude Override
+/// - If elevation > AlpineElevation: return ALPINE biome (hardcoded)
+/// 
+/// Phase 3: Climate-Based Land Biomes
+/// - Sample LUT (contains ONLY LandOnly biomes)
+/// - LUT is indexed by temperature x humidity
+/// 
+/// This ensures:
+/// - Ocean always stays Ocean (no matter the temperature)
+/// - Mountains always become Alpine (no matter the climate)
+/// - Land biomes are properly distributed by climate
+/// </summary>
 uint getBiomeId(vec3 p) {
+    float C = getContinentalness(p.xz);
+    float tC = C * 0.5 + 0.5; // Remap to [0,1]
+    
+    // PHASE 1: Ocean Check (Priority 100)
+    // If continentalness is below ocean threshold, it's ocean regardless of climate
+    if (tC < params.uOceanThreshold) {
+        return OCEAN_BIOME_ID;
+    }
+    
+    // PHASE 2: Altitude Override (Priority 90)
+    // If elevation is above alpine threshold, it's alpine regardless of climate
+    // Use approximate elevation from height spline (fast, no full getHeight calculation)
+    float approxElevation = texture(uHeightSpline, tC).r + float(WATER_LEVEL);
+    if (approxElevation > params.uAlpineElevation) {
+        return ALPINE_BIOME_ID;
+    }
+    
+    // PHASE 3: Climate-Based Land Biomes (Priority 50)
+    // Sample the LUT which contains only LandOnly biomes
     float t = getTemperature(p);
     float h = getHumidity(p);
     
-    // Sample LUT (texture returns normalized float [0,1], scale to 255 for ID?)
-    // R8UI texture returns uint directly if using usampler2D and texture()
-    // Wait, texture() on usampler2D returns uvec4.
-    // The value in R8UI is 0..255.
-    return texture(uBiomeLUT, vec2(t, h)).r;
+    // Sample biome LUT (R8UI texture, contains only LAND biomes)
+    uint biomeId = texture(uBiomeLUT, vec2(t, h)).r;
+    
+    // Fallback safety: if LUT returns 0 (which might be Ocean ID), use default land biome
+    if (biomeId == OCEAN_BIOME_ID) {
+        return DEFAULT_FALLBACK_BIOME_ID;
+    }
+    
+    return biomeId;
 }
 
 RegionMix getBiomeWeights(vec3 p) {

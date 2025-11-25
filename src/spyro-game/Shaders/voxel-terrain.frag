@@ -145,19 +145,24 @@ void main() {
     // This ensures the whole voxel gets a single biome assignment, preventing
     // diagonal artifacts on faces and gradients across the block.
     vec3 voxelCenter = floor(vWorldPos - N * 0.01) + 0.5;
-    RegionMix regionMix = getBiomeWeights(voxelCenter);
-
-    float totalWeight = 0.0;
-    for (int i = 0; i < 4; i++) {
-        if (regionMix.weights[i] > 0.001) {
-            baseColor += sampleBiomeTexture(regionMix.biomeIds[i], layer, vTexCoord) * regionMix.weights[i];
-            totalWeight += regionMix.weights[i];
-        }
-    }
     
-    // Normalize just in case
-    if (totalWeight > 0.0) baseColor /= totalWeight;
-    else baseColor = vec4(1.0, 0.0, 1.0, 1.0); // Error
+    // CRITICAL FIX: Use ONLY the primary biome (no blending)
+    // Biome blending at the pixel level causes gradient artifacts between biomes.
+    // Each block should have a single, solid texture from its primary biome.
+    uint primaryBiomeId = getBiomeId(voxelCenter);
+    baseColor = sampleBiomeTexture(primaryBiomeId, layer, vTexCoord);
+    
+    // OLD CODE (REMOVED - was causing gradient blending artifacts):
+    // RegionMix regionMix = getBiomeWeights(voxelCenter);
+    // float totalWeight = 0.0;
+    // for (int i = 0; i < 4; i++) {
+    //     if (regionMix.weights[i] > 0.001) {
+    //         baseColor += sampleBiomeTexture(regionMix.biomeIds[i], layer, vTexCoord) * regionMix.weights[i];
+    //         totalWeight += regionMix.weights[i];
+    //     }
+    // }
+    // if (totalWeight > 0.0) baseColor /= totalWeight;
+    // else baseColor = vec4(1.0, 0.0, 1.0, 1.0); // Error
     
     // Water specific processing
     if (vBlockType == BLOCK_WATER_LEVEL) {
@@ -343,10 +348,8 @@ void main() {
 
     // M4: Biome Visualization (Debug)
     if (uShowBiomes == 1) {
-        // RegionMix regionMix = getBiomeWeights(vWorldPos); // Reused from above
-        
-        // Visualize primary biome
-        uint biomeId = regionMix.biomeIds[0];
+        // Visualize primary biome (reuse calculation from above)
+        uint biomeId = primaryBiomeId;
         vec3 biomeColor = vec3(0.5);
         
         switch(biomeId) {

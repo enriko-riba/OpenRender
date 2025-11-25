@@ -75,9 +75,9 @@ public class BlockPickingService
             lastCameraPosition = camera.Position;
             lastCameraDirection = camera.Front;
             
-            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockType blockType))
+            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockDescriptor descriptor))
             {
-                cachedPickedBlock = new BlockState(blockPos, blockType);
+                cachedPickedBlock = new BlockState(blockPos, descriptor);
             }
             else
             {

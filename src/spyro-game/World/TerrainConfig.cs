@@ -45,6 +45,128 @@ public sealed class TerrainConfig
     // New height spline has ocean floor at -80 to -20, so sea level at 35 creates proper ocean depth
     public float SeaLevel { get; set; } = 35f;
 
+    // --- Terrain Shaping Parameters ---
+    // These control how terrain features are generated and placed
+    
+    /// <summary>
+    /// Continentalness threshold separating ocean from land (NEW: Biome system).
+    /// Example: 0.35 means C < 0.35 is ocean, C >= 0.35 is land.
+    /// - Lower values (0.30): More ocean, less land
+    /// - Higher values (0.40): Less ocean, more land
+    /// CRITICAL: Must match the coast transition in your height spline!
+    /// </summary>
+    public float OceanThreshold { get; set; } = 0.35f;
+    
+    /// <summary>
+    /// Continentalness threshold for deep ocean biome variant.
+    /// Example: 0.20 means C < 0.20 is deep ocean, 0.20-0.35 is regular ocean.
+    /// </summary>
+    public float DeepOceanThreshold { get; set; } = 0.20f;
+    
+    /// <summary>
+    /// Elevation threshold (in blocks) where Alpine biome begins.
+    /// Example: 200 means elevation > 200 forces Alpine biome regardless of climate.
+    /// - Lower values (150): Alpine starts earlier, more snowy peaks
+    /// - Higher values (250): Alpine only on highest peaks
+    /// </summary>
+    public float AlpineElevation { get; set; } = 200f;
+    
+    /// <summary>
+    /// Continentalness range around OceanThreshold for coast transition zones.
+    /// Example: 0.05 means coast is from C=0.30 to C=0.40 (±0.05 around 0.35).
+    /// Used for Beach/Shore biomes that need to appear near water-land boundary.
+    /// </summary>
+    public float CoastRange { get; set; } = 0.05f;
+    
+    /// <summary>
+    /// Coast threshold for humidity calculation (continentalness value where coast is detected).
+    /// Example: 0.35 means C=0.35 is considered coast for biome humidity calculations.
+    /// - Lower values (0.30): Coast detection happens earlier, more inland drying
+    /// - Higher values (0.40): Coast detection happens later, wetter interiors
+    /// Should match the coast region in your height spline (steep transition zone).
+    /// </summary>
+    public float CoastThreshold { get; set; } = 0.35f;
+    
+    /// <summary>
+    /// Continentalness threshold where mountains begin (for cliff/overhang generation).
+    /// Example: 0.75 means mountains start appearing at C > 0.75.
+    /// - Lower values (0.65): Mountains appear in more areas, more dramatic terrain
+    /// - Higher values (0.85): Mountains only in highest continentalness, flatter world
+    /// </summary>
+    public float MountainThreshold { get; set; } = 0.75f;
+    
+    /// <summary>
+    /// Frequency of cliff noise (inverse of feature size in blocks).
+    /// Example: 1/40 = 0.025 means cliff features repeat every ~40 blocks.
+    /// - Lower values (1/60 = 0.0167): Larger, smoother cliff faces
+    /// - Higher values (1/25 = 0.04): More jagged, frequent cliff details
+    /// </summary>
+    public float CliffFrequency { get; set; } = 1f / 40f;
+    
+    /// <summary>
+    /// Height amplitude of cliff variations in blocks.
+    /// Example: 40 means cliffs can vary up to 40 blocks in height.
+    /// - Lower values (25): Gentler, less dramatic cliffs
+    /// - Higher values (60): Very dramatic, towering cliff faces
+    /// </summary>
+    public float CliffAmplitude { get; set; } = 40f;
+    
+    /// <summary>
+    /// Frequency of 3D overhang noise (inverse of feature size).
+    /// Example: 1/60 = 0.0167 means overhang features ~60 blocks wide.
+    /// - Lower values (1/80 = 0.0125): Larger, smoother overhangs
+    /// - Higher values (1/40 = 0.025): Smaller, more frequent overhangs
+    /// </summary>
+    public float OverhangFrequency { get; set; } = 1f / 60f;
+    
+    /// <summary>
+    /// Strength/amplitude of overhang displacement in blocks.
+    /// Example: 15 means overhangs can extend up to 15 blocks.
+    /// - Lower values (8): Subtle overhangs, barely noticeable
+    /// - Higher values (25): Extreme overhangs, floating islands
+    /// </summary>
+    public float OverhangAmplitude { get; set; } = 15f;
+    
+    /// <summary>
+    /// Range in blocks around sea level where shoreline detection occurs.
+    /// Example: 2 means y <= SeaLevel + 2 checks for nearby water to place sand.
+    /// - Lower values (1): Narrow shoreline, sharp transition
+    /// - Higher values (4): Wide shoreline, more beach area
+    /// </summary>
+    public float ShorelineRange { get; set; } = 2f;
+    
+    /// <summary>
+    /// Depth in blocks of the subsurface dirt layer below grass/surface.
+    /// Example: 2 means 2 blocks of dirt below the surface before stone.
+    /// - Lower values (1): Thin topsoil, stone closer to surface
+    /// - Higher values (4): Thick soil layer, more digging before stone
+    /// </summary>
+    public float SubsurfaceDepth { get; set; } = 2f;
+    
+    /// <summary>
+    /// Distance in blocks below surface where caves fade to prevent surface breaches.
+    /// Example: 5 means caves attenuate from depth 0 to 5.
+    /// - Lower values (3): Caves reach surface more easily, more cave entrances
+    /// - Higher values (8): Caves stay deep, fewer natural entrances
+    /// </summary>
+    public float CaveDepthFade { get; set; } = 5f;
+    
+    /// <summary>
+    /// Slope threshold range for cave breach detection.
+    /// Example: Min=0.5, Max=2.0 means gentle slopes (0.5) to steep cliffs (2.0) allow breaches.
+    /// - Lower min (0.3): Caves breach even on gentle slopes
+    /// - Higher max (3.0): Only very steep cliffs allow breaches
+    /// </summary>
+    public SlopeRange CaveSlopeFade { get; set; } = new() { Min = 0.5f, Max = 2.0f };
+    
+    /// <summary>
+    /// Additional blocks below sea level where cave flooding extends inland.
+    /// Example: 8 means caves up to y = SeaLevel + 8 are flooded if near coast.
+    /// - Lower values (4): Less flooding, more dry caves near coast
+    /// - Higher values (12): More flooding, wetter caves, fewer air pockets
+    /// </summary>
+    public float CaveFloodingExtension { get; set; } = 8f;
+
     public static TerrainConfig Default() => new();
 
     public static TerrainConfig Load(string path)
@@ -86,13 +208,28 @@ public sealed class TerrainConfig
         => HeightSpline.Bake(samples);
 
     /// <summary>
-    /// Build a 2D LUT of biome ids (temp x humidity → biomeId). Returns a row-major byte array of size res*res.
-    /// Values are indices into Biomes list (0..Biomes.Count-1). Out-of-range maps to 0.
+    /// Build a 2D LUT of biome ids (temp x humidity → biomeId). 
+    /// Returns a row-major byte array of size res*res.
+    /// Values are indices into Biomes list (0..Biomes.Count-1). Out-of-range maps to DEFAULT_FALLBACK_BIOME_ID.
+    /// 
+    /// IMPORTANT: This LUT only contains LAND biomes (AllowedTerrain == LandOnly).
+    /// Ocean and Alpine biomes are handled via hardcoded checks in the shader (Phase 1 & 2).
+    /// The shader only samples this LUT for land areas after ocean/alpine checks.
     /// </summary>
     public byte[] BuildBiomeIdLut(int resolution = 256)
     {
         if (resolution <= 1) resolution = 2;
         var data = new byte[resolution * resolution];
+
+        // Filter to only LAND biomes (exclude Ocean and Alpine which are hardcoded in shader)
+        var landBiomes = Biomes.Where(b => b.AllowedTerrain == TerrainType.LandOnly).ToList();
+        
+        if (landBiomes.Count == 0)
+        {
+            // Fallback: fill LUT with default biome ID
+            Array.Fill(data, (byte)BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID);
+            return data;
+        }
 
         for (var y = 0; y < resolution; y++)
         {
@@ -100,9 +237,9 @@ public sealed class TerrainConfig
             for (var x = 0; x < resolution; x++)
             {
                 var t = x / (float)(resolution - 1); // temperature in [0,1]
-                var id = BiomeDefinition.SelectBestBiomeId(Biomes, t, h);
-                if (id < 0) id = 0;
-                data[x + y * resolution] = (byte)id;
+                var id = BiomeDefinition.SelectBestBiomeId(landBiomes, t, h);
+                if (id < 0) id = BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID;
+                data[x + y * resolution] = (byte)landBiomes[id].Id; // Use actual biome ID, not list index
             }
         }
         return data;
@@ -110,6 +247,7 @@ public sealed class TerrainConfig
 
     /// <summary>
     /// Struct matching the std430 layout in the shader.
+    /// Pack carefully to match GLSL alignment: vec4 = 16-byte aligned, vec3 uses 16 bytes, etc.
     /// </summary>
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     public struct GpuParams
@@ -124,7 +262,27 @@ public sealed class TerrainConfig
         public float uRegionCellSize; public float uRegionJitter; public float uRegionFeather; public uint uMaxRegionMix;
         // Cave params
         public float uCheeseFreq; public float uCheeseAmp; public float uSpaghettiFreq; public float uSpaghettiAmp;
-        public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; public float pad0;
+        public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; 
+        
+        // Terrain shaping params
+        public float uCoastThreshold;          // Coast detection for humidity
+        public float uMountainThreshold;       // Where mountains start for cliff/overhang gen
+        public float uCliffFreq;               // Cliff noise frequency
+        public float uCliffAmp;                // Cliff height amplitude
+        public float uOverhangFreq;            // 3D overhang noise frequency
+        public float uOverhangAmp;             // Overhang displacement amplitude
+        public float uShorelineRange;          // Shoreline detection range
+        public float uSubsurfaceDepth;         // Dirt layer thickness
+        public float uCaveDepthFade;           // Cave surface attenuation distance
+        public float uCaveSlopeFadeMin;        // Cave slope breach min threshold
+        public float uCaveSlopeFadeMax;        // Cave slope breach max threshold
+        public float uCaveFloodExt;            // Cave flooding extension above sea level
+        
+        // NEW: Ocean/Land/Altitude thresholds for biome system
+        public float uOceanThreshold;          // C < this = ocean
+        public float uDeepOceanThreshold;      // C < this = deep ocean
+        public float uAlpineElevation;         // elevation > this = alpine
+        public float uCoastRange;              // +/- range around OceanThreshold for coast
     }
 
     public GpuParams GetGpuParams()
@@ -156,11 +314,25 @@ public sealed class TerrainConfig
             uCaveThreshold = Caves.CarveThreshold,
             uCurlScale = Caves.CurlScale,
             uCurlStrength = Caves.CurlStrength,
-            pad0 = 0
+            uCoastThreshold = CoastThreshold,
+            uMountainThreshold = MountainThreshold,
+            uCliffFreq = CliffFrequency,
+            uCliffAmp = CliffAmplitude,
+            uOverhangFreq = OverhangFrequency,
+            uOverhangAmp = OverhangAmplitude,
+            uShorelineRange = ShorelineRange,
+            uSubsurfaceDepth = SubsurfaceDepth,
+            uCaveDepthFade = CaveDepthFade,
+            uCaveSlopeFadeMin = CaveSlopeFade.Min,
+            uCaveSlopeFadeMax = CaveSlopeFade.Max,
+            uCaveFloodExt = CaveFloodingExtension,
+            uOceanThreshold = OceanThreshold,
+            uDeepOceanThreshold = DeepOceanThreshold,
+            uAlpineElevation = AlpineElevation,
+            uCoastRange = CoastRange,
         };
     }
 }
-
 
 /// <summary>
 /// Range helper for climate comfort bands.
@@ -172,16 +344,68 @@ public readonly record struct Range(float Min, float Max)
 }
 
 /// <summary>
-/// Defines a biome: name, climate comfort ranges, and texture set mapping.
+/// Range helper for slope thresholds (used for cave breach detection).
+/// </summary>
+public struct SlopeRange
+{
+    public float Min { get; set; }
+    public float Max { get; set; }
+    
+    public SlopeRange()
+    {
+        Min = 0.5f;
+        Max = 2.0f;
+    }
+}
+
+/// <summary>
+/// Terrain type constraint for biome placement.
+/// Determines where a biome can appear based on ocean/land/altitude.
+/// </summary>
+public enum TerrainType
+{
+    /// <summary>No terrain restriction - biome can appear anywhere if climate matches</summary>
+    Any = 0,
+    /// <summary>Only in ocean areas (C < OceanThreshold)</summary>
+    OceanOnly = 1,
+    /// <summary>Only on land areas (C >= OceanThreshold)</summary>
+    LandOnly = 2,
+    /// <summary>Only near coast transition (|C - OceanThreshold| < CoastRange)</summary>
+    CoastOnly = 3,
+    /// <summary>Only at high elevation (elevation > AlpineElevation)</summary>
+    MountainOnly = 4
+}
+
+/// <summary>
+/// Defines a biome: name, climate comfort ranges, terrain constraints, and texture set mapping.
 /// </summary>
 public sealed class BiomeDefinition
 {
+    // Hardcoded biome IDs for shader use (must match shader constants)
+    public const int OCEAN_BIOME_ID = 0;
+    public const int ALPINE_BIOME_ID = 9;
+    public const int DEFAULT_FALLBACK_BIOME_ID = 2; // Plains
+    
     public int Id { get; set; }
     public string Name { get; set; } = "Unnamed";
 
     // Climate comfort bands in normalized [0,1]
     public Range Temperature { get; set; } = new(0.4f, 0.6f);
     public Range Humidity { get; set; } = new(0.4f, 0.6f);
+    
+    // NEW: Elevation constraints (in blocks)
+    /// <summary>Minimum elevation for this biome (-1000 = no minimum)</summary>
+    public float MinElevation { get; set; } = float.MinValue;
+    /// <summary>Maximum elevation for this biome (9999 = no maximum)</summary>
+    public float MaxElevation { get; set; } = float.MaxValue;
+    
+    // NEW: Terrain type restriction
+    /// <summary>Where this biome can appear (ocean/land/mountain/etc.)</summary>
+    public TerrainType AllowedTerrain { get; set; } = TerrainType.Any;
+    
+    // NEW: Selection priority (higher = checked first, 0 = lowest)
+    /// <summary>Biome selection priority (100=hardcoded like Ocean, 50=normal, 0=fallback)</summary>
+    public int Priority { get; set; } = 0;
 
     /// <summary>
     /// Texture paths indexed by GeologyLayer enum.
@@ -191,13 +415,18 @@ public sealed class BiomeDefinition
 
     public BiomeDefinition() { }
 
-    public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths)
+    public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths,
+        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue)
     {
         Id = id;
         Name = name;
         Temperature = temperature;
         Humidity = humidity;
         TexturePaths = texturePaths;
+        Priority = priority;
+        AllowedTerrain = terrainType;
+        MinElevation = minElevation;
+        MaxElevation = maxElevation;
     }
 
     public static int SelectBestBiomeId(List<BiomeDefinition> biomes, float temperature01, float humidity01)
@@ -224,7 +453,7 @@ public sealed class BiomeDefinition
 
     public static List<BiomeDefinition> DefaultSet()
     {
-        // Default texture paths (currently shared across all biomes)
+        // Default texture paths
         // Index mapping:
         // 0: Air (unused)
         // 1: Water
@@ -235,42 +464,83 @@ public sealed class BiomeDefinition
         // 6: UnderwaterSubsurface
         // 7: ShoreLine
 
-        // Rebalanced biome ranges for even distribution across temperature-humidity space
-        // Temperature: 0.0 (cold) -> 1.0 (hot)
-        // Humidity: 0.0 (dry) -> 1.0 (wet)
+        // NEW ARCHITECTURE: Biomes are organized by PRIORITY and TERRAIN TYPE
+        // Priority levels:
+        // - 100: Hardcoded ocean biomes (checked first in shader)
+        // - 90: Hardcoded alpine biome (altitude override in shader)
+        // - 50: Normal climate-based land biomes
+        // - 0: Fallback biome (if nothing else matches)
         
         return
         [
-            // Cold biomes (temp 0.0-0.33)
-            // Alpine covers full humidity range at coldest temps to handle mountain peaks
-            new (9, "Alpine",     new(0.0f,0.25f),   new(0.0f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (6, "Taiga",      new(0.25f,0.5f),   new(0.5f,1.0f),    ["", 
-                "Resources/voxel/water.png",                // 1 - water
-                "Resources/voxel/Taiga/grass-dirt.png",     // 2 - surface
-                "Resources/voxel/Taiga/dirt.png",           // 3 - subsurface
-                "Resources/voxel/rock.png",                 // 4 - deep subsurface
-                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
-                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
-                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
+            // PRIORITY 100: OCEAN BIOMES (checked first in shader via hardcoded logic)
+            new (OCEAN_BIOME_ID, "Ocean", 
+                new(0.0f, 1.0f), new(0.0f, 1.0f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 100, 
+                terrainType: TerrainType.OceanOnly),
             
-            // Temperate biomes (temp 0.33-0.66)
-            new (8, "Highlands",  new(0.25f,0.5f),   new(0.0f,0.5f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (2, "Plains",     new(0.5f,0.75f),   new(0.33f,0.66f),  ["",
-                "Resources/voxel/water.png",                // 1 - water
-                "Resources/voxel/Plains/grass.png",         // 2 - surface
-                "Resources/voxel/Plains/dirt.png",          // 3 - subsurface
-                "Resources/voxel/rock.png",                 // 4 - deep subsurface
-                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
-                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
-                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
-            new (1, "Beach",      new(0.5f,0.75f),   new(0.0f,0.33f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (7, "Tundra",     new(0.5f,0.75f),   new(0.66f,1.0f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            // PRIORITY 90: ALPINE BIOME (checked second in shader via altitude override)
+            new (ALPINE_BIOME_ID, "Alpine", 
+                new(0.0f, 1.0f), new(0.0f, 1.0f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/Alpine/snow.png", "Resources/voxel/Alpine/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 90, 
+                terrainType: TerrainType.MountainOnly,
+                minElevation: 200f),
             
-            // Warm/Hot biomes (temp 0.66-1.0)
-            new (0, "Ocean",      new(0.75f,1.0f),   new(0.66f,1.0f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (5, "Rainforest", new(0.75f,1.0f),  new(0.5f,0.66f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (3, "Savanna",    new(0.75f,1.0f),  new(0.25f,0.5f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (4, "Desert",     new(0.75f,1.0f),  new(0.0f,0.25f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            // PRIORITY 50: LAND BIOMES (checked via climate LUT in shader)
+            // These are ONLY used on land (C >= OceanThreshold) and below Alpine elevation
+            
+            // Cold land biomes
+            new (6, "Taiga", 
+                new(0.25f, 0.5f), new(0.5f, 1.0f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/Taiga/grass-dirt.png", "Resources/voxel/Taiga/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            // Temperate land biomes
+            new (8, "Highlands", 
+                new(0.25f, 0.5f), new(0.0f, 0.5f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            new (DEFAULT_FALLBACK_BIOME_ID, "Plains", 
+                new(0.5f, 0.75f), new(0.33f, 0.66f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/Plains/grass.png", "Resources/voxel/Plains/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            new (1, "Beach", 
+                new(0.5f, 0.75f), new(0.0f, 0.33f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            new (7, "Tundra", 
+                new(0.5f, 0.75f), new(0.66f, 1.0f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            // Warm/Hot land biomes
+            new (5, "Rainforest", 
+                new(0.75f, 1.0f), new(0.5f, 0.66f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            new (3, "Savanna", 
+                new(0.75f, 1.0f), new(0.25f, 0.5f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
+            
+            new (4, "Desert", 
+                new(0.75f, 1.0f), new(0.0f, 0.25f), 
+                ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
+                priority: 50, 
+                terrainType: TerrainType.LandOnly),
         ];
     }
 }
@@ -320,12 +590,28 @@ public sealed class CaveParams
 /// </summary>
 public sealed class Spline1D
 {
-    public struct Point(float x, float y)
+    public struct Point
     {
-        public float X { get; set; } = x; public float Y { get; set; } = y;
+        public float X { get; set; }
+        public float Y { get; set; }
+        
+        // Parameterless constructor for JSON deserialization
+        public Point()
+        {
+            X = 0f;
+            Y = 0f;
+        }
+        
+        // Parameterized constructor for convenience
+        public Point(float x, float y)
+        {
+            X = x;
+            Y = y;
+        }
     }
 
-    public List<Point> Points { get; } = [];
+    // CRITICAL FIX: Add setter for JSON deserialization
+    public List<Point> Points { get; set; } = [];
 
     public void Clear() => Points.Clear();
 

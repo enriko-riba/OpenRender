@@ -1,9 +1,9 @@
-﻿namespace SpyroGame.World;
+namespace SpyroGame.World;
 
 /// <summary>
 /// Minimal geology layers used for biome texture selection. Independent of in-world block types.
 /// </summary>
-public enum GeologyLayer : byte
+public enum BlockDescriptor : byte
 {
     Air = 0,
     Water = 1,
