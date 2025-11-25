@@ -816,6 +816,23 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
+    /// Get detailed streaming progress information for loading screens.
+    /// </summary>
+    public (int targetChunks, int loadedChunks, int pendingChunks, int generatingChunks, float progressPercent) GetStreamingProgress()
+    {
+        var (total, pending, generating, ready) = GetStats();
+        
+        // Calculate target based on current load distance
+        var targetChunks = (2 * LoadDistance + 1) * (2 * LoadDistance + 1);
+        
+        // Progress is based on ready chunks vs target
+        var progressPercent = ready / (float)Math.Max(1, targetChunks) * 100f;
+        progressPercent = Math.Clamp(progressPercent, 0f, 100f);
+        
+        return (targetChunks, ready, pending, generating, progressPercent);
+    }
+
+    /// <summary>
     /// Get memory usage statistics (Phase 5)
     /// </summary>
     public (long totalBytes, long voxelBytes, long visibilityBytes, long compactBytes) GetMemoryStats()

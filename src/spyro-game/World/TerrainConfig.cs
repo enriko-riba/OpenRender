@@ -13,22 +13,22 @@ public sealed class TerrainConfig
     public float WorldScale { get; set; } = 1.0f;
 
     // Macro field scales (world-space → noise frequencies)
-    // Increased scales for testing/visibility in small world
-    public float ContinentalnessScale { get; set; } = 1f / 200f; // Was 1/2000
-    public float ErosionScale { get; set; } = 1f / 150f; // Was 1/1500
-    public float RidgeScale { get; set; } = 1f / 80f; // Was 1/800
+    // Adjusted for larger terrain features and better ocean generation
+    public float ContinentalnessScale { get; set; } = 1f / 800f; // Reduced frequency for larger continents/oceans (was 1/200)
+    public float ErosionScale { get; set; } = 1f / 300f; // Larger erosion patterns (was 1/150)
+    public float RidgeScale { get; set; } = 1f / 120f; // Larger ridge features (was 1/80)
 
-    // Domain warp
-    public float WarpScale { get; set; } = 1f / 100f; // Was 1/1000
-    public float WarpStrength { get; set; } = 40f; // Reduced strength for higher freq
+    // Domain warp - increased for more natural terrain flow
+    public float WarpScale { get; set; } = 1f / 150f; // Larger warp patterns (was 1/100)
+    public float WarpStrength { get; set; } = 60f; // Increased warp intensity (was 40)
 
-    // Climate
-    public float BaseTemperature { get; set; } = 0.6f;
-    public float LapseRate { get; set; } = 0.0018f; // temp drop per unit height
-    public float BaseHumidity { get; set; } = 0.55f;
-    public float CoastDrying { get; set; } = 0.25f;
-    public float ClimateScale { get; set; } = 1f / 12000f;
-    public float ClimateWarp { get; set; } = 1f / 22000f;
+    // Climate - adjusted for better biome distribution
+    public float BaseTemperature { get; set; } = 0.5f; // Centered temperature (was 0.6)
+    public float LapseRate { get; set; } = 0.002f; // Slightly increased altitude cooling (was 0.0018)
+    public float BaseHumidity { get; set; } = 0.5f; // Centered humidity (was 0.55)
+    public float CoastDrying { get; set; } = 0.3f; // Increased inland drying (was 0.25)
+    public float ClimateScale { get; set; } = 1f / 15000f; // Slightly larger climate zones (was 1/12000)
+    public float ClimateWarp { get; set; } = 1f / 25000f; // Slightly larger climate warp (was 1/22000)
 
     // Height mapping
     public Spline1D HeightSpline { get; set; } = Spline1D.DefaultHeightSpline();
@@ -41,8 +41,9 @@ public sealed class TerrainConfig
     public BiomeRegionParams BiomeRegions { get; set; } = BiomeRegionParams.Default();
     public CaveParams Caves { get; set; } = CaveParams.Default();
 
-    // Optional sea level for climate lapse calculations (world units)
-    public float SeaLevel { get; set; } = 70f;
+    // Sea level adjusted for deeper ocean system (was 70)
+    // New height spline has ocean floor at -80 to -20, so sea level at 35 creates proper ocean depth
+    public float SeaLevel { get; set; } = 35f;
 
     public static TerrainConfig Default() => new();
 
@@ -248,22 +249,16 @@ public sealed class BiomeDefinition
         // 6: UnderwaterSubsurface
         // 7: ShoreLine
 
+        // Rebalanced biome ranges for even distribution across temperature-humidity space
+        // Temperature: 0.0 (cold) -> 1.0 (hot)
+        // Humidity: 0.0 (dry) -> 1.0 (wet)
+        
         return
         [
-            new(0, "Ocean",      new(0.55f,0.75f), new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new(1, "Beach",      new(0.55f,0.75f), new(0.35f,0.65f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (2, "Plains",     new(0.45f,0.65f), new(0.4f,0.65f),   ["",
-                "Resources/voxel/water.png",                // 1 - water
-                "Resources/voxel/Plains/grass.png",         // 2 - surface
-                "Resources/voxel/Plains/dirt.png",          // 3 - subsurface
-                "Resources/voxel/rock.png",                 // 4 - deep subsurface
-                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
-                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
-                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
-            new (3, "Savanna",    new(0.6f,0.8f),   new(0.25f,0.55f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (4, "Desert",     new(0.65f,1.0f),  new(0.0f,0.35f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (5, "Rainforest", new(0.55f,0.8f),  new(0.7f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (6, "Taiga",      new(0.2f,0.45f),  new(0.45f,0.75f),  ["", 
+            // Cold biomes (temp 0.0-0.33)
+            // Alpine covers full humidity range at coldest temps to handle mountain peaks
+            new (9, "Alpine",     new(0.0f,0.25f),   new(0.0f,1.0f),    ["", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (6, "Taiga",      new(0.25f,0.5f),   new(0.5f,1.0f),    ["", 
                 "Resources/voxel/water.png",                // 1 - water
                 "Resources/voxel/Taiga/grass-dirt.png",     // 2 - surface
                 "Resources/voxel/Taiga/dirt.png",           // 3 - subsurface
@@ -271,9 +266,25 @@ public sealed class BiomeDefinition
                 "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
                 "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
                 "Resources/voxel/sand.png"]),               // 7 - ShoreLine
-            new (7, "Tundra",     new(0.0f,0.35f),  new(0.2f,0.6f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (8, "Highlands",  new(0.25f,0.6f),  new(0.25f,0.75f),  ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
-            new (9, "Alpine",     new(0.0f,0.3f),   new(0.2f,0.7f),    ["", "Resources/voxel/water.png", "Resources/voxel/snow.png",       "Resources/voxel/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            
+            // Temperate biomes (temp 0.33-0.66)
+            new (8, "Highlands",  new(0.25f,0.5f),   new(0.0f,0.5f),    ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (2, "Plains",     new(0.5f,0.75f),   new(0.33f,0.66f),  ["",
+                "Resources/voxel/water.png",                // 1 - water
+                "Resources/voxel/Plains/grass.png",         // 2 - surface
+                "Resources/voxel/Plains/dirt.png",          // 3 - subsurface
+                "Resources/voxel/rock.png",                 // 4 - deep subsurface
+                "Resources/voxel/bedrock.png",              // 5 - UnderwaterSurface
+                "Resources/voxel/rock.png",                 // 6 - UnderwaterSubsurface
+                "Resources/voxel/sand.png"]),               // 7 - ShoreLine
+            new (1, "Beach",      new(0.5f,0.75f),   new(0.0f,0.33f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (7, "Tundra",     new(0.5f,0.75f),   new(0.66f,1.0f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/sand.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            
+            // Warm/Hot biomes (temp 0.66-1.0)
+            new (0, "Ocean",      new(0.75f,1.0f),   new(0.66f,1.0f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (5, "Rainforest", new(0.75f,1.0f),  new(0.5f,0.66f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (3, "Savanna",    new(0.75f,1.0f),  new(0.25f,0.5f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
+            new (4, "Desert",     new(0.75f,1.0f),  new(0.0f,0.25f),   ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png",      "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/sand.png"]),
         ];
     }
 }
@@ -306,7 +317,9 @@ public sealed class CaveParams
     public float SpaghettiFrequency { get; set; } = 1f / 80f; // Much smoother (was 1/35)
     public float SpaghettiAmplitude { get; set; } = 0.8f;
 
-    public float CarveThreshold { get; set; } = 0.75f; // Reduced density (was 0.72)
+    // Increased threshold by ~15% to reduce cave frequency (0.75 -> 0.86)
+    // Higher threshold = fewer caves since density must be higher to carve
+    public float CarveThreshold { get; set; } = 0.86f; // Reduced cave frequency by 15% (was 0.75)
 
     public float CurlScale { get; set; } = 1f / 120f;
     public float CurlStrength { get; set; } = 12f;
@@ -379,13 +392,28 @@ public sealed class Spline1D
     public static Spline1D DefaultHeightSpline()
     {
         var s = new Spline1D();
-        // Example mapping continentalness→height scale (units are arbitrary)
-        s.Add(0.00f, -40f); // deep ocean
-        s.Add(0.20f, -10f); // shallow
-        s.Add(0.35f, 0f);  // coast
-        s.Add(0.55f, 25f); // inland plains
-        s.Add(0.75f, 60f); // hills
-        s.Add(1.00f, 120f); // mountains
+        // Enhanced height mapping for dramatic terrain features
+        // Continentalness input: 0.0 = deep ocean, 1.0 = mountains
+        
+        // Deep ocean basin (extended and deeper)
+        s.Add(0.00f, -80f);  // Very deep ocean trenches
+        s.Add(0.15f, -50f);  // Deep ocean
+        s.Add(0.25f, -20f);  // Shallow ocean
+        
+        // Steep coastal cliffs - dramatic transition from ocean to land
+        s.Add(0.32f, -5f);   // Continental shelf
+        s.Add(0.38f, 35f);   // Steep cliff rise (40m elevation change over short distance)
+        
+        // Land regions
+        s.Add(0.50f, 50f);   // Coastal plains
+        s.Add(0.65f, 80f);   // Inland plains/hills
+        
+        // Mountain regions with cliffs
+        s.Add(0.75f, 120f);  // Foothills
+        s.Add(0.85f, 180f);  // Mountain slopes
+        s.Add(0.95f, 250f);  // High mountains
+        s.Add(1.00f, 320f);  // Mountain peaks
+        
         s.Sort();
         return s;
     }

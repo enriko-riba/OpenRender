@@ -207,7 +207,46 @@ float getHeight(vec2 p) {
     float ruggedness = (1.0 - E * 0.5 - 0.5); // [0, 1] roughly
     height += PV * 20.0 * ruggedness;
     
+    // Add dramatic cliff noise in mountainous regions (C > 0.7)
+    if (tC > 0.7) {
+        // High-frequency ridge noise for cliff faces
+        float cliffNoise = fbm(p * (1.0 / 40.0), params.uSeed + 1500u, 4, 0.6, 2.5);
+        // Make it ridged (abs creates sharp peaks)
+        cliffNoise = abs(cliffNoise);
+        // Scale by mountain intensity
+        float mountainness = smoothstep(0.7, 0.95, tC);
+        height += cliffNoise * 40.0 * mountainness;
+    }
+    
     return height;
+}
+
+// 3D density function for overhangs in mountains
+float getTerrainDensity(vec3 p) {
+    vec2 xz = p.xz;
+    float y = p.y;
+    
+    float C = getContinentalness(xz);
+    float tC = C * 0.5 + 0.5;
+    
+    // Base height at this XZ
+    float baseHeight = getHeight(xz);
+    
+    // Simple density: positive below surface, negative above
+    float density = baseHeight - y;
+    
+    // Add 3D overhang noise in mountains (C > 0.75)
+    if (tC > 0.75 && y > baseHeight - 50.0 && y < baseHeight + 30.0) {
+        float mountainness = smoothstep(0.75, 1.0, tC);
+        // 3D noise for overhangs
+        float overhangNoise = fbm3D(p * (1.0 / 60.0), params.uSeed + 2000u, 3, 0.5, 2.0);
+        // Add overhang effect near the surface
+        float heightFactor = 1.0 - abs((y - baseHeight) / 40.0);
+        heightFactor = clamp(heightFactor, 0.0, 1.0);
+        density += overhangNoise * 15.0 * mountainness * heightFactor;
+    }
+    
+    return density;
 }
 
 // Generate terrain height
@@ -236,22 +275,22 @@ bool isCave(int wx, int wy, int wz, int depth, float slope) {
     vec3 p = vec3(wx, wy, wz);
     
     // Surface attenuation: reduce cave probability near surface
-    // Ramp from 0.0 at depth 0 to 1.0 at depth 10
+    // Ramp from 0.0 at depth 0 to 1.0 at depth 5 (reduced from 10 for more breaches)
     // This tapers the cave from the inside as it approaches surface
-    float depthAtten = smoothstep(0.0, 10.0, float(depth));
+    float depthAtten = smoothstep(0.0, 5.0, float(depth));
     
     // Allow entrances on slopes (cliffs/hills)
-    // Stricter slope threshold: 0.75 (approx 37 deg) to 1.5 (approx 56 deg)
-    // This prevents entrances on gentle noise bumps (the "sieve" effect)
-    float slopeAtten = smoothstep(0.75, 1.5, slope);
+    // More permissive slope threshold: 0.5 (gentle) to 2.0 (steep cliffs)
+    // This allows breaches on various terrain types
+    float slopeAtten = smoothstep(0.5, 2.0, slope);
     
-    // Cap slope attenuation at 0.85 to force tapering at the breach point
-    // This ensures only the "core" of the cave (high density) breaches,
-    // eliminating ragged edges and small holes.
-    slopeAtten *= 0.85;
+    // Removed the 0.85 cap - allow full slope-based breach on steep terrain
+    // On very steep slopes (2.0+), caves can breach even at the surface (depth 0)
     
     // Use the best of both: if deep OR steep, allow cave
-    float attenuation = max(depthAtten, slopeAtten);
+    // Favor steep slopes: weight slope more heavily
+    float attenuation = max(depthAtten, slopeAtten * 1.2);
+    attenuation = clamp(attenuation, 0.0, 1.0);
     
     // Cheese caves
     float cheese = getCheeseDensity(p);
@@ -291,15 +330,29 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     
     // Solid blocks (y <= height)
     
+    // Check for 3D density overhangs in mountains
+    vec2 xz = vec2(wx, wz);
+    float C = getContinentalness(xz);
+    float tC = C * 0.5 + 0.5;
+    
+    // Use 3D density in mountainous regions
+    if (tC > 0.75 && y > height - 50 && y > WATER_LEVEL + 20) {
+        vec3 p = vec3(wx, y, wz);
+        float density = getTerrainDensity(p);
+        if (density < 0.0) {
+            // Overhang carved out
+            return BLOCK_NONE;
+        }
+    }
+    
     // M3: Cave Carving
     // Don't carve bedrock (y=0) or water (y > height)
     if (y > 0) {
         int depth = height - y;
-        // Calculate slope only if near surface to save perf?
-        // Or just calculate it. It requires 4 extra height samples.
-        // Optimization: Only calculate if depth < 10 (where attenuation matters)
+        // Calculate slope for breach logic
+        // Extended range to depth < 15 (from 12) for better breach detection
         float slope = 0.0;
-        if (depth < 12) {
+        if (depth < 15) {
             slope = getSlope(wx, wz);
         }
         
