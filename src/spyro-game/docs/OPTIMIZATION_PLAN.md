@@ -37,6 +37,15 @@ Compress to 16 bytes per vertex.
 
 **Benefit:** Reduces VRAM usage and vertex fetch bandwidth by ~43%.
 
+### 1.3. Greedy Meshing (High Impact / High Effort)
+**Current State:**
+Faces are generated individually. A flat wall of 16x16 blocks generates 256 separate quads (1024 vertices).
+
+**Recommendation:**
+Implement Greedy Meshing in the compute shader to merge adjacent faces of the same type/texture into larger quads.
+*   **Benefit:** Can reduce vertex and index count by 50-80% for typical terrain. Drastically reduces vertex shader invocations.
+*   **Implementation:** Requires a more complex compute kernel (likely slice-based) to scan and merge runs of identical faces. Texture coordinates will need to be adjusted to tile correctly across the larger quad.
+
 ## 2. Performance Optimizations
 
 ### 2.1. Compute Shader Workgroup Optimization
@@ -53,6 +62,16 @@ Compress to 16 bytes per vertex.
 Uses `MultiDrawElementsIndirect`.
 **Recommendation:**
 Ensure `gl_DrawID` is utilized to fetch per-chunk data (transform, offset) to avoid updating uniforms or pushing constants.
+
+### 2.3. GPU Occlusion Culling (Advanced)
+**Current State:**
+Frustum culling is implemented in `compute-frustum.comp`. However, chunks hidden behind mountains or underground are still processed by the vertex shader (though depth testing discards fragments).
+
+**Recommendation:**
+Implement Compute-based Occlusion Culling (Hi-Z Culling).
+*   **Technique:** Generate a hierarchical depth buffer (Hi-Z pyramid) from the previous frame's depth buffer.
+*   **Implementation:** In `compute-frustum.comp`, after passing frustum check, sample the Hi-Z buffer to check if the chunk's AABB is occluded. If occluded, set `instanceCount` to 0.
+*   **Benefit:** Massive performance gain for large view distances and complex terrain (caves, valleys).
 
 ## 3. Implementation Plan & Effort
 
@@ -71,7 +90,17 @@ Ensure `gl_DrawID` is utilized to fetch per-chunk data (transform, offset) to av
 3.  Update `voxel-terrain.vert` to unpack data.
 4.  Implement `gl_DrawID` based chunk offset lookup (requires binding `ChunkInfoBuffer` to vertex shader).
 
-### Phase 3: Code Cleanup (Est. 2 hours)
+### Phase 3: Greedy Meshing (Est. 16-24 hours)
+1.  Prototype greedy meshing logic (likely on CPU first or simple compute shader).
+2.  Replace `compute-compact.comp` with greedy version.
+3.  Update texture coordinate handling in vertex shader.
+
+### Phase 4: Occlusion Culling (Est. 12-16 hours)
+1.  Implement depth pyramid generation (mip-mapping depth buffer).
+2.  Update `compute-frustum.comp` to sample depth map.
+3.  Handle frame latency (reprojection) if necessary.
+
+### Phase 5: Code Cleanup (Est. 2 hours)
 1.  Remove unused uniforms/buffers.
 2.  Standardize binding points.
 
