@@ -48,7 +48,7 @@ Implement Greedy Meshing in the compute shader to merge adjacent faces of the sa
 
 ## 2. Performance Optimizations
 
-### 2.1. Compute Shader Workgroup Optimization
+### 2.1. Compute Shader Workgroup Optimization (DROPPED)
 **Current State:**
 `compute-visibility` uses `16x1x16` (256 threads). Each thread processes 1 voxel.
 `compute-count` uses `64x1x1` and processes 4 voxels per thread.
@@ -57,11 +57,21 @@ Implement Greedy Meshing in the compute shader to merge adjacent faces of the sa
 *   Align `compute-visibility` to process vertical strips (e.g., 4 voxels per thread). This synergizes with Visibility Mask Packing (allows non-atomic writes).
 *   Ensure memory accesses are coalesced.
 
-### 2.2. Indirect Draw Batching
+**Status:**
+*   **Attempted 2025-11-25:** Changed dispatch to 1 workgroup per chunk (looping over Y internally).
+*   **Result:** Caused significant stuttering ("halt and continue" behavior) and FPS drops (150 -> 90).
+*   **Reason:** The GPU prefers massive parallelism (many small threads) over fewer long-running threads. Looping 384 times in a single thread likely stalled the pipeline or caused TDR warnings.
+*   **Action:** Reverted to original dispatch (384 workgroups per chunk) which is smoother.
+
+### 2.2. Indirect Draw Batching (Completed 2025-11-25)
 **Current State:**
-Uses `MultiDrawElementsIndirect`.
+Uses `MultiDrawElementsIndirect` with `gl_DrawID` to fetch per-chunk data.
 **Recommendation:**
 Ensure `gl_DrawID` is utilized to fetch per-chunk data (transform, offset) to avoid updating uniforms or pushing constants.
+
+**Status:**
+*   **Completed:** Implemented as part of **Phase 2 (Vertex Compression)**.
+*   **Details:** `voxel-terrain.vert` uses `gl_DrawID` to index into `ChunkInfoBuffer` to retrieve the chunk's world position. This allows a single `MultiDrawElementsIndirect` call to render all chunks without CPU intervention or uniform updates.
 
 ### 2.3. GPU Occlusion Culling (Advanced)
 **Current State:**

@@ -44,7 +44,8 @@ void main() {
     // OPTIMIZATION: Read packed visibility mask once for 4 voxels
     uint packedMask = visibilityMask[voxelIdx >> 2];
     
-    for (uint i = 0u; i < 4u; i++) {
+    if (packedMask != 0u) {
+        for (uint i = 0u; i < 4u; i++) {
             // Extract mask for this voxel
             uint mask = (packedMask >> (i * 8u)) & 0xFFu;
             
@@ -64,6 +65,7 @@ void main() {
                 }
             }
         }
+    }
     
     if (tCount > 0u) atomicAdd(s_TotalCount, tCount);
     if (oCount > 0u) atomicAdd(s_OpaqueCount, oCount);
