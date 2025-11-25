@@ -1,52 +1,202 @@
 namespace SpyroGame.World;
 
 /// <summary>
-/// CPU-only terrain configuration bucket. Holds all tweakable parameters and small data tables
+/// Terrain configuration parameters bucket. Holds all tweakable parameters and small data tables
 /// (splines, biome defs, region + cave params). No generation logic here.
 /// Upload/bake these into GPU buffers/textures elsewhere.
 /// </summary>
 public sealed class TerrainConfig
 {
     // World & seeds
+    
+    /// <summary>
+    /// Gets or sets the world name used for save file identification.
+    /// </summary>
     public string WorldName { get; set; } = "default";
+    
+    /// <summary>
+    /// Gets or sets the random seed for procedural generation.
+    /// Different seeds produce entirely different terrain layouts while maintaining the same characteristics.
+    /// Range: Any integer value. Default: 1337
+    /// </summary>
     public int Seed { get; set; } = 1337;
+    
+    /// <summary>
+    /// Gets or sets the global world scale multiplier.
+    /// Currently unused but reserved for future multi-scale world systems.
+    /// Default: 1.0
+    /// </summary>
     public float WorldScale { get; set; } = 1.0f;
 
     // Macro field scales (world-space → noise frequencies)
-    // Adjusted for larger terrain features and better ocean generation
-    public float ContinentalnessScale { get; set; } = 1f / 800f; // Reduced frequency for larger continents/oceans (was 1/200)
-    public float ErosionScale { get; set; } = 1f / 300f; // Larger erosion patterns (was 1/150)
-    public float RidgeScale { get; set; } = 1f / 120f; // Larger ridge features (was 1/80)
+    
+    /// <summary>
+    /// Gets or sets the continentalness noise frequency (inverse of wavelength in blocks).
+    /// Controls the size of oceans and continents. Lower values create larger land masses.
+    /// - 1/800 (default): Very large continents and ocean basins (800-block features)
+    /// - 1/1200: Massive continental scale (Earth-like)
+    /// - 1/400: Smaller, more fragmented continents
+    /// Technical: This is the primary driver for ocean/land distribution via the height spline.
+    /// </summary>
+    public float ContinentalnessScale { get; set; } = 1f / 800f;
+    
+    /// <summary>
+    /// Gets or sets the erosion noise frequency (inverse of wavelength in blocks).
+    /// Controls the scale of terrain roughness and flat areas.
+    /// - 1/300 (default): Large erosion patterns (300-block smooth/rough zones)
+    /// - 1/500: Very gradual terrain character changes
+    /// - 1/150: More chaotic, rapidly changing terrain roughness
+    /// Technical: Modulates peaks/valleys amplitude. High erosion = flatter terrain, low = more dramatic relief.
+    /// </summary>
+    public float ErosionScale { get; set; } = 1f / 300f;
+    
+    /// <summary>
+    /// Gets or sets the peaks/valleys ridge noise frequency (inverse of wavelength in blocks).
+    /// Controls the spacing of mountain ridges and valley systems.
+    /// - 1/120 (default): Wide ridges and valleys (120-block spacing)
+    /// - 1/200: Broad, gentle mountain systems
+    /// - 1/60: Tight, jagged ridge patterns
+    /// Technical: Uses ridged noise (abs of FBM) to create sharp peaks and linear valleys.
+    /// </summary>
+    public float RidgeScale { get; set; } = 1f / 120f;
 
-    // Domain warp - increased for more natural terrain flow
-    public float WarpScale { get; set; } = 1f / 150f; // Larger warp patterns (was 1/100)
-    public float WarpStrength { get; set; } = 60f; // Increased warp intensity (was 40)
+    // Domain warp
+    
+    /// <summary>
+    /// Gets or sets the domain warp noise frequency (inverse of wavelength in blocks).
+    /// Controls the scale of terrain flow distortion applied before continentalness sampling.
+    /// - 1/150 (default): Large-scale terrain flow (150-block warp patterns)
+    /// - 1/250: Very gentle, continental-scale flow
+    /// - 1/80: Aggressive, swirling terrain patterns
+    /// Technical: Applies 2D FBM offset to input coordinates, creating natural curved features.
+    /// </summary>
+    public float WarpScale { get; set; } = 1f / 150f;
+    
+    /// <summary>
+    /// Gets or sets the domain warp displacement strength in blocks.
+    /// Controls how far terrain features are displaced by the warp effect.
+    /// - 60 (default): Moderate displacement (60-block maximum shift)
+    /// - 100: Strong displacement, highly organic flowing terrain
+    /// - 30: Subtle displacement, more regular terrain grid
+    /// Technical: Multiplies the warp noise output to determine actual coordinate offset.
+    /// </summary>
+    public float WarpStrength { get; set; } = 60f;
 
-    // Climate - adjusted for better biome distribution
-    public float BaseTemperature { get; set; } = 0.5f; // Centered temperature (was 0.6)
-    public float LapseRate { get; set; } = 0.002f; // Slightly increased altitude cooling (was 0.0018)
-    public float BaseHumidity { get; set; } = 0.5f; // Centered humidity (was 0.55)
-    public float CoastDrying { get; set; } = 0.3f; // Increased inland drying (was 0.25)
-    public float ClimateScale { get; set; } = 1f / 15000f; // Slightly larger climate zones (was 1/12000)
-    public float ClimateWarp { get; set; } = 1f / 25000f; // Slightly larger climate warp (was 1/22000)
+    // Climate
+    
+    /// <summary>
+    /// Gets or sets the base temperature at sea level before altitude and noise adjustments.
+    /// Normalized range [0,1] where 0=frozen, 1=scorching.
+    /// - 0.5 (default): Temperate baseline (Earth-like)
+    /// - 0.7: Warmer world (more tropical biomes, less tundra)
+    /// - 0.3: Colder world (more taiga/alpine, less desert)
+    /// Technical: Starting point for temperature calculation before lapse rate and climate noise.
+    /// </summary>
+    public float BaseTemperature { get; set; } = 0.5f;
+    
+    /// <summary>
+    /// Gets or sets the temperature decrease per block of altitude above sea level.
+    /// Controls how quickly mountains become cold/snowy.
+    /// - 0.002 (default): Moderate cooling (0.2 temp loss per 100 blocks altitude)
+    /// - 0.003: Aggressive cooling (low snowline, alpine starts at ~150 blocks)
+    /// - 0.001: Gentle cooling (high snowline, alpine starts at ~300 blocks)
+    /// Technical: Implements adiabatic lapse rate. Applied as: temp -= LapseRate * max(0, altitude).
+    /// </summary>
+    public float LapseRate { get; set; } = 0.002f;
+    
+    /// <summary>
+    /// Gets or sets the base humidity at coastlines before continental drying and noise adjustments.
+    /// Normalized range [0,1] where 0=arid, 1=very humid.
+    /// - 0.5 (default): Moderate baseline (balanced biome distribution)
+    /// - 0.7: Humid world (more rainforest/taiga, less desert)
+    /// - 0.3: Dry world (more desert/savanna, less rainforest)
+    /// Technical: Starting point for humidity calculation before coast drying and climate noise.
+    /// </summary>
+    public float BaseHumidity { get; set; } = 0.5f;
+    
+    /// <summary>
+    /// Gets or sets the humidity reduction rate with distance from coast.
+    /// Controls the strength of continental interior drying effect.
+    /// - 0.3 (default): Moderate drying (noticeable inland deserts)
+    /// - 0.5: Strong drying (large inland deserts, coastal rainforests)
+    /// - 0.1: Weak drying (humid interiors, small deserts)
+    /// Technical: Applied as: hum -= (continentalness - coastThreshold) * CoastDrying.
+    /// </summary>
+    public float CoastDrying { get; set; } = 0.3f;
+    
+    /// <summary>
+    /// Gets or sets the climate noise frequency (inverse of wavelength in blocks).
+    /// Controls the size of temperature and humidity variation zones.
+    /// - 1/15000 (default): Very large climate zones (15km weather systems)
+    /// - 1/25000: Continental-scale climate patterns
+    /// - 1/8000: Smaller, more varied climate zones
+    /// Technical: Applied to both temperature and humidity as FBM noise with ±0.2 range.
+    /// </summary>
+    public float ClimateScale { get; set; } = 1f / 15000f;
+    
+    /// <summary>
+    /// Gets or sets the climate warp frequency (inverse of wavelength in blocks).
+    /// Controls the scale of flow patterns in climate distribution.
+    /// - 1/25000 (default): Very large climate flow patterns (25km distortions)
+    /// - 1/40000: Continental-scale climate swirls
+    /// - 1/12000: Smaller, more chaotic climate boundaries
+    /// Technical: Domain warp applied before climate noise sampling for organic boundaries.
+    /// </summary>
+    public float ClimateWarp { get; set; } = 1f / 25000f;
 
     // Height mapping
+    
+    /// <summary>
+    /// Gets or sets the height spline that maps continentalness [0,1] to elevation in blocks.
+    /// Defines the terrain elevation profile from deep ocean to mountain peaks.
+    /// The spline is sampled during terrain generation to determine base height before erosion/peaks are applied.
+    /// Default spline: Ocean floor at -80 blocks, sea level at 0 (internal +35), mountain peaks at +320 blocks.
+    /// </summary>
     public Spline1D HeightSpline { get; set; } = Spline1D.DefaultHeightSpline();
+    
+    /// <summary>
+    /// Gets or sets the optional erosion-to-slope spline for advanced terrain shaping.
+    /// Currently unused. Reserved for future erosion-dependent slope modulation.
+    /// </summary>
     public Spline1D? ErosionToSlopeSpline { get; set; } = null;
 
     // Biomes
+    
+    /// <summary>
+    /// Gets or sets the list of biome definitions used for terrain texturing and climate-based placement.
+    /// Each biome defines temperature/humidity ranges, elevation constraints, and texture mappings.
+    /// The biome system uses a combination of LUT sampling (for climate biomes) and hardcoded checks (ocean, alpine).
+    /// Default: 10 biomes including Ocean, Beach, Plains, Desert, Savanna, Rainforest, Taiga, Tundra, Highlands, Alpine.
+    /// </summary>
     public List<BiomeDefinition> Biomes { get; set; } = BiomeDefinition.DefaultSet();
 
     // Regions and caves
+    
+    /// <summary>
+    /// Gets or sets the biome region parameters controlling how biomes are distributed and blended across chunks.
+    /// Implements a Voronoi-based region system where each region has a dominant biome with feathered boundaries.
+    /// See <see cref="BiomeRegionParams"/> for detailed parameters.
+    /// </summary>
     public BiomeRegionParams BiomeRegions { get; set; } = BiomeRegionParams.Default();
+    
+    /// <summary>
+    /// Gets or sets the cave generation parameters controlling cave frequency, size, and distribution.
+    /// Implements a dual-system approach: "cheese" caves (large chambers) and "spaghetti" caves (tunnels).
+    /// See <see cref="CaveParams"/> for detailed parameters.
+    /// </summary>
     public CaveParams Caves { get; set; } = CaveParams.Default();
 
-    // Sea level adjusted for deeper ocean system (was 70)
-    // New height spline has ocean floor at -80 to -20, so sea level at 35 creates proper ocean depth
+    /// <summary>
+    /// Gets or sets the Y-coordinate of the water level in blocks.
+    /// Water blocks are placed at all Y positions <= SeaLevel where terrain surface is below this level.
+    /// - 35 (default): Creates ~115-block deep oceans with current height spline
+    /// - 50: Shallower oceans, more land exposed
+    /// - 20: Deeper oceans, less land visible
+    /// Technical: This is the absolute Y coordinate, not relative to terrain. Ocean floor can be much lower.
+    /// </summary>
     public float SeaLevel { get; set; } = 35f;
 
     // --- Terrain Shaping Parameters ---
-    // These control how terrain features are generated and placed
     
     /// <summary>
     /// Continentalness threshold separating ocean from land (NEW: Biome system).
@@ -166,6 +316,30 @@ public sealed class TerrainConfig
     /// - Higher values (12): More flooding, wetter caves, fewer air pockets
     /// </summary>
     public float CaveFloodingExtension { get; set; } = 8f;
+    
+    /// <summary>
+    /// Vertical range below terrain surface where overhang effects are applied (in blocks).
+    /// Example: 50 means overhangs can form up to 50 blocks below the surface.
+    /// - Lower values (30): Shallower overhangs, limited to near-surface
+    /// - Higher values (70): Deeper overhangs, more dramatic caves
+    /// </summary>
+    public float OverhangDepthRange { get; set; } = 50f;
+    
+    /// <summary>
+    /// Vertical range above terrain surface where overhang effects extend (in blocks).
+    /// Example: 30 means overhangs can extend up to 30 blocks above the base surface.
+    /// - Lower values (20): Smaller overhangs
+    /// - Higher values (50): Larger, more dramatic floating islands
+    /// </summary>
+    public float OverhangHeightRange { get; set; } = 30f;
+    
+    /// <summary>
+    /// Height factor denominator for overhang strength falloff.
+    /// Example: 40 means overhang effect fades over 40-block vertical range.
+    /// - Lower values (25): Sharper falloff, more concentrated overhangs
+    /// - Higher values (60): Gentler falloff, more gradual overhang transitions
+    /// </summary>
+    public float OverhangFalloffRange { get; set; } = 40f;
 
     public static TerrainConfig Default() => new();
 
@@ -201,52 +375,52 @@ public sealed class TerrainConfig
     // --- Helper baking functions for GPU uploads ---
 
     /// <summary>
-    /// Bake the height spline to a float array (to upload as a 1D R32F texture).
-    /// Input x domain assumed [0,1]. Output is raw float values (meters or units you choose).
+    /// Bakes the height spline to a float array for GPU upload as a 1D R32F texture.
+    /// Samples the spline uniformly across [0,1] continentalness domain.
     /// </summary>
+    /// <param name="samples">Number of samples to generate. Default: 256 (provides good interpolation quality).</param>
+    /// <returns>Float array containing elevation values in blocks, indexed by normalized continentalness.</returns>
     public float[] BakeHeightSplineLut(int samples = 256)
         => HeightSpline.Bake(samples);
 
     /// <summary>
-    /// Build a 2D LUT of biome ids (temp x humidity → biomeId). 
-    /// Returns a row-major byte array of size res*res.
-    /// Values are indices into Biomes list (0..Biomes.Count-1). Out-of-range maps to DEFAULT_FALLBACK_BIOME_ID.
-    /// 
+    /// Builds a 2D lookup table mapping (temperature, humidity) to biome IDs for GPU sampling.
+    /// Returns a row-major byte array where each pixel represents a biome ID.
     /// IMPORTANT: This LUT only contains LAND biomes (AllowedTerrain == LandOnly).
-    /// Ocean and Alpine biomes are handled via hardcoded checks in the shader (Phase 1 & 2).
+    /// Ocean and Alpine biomes are handled via hardcoded checks in the shader (Phase 1 and Phase 2).
     /// The shader only samples this LUT for land areas after ocean/alpine checks.
     /// </summary>
+    /// <param name="resolution">Resolution of the LUT (both width and height). Default: 256x256.</param>
+    /// <returns>Byte array of size resolution² containing biome IDs (0-255).</returns>
     public byte[] BuildBiomeIdLut(int resolution = 256)
     {
         if (resolution <= 1) resolution = 2;
         var data = new byte[resolution * resolution];
 
-        // Filter to only LAND biomes (exclude Ocean and Alpine which are hardcoded in shader)
         var landBiomes = Biomes.Where(b => b.AllowedTerrain == TerrainType.LandOnly).ToList();
         
         if (landBiomes.Count == 0)
         {
-            // Fallback: fill LUT with default biome ID
             Array.Fill(data, (byte)BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID);
             return data;
         }
 
         for (var y = 0; y < resolution; y++)
         {
-            var h = y / (float)(resolution - 1); // humidity in [0,1]
+            var h = y / (float)(resolution - 1);
             for (var x = 0; x < resolution; x++)
             {
-                var t = x / (float)(resolution - 1); // temperature in [0,1]
+                var t = x / (float)(resolution - 1);
                 var id = BiomeDefinition.SelectBestBiomeId(landBiomes, t, h);
                 if (id < 0) id = BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID;
-                data[x + y * resolution] = (byte)landBiomes[id].Id; // Use actual biome ID, not list index
+                data[x + y * resolution] = (byte)landBiomes[id].Id;
             }
         }
         return data;
     }
 
     /// <summary>
-    /// Struct matching the std430 layout in the shader.
+    /// Struct matching the std430 layout in the GPU shader.
     /// Pack carefully to match GLSL alignment: vec4 = 16-byte aligned, vec3 uses 16 bytes, etc.
     /// </summary>
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -254,35 +428,36 @@ public sealed class TerrainConfig
     {
         public uint uSeed;
         public float uWorldScale;
-        public float uMacroScale; // Unused in C# config but present in shader plan
+        public float uMacroScale;
         public float uContScale; public float uErodeScale; public float uRidgeScale;
         public float uWarpScale; public float uWarpStrength;
         public float uBaseTemp; public float uLapseRate; public float uBaseHum; public float uCoastDry;
         public float uClimateScale; public float uClimateWarp;
         public float uRegionCellSize; public float uRegionJitter; public float uRegionFeather; public uint uMaxRegionMix;
-        // Cave params
         public float uCheeseFreq; public float uCheeseAmp; public float uSpaghettiFreq; public float uSpaghettiAmp;
         public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; 
         
-        // Terrain shaping params
-        public float uCoastThreshold;          // Coast detection for humidity
-        public float uMountainThreshold;       // Where mountains start for cliff/overhang gen
-        public float uCliffFreq;               // Cliff noise frequency
-        public float uCliffAmp;                // Cliff height amplitude
-        public float uOverhangFreq;            // 3D overhang noise frequency
-        public float uOverhangAmp;             // Overhang displacement amplitude
-        public float uShorelineRange;          // Shoreline detection range
-        public float uSubsurfaceDepth;         // Dirt layer thickness
-        public float uCaveDepthFade;           // Cave surface attenuation distance
-        public float uCaveSlopeFadeMin;        // Cave slope breach min threshold
-        public float uCaveSlopeFadeMax;        // Cave slope breach max threshold
-        public float uCaveFloodExt;            // Cave flooding extension above sea level
+        public float uCoastThreshold;
+        public float uMountainThreshold;
+        public float uCliffFreq;
+        public float uCliffAmp;
+        public float uOverhangFreq;
+        public float uOverhangAmp;
+        public float uShorelineRange;
+        public float uSubsurfaceDepth;
+        public float uCaveDepthFade;
+        public float uCaveSlopeFadeMin;
+        public float uCaveSlopeFadeMax;
+        public float uCaveFloodExt;
         
-        // NEW: Ocean/Land/Altitude thresholds for biome system
-        public float uOceanThreshold;          // C < this = ocean
-        public float uDeepOceanThreshold;      // C < this = deep ocean
-        public float uAlpineElevation;         // elevation > this = alpine
-        public float uCoastRange;              // +/- range around OceanThreshold for coast
+        public float uOceanThreshold;
+        public float uDeepOceanThreshold;
+        public float uAlpineElevation;
+        public float uCoastRange;
+        
+        public float uOverhangDepthRange;
+        public float uOverhangHeightRange;
+        public float uOverhangFalloffRange;
     }
 
     public GpuParams GetGpuParams()
@@ -291,7 +466,7 @@ public sealed class TerrainConfig
         {
             uSeed = (uint)Seed,
             uWorldScale = WorldScale,
-            uMacroScale = 1.0f, // Default
+            uMacroScale = 1.0f,
             uContScale = ContinentalnessScale,
             uErodeScale = ErosionScale,
             uRidgeScale = RidgeScale,
@@ -330,27 +505,64 @@ public sealed class TerrainConfig
             uDeepOceanThreshold = DeepOceanThreshold,
             uAlpineElevation = AlpineElevation,
             uCoastRange = CoastRange,
+            uOverhangDepthRange = OverhangDepthRange,
+            uOverhangHeightRange = OverhangHeightRange,
+            uOverhangFalloffRange = OverhangFalloffRange,
         };
     }
 }
 
 /// <summary>
-/// Range helper for climate comfort bands.
+/// Defines a normalized range with minimum and maximum bounds.
+/// Used for climate comfort bands in biome definitions.
 /// </summary>
+/// <param name="Min">Minimum value of the range (inclusive). Range: [0,1].</param>
+/// <param name="Max">Maximum value of the range (inclusive). Range: [0,1].</param>
 public readonly record struct Range(float Min, float Max)
 {
+    /// <summary>
+    /// Determines whether the specified value falls within this range (inclusive).
+    /// </summary>
+    /// <param name="v">Value to test.</param>
+    /// <returns>True if v is between Min and Max (inclusive), false otherwise.</returns>
     public bool Contains(float v) => v >= Min && v <= Max;
+    
+    /// <summary>
+    /// Gets the center point of this range.
+    /// Used for distance calculations when selecting the best-matching biome.
+    /// </summary>
     public float Center => (Min + Max) * 0.5f;
 }
 
 /// <summary>
-/// Range helper for slope thresholds (used for cave breach detection).
+/// Defines a slope range used for cave breach detection on terrain surfaces.
+/// Slopes are calculated as the maximum height difference between neighboring blocks.
 /// </summary>
 public struct SlopeRange
 {
+    /// <summary>
+    /// Gets or sets the minimum slope threshold for cave breaching.
+    /// Slopes below this value will not allow caves to breach the surface.
+    /// - 0.5 (default): Gentle slopes (0.5 block rise per block horizontal) start allowing breaches
+    /// - 0.3: Even gentler slopes allow breaches (more cave entrances)
+    /// - 1.0: Only moderate slopes allow breaches (fewer entrances)
+    /// Technical: Applied with smoothstep(Min, Max, slope) for gradual attenuation.
+    /// </summary>
     public float Min { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the maximum slope threshold for full cave breaching.
+    /// Slopes above this value will have maximum cave breach probability.
+    /// - 2.0 (default): Steep slopes (2 block rise per block horizontal) have full breach chance
+    /// - 3.0: Only very steep cliffs allow full breaching
+    /// - 1.5: Moderate slopes already allow full breaching
+    /// Technical: Applied with smoothstep(Min, Max, slope) for gradual attenuation.
+    /// </summary>
     public float Max { get; set; }
     
+    /// <summary>
+    /// Initializes a new instance of <see cref="SlopeRange"/> with default values.
+    /// </summary>
     public SlopeRange()
     {
         Min = 0.5f;
@@ -359,62 +571,146 @@ public struct SlopeRange
 }
 
 /// <summary>
-/// Terrain type constraint for biome placement.
-/// Determines where a biome can appear based on ocean/land/altitude.
+/// Defines terrain type constraints that determine where a biome can appear.
+/// Used to ensure ocean biomes stay in water, alpine on mountains, etc.
 /// </summary>
 public enum TerrainType
 {
-    /// <summary>No terrain restriction - biome can appear anywhere if climate matches</summary>
+    /// <summary>
+    /// No terrain restriction. Biome can appear anywhere if climate conditions match.
+    /// Used for flexible biomes that adapt to any elevation.
+    /// </summary>
     Any = 0,
-    /// <summary>Only in ocean areas (C < OceanThreshold)</summary>
+    
+    /// <summary>
+    /// Only appears in ocean areas where continentalness is below OceanThreshold.
+    /// Used for underwater biomes like Ocean and Deep Ocean.
+    /// Technical: Checked via hardcoded logic before LUT sampling.
+    /// </summary>
     OceanOnly = 1,
-    /// <summary>Only on land areas (C >= OceanThreshold)</summary>
+    
+    /// <summary>
+    /// Only appears on land areas where continentalness is above OceanThreshold.
+    /// Used for all terrestrial biomes (Plains, Desert, Forest, etc.).
+    /// Technical: These biomes populate the climate LUT for land-only sampling.
+    /// </summary>
     LandOnly = 2,
-    /// <summary>Only near coast transition (|C - OceanThreshold| < CoastRange)</summary>
+    
+    /// <summary>
+    /// Only appears near coast transition zones (continentalness near OceanThreshold).
+    /// Used for shoreline biomes like Beach that require proximity to water.
+    /// Technical: Checked via |C - OceanThreshold| < CoastRange.
+    /// </summary>
     CoastOnly = 3,
-    /// <summary>Only at high elevation (elevation > AlpineElevation)</summary>
+    
+    /// <summary>
+    /// Only appears at high elevations above AlpineElevation threshold.
+    /// Used for mountain peak biomes like Alpine that require altitude.
+    /// Technical: Checked via hardcoded elevation override before LUT sampling.
+    /// </summary>
     MountainOnly = 4
 }
 
 /// <summary>
-/// Defines a biome: name, climate comfort ranges, terrain constraints, and texture set mapping.
+/// Defines a biome with its climate requirements, elevation constraints, texture mappings, and placement priority.
+/// Biomes are selected in the shader based on a combination of hardcoded checks (ocean, alpine) and
+/// climate-based LUT sampling (temperature × humidity).
 /// </summary>
 public sealed class BiomeDefinition
 {
-    // Hardcoded biome IDs for shader use (must match shader constants)
+    /// <summary>
+    /// Hardcoded biome ID for Ocean. Must match shader constant OCEAN_BIOME_ID.
+    /// </summary>
     public const int OCEAN_BIOME_ID = 0;
-    public const int ALPINE_BIOME_ID = 9;
-    public const int DEFAULT_FALLBACK_BIOME_ID = 2; // Plains
     
+    /// <summary>
+    /// Hardcoded biome ID for Alpine. Must match shader constant ALPINE_BIOME_ID.
+    /// </summary>
+    public const int ALPINE_BIOME_ID = 9;
+    
+    /// <summary>
+    /// Default fallback biome ID used when LUT sampling fails. Must match shader constant DEFAULT_FALLBACK_BIOME_ID.
+    /// </summary>
+    public const int DEFAULT_FALLBACK_BIOME_ID = 2;
+    
+    /// <summary>
+    /// Gets or sets the unique biome identifier used in shaders and save files.
+    /// Must be unique across all biome definitions.
+    /// </summary>
     public int Id { get; set; }
+    
+    /// <summary>
+    /// Gets or sets the human-readable biome name for debugging and UI display.
+    /// </summary>
     public string Name { get; set; } = "Unnamed";
 
-    // Climate comfort bands in normalized [0,1]
+    /// <summary>
+    /// Gets or sets the temperature comfort range [0,1] where this biome naturally occurs.
+    /// 0=frozen, 0.25=cold, 0.5=temperate, 0.75=warm, 1.0=scorching.
+    /// Used during LUT generation to map temperature/humidity coordinates to biome IDs.
+    /// </summary>
     public Range Temperature { get; set; } = new(0.4f, 0.6f);
+    
+    /// <summary>
+    /// Gets or sets the humidity comfort range [0,1] where this biome naturally occurs.
+    /// 0=arid, 0.33=dry, 0.5=moderate, 0.66=humid, 1.0=very wet.
+    /// Used during LUT generation to map temperature/humidity coordinates to biome IDs.
+    /// </summary>
     public Range Humidity { get; set; } = new(0.4f, 0.6f);
     
-    // NEW: Elevation constraints (in blocks)
-    /// <summary>Minimum elevation for this biome (-1000 = no minimum)</summary>
+    /// <summary>
+    /// Gets or sets the minimum elevation in blocks where this biome can appear.
+    /// Set to float.MinValue for no minimum constraint.
+    /// Currently not actively enforced in shaders (reserved for future use).
+    /// </summary>
     public float MinElevation { get; set; } = float.MinValue;
-    /// <summary>Maximum elevation for this biome (9999 = no maximum)</summary>
+    
+    /// <summary>
+    /// Gets or sets the maximum elevation in blocks where this biome can appear.
+    /// Set to float.MaxValue for no maximum constraint.
+    /// Currently not actively enforced in shaders (reserved for future use).
+    /// </summary>
     public float MaxElevation { get; set; } = float.MaxValue;
     
-    // NEW: Terrain type restriction
-    /// <summary>Where this biome can appear (ocean/land/mountain/etc.)</summary>
+    /// <summary>
+    /// Gets or sets the terrain type constraint determining where this biome can physically appear.
+    /// Controls whether the biome is restricted to ocean, land, mountains, coasts, or has no restriction.
+    /// See <see cref="TerrainType"/> for available options.
+    /// </summary>
     public TerrainType AllowedTerrain { get; set; } = TerrainType.Any;
     
-    // NEW: Selection priority (higher = checked first, 0 = lowest)
-    /// <summary>Biome selection priority (100=hardcoded like Ocean, 50=normal, 0=fallback)</summary>
+    /// <summary>
+    /// Gets or sets the selection priority for this biome during shader evaluation.
+    /// Higher priorities are checked first:
+    /// - 100: Hardcoded checks (Ocean) processed before LUT
+    /// - 90: Hardcoded overrides (Alpine) processed before LUT
+    /// - 50: Normal climate biomes sampled from LUT
+    /// - 0: Fallback biomes used when nothing else matches
+    /// </summary>
     public int Priority { get; set; } = 0;
 
     /// <summary>
-    /// Texture paths indexed by GeologyLayer enum.
-    /// Index 0 = Air (unused), 1 = Water, 2 = Surface, etc.
+    /// Gets or sets the texture paths indexed by GeologyLayer/BlockDescriptor enum values.
+    /// Each index corresponds to a terrain layer:
+    /// 0 = Air (unused)
+    /// 1 = Water
+    /// 2 = Surface (grass, sand, snow at terrain surface)
+    /// 3 = Subsurface (dirt below surface)
+    /// 4 = Deep Subsurface (rock/stone)
+    /// 5 = Underwater Surface (ocean floor)
+    /// 6 = Underwater Subsurface (deep ocean bedrock)
+    /// 7 = Shoreline (beach sand)
     /// </summary>
     public List<string> TexturePaths { get; set; } = [];
 
+    /// <summary>
+    /// Initializes a new instance of <see cref="BiomeDefinition"/> with default values.
+    /// </summary>
     public BiomeDefinition() { }
 
+    /// <summary>
+    /// Initializes a new instance of <see cref="BiomeDefinition"/> with specified parameters.
+    /// </summary>
     public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths,
         int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue)
     {
@@ -429,11 +725,19 @@ public sealed class BiomeDefinition
         MaxElevation = maxElevation;
     }
 
+    /// <summary>
+    /// Selects the best-matching biome from a list based on temperature and humidity values.
+    /// Prefers biomes where both temperature and humidity fall within range.
+    /// Falls back to nearest biome by L1 distance to range centers if no perfect match exists.
+    /// </summary>
+    /// <param name="biomes">List of biomes to select from.</param>
+    /// <param name="temperature01">Temperature value [0,1].</param>
+    /// <param name="humidity01">Humidity value [0,1].</param>
+    /// <returns>Index of best-matching biome in the list, or -1 if list is empty.</returns>
     public static int SelectBestBiomeId(List<BiomeDefinition> biomes, float temperature01, float humidity01)
     {
         if (biomes.Count == 0) return -1;
 
-        // Prefer those where both temp and humidity are inside; otherwise nearest by L1 to centers
         var best = -1;
         var bestScore = float.MaxValue;
         for (var i = 0; i < biomes.Count; i++)
@@ -451,36 +755,22 @@ public sealed class BiomeDefinition
         return best;
     }
 
+    /// <summary>
+    /// Creates the default set of 10 biomes with standard configurations.
+    /// Includes: Ocean (0), Beach (1), Plains (2), Savanna (3), Desert (4), Rainforest (5),
+    /// Taiga (6), Tundra (7), Highlands (8), Alpine (9).
+    /// </summary>
+    /// <returns>List of configured biome definitions.</returns>
     public static List<BiomeDefinition> DefaultSet()
     {
-        // Default texture paths
-        // Index mapping:
-        // 0: Air (unused)
-        // 1: Water
-        // 2: Surface
-        // 3: Subsurface
-        // 4: DeepSubsurface
-        // 5: UnderwaterSurface
-        // 6: UnderwaterSubsurface
-        // 7: ShoreLine
-
-        // NEW ARCHITECTURE: Biomes are organized by PRIORITY and TERRAIN TYPE
-        // Priority levels:
-        // - 100: Hardcoded ocean biomes (checked first in shader)
-        // - 90: Hardcoded alpine biome (altitude override in shader)
-        // - 50: Normal climate-based land biomes
-        // - 0: Fallback biome (if nothing else matches)
-        
         return
         [
-            // PRIORITY 100: OCEAN BIOMES (checked first in shader via hardcoded logic)
             new (OCEAN_BIOME_ID, "Ocean", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 100, 
                 terrainType: TerrainType.OceanOnly),
             
-            // PRIORITY 90: ALPINE BIOME (checked second in shader via altitude override)
             new (ALPINE_BIOME_ID, "Alpine", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Alpine/snow.png", "Resources/voxel/Alpine/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
@@ -488,17 +778,12 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.MountainOnly,
                 minElevation: 200f),
             
-            // PRIORITY 50: LAND BIOMES (checked via climate LUT in shader)
-            // These are ONLY used on land (C >= OceanThreshold) and below Alpine elevation
-            
-            // Cold land biomes
             new (6, "Taiga", 
                 new(0.25f, 0.5f), new(0.5f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Taiga/grass-dirt.png", "Resources/voxel/Taiga/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
                 terrainType: TerrainType.LandOnly),
             
-            // Temperate land biomes
             new (8, "Highlands", 
                 new(0.25f, 0.5f), new(0.0f, 0.5f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
@@ -523,7 +808,6 @@ public sealed class BiomeDefinition
                 priority: 50, 
                 terrainType: TerrainType.LandOnly),
             
-            // Warm/Hot land biomes
             new (5, "Rainforest", 
                 new(0.75f, 1.0f), new(0.5f, 0.66f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
@@ -546,63 +830,166 @@ public sealed class BiomeDefinition
 }
 
 /// <summary>
-/// Region grouping for biomes across chunks.
+/// Defines parameters for biome region grouping using Voronoi/Worley noise.
+/// Regions are large areas (multiple chunks) with a dominant biome and feathered boundaries.
+/// This system creates natural biome clustering and prevents rapid biome transitions.
 /// </summary>
 public sealed class BiomeRegionParams
 {
-    /// <summary>Desired cell size in chunks (X/Z). Example: 4 = 4x4 chunks per region.</summary>
+    /// <summary>
+    /// Gets or sets the desired region cell size in chunks (both X and Z dimensions).
+    /// Each region is centered on a Voronoi cell and extends across multiple chunks.
+    /// - 4 (default): Regions are 4×4 chunks (64×64 blocks)
+    /// - 8: Larger regions (128×128 blocks), less biome variety per area
+    /// - 2: Smaller regions (32×32 blocks), more frequent biome changes
+    /// Technical: Used in shader as: cellSize = CellSizeChunks * CHUNK_SIDE_SIZE (16).
+    /// </summary>
     public float CellSizeChunks { get; set; } = 4f;
-    /// <summary>Jitter strength [0..1] applied to cell centers.</summary>
+    
+    /// <summary>
+    /// Gets or sets the jitter strength [0,1] applied to Voronoi cell centers.
+    /// Randomizes region center positions to prevent grid-like patterns.
+    /// - 0.35 (default): Moderate jitter (natural looking distribution)
+    /// - 0.0: No jitter (perfect grid, very artificial)
+    /// - 0.7: Strong jitter (highly irregular regions, can create very small regions)
+    /// Technical: Applied as: center += (random2D() - 0.5) * JitterStrength.
+    /// </summary>
     public float JitterStrength { get; set; } = 0.35f;
-    /// <summary>Feather width in world units used to blend between neighboring regions.</summary>
-    public float FeatherWidth { get; set; } = 12f;
-    /// <summary>Max number of neighboring regions to mix.</summary>
+    
+    /// <summary>
+    /// Gets or sets the feather width in world units (blocks) for blending between neighboring regions.
+    /// Controls the softness of biome boundaries.
+    /// - 3 (default): Clean transitions (recommended)
+    /// - 1-2: Sharp transitions (may show visible seams)
+    /// - 6+: Very soft transitions (can create "spray paint" mixing effect)
+    /// Technical: Applied with smoothstep(d0, d0 + feather, distance) where d0 is nearest region distance.
+    /// </summary>
+    public float FeatherWidth { get; set; } = 3f;
+    
+    /// <summary>
+    /// Gets or sets the maximum number of neighboring regions to blend together.
+    /// Higher values create smoother transitions but increase GPU cost.
+    /// - 3 (default): Blend 3 nearest regions
+    /// - 4: Smoother transitions (slightly more expensive)
+    /// - 2: Faster but sharper transitions
+    /// Technical: Worley noise finds K nearest cell centers and weights them by distance.
+    /// </summary>
     public int MaxRegionMix { get; set; } = 3;
 
+    /// <summary>
+    /// Creates a BiomeRegionParams instance with default values.
+    /// </summary>
     public static BiomeRegionParams Default() => new();
 }
 
 /// <summary>
-/// Cave shaping parameters used by the GPU density function.
+/// Defines parameters for procedural cave generation using dual-system approach.
+/// Combines "cheese" caves (large chambers) with "spaghetti" caves (winding tunnels).
+/// Both systems use 3D noise with depth/slope attenuation to prevent surface breaches.
 /// </summary>
 public sealed class CaveParams
 {
-    public float CheeseFrequency { get; set; } = 1f / 100f; // Much smoother (was 1/50)
+    /// <summary>
+    /// Gets or sets the frequency of cheese cave noise (inverse of feature size).
+    /// Controls the size of large cavern systems.
+    /// - 1/100 (default): Large chambers (~100 block spacing)
+    /// - 1/150: Very large caverns
+    /// - 1/50: Smaller, more frequent chambers
+    /// Technical: Applied as fbm3D(position * CheeseFrequency).
+    /// </summary>
+    public float CheeseFrequency { get; set; } = 1f / 100f;
+    
+    /// <summary>
+    /// Gets or sets the amplitude multiplier for cheese cave density.
+    /// Currently unused (fixed at 1.0). Reserved for future cave intensity control.
+    /// </summary>
     public float CheeseAmplitude { get; set; } = 1.0f;
 
-    public float SpaghettiFrequency { get; set; } = 1f / 80f; // Much smoother (was 1/35)
+    /// <summary>
+    /// Gets or sets the frequency of spaghetti cave noise (inverse of feature size).
+    /// Controls the size and spacing of tunnel systems.
+    /// - 1/80 (default): Long winding tunnels (~80 block wavelength)
+    /// - 1/120: Very long tunnels
+    /// - 1/40: Shorter, tighter tunnels
+    /// Technical: Uses two perpendicular noise fields to create worm-like structures.
+    /// </summary>
+    public float SpaghettiFrequency { get; set; } = 1f / 80f;
+    
+    /// <summary>
+    /// Gets or sets the amplitude multiplier for spaghetti cave density.
+    /// Currently unused (fixed at 0.8). Reserved for future tunnel size control.
+    /// </summary>
     public float SpaghettiAmplitude { get; set; } = 0.8f;
 
-    // Increased threshold by ~15% to reduce cave frequency (0.75 -> 0.86)
-    // Higher threshold = fewer caves since density must be higher to carve
-    public float CarveThreshold { get; set; } = 0.86f; // Reduced cave frequency by 15% (was 0.75)
+    /// <summary>
+    /// Gets or sets the density threshold for cave carving [0,1].
+    /// Higher values create fewer, smaller caves; lower values create more, larger caves.
+    /// - 0.86 (default): Moderate cave frequency (balanced exploration)
+    /// - 0.75: Higher cave frequency (more caves, easier underground navigation)
+    /// - 0.92: Lower cave frequency (rare caves, more solid underground)
+    /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
+    /// </summary>
+    public float CarveThreshold { get; set; } = 0.86f;
 
+    /// <summary>
+    /// Gets or sets the curl noise scale for cave path distortion.
+    /// Currently unused. Reserved for future cave curvature control.
+    /// </summary>
     public float CurlScale { get; set; } = 1f / 120f;
+    
+    /// <summary>
+    /// Gets or sets the curl noise strength for cave path distortion.
+    /// Currently unused. Reserved for future cave curvature intensity.
+    /// </summary>
     public float CurlStrength { get; set; } = 12f;
 
+    /// <summary>
+    /// Gets or sets the ridge carving threshold for mountain caves.
+    /// Currently unused. Reserved for future ridge-aligned cave systems.
+    /// </summary>
     public float RidgeCarve { get; set; } = 0.35f;
 
+    /// <summary>
+    /// Creates a CaveParams instance with default values.
+    /// </summary>
     public static CaveParams Default() => new();
 }
 
 /// <summary>
-/// 1D spline defined by control points in [0,1] domain. Provides linear evaluation and LUT baking.
+/// Defines a 1D spline with linear interpolation between control points.
+/// Used primarily for mapping continentalness values to terrain elevation.
+/// Domain is normalized [0,1], range can be any float values (typically elevation in blocks).
 /// </summary>
 public sealed class Spline1D
 {
+    /// <summary>
+    /// Represents a single control point on the spline.
+    /// </summary>
     public struct Point
     {
+        /// <summary>
+        /// Gets or sets the X coordinate (domain) of this control point. Range: [0,1].
+        /// </summary>
         public float X { get; set; }
+        
+        /// <summary>
+        /// Gets or sets the Y coordinate (range) of this control point.
+        /// For height splines, this is elevation in blocks (can be negative for ocean floor).
+        /// </summary>
         public float Y { get; set; }
         
-        // Parameterless constructor for JSON deserialization
+        /// <summary>
+        /// Initializes a new control point at origin (0,0).
+        /// </summary>
         public Point()
         {
             X = 0f;
             Y = 0f;
         }
         
-        // Parameterized constructor for convenience
+        /// <summary>
+        /// Initializes a new control point at the specified coordinates.
+        /// </summary>
         public Point(float x, float y)
         {
             X = x;
@@ -610,21 +997,37 @@ public sealed class Spline1D
         }
     }
 
-    // CRITICAL FIX: Add setter for JSON deserialization
+    /// <summary>
+    /// Gets or sets the list of control points defining this spline.
+    /// Points should be sorted by X coordinate for proper interpolation.
+    /// </summary>
     public List<Point> Points { get; set; } = [];
 
+    /// <summary>
+    /// Removes all control points from this spline.
+    /// </summary>
     public void Clear() => Points.Clear();
 
+    /// <summary>
+    /// Adds a new control point to this spline.
+    /// Call <see cref="Sort"/> after adding all points to ensure proper interpolation.
+    /// </summary>
     public void Add(float x, float y) => Points.Add(new Point(x, y));
 
+    /// <summary>
+    /// Sorts all control points by X coordinate in ascending order.
+    /// Required for proper linear interpolation. Call after adding all points.
+    /// </summary>
     public void Sort()
     {
         Points.Sort((a, b) => a.X.CompareTo(b.X));
     }
 
     /// <summary>
-    /// Evaluate with linear interpolation. If no points, returns 0. If one point, returns that Y.
+    /// Evaluates the spline at the given X coordinate using linear interpolation.
     /// </summary>
+    /// <param name="x">X coordinate to evaluate. Clamped to [Points[0].X, Points[^1].X].</param>
+    /// <returns>Interpolated Y value at the specified X coordinate.</returns>
     public float Evaluate(float x)
     {
         if (Points.Count == 0) return 0f;
@@ -633,7 +1036,6 @@ public sealed class Spline1D
         if (x <= Points[0].X) return Points[0].Y;
         if (x >= Points[^1].X) return Points[^1].Y;
 
-        // binary search lower bound
         int lo = 0, hi = Points.Count - 1;
         while (lo + 1 < hi)
         {
@@ -647,7 +1049,11 @@ public sealed class Spline1D
     }
 
     /// <summary>
-    /// Bake to uniform samples covering [0,1].</summary>
+    /// Bakes the spline to a uniform array of samples across [0,1] domain.
+    /// Used for GPU texture upload where random access evaluation is expensive.
+    /// </summary>
+    /// <param name="samples">Number of samples to generate. Higher values = better interpolation quality.</param>
+    /// <returns>Float array containing uniformly spaced Y values indexed by normalized X.</returns>
     public float[] Bake(int samples)
     {
         if (samples < 2) samples = 2;
@@ -661,30 +1067,31 @@ public sealed class Spline1D
         return arr;
     }
 
+    /// <summary>
+    /// Creates the default height spline for ocean-to-mountain elevation mapping.
+    /// Maps continentalness [0,1] to elevation in blocks:
+    /// - 0.00-0.25: Ocean basin (-80 to -20 blocks)
+    /// - 0.32-0.38: Steep coastal cliffs (-5 to +35 blocks)
+    /// - 0.50-0.65: Coastal plains and inland hills (+50 to +80 blocks)
+    /// - 0.75-1.00: Mountain regions (+120 to +320 blocks)
+    /// Note: Spline values are relative. GPU adds WATER_LEVEL (35) for absolute Y coordinates.
+    /// </summary>
+    /// <returns>Configured height spline with 11 control points.</returns>
     public static Spline1D DefaultHeightSpline()
     {
         var s = new Spline1D();
-        // Enhanced height mapping for dramatic terrain features
-        // Continentalness input: 0.0 = deep ocean, 1.0 = mountains
         
-        // Deep ocean basin (extended and deeper)
-        s.Add(0.00f, -80f);  // Very deep ocean trenches
-        s.Add(0.15f, -50f);  // Deep ocean
-        s.Add(0.25f, -20f);  // Shallow ocean
-        
-        // Steep coastal cliffs - dramatic transition from ocean to land
-        s.Add(0.32f, -5f);   // Continental shelf
-        s.Add(0.38f, 35f);   // Steep cliff rise (40m elevation change over short distance)
-        
-        // Land regions
-        s.Add(0.50f, 50f);   // Coastal plains
-        s.Add(0.65f, 80f);   // Inland plains/hills
-        
-        // Mountain regions with cliffs
-        s.Add(0.75f, 120f);  // Foothills
-        s.Add(0.85f, 180f);  // Mountain slopes
-        s.Add(0.95f, 250f);  // High mountains
-        s.Add(1.00f, 320f);  // Mountain peaks
+        s.Add(0.00f, -80f);
+        s.Add(0.15f, -50f);
+        s.Add(0.25f, -20f);
+        s.Add(0.32f, -5f);
+        s.Add(0.38f, 35f);
+        s.Add(0.50f, 50f);
+        s.Add(0.65f, 80f);
+        s.Add(0.75f, 120f);
+        s.Add(0.85f, 180f);
+        s.Add(0.95f, 250f);
+        s.Add(1.00f, 320f);
         
         s.Sort();
         return s;

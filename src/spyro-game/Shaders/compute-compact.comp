@@ -214,7 +214,7 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
         uint voxel = getPackedVoxel(voxelIdx, voxelData);
         // Water is NOT solid for AO purposes (it doesn't occlude solid blocks)
-        return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
+        return (voxel & 0xFFu) > BD_WATER;
     } 
     
     // Outside current chunk - try to find neighbor in current batch
@@ -240,15 +240,20 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
         // Linear search in batch (batch size is small, ~64)
         for (uint i = 0u; i < uChunkCount; i++) {
             if (chunkIndices[i] == nGlobalIdx) {
-                // Found neighbor in batch! Read its data.
-                uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-                uint voxel = getPackedVoxel(voxelIdx, voxelData);
-                return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
+                // Found neighbor in batch! Verify local coords are in bounds before reading.
+                if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
+                    uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+                    uint voxel = getPackedVoxel(voxelIdx, voxelData);
+                    return (voxel & 0xFFu) > BD_WATER;
+                }
+                // If local coords out of bounds, fall through to procedural
+                break;
             }
         }
     }
 
     // Fallback: Outside chunk and not in batch - use procedural generation
+    // CRITICAL: Must use the SAME logic as terrain generation to match exactly
     int wx = int(chunkWorldOffset.x) + pos.x;
     int wz = int(chunkWorldOffset.z) + pos.z;
     int wy = pos.y;
@@ -256,41 +261,19 @@ bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
     // Check edits first
     int editType = getBlockFromEdits(wx, wy, wz);
     if (editType != -1) {
-        return editType > int(BLOCK_WATER_LEVEL);
+        return editType > int(BD_WATER);
     }
 
-    int height;
-    height = generateHeight(wx, wz);
+    // Generate height for this specific position
+    int height = generateHeight(wx, wz);
     
-    // Procedural: Solid if y <= height AND not water level
-    // generateBlockType returns WATER for y <= WATER_LEVEL.
-    // So if y <= WATER_LEVEL, it is water (not solid).
-    // If y > WATER_LEVEL and y <= height, it is solid.
-    // Wait, generateBlockType returns SAND for y < WATER_LEVEL - 2.
-    // So deep underwater is solid.
-    // But for simple AO, let's assume water level is water.
-    // FIX: Underwater terrain (Sand/Bedrock) IS solid.
-    // The previous check (pos.y <= WATER_LEVEL) return false; was wrong because it treated underwater solids as water.
-    // generateBlockType logic:
-    // y > height -> Water (if y<=WL) or Air. Both non-solid.
-    // y <= height -> Sand/Bedrock/Grass. All solid.
+    // Use generateBlockType() to match EXACT terrain generation logic
+    // This includes: ocean/land distinction, overhangs, caves, surface/subsurface types
+    uint blockType = generateBlockType(height, wy, wx, wz);
     
-    // M3: Check for caves in procedural fallback
-    // This fixes AO artifacts at chunk boundaries where caves cross chunks
-    if (pos.y <= height && pos.y > 0) {
-        int depth = height - pos.y;
-        float slope = 0.0;
-        if (depth < 12) {
-            slope = getSlope(wx, wz);
-        }
-        if (isCave(wx, pos.y, wz, depth, slope)) {
-            return false; // Cave is air (not solid)
-        }
-    }
-
-    return pos.y <= height;
+    // Water is NOT solid for AO (blocks behind water should not be darkened)
+    return blockType > BD_WATER;
 }
-
 float calculateAO(uint face, uint corner, uint chunkIdx, vec3 chunkWorldOffset, ivec3 p) {
     ivec3 o1, o2, o3;
     
@@ -384,15 +367,15 @@ void main(){
     uint voxelIdx = chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED);
     
     uint voxel = voxelData[voxelIdx]; // Direct access
-    uint blockType = voxel & 0xFFu;
+    uint blockDescriptor = voxel & 0xFFu;
     
     uint mask = visibilityMask[voxelIdx]; // Direct access
     
     // Early exit if no faces visible
     // Note: We can't return early because we need to participate in barrier() later!
     // So we use a flag.
-    bool hasFaces = (mask != 0u && blockType != 0u);
-    bool isWater = (blockType == BLOCK_WATER_LEVEL);
+    bool hasFaces = (mask != 0u && blockDescriptor != 0u);
+    bool isWater = (blockDescriptor == BD_WATER);
     uint faceCount = 0u;
     
     if (hasFaces) {
@@ -452,7 +435,7 @@ void main(){
     
     // Re-initialize counters for distribution
     // We need a second barrier.
-    // But we can't re-init s_OpaqueCount because other threads might still be reading it?
+    // But we can't re-init s_OpaqueCount safely if we use it for allocation?
     // We passed a barrier.
     // But we need the TOTAL count for the leader thread.
     // We already did that.
@@ -539,7 +522,7 @@ void main(){
         // ... (write vertex/index)
         vec3 corners[4];
         getFaceCorners(face, voxelPos, corners);
-        uint facePacked = face | (blockType << 8);
+        uint facePacked = face | (blockDescriptor << 8);
 
         for(uint v=0u; v<4u; v++){
             vec2 uv;

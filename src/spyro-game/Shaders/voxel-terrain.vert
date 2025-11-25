@@ -55,12 +55,12 @@ layout(location = 3) in uint aFaceIndex;  // Face direction index [0-5] + blockT
 // Vertex Output (to fragment shader)
 // ============================================================================
 
-out vec3 vWorldPos;      // World-space position
-out vec3 vNormal;        // World-space normal (derived from face index)
-out vec2 vTexCoord;      // Texture coordinates
-out float vAO;           // Ambient occlusion
-out vec3 vViewDir;       // Direction to camera
-flat out uint vBlockType; // Block type for texture selection
+out vec3 vWorldPos;          // World-space position
+out vec3 vNormal;            // World-space normal (derived from face index)
+out vec2 vTexCoord;          // Texture coordinates
+out float vAO;               // Ambient occlusion
+out vec3 vViewDir;           // Direction to camera
+flat out uint vBlockDescriptor;  // Block descriptor for texture/geology layer selection (renamed from vBlockType)
 
 // ============================================================================
 // Main Shader
@@ -71,9 +71,9 @@ void main() {
     vec4 worldPos = uChunkTransform * vec4(aPosition, 1.0);
     vWorldPos = worldPos.xyz;
 
-    // Extract face index and block type
+    // Extract face index and block descriptor
     uint faceIndex = aFaceIndex & 0x7u; // 3 bits for face (0-5)
-    vBlockType = (aFaceIndex >> 8) & 0xFFu; // 8 bits for block type
+    vBlockDescriptor = (aFaceIndex >> 8) & 0xFFu; // 8 bits for block descriptor (geology layer)
 
     // Derive normal from face index (Phase 5.2 optimization!)
     // This replaces 12 bytes of stored normal data with a simple array lookup

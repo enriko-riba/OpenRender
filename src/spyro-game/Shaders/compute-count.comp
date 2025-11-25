@@ -54,9 +54,10 @@ void main() {
             tCount += faces;
             
             uint voxel = voxelData[voxelIdx];
-            uint blockType = voxel & 0xFFu;
+            uint blockDescriptor = voxel & 0xFFu;
             
-            if (blockType != BLOCK_WATER_LEVEL) {
+            // Count opaque faces (exclude water)
+            if (blockDescriptor != BD_WATER) {
                 oCount += faces;
             }
         }

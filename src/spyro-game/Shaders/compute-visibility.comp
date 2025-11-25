@@ -72,34 +72,45 @@ layout(std430, binding = 7) readonly buffer WorldEditsBuffer {
 // Helper Functions
 // ============================================================================
 
-uint packSimple(uint blockType)
-{   // Pack minimal voxel (other fields zero) to mimic voxelData layout low 8 bits block type
-    return blockType & 0xFFu;
+uint packSimple(uint blockDescriptor)
+{   // Pack minimal voxel (other fields zero) to mimic voxelData layout low 8 bits block descriptor
+    return blockDescriptor & 0xFFu;
 }
 
 uint proceduralVoxel(int wx, int ly, int wz)
 {
     int height = generateHeight(wx, wz);
-    if (ly >= height) return packSimple(BLOCK_NONE);
-    uint blockType = generateBlockType(height, ly, wx, wz);
-    return packSimple(blockType);
+    
+    // CRITICAL FIX: Must match generateBlockType() EXACTLY for water!
+    // generateBlockType() checks: if (y > height) then check for water
+    if (ly > height) {
+        // Above surface: check if underwater
+        if (ly <= WATER_LEVEL) {
+            return packSimple(BD_WATER);
+        }
+        return packSimple(BD_AIR);
+    }
+    
+    // Solid blocks below surface
+    uint blockDescriptor = generateBlockType(height, ly, wx, wz);
+    return packSimple(blockDescriptor);
 }
 
 /// Check if voxel is transparent (air or water)
 bool isTransparent(uint voxel) {
-    uint blockType = voxel & 0xFFu;
-    return blockType == BLOCK_NONE || blockType == BLOCK_WATER_LEVEL;
+    uint blockDescriptor = voxel & 0xFFu;
+    return blockDescriptor == BD_AIR || blockDescriptor == BD_WATER;
 }
 
 bool isWater(uint voxel) {
-    uint blockType = voxel & 0xFFu;
-    return blockType == BLOCK_WATER_LEVEL;
+    uint blockDescriptor = voxel & 0xFFu;
+    return blockDescriptor == BD_WATER;
 }
 
 /// Get voxel at local coordinates (with bounds checking)
 /// If out of bounds, calculate procedurally (fast heightmap classification) instead of returning air.
 uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
-    if (ly < 0 || ly >= CHUNK_Y_SIZE) return packSimple(BLOCK_NONE);
+    if (ly < 0 || ly >= CHUNK_Y_SIZE) return packSimple(BD_AIR);
 
     if (lx >= 0 && lx < CHUNK_SIDE_SIZE && lz >= 0 && lz < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
@@ -166,14 +177,14 @@ void main() {
                     ly * CHUNK_SIDE_SIZE_SQUARED;
 
     uint voxel = voxelData[voxelIdx];
-    uint blockType = voxel & 0xFFu;
+    uint blockDescriptor = voxel & 0xFFu;
 
-    if (blockType == BLOCK_NONE) {
+    if (blockDescriptor == BD_AIR) {
         visibilityMask[voxelIdx] = 0u;
         return;
     }
 
-    bool currentIsWater = (blockType == BLOCK_WATER_LEVEL);
+    bool currentIsWater = (blockDescriptor == BD_WATER);
     
     // Neighbor-based face visibility
     uint mask = 0u;
@@ -184,18 +195,12 @@ void main() {
         uint nv = neighborVoxel; \
         bool neighborIsWater = isWater(nv); \
         bool neighborIsTransparent = isTransparent(nv); \
-        /* FIX: If we are deep underwater, assume Air neighbor is actually Water (error correction) */ \
-        /* This fixes issues where getVoxel returns 0 for valid water blocks or boundary issues */ \
-        if (currentIsWater && int(ly) < WATER_LEVEL - 1 && nv == BLOCK_NONE) { \
-             neighborIsWater = true; \
-        } \
+        /* Water face culling: Water only renders faces against Air (not against other water) */ \
         if (currentIsWater) { \
-            /* Water only draws against Air (transparent but not water) */ \
-            /* Also draw against other water if we want to see water-water boundaries? No. */ \
+            /* Only draw water face if neighbor is Air (transparent AND not water) */ \
             if (neighborIsTransparent && !neighborIsWater) mask |= faceBit; \
         } else { \
             /* Solid blocks draw against any transparent block (Air OR Water) */ \
-            /* If neighbor is water, it is transparent, so we draw the solid face. */ \
             if (neighborIsTransparent) mask |= faceBit; \
         } \
     }

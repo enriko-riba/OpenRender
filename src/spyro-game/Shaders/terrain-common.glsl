@@ -9,14 +9,16 @@ const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
 const int PACKED_CHUNK_VOXEL_COUNT = CHUNK_VOXEL_COUNT; // UNPACKED
 const int WATER_LEVEL = 35;
 
-// Block types
-const uint BLOCK_NONE = 0u;
-const uint BLOCK_WATER_LEVEL = 1u;
-const uint BLOCK_ROCK = 2u;
-const uint BLOCK_SAND = 3u;
-const uint BLOCK_DIRT = 4u;
-const uint BLOCK_GRASS_DIRT = 5u;
-const uint BLOCK_BEDROCK = 8u; // Added BedRock
+// Block descriptors (matches BlockDescriptor C# enum)
+// These represent geology layers for biome texture selection
+const uint BD_AIR = 0u;                    // Air (empty space)
+const uint BD_WATER = 1u;                  // Water
+const uint BD_SURFACE = 2u;                // Surface layer (grass, snow, sand at surface)
+const uint BD_SUBSURFACE = 3u;             // Subsurface layer (dirt below surface)
+const uint BD_DEEP_SUBSURFACE = 4u;        // Deep subsurface (rock/stone)
+const uint BD_UNDERWATER_SURFACE = 5u;     // Underwater surface (ocean floor)
+const uint BD_UNDERWATER_SUBSURFACE = 6u;  // Underwater subsurface (bedrock)
+const uint BD_SHORELINE = 7u;              // Shoreline (beach sand)
 
 // Helper to read packed voxel (UNPACKED: 1 voxel per uint)
 #define getPackedVoxel(idx, buf) (buf[idx] & 0xFFu)
@@ -58,11 +60,15 @@ layout(std430, binding = 10) readonly buffer TerrainParams {
     float uCaveSlopeFadeMin;
     float uCaveSlopeFadeMax;
     float uCaveFloodExt;
-    // NEW: Ocean/Land/Altitude thresholds for terrain-type-aware biome system
+    // NEW: Ocean/Land/Altitude thresholds for biome system
     float uOceanThreshold;
     float uDeepOceanThreshold;
     float uAlpineElevation;
     float uCoastRange;
+    // Overhang range parameters
+    float uOverhangDepthRange;
+    float uOverhangHeightRange;
+    float uOverhangFalloffRange;
 } params;
 
 // Hardcoded biome IDs (must match BiomeDefinition constants in C#)
@@ -263,12 +269,15 @@ float getTerrainDensity(vec3 p) {
     float density = baseHeight - y;
     
     // Add 3D overhang noise in mountains
-    if (tC > params.uMountainThreshold && y > baseHeight - 50.0 && y < baseHeight + 30.0) {
+    // Use configurable ranges instead of hardcoded values
+    if (tC > params.uMountainThreshold && 
+        y > baseHeight - params.uOverhangDepthRange && 
+        y < baseHeight + params.uOverhangHeightRange) {
         float mountainness = smoothstep(params.uMountainThreshold, 1.0, tC);
         // 3D noise for overhangs
         float overhangNoise = fbm3D(p * params.uOverhangFreq, params.uSeed + 2000u, 3, 0.5, 2.0);
         // Add overhang effect near the surface
-        float heightFactor = 1.0 - abs((y - baseHeight) / 40.0);
+        float heightFactor = 1.0 - abs((y - baseHeight) / params.uOverhangFalloffRange);
         heightFactor = clamp(heightFactor, 0.0, 1.0);
         density += overhangNoise * params.uOverhangAmp * mountainness * heightFactor;
     }
@@ -345,9 +354,9 @@ bool isNearWater(int wx, int wz) {
 uint generateBlockType(int height, int y, int wx, int wz) {
     if (y > height) {
         if (y <= WATER_LEVEL) {
-            return BLOCK_WATER_LEVEL;
+            return BD_WATER;
         }
-        return BLOCK_NONE;
+        return BD_AIR;
     } 
     
     // Solid blocks (y <= height)
@@ -366,7 +375,7 @@ uint generateBlockType(int height, int y, int wx, int wz) {
         float density = getTerrainDensity(p);
         if (density < 0.0) {
             // Overhang carved out
-            return BLOCK_NONE;
+            return BD_AIR;
         }
     }
     
@@ -390,13 +399,13 @@ uint generateBlockType(int height, int y, int wx, int wz) {
                 // Caves under land (height > WATER_LEVEL) remain dry (Air), preserving "air pockets".
                 // Use config value for flooding extension instead of hardcoded 8
                 if (y <= WATER_LEVEL + int(params.uCaveFloodExt)) {
-                    return BLOCK_WATER_LEVEL;
+                    return BD_WATER;
                 }
                 
                 // Dry cave under land
-                return BLOCK_NONE;
+                return BD_AIR;
             }
-            return BLOCK_NONE;
+            return BD_AIR;
         }
     }
     
@@ -404,22 +413,22 @@ uint generateBlockType(int height, int y, int wx, int wz) {
     if (y == height) {
         if (y < WATER_LEVEL) {
             // Underwater surface (ocean floor or shallow water)
-            if (y >= WATER_LEVEL - 1) return BLOCK_SAND; // 1 block below water
-            return BLOCK_BEDROCK; // Deep underwater
+            if (y >= WATER_LEVEL - 1) return BD_SHORELINE; // 1 block below water
+            return BD_UNDERWATER_SUBSURFACE; // Deep underwater (bedrock)
         } else {
             // Above water surface (land)
             if (y <= WATER_LEVEL + int(params.uShorelineRange)) {
                 // Shoreline check
-                if (isNearWater(wx, wz)) return BLOCK_SAND;
+                if (isNearWater(wx, wz)) return BD_SHORELINE;
             }
-            return BLOCK_GRASS_DIRT;
+            return BD_SURFACE;
         }
     }
     
     // Sub-surface
     int depth = height - y;
-    if (depth <= int(params.uSubsurfaceDepth)) return BLOCK_DIRT;
-    return BLOCK_ROCK;
+    if (depth <= int(params.uSubsurfaceDepth)) return BD_SUBSURFACE;
+    return BD_DEEP_SUBSURFACE;
 }
 
 // ============================================================================
@@ -487,55 +496,144 @@ float getHumidity(vec3 p) {
 }
 
 /// <summary>
-/// NEW ARCHITECTURE: Terrain-Type-Aware Biome Selection
+/// NEW ARCHITECTURE: Terrain-Type-Aware Biome Selection with Natural Transitions
 /// 
-/// Phase 1: Ocean/Land Check
+/// Phase 1: Ocean Check
 /// - If C < OceanThreshold: return OCEAN biome (hardcoded)
 /// 
-/// Phase 2: Altitude Override
-/// - If elevation > AlpineElevation: return ALPINE biome (hardcoded)
-/// 
-/// Phase 3: Climate-Based Land Biomes
-/// - Sample LUT (contains ONLY LandOnly biomes)
-/// - LUT is indexed by temperature x humidity
+/// Phase 2: Climate-Based Land Biomes with Altitude Influence
+/// - Sample LUT (contains ONLY LandOnly biomes) based on temperature/humidity
+/// - Add altitude-based Alpine influence with noise for natural transitions
+/// - Blend Alpine with base biome using smooth probability curve
 /// 
 /// This ensures:
 /// - Ocean always stays Ocean (no matter the temperature)
-/// - Mountains always become Alpine (no matter the climate)
-/// - Land biomes are properly distributed by climate
+/// - Mountains gradually transition to Alpine with natural variation
+/// - Land biomes are distributed by climate with altitude influence
+/// - Alpine "pockets" can stretch into forests and vice versa
 /// </summary>
 uint getBiomeId(vec3 p) {
     float C = getContinentalness(p.xz);
     float tC = C * 0.5 + 0.5; // Remap to [0,1]
     
-    // PHASE 1: Ocean Check (Priority 100)
-    // If continentalness is below ocean threshold, it's ocean regardless of climate
-    if (tC < params.uOceanThreshold) {
+    // Declare variables once at top scope
+    float terrainHeight;
+    float heightApprox;  // Used in fragment shader paths
+    
+    // PHASE 1: Ocean Detection
+    // CRITICAL FIX: Ocean ONLY appears on blocks BELOW water level!
+    // Previous bug: Ocean extended up entire cliff column if C < threshold
+    // New logic: Check BOTH continentalness AND actual Y position
+    
+    bool isUnderwater;
+    
+    #ifdef IS_FRAGMENT_SHADER
+        // Fragment: Use height approximation
+        heightApprox = texture(uHeightSpline, tC).r + float(WATER_LEVEL);
+        
+        // Ocean ONLY if:
+        // 1. Low continentalness (coastal/ocean area)
+        // 2. Height is below water
+        // 3. Fragment Y position is below water (CRITICAL!)
+        isUnderwater = (tC < params.uOceanThreshold) && 
+                       (heightApprox <= float(WATER_LEVEL) + 10.0) &&
+                       (p.y <= float(WATER_LEVEL));
+    #else
+        // Compute: Use actual terrain height
+        terrainHeight = getHeight(p.xz);
+        
+        // Ocean ONLY if:
+        // 1. Terrain surface is below water
+        // 2. Block Y position is below water (CRITICAL!)
+        isUnderwater = (terrainHeight <= float(WATER_LEVEL)) && 
+                       (p.y <= float(WATER_LEVEL));
+    #endif
+    
+    if (isUnderwater) {
         return OCEAN_BIOME_ID;
     }
     
-    // PHASE 2: Altitude Override (Priority 90)
-    // If elevation is above alpine threshold, it's alpine regardless of climate
-    // Use approximate elevation from height spline (fast, no full getHeight calculation)
-    float approxElevation = texture(uHeightSpline, tC).r + float(WATER_LEVEL);
-    if (approxElevation > params.uAlpineElevation) {
-        return ALPINE_BIOME_ID;
-    }
+    // PHASE 1.5: Beach Detection
+    // Beach appears at shoreline (just above water in coastal areas)
+    #ifdef IS_FRAGMENT_SHADER
+        // Fragment: Approximate based on continentalness (reuse heightApprox from Phase 1)
+        bool isCoastal = (tC < params.uCoastRange);
+        bool likelyBeach = isCoastal && (tC > params.uOceanThreshold) && (tC < params.uOceanThreshold + 0.1);
+        if (likelyBeach) {
+            return 1u;  // BEACH_BIOME_ID
+        }
+    #else
+        // Compute: Precise based on actual height (reuse terrainHeight from Phase 1)
+        float heightAboveWater = terrainHeight - float(WATER_LEVEL);
+        bool isCoastal = (tC < params.uCoastRange);
+        
+        if (isCoastal && heightAboveWater >= 0.0 && heightAboveWater <= 3.0) {
+            return 1u;  // BEACH_BIOME_ID
+        }
+    #endif
     
-    // PHASE 3: Climate-Based Land Biomes (Priority 50)
-    // Sample the LUT which contains only LandOnly biomes
+    // PHASE 2: Climate-Based Land Biomes with Boundary Noise
+    // ALL climate biomes get organic boundaries via noise-shifted temperature/humidity
     float t = getTemperature(p);
     float h = getHumidity(p);
     
-    // Sample biome LUT (R8UI texture, contains only LAND biomes)
-    uint biomeId = texture(uBiomeLUT, vec2(t, h)).r;
+    // Add boundary noise to T/H BEFORE LUT lookup
+    // This creates curved organic boundaries between ALL climate zones
+    float noiseT = fbm(p.xz * 0.02, params.uSeed + 4000u, 2, 0.5, 2.0) * 0.08;
+    float noiseH = fbm(p.xz * 0.02, params.uSeed + 5000u, 2, 0.5, 2.0) * 0.08;
     
-    // Fallback safety: if LUT returns 0 (which might be Ocean ID), use default land biome
-    if (biomeId == OCEAN_BIOME_ID) {
-        return DEFAULT_FALLBACK_BIOME_ID;
+    float tShifted = clamp(t + noiseT, 0.0, 1.0);
+    float hShifted = clamp(h + noiseH, 0.0, 1.0);
+    
+    // Sample biome LUT with noise-shifted coordinates
+    uint baseBiomeId = texture(uBiomeLUT, vec2(tShifted, hShifted)).r;
+    
+    // Skip special biomes if LUT returns them
+    if (baseBiomeId == OCEAN_BIOME_ID || baseBiomeId == 1u) {
+        baseBiomeId = DEFAULT_FALLBACK_BIOME_ID;
     }
     
-    return biomeId;
+    // PHASE 3: Alpine Override (Dual Triggers with Separate Thresholds)
+    // Altitude trigger: elevation >= 250 (high mountains)
+    // Cold trigger: temperature < 0.15 (arctic, any elevation)
+    
+    bool alpineFromAltitude = false;
+    bool alpineFromCold = false;
+    
+    #ifdef IS_FRAGMENT_SHADER
+        // Fragment: Use height approximation (reuse heightApprox from Phase 1)
+        // Altitude trigger: >= 250 (use higher threshold due to approximation uncertainty)
+        if (heightApprox >= 220.0) {
+            float altInfluence = smoothstep(220.0, 280.0, heightApprox);
+            float boundaryNoise = fbm(p.xz * 0.015, params.uSeed + 3000u, 2, 0.5, 2.0) * 0.5 + 0.5;
+            float alpineFavor = altInfluence * 0.7 + boundaryNoise * 0.3;
+            alpineFromAltitude = (alpineFavor > 0.55);
+        }
+    #else
+        // Compute: Use actual terrain height (reuse terrainHeight from Phase 1)
+        // Altitude trigger: >= 250 with smoothstep transition
+        if (terrainHeight >= 220.0) {
+            float altInfluence = smoothstep(220.0, 280.0, terrainHeight);
+            float boundaryNoise = fbm(p.xz * 0.015, params.uSeed + 3000u, 2, 0.5, 2.0) * 0.5 + 0.5;
+            float alpineFavor = altInfluence * 0.7 + boundaryNoise * 0.3;
+            alpineFromAltitude = (alpineFavor > 0.55);
+        }
+    #endif
+    
+    // Cold trigger: temperature < 0.15, NO height restriction
+    // This allows arctic tundra with snow at sea level
+    if (t < 0.20) {
+        float coldInfluence = smoothstep(0.20, 0.10, t);
+        float boundaryNoise = fbm(p.xz * 0.015, params.uSeed + 3000u, 2, 0.5, 2.0) * 0.5 + 0.5;
+        float alpineFavor = coldInfluence * 0.7 + boundaryNoise * 0.3;
+        alpineFromCold = (alpineFavor > 0.55);
+    }
+    
+    if (alpineFromAltitude || alpineFromCold) {
+        return ALPINE_BIOME_ID;
+    }
+    
+    return baseBiomeId;
 }
 
 RegionMix getBiomeWeights(vec3 p) {
