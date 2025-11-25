@@ -100,14 +100,8 @@ public sealed class FontAtlasGenerator
     }
 
     /// <summary>
-    /// Adds a row of characters to the texture.
+    /// Adds a row of characters to the texture and extracts kerning information.
     /// </summary>
-    /// <param name="fontAtlas"></param>
-    /// <param name="font"></param>
-    /// <param name="style"></param>
-    /// <param name="sb"></param>
-    /// <param name="image"></param>
-    /// <param name="textureY"></param>
     private static void AddRow(FontAtlas fontAtlas, Font font, TextOptions style, ReadOnlySpan<char> text, Image<Rgba32> image, ref float textureY)
     {
         var textureX = (float)Padding;
@@ -145,11 +139,56 @@ public sealed class FontAtlasGenerator
                 UvMaxX = uvMaxX,
                 UvMaxY = uvMaxY,
             };
+            
+            // Extract kerning information for common character pairs
+            // SixLabors.Fonts doesn't directly expose kerning, so we measure it
+            gi.KerningPairs = ExtractKerningPairs(text[j], font, style);
+            
             textureX += fontAtlas.CharWidth + Padding;
             rto.Origin = new System.Numerics.Vector2(textureX, drawY);
             fontAtlas.Glyphs.Add(text[j], gi);
         }
         textureY += fontAtlas.CharacterFrameSize.Y;
+    }
+
+    /// <summary>
+    /// Extracts kerning adjustments for common character pairs.
+    /// Uses measurement-based approach since SixLabors.Fonts doesn't expose raw kerning tables.
+    /// </summary>
+    private static Dictionary<char, float>? ExtractKerningPairs(char baseChar, Font font, TextOptions style)
+    {
+        // Common characters that frequently have kerning adjustments
+        var testChars = new[] { 
+            'A', 'V', 'W', 'Y', 'T', 'P', 'F', 'L', 'a', 'v', 'w', 'y', 't', 'p', 'f', 'l',
+            'o', 'e', 'c', '.', ',', '-', '\''
+        };
+
+        Dictionary<char, float>? kerningPairs = null;
+
+        foreach (var testChar in testChars)
+        {
+            // Measure individual characters
+            var baseStr = baseChar.ToString();
+            var testStr = testChar.ToString();
+            var pairStr = baseStr + testStr;
+
+            var baseWidth = TextMeasurer.MeasureAdvance(baseStr, style).Width;
+            var testWidth = TextMeasurer.MeasureAdvance(testStr, style).Width;
+            var pairWidth = TextMeasurer.MeasureAdvance(pairStr, style).Width;
+
+            // Calculate kerning: if pair is narrower than sum, there's negative kerning
+            var expectedWidth = baseWidth + testWidth;
+            var kerning = pairWidth - expectedWidth;
+
+            // Only store significant kerning adjustments (> 0.1 pixel)
+            if (Math.Abs(kerning) > 0.1f)
+            {
+                kerningPairs ??= new Dictionary<char, float>();
+                kerningPairs[testChar] = kerning;
+            }
+        }
+
+        return kerningPairs;
     }
 
     /// <summary>
