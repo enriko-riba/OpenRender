@@ -255,16 +255,6 @@ internal class GameScene : Scene
             }
         }
 
-        // Toggle Greedy Meshing (F4)
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F4))
-        {
-            if (streamingManager != null)
-            {
-                streamingManager.UseGreedyMeshing = !streamingManager.UseGreedyMeshing;
-                Log.Info($"Greedy Meshing: {(streamingManager.UseGreedyMeshing ? "ENABLED" : "DISABLED")}");
-            }
-        }
-
         // Toggle Debug Wireframe (F5)
         if (SceneManager.KeyboardState.IsKeyPressed(Keys.F5))
         {
@@ -570,7 +560,6 @@ internal class GameScene : Scene
         WriteLine("  Mouse - Look", textColor);
         WriteLine("  F - Toggle Ghost/Physics", textColor);
         WriteLine("  F3 - Toggle Biome Debug", textColor);
-        WriteLine("  F4 - Toggle Greedy Meshing", textColor);
         WriteLine("  F5 - Toggle Wireframe Debug", textColor);
         WriteLine("  Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);

@@ -1,30 +1,17 @@
 #version 460
 // compute-compact.comp - Phase 3.4: Mesh Compaction
-// Purpose: Build compact vertex buffer from visible faces OR merged quads
-// Version: 5.2 (GM UV tiling + fixes)
-//
-// Hotfix summary:
-// Greedy meshing emission stores quads in a per-chunk reserved region:
-//   globalQuadIdx = chunkIdx * (CHUNK_VOXEL_COUNT * 3) + slot
-// Previous consumption assumed a globally packed array using prefix sums
-// (quadOffsets) which was incorrect, producing invalid reads (random high
-// altitude faces). This path now reads from the correct per-chunk region and
-// processes all quads in a single workgroup per chunk (dispatch (chunkCount,1,1)).
-// Removed Y-layer filtering that left holes and misaligned vertex/index writes.
-// quadOffsets binding is still present for compatibility but no longer used in
-// greedy path.
+// Purpose: Build compact vertex buffer from visible faces
+// Version: 5.2 (Greedy Meshing removed)
 
 #include "terrain-common.glsl"
 #include "terrain-noise.glsl"
 #include "terrain-caves.glsl"
 #include "terrain-generation.glsl"
-#include "terrain-greedy-meshing.glsl"
 
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
 const uint FACE_POS_X = 0u; const uint FACE_NEG_X = 1u; const uint FACE_POS_Y = 2u; const uint FACE_NEG_Y = 3u; const uint FACE_POS_Z = 4u; const uint FACE_NEG_Z = 5u;
-const float ATLAS_COLS = 3.0; const float ATLAS_ROWS = 1.0; const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
-uniform uint uChunkCount; uniform uint uWorldChunksXZ; uniform uint uVertexRegionOffset; uniform uint uIndexRegionOffset; uniform uint uUseGreedyMeshing;
+uniform uint uChunkCount; uniform uint uWorldChunksXZ; uniform uint uVertexRegionOffset; uniform uint uIndexRegionOffset;
 
 layout(std430, binding = 9) readonly buffer ChunkIndices { uint chunkIndices[]; };
 layout(std430, binding = 0) readonly buffer VoxelData { uint voxelData[]; };
@@ -35,111 +22,239 @@ layout(std430, binding = 7) writeonly buffer CompactIndices { uint compactIndice
 layout(std430, binding = 8) buffer PerChunkEmit { uint perChunkEmit[]; };
 layout(std430, binding = 12) readonly buffer OpaqueCounts { uint opaqueCounts[]; };
 layout(std430, binding = 14) buffer WaterEmit { uint waterEmit[]; };
-layout(std430, binding = 5) buffer AtomicCounters { uint vertexCounter; uint indexCounter; uint faceCounter; };
-layout(std430, binding = 10) readonly buffer MergedQuads { uint mergedQuads[]; };
-layout(std430, binding = 11) readonly buffer QuadCounts { uint quadCounts[]; };
-layout(std430, binding = 15) readonly buffer QuadOffsets { uint quadOffsets[]; };
 
 struct WorldEdit { int x, y, z, type; };
 layout(std430, binding = 13) readonly buffer WorldEdits { int editCount; int _pad1; int _pad2; int _pad3; WorldEdit edits[]; };
 
 shared uint s_OpaqueCount; shared uint s_WaterCount; shared uint s_OpaqueBase; shared uint s_WaterBase;
-// New: compact face index in greedy path
-shared uint s_faceBase;
 
-int getBlockFromEdits(int wx, int wy, int wz) { for (int i=0;i<editCount;i++){ if(edits[i].x==wx && edits[i].y==wy && edits[i].z==wz) return edits[i].type; } return -1; }
-void getFaceCorners(uint face, vec3 pos, out vec3 corners[4]) {
-    if (face==FACE_POS_X){ corners[0]=pos+vec3(1,0,0); corners[1]=pos+vec3(1,1,0); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,0,1);} else if (face==FACE_NEG_X){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(0,1,0); corners[3]=pos+vec3(0,0,0);} else if (face==FACE_POS_Y){ corners[0]=pos+vec3(0,1,0); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,1,0);} else if (face==FACE_NEG_Y){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,0,0); corners[2]=pos+vec3(1,0,0); corners[3]=pos+vec3(1,0,1);} else if (face==FACE_POS_Z){ corners[0]=pos+vec3(1,0,1); corners[1]=pos+vec3(1,1,1); corners[2]=pos+vec3(0,1,1); corners[3]=pos+vec3(0,0,1);} else { corners[0]=pos+vec3(0,0,0); corners[1]=pos+vec3(0,1,0); corners[2]=pos+vec3(1,1,0); corners[3]=pos+vec3(1,0,0);} }
-void getMergedFaceCorners(uint face, vec3 pos, uint ex, uint ez, out vec3 corners[4]) {
-    float fx=float(ex); float fz=float(ez);
-    if (face==FACE_POS_Y){ corners[0]=pos+vec3(0,1,0); corners[1]=pos+vec3(0,1,fz); corners[2]=pos+vec3(fx,1,fz); corners[3]=pos+vec3(fx,1,0);} 
-    else if (face==FACE_NEG_Y){ corners[0]=pos+vec3(0,0,fz); corners[1]=pos+vec3(0,0,0); corners[2]=pos+vec3(fx,0,0); corners[3]=pos+vec3(fx,0,fz);} 
-    else if (face==FACE_POS_X){ corners[0]=pos+vec3(1,0,0); corners[1]=pos+vec3(1,1,0); corners[2]=pos+vec3(1,1,fz); corners[3]=pos+vec3(1,0,fz);} 
-    else if (face==FACE_NEG_X){ corners[0]=pos+vec3(0,0,fz); corners[1]=pos+vec3(0,1,fz); corners[2]=pos+vec3(0,1,0); corners[3]=pos+vec3(0,0,0);} 
-    else if (face==FACE_POS_Z){ corners[0]=pos+vec3(fx,0,1); corners[1]=pos+vec3(fx,1,1); corners[2]=pos+vec3(0,1,1); corners[3]=pos+vec3(0,0,1);} 
-    else { corners[0]=pos+vec3(0,0,0); corners[1]=pos+vec3(0,1,0); corners[2]=pos+vec3(fx,1,0); corners[3]=pos+vec3(fx,0,0);} }
-uint mapAO(float ao){ if(ao>0.9) return 4u; if(ao>0.7) return 3u; if(ao>0.5) return 2u; if(ao>0.35) return 1u; return 0u; }
-
-// New: pack extents into packed2
-void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint corner, uint blockType, uint extentX, uint extentZ){
-    uint x=uint(localPos.x)&0x1Fu; uint y=uint(localPos.y)&0x1FFu; uint z=uint(localPos.z)&0x1Fu; 
-    uint packed1=x|(y<<5)|(z<<14)|((face&0x7u)<<19)|((aoIdx&0x7u)<<22)|((corner&0x3u)<<25);
-    uint ex = extentX & 0x1Fu; uint ez = extentZ & 0x1Fu; // 5 bits each
-    uint packed2=(blockType&0xFFu) | (ex<<8) | (ez<<13);
-    uint baseIdx=vertexIdx*2u; compactVertices[baseIdx]=packed1; compactVertices[baseIdx+1u]=packed2;
+int getBlockFromEdits(int wx, int wy, int wz) { 
+    for (int i=0;i<editCount;i++){ 
+        if(edits[i].x==wx && edits[i].y==wy && edits[i].z==wz) return edits[i].type; 
+    } 
+    return -1; 
 }
 
-// Helper added back (was removed in hotfix) -------------------------------------------------
+void getFaceCorners(uint face, vec3 pos, out vec3 corners[4]) {
+    if (face==FACE_POS_X){ corners[0]=pos+vec3(1,0,0); corners[1]=pos+vec3(1,1,0); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,0,1);} 
+    else if (face==FACE_NEG_X){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(0,1,0); corners[3]=pos+vec3(0,0,0);} 
+    else if (face==FACE_POS_Y){ corners[0]=pos+vec3(0,1,0); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,1,0);} 
+    else if (face==FACE_NEG_Y){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,0,0); corners[2]=pos+vec3(1,0,0); corners[3]=pos+vec3(1,0,1);} 
+    else if (face==FACE_POS_Z){ corners[0]=pos+vec3(1,0,1); corners[1]=pos+vec3(1,1,1); corners[2]=pos+vec3(0,1,1); corners[3]=pos+vec3(0,0,1);} 
+    else { corners[0]=pos+vec3(0,0,0); corners[1]=pos+vec3(0,1,0); corners[2]=pos+vec3(1,1,0); corners[3]=pos+vec3(1,0,0);} 
+}
+
+uint mapAO(float ao){ 
+    if(ao>0.9) return 4u; 
+    if(ao>0.7) return 3u; 
+    if(ao>0.5) return 2u; 
+    if(ao>0.35) return 1u; 
+    return 0u; 
+}
+
+void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint corner, uint blockType){
+    uint x=uint(localPos.x)&0x1Fu; 
+    uint y=uint(localPos.y)&0x1FFu; 
+    uint z=uint(localPos.z)&0x1Fu; 
+    uint packed1=x|(y<<5)|(z<<14)|((face&0x7u)<<19)|((aoIdx&0x7u)<<22)|((corner&0x3u)<<25);
+    uint packed2=(blockType&0xFFu);
+    uint baseIdx=vertexIdx*2u; 
+    compactVertices[baseIdx]=packed1; 
+    compactVertices[baseIdx+1u]=packed2;
+}
+
 bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
-    if (pos.y < 0) return true; if (pos.y >= CHUNK_Y_SIZE) return false; if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
+    if (pos.y < 0) return true; 
+    if (pos.y >= CHUNK_Y_SIZE) return false; 
+    
+    if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-        uint voxel = voxelData[voxelIdx]; return (voxel & 0xFFu) > BD_WATER;
+        uint voxel = voxelData[voxelIdx]; 
+        return (voxel & 0xFFu) > BD_WATER;
     }
-    uint currentGlobalIdx = chunkIndices[chunkIdx]; int chunkX = int(currentGlobalIdx % uWorldChunksXZ); int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
-    int nChunkX = chunkX; int nChunkZ = chunkZ; int localX = pos.x; int localZ = pos.z;
-    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; } else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
-    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; } else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
+    
+    uint currentGlobalIdx = chunkIndices[chunkIdx]; 
+    int chunkX = int(currentGlobalIdx % uWorldChunksXZ); 
+    int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
+    int nChunkX = chunkX; 
+    int nChunkZ = chunkZ; 
+    int localX = pos.x; 
+    int localZ = pos.z;
+    
+    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; } 
+    else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
+    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; } 
+    else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
+    
     if (nChunkX >= 0 && nChunkX < int(uWorldChunksXZ) && nChunkZ >= 0 && nChunkZ < int(uWorldChunksXZ)) {
         uint nGlobalIdx = uint(nChunkX + nChunkZ * int(uWorldChunksXZ));
-        for (uint i = 0u; i < uChunkCount; i++) { if (chunkIndices[i] == nGlobalIdx) { if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
+        for (uint i = 0u; i < uChunkCount; i++) { 
+            if (chunkIndices[i] == nGlobalIdx) { 
+                if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
                     uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-                    uint voxel = voxelData[voxelIdx]; return (voxel & 0xFFu) > BD_WATER; } break; } }
+                    uint voxel = voxelData[voxelIdx]; 
+                    return (voxel & 0xFFu) > BD_WATER; 
+                } 
+                break; 
+            } 
+        }
     }
-    int wx = int(chunkWorldOffset.x) + pos.x; int wz = int(chunkWorldOffset.z) + pos.z; int wy = pos.y; int editType = getBlockFromEdits(wx, wy, wz);
-    if (editType != -1) return editType > int(BD_WATER); int height = generateHeight(wx, wz); uint blockType = generateBlockType(height, wy, wx, wz); return blockType > BD_WATER;
+    
+    int wx = int(chunkWorldOffset.x) + pos.x; 
+    int wz = int(chunkWorldOffset.z) + pos.z; 
+    int wy = pos.y; 
+    int editType = getBlockFromEdits(wx, wy, wz);
+    if (editType != -1) return editType > int(BD_WATER); 
+    
+    int height = generateHeight(wx, wz); 
+    uint blockType = generateBlockType(height, wy, wx, wz); 
+    return blockType > BD_WATER;
 }
 
 float calculateAO(uint face, uint corner, uint chunkIdx, vec3 chunkWorldOffset, ivec3 p) {
     ivec3 o1,o2,o3;
-    if (face==FACE_POS_Y){ if(corner==0u){o1=ivec3(-1,1,0);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} else {o1=ivec3(1,1,0);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} }
-    else if (face==FACE_NEG_Y){ if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} else if(corner==1u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} else if(corner==2u){o1=ivec3(1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} else {o1=ivec3(1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} }
-    else if (face==FACE_POS_Z){ if(corner==0u){o1=ivec3(1,0,1);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} else if(corner==1u){o1=ivec3(1,0,1);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} else if(corner==2u){o1=ivec3(-1,0,1);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} else {o1=ivec3(-1,0,1);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} }
-    else if (face==FACE_NEG_Z){ if(corner==0u){o1=ivec3(-1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} else if(corner==1u){o1=ivec3(-1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} else if(corner==2u){o1=ivec3(1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} else {o1=ivec3(1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} }
-    else if (face==FACE_POS_X){ if(corner==0u){o1=ivec3(1,-1,0);o2=ivec3(1,0,-1);o3=ivec3(1,-1,-1);} else if(corner==1u){o1=ivec3(1,1,0);o2=ivec3(1,0,-1);o3=ivec3(1,1,-1);} else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(1,0,1);o3=ivec3(1,1,1);} else {o1=ivec3(1,-1,0);o2=ivec3(1,0,1);o3=ivec3(1,-1,1);} }
-    else { if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,-1,1);} else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,1,1);} else if(corner==2u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,1,-1);} else {o1=ivec3(-1,-1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,-1,-1);} }
-    bool s1=isSolid(p+o1,chunkIdx,chunkWorldOffset); bool s2=isSolid(p+o2,chunkIdx,chunkWorldOffset); bool s3=isSolid(p+o3,chunkIdx,chunkWorldOffset);
-    if(s1 && s2) return 0.33; int count=(s1?1:0)+(s2?1:0)+(s3?1:0); if(count==0) return 1.0; if(count==1) return 0.8; if(count==2) return 0.6; return 0.4;
+    
+    if (face==FACE_POS_Y){ 
+        if(corner==0u){o1=ivec3(-1,1,0);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} 
+        else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} 
+        else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} 
+        else {o1=ivec3(1,1,0);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} 
+    }
+    else if (face==FACE_NEG_Y){ 
+        if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} 
+        else if(corner==1u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} 
+        else if(corner==2u){o1=ivec3(1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} 
+        else {o1=ivec3(1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} 
+    }
+    else if (face==FACE_POS_Z){ 
+        if(corner==0u){o1=ivec3(1,0,1);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} 
+        else if(corner==1u){o1=ivec3(1,0,1);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} 
+        else if(corner==2u){o1=ivec3(-1,0,1);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} 
+        else {o1=ivec3(-1,0,1);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} 
+    }
+    else if (face==FACE_NEG_Z){ 
+        if(corner==0u){o1=ivec3(-1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} 
+        else if(corner==1u){o1=ivec3(-1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} 
+        else if(corner==2u){o1=ivec3(1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} 
+        else {o1=ivec3(1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} 
+    }
+    else if (face==FACE_POS_X){ 
+        if(corner==0u){o1=ivec3(1,-1,0);o2=ivec3(1,0,-1);o3=ivec3(1,-1,-1);} 
+        else if(corner==1u){o1=ivec3(1,1,0);o2=ivec3(1,0,-1);o3=ivec3(1,1,-1);} 
+        else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(1,0,1);o3=ivec3(1,1,1);} 
+        else {o1=ivec3(1,-1,0);o2=ivec3(1,0,1);o3=ivec3(1,-1,1);} 
+    }
+    else { 
+        if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,-1,1);} 
+        else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,1,1);} 
+        else if(corner==2u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,1,-1);} 
+        else {o1=ivec3(-1,-1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,-1,-1);} 
+    }
+    
+    bool s1=isSolid(p+o1,chunkIdx,chunkWorldOffset); 
+    bool s2=isSolid(p+o2,chunkIdx,chunkWorldOffset); 
+    bool s3=isSolid(p+o3,chunkIdx,chunkWorldOffset);
+    
+    if(s1 && s2) return 0.33; 
+    int count=(s1?1:0)+(s2?1:0)+(s3?1:0); 
+    if(count==0) return 1.0; 
+    if(count==1) return 0.8; 
+    if(count==2) return 0.6; 
+    return 0.4;
 }
 
-void main(){ uint chunkIdx=gl_WorkGroupID.x; if(chunkIdx>=uChunkCount) return; uint actualChunkIdx=chunkIndices[chunkIdx]; uint chunkX=actualChunkIdx%uWorldChunksXZ; uint chunkZ=actualChunkIdx/uWorldChunksXZ; vec3 chunkWorldOffset=vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
-    if (uUseGreedyMeshing==0u){
-        uint workGroupY=gl_WorkGroupID.y; if(workGroupY>=uint(CHUNK_Y_SIZE)) return; int lx=int(gl_LocalInvocationID.x); int lz=int(gl_LocalInvocationID.z); int ly=int(workGroupY);
-        if(gl_LocalInvocationIndex==0u){ s_OpaqueCount=0u; s_WaterCount=0u; } barrier();
-        uint voxelIdx=chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED); uint voxel=voxelData[voxelIdx]; uint blockDescriptor=voxel&0xFFu; uint mask=getPackedVisMask(voxelIdx,visibilityMask); bool hasFaces=(mask!=0u && blockDescriptor!=0u); bool isWater=(blockDescriptor==BD_WATER); uint faceCount=0u; if(hasFaces){ faceCount=uint(bitCount(mask&0x3Fu)); if(faceCount>0u){ if(isWater) atomicAdd(s_WaterCount,faceCount); else atomicAdd(s_OpaqueCount,faceCount);} } barrier(); if(gl_LocalInvocationIndex==0u){ if(s_OpaqueCount>0u) s_OpaqueBase=atomicAdd(perChunkEmit[chunkIdx],s_OpaqueCount); if(s_WaterCount>0u) s_WaterBase=atomicAdd(waterEmit[chunkIdx],s_WaterCount);} barrier(); if(!hasFaces||faceCount==0u) return; uint localFaceIdx; if(isWater){ uint opaqueChunkCount=opaqueCounts[chunkIdx]; localFaceIdx=opaqueChunkCount+atomicAdd(s_WaterBase,faceCount);} else { localFaceIdx=atomicAdd(s_OpaqueBase,faceCount); uint opaqueChunkCount=opaqueCounts[chunkIdx]; if(localFaceIdx>=opaqueChunkCount) return; }
-        uint vertexChunkBase=baseOffsets[chunkIdx]; uint indexChunkBase=(vertexChunkBase/4u)*6u; vec3 voxelPos=chunkWorldOffset+vec3(float(lx),float(ly),float(lz)); uint currentFaceOffset=0u; for(uint face=0u; face<6u; face++){ uint faceBit=1u<<face; if((mask&faceBit)==0u) continue; uint finalFaceIdx=localFaceIdx+currentFaceOffset; currentFaceOffset++; uint vertBaseAbs=uVertexRegionOffset+vertexChunkBase+finalFaceIdx*4u; uint idxWriteBase=uIndexRegionOffset+indexChunkBase+finalFaceIdx*6u; vec3 corners[4]; getFaceCorners(face,voxelPos,corners); for(uint v=0u; v<4u; v++){ vec3 worldPos=corners[v]; vec3 localPosFloat=worldPos-chunkWorldOffset; ivec3 localPos=ivec3(round(localPosFloat)); float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz)); uint aoIdx=mapAO(ao); writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockDescriptor,1u,1u);} uint localVertBase=finalFaceIdx*4u; compactIndices[idxWriteBase+0u]=localVertBase+0u; compactIndices[idxWriteBase+1u]=localVertBase+1u; compactIndices[idxWriteBase+2u]=localVertBase+2u; compactIndices[idxWriteBase+3u]=localVertBase+2u; compactIndices[idxWriteBase+4u]=localVertBase+3u; compactIndices[idxWriteBase+5u]=localVertBase+0u; }
-    } else {
-        uint quadCount=quadCounts[chunkIdx]; if(quadCount==0u) return; uint threadIdx=gl_LocalInvocationIndex; uint quadsPerThread=(quadCount+255u)/256u; uint vertexChunkBase=baseOffsets[chunkIdx]; uint indexChunkBase=(vertexChunkBase/4u)*6u; uint maxQuadsPerChunk=CHUNK_VOXEL_COUNT*6u; uint chunkQuadBase=chunkIdx*maxQuadsPerChunk; 
-        if (gl_LocalInvocationIndex==0u) s_faceBase=0u; barrier();
-        for(uint i=0u;i<quadsPerThread;i++){ uint slot=threadIdx+i*256u; if(slot>=quadCount) break; uint packed1=mergedQuads[(chunkQuadBase+slot)*2u+0u]; uint packed2=mergedQuads[(chunkQuadBase+slot)*2u+1u]; ivec3 startPos=ivec3(int(packed1&0x1Fu), int((packed1>>5)&0x1FFu), int((packed1>>14)&0x1Fu)); uint face=(packed1>>19)&0x7u; uint extentX=(packed1>>22)&0x1Fu; uint extentZ=(packed1>>27)&0x1Fu; uint blockType=packed2&0xFFu; uint ao0=(packed2>>8)&0x7u; uint ao1=(packed2>>11)&0x7u; uint ao2=(packed2>>14)&0x7u; uint ao3=(packed2>>17)&0x7u; 
-            uint localFaceIdx = atomicAdd(s_faceBase, 1u);
-            uint vertBaseAbs=uVertexRegionOffset+vertexChunkBase+localFaceIdx*4u; uint idxWriteBase=uIndexRegionOffset+indexChunkBase+localFaceIdx*6u; 
-            vec3 voxelLocalPos=vec3(startPos); vec3 corners[4]; getMergedFaceCorners(face,voxelLocalPos,extentX,extentZ,corners); 
-            
-            // GREEDY MESHING AO FIX:
-            // For merged quads, use the original 1x1 AO values from the starting block
-            // Attempting to recalculate AO at merged corners causes artifacts because:
-            // 1. Corner positions are at face boundaries, not block centers
-            // 2. AO calculation expects positions of actual solid blocks
-            // 3. Different corners sample different neighbor patterns
-            // The starting block's AO provides consistent shadowing across the merged surface
-            bool isMerged = (extentX > 1u) || (extentZ > 1u);
-            
-            for(uint v=0u; v<4u; v++){ 
-                ivec3 localPos=ivec3(round(corners[v])); 
-                uint aoIdx;
-                
-                if (isMerged) {
-                    // Use AO from the starting block for all corners
-                    // This provides consistent shadowing without artifacts
-                    aoIdx = ao0;
-                } else {
-                    // Use pre-calculated per-corner AO for 1×1 quads
-                    aoIdx = (v==0u)?ao0:(v==1u)?ao1:(v==2u)?ao2:ao3;
-                }
-                
-                writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockType,extentX,extentZ);
-            } 
-            
-            uint localVertBase=localFaceIdx*4u; compactIndices[idxWriteBase+0u]=localVertBase+0u; compactIndices[idxWriteBase+1u]=localVertBase+1u; compactIndices[idxWriteBase+2u]=localVertBase+2u; compactIndices[idxWriteBase+3u]=localVertBase+2u; compactIndices[idxWriteBase+4u]=localVertBase+3u; compactIndices[idxWriteBase+5u]=localVertBase+0u; }
+void main(){ 
+    uint chunkIdx=gl_WorkGroupID.x; 
+    if(chunkIdx>=uChunkCount) return; 
+    
+    uint actualChunkIdx=chunkIndices[chunkIdx]; 
+    uint chunkX=actualChunkIdx%uWorldChunksXZ; 
+    uint chunkZ=actualChunkIdx/uWorldChunksXZ; 
+    vec3 chunkWorldOffset=vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
+    
+    uint workGroupY=gl_WorkGroupID.y; 
+    if(workGroupY>=uint(CHUNK_Y_SIZE)) return; 
+    
+    int lx=int(gl_LocalInvocationID.x); 
+    int lz=int(gl_LocalInvocationID.z); 
+    int ly=int(workGroupY);
+    
+    if(gl_LocalInvocationIndex==0u){ 
+        s_OpaqueCount=0u; 
+        s_WaterCount=0u; 
+    } 
+    barrier();
+    
+    uint voxelIdx=chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED); 
+    uint voxel=voxelData[voxelIdx]; 
+    uint blockDescriptor=voxel&0xFFu; 
+    uint mask=getPackedVisMask(voxelIdx,visibilityMask); 
+    
+    bool hasFaces=(mask!=0u && blockDescriptor!=0u); 
+    bool isWater=(blockDescriptor==BD_WATER); 
+    uint faceCount=0u; 
+    
+    if(hasFaces){ 
+        faceCount=uint(bitCount(mask&0x3Fu)); 
+        if(faceCount>0u){ 
+            if(isWater) atomicAdd(s_WaterCount,faceCount); 
+            else atomicAdd(s_OpaqueCount,faceCount);
+        } 
+    } 
+    
+    barrier(); 
+    
+    if(gl_LocalInvocationIndex==0u){ 
+        if(s_OpaqueCount>0u) s_OpaqueBase=atomicAdd(perChunkEmit[chunkIdx],s_OpaqueCount); 
+        if(s_WaterCount>0u) s_WaterBase=atomicAdd(waterEmit[chunkIdx],s_WaterCount);
+    } 
+    
+    barrier(); 
+    
+    if(!hasFaces||faceCount==0u) return; 
+    
+    uint localFaceIdx; 
+    if(isWater){ 
+        uint opaqueChunkCount=opaqueCounts[chunkIdx]; 
+        localFaceIdx=opaqueChunkCount+atomicAdd(s_WaterBase,faceCount);
+    } else { 
+        localFaceIdx=atomicAdd(s_OpaqueBase,faceCount); 
+        uint opaqueChunkCount=opaqueCounts[chunkIdx]; 
+        if(localFaceIdx>=opaqueChunkCount) return; 
+    }
+    
+    uint vertexChunkBase=baseOffsets[chunkIdx]; 
+    uint indexChunkBase=(vertexChunkBase/4u)*6u; 
+    vec3 voxelPos=chunkWorldOffset+vec3(float(lx),float(ly),float(lz)); 
+    uint currentFaceOffset=0u; 
+    
+    for(uint face=0u; face<6u; face++){ 
+        uint faceBit=1u<<face; 
+        if((mask&faceBit)==0u) continue; 
+        
+        uint finalFaceIdx=localFaceIdx+currentFaceOffset; 
+        currentFaceOffset++; 
+        uint vertBaseAbs=uVertexRegionOffset+vertexChunkBase+finalFaceIdx*4u; 
+        uint idxWriteBase=uIndexRegionOffset+indexChunkBase+finalFaceIdx*6u; 
+        
+        vec3 corners[4]; 
+        getFaceCorners(face,voxelPos,corners); 
+        
+        for(uint v=0u; v<4u; v++){ 
+            vec3 worldPos=corners[v]; 
+            vec3 localPosFloat=worldPos-chunkWorldOffset; 
+            ivec3 localPos=ivec3(round(localPosFloat)); 
+            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz)); 
+            uint aoIdx=mapAO(ao); 
+            writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockDescriptor);
+        } 
+        
+        uint localVertBase=finalFaceIdx*4u; 
+        compactIndices[idxWriteBase+0u]=localVertBase+0u; 
+        compactIndices[idxWriteBase+1u]=localVertBase+1u; 
+        compactIndices[idxWriteBase+2u]=localVertBase+2u; 
+        compactIndices[idxWriteBase+3u]=localVertBase+2u; 
+        compactIndices[idxWriteBase+4u]=localVertBase+3u; 
+        compactIndices[idxWriteBase+5u]=localVertBase+0u; 
     }
 }

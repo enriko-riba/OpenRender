@@ -1,5 +1,5 @@
 // Phase 5.2: Compressed Vertex Format (8 bytes)
-// Greedy meshing UV fix: correct orientation for readable text from outside
+// Simple per-face rendering with proper UV tiling
 #version 460
 #extension GL_ARB_shader_draw_parameters : require
 
@@ -16,7 +16,6 @@ layout(location=0) in uvec2 aPackedData;
 
 out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; flat out uint vBlockDescriptor;
 
-// Base UV coordinates for corners (standard OpenGL bottom-left origin)
 vec2 getBaseUV(uint c){ 
     if(c==0u) return vec2(0,0); 
     if(c==1u) return vec2(0,1); 
@@ -37,10 +36,6 @@ void main(){
     uint lx=p1&0x1Fu; uint ly=(p1>>5)&0x1FFu; uint lz=(p1>>14)&0x1Fu; 
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
     vBlockDescriptor=p2&0xFFu;
-    
-    // Extract extents (5 bits each at positions 8 and 13)
-    uint extentX=(p2>>8)&0x1Fu;
-    uint extentZ=(p2>>13)&0x1Fu;
 
     int chunkIdx=chunkInfo[gl_DrawIDARB]; 
     int cx=chunkIdx%int(uWorldChunksXZ); 
@@ -55,45 +50,9 @@ void main(){
     vec3 normal=FACE_NORMALS[face];
     vNormal=mat3(uChunkTransform)*normal;
     
-    // UVs with extent-based tiling and correct orientation
+    // Simple UVs for 1×1 faces
     bool isWater=(vBlockDescriptor==1u);
-    if(isWater){
-        vTexCoord=getBaseUV(corner);
-    } else {
-        // Get base corner UV
-        vec2 base=getBaseUV(corner);
-        
-        // Scale UVs by extents for tiling
-        float scaleU, scaleV;
-        if(face==FACE_POS_Y || face==FACE_NEG_Y){
-            // Horizontal faces
-            scaleU = float(extentX);
-            scaleV = float(extentZ);
-        } else if(face==FACE_POS_X || face==FACE_NEG_X){
-            // X-facing sides
-            scaleU = float(extentZ);
-            scaleV = 1.0;
-        } else {
-            // Z-facing sides
-            scaleU = float(extentX);
-            scaleV = 1.0;
-        }
-        
-        base.x *= scaleU;
-        base.y *= scaleV;
-        
-        // Fix mirroring: flip U for faces where text is readable from INSIDE
-        // These faces need flipping to be readable from OUTSIDE:
-        // - NEG_X (-X): flip U
-        // - POS_Z (+Z): flip U
-        // - POS_Y (top): flip U
-        // - NEG_Y (bottom): flip U
-        if(face==FACE_NEG_X || face==FACE_POS_Z || face==FACE_POS_Y || face==FACE_NEG_Y){
-            base.x = scaleU - base.x;
-        }
-        
-        vTexCoord=base;
-    }
+    vTexCoord=getBaseUV(corner);
     
     vAO=unpackAO(aoIdx);
     vViewDir=normalize(cameraPos-vWorldPos);
