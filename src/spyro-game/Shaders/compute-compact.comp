@@ -244,7 +244,9 @@ void main(){
             vec3 worldPos=corners[v]; 
             vec3 localPosFloat=worldPos-chunkWorldOffset; 
             ivec3 localPos=ivec3(round(localPosFloat)); 
-            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz)); 
+            // CRITICAL FIX: Use corner's actual position for AO sampling to handle chunk boundaries
+            // When corner is at position 16.0 (next chunk's 0), AO must sample from that position
+            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,localPos); 
             uint aoIdx=mapAO(ao); 
             writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockDescriptor);
         } 

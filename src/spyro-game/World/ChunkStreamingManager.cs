@@ -78,10 +78,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private Shader? buildIndirectShader; // Cached build-indirect shader
     private Phase3BufferManager? phase3Buffers;
 
-    // Phase GM-1: Greedy meshing
-    private Shader? greedyMergeShader;
-    private bool useGreedyMeshing = false; // Feature flag for testing
-
     // Phase 4: Rendering
     private VoxelTerrainRenderer? terrainRenderer;
 
@@ -108,16 +104,6 @@ public sealed class ChunkStreamingManager : IDisposable
     public int CulledChunkCount { get; private set; }
 
     // Phase GM-1: Greedy meshing feature flag
-    public bool UseGreedyMeshing
-    {
-        get => useGreedyMeshing;
-        set
-        {
-            useGreedyMeshing = value;
-            Log.Info($"Greedy meshing: {(value ? "ENABLED" : "DISABLED")}");
-        }
-    }
-
     // Phase 5: Streaming & Unloading
     // CRITICAL: Unload distance must provide hysteresis but not accumulate too many chunks
     // Load distance: 16 chunks radius (1089 chunks in 33x33 grid)
@@ -1460,33 +1446,6 @@ public sealed class ChunkStreamingManager : IDisposable
         compactShader = new Shader("Shaders/compute-compact.comp", ShaderType.ComputeShader);
         buildIndirectShader = new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
 
-        // Phase GM-1: Load greedy merge shader
-        try
-        {
-            // Clear any previous GL errors
-            while (GL.GetError() != ErrorCode.NoError) { }
-            
-            greedyMergeShader = new Shader("Shaders/compute-greedy-merge.comp", ShaderType.ComputeShader);
-            
-            // Verify shader loaded correctly
-            if (greedyMergeShader.Handle <= 0)
-            {
-                Log.Warn("Greedy merge shader loaded but has invalid handle");
-                greedyMergeShader = null;
-                useGreedyMeshing = false;
-            }
-            else
-            {
-                Log.Info("Greedy merge shader loaded successfully");
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warn($"Failed to load greedy merge shader (optional): {ex.Message}");
-            greedyMergeShader = null;
-            useGreedyMeshing = false;
-        }
-
         // Allocate Phase 3 buffers
         phase3Buffers = new Phase3BufferManager();
         phase3Buffers.AllocateBuffers(maxChunksPerBatch);
@@ -1543,50 +1502,6 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
 
-        // Phase GM-1: Greedy Meshing (optional, behind feature flag)
-        if (useGreedyMeshing && greedyMergeShader != null && phase3Buffers != null)
-        {
-            Log.Info($"Phase GM-1: Running greedy merge for {chunkCount} chunks");
-
-            // Clear quad counts
-            GL.NamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), new uint[chunkCount]);
-
-            // Bind buffers for greedy merge
-            phase3Buffers.BindBuffersForGreedyMerge();
-            // VoxelData already bound from visibility stage
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
-
-            greedyMergeShader.Use();
-            GL.Uniform1(greedyMergeShader.GetUniformLocation("uChunkCount"), chunkCount);
-
-            // Correct dispatch: per chunk, per Y-layer, per axis (X,Y,Z)
-            GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 3);
-            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
-
-            // Optional: read back and build per-chunk prefix (kept for debugging)
-            var quadCounts = new uint[chunkCount];
-            GL.GetNamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), quadCounts);
-            var totalQuads = quadCounts.Sum(c => (long)c);
-            var avgQuads = (chunkCount > 0) ? totalQuads / (float)chunkCount : 0f;
-            Log.Info($"Phase GM-1: Generated {totalQuads:N0} quads (avg {avgQuads:F1} per chunk)");
-
-            // Build prefix sum of quad counts for potential later use
-            var quadOffsets = new uint[chunkCount];
-            uint cumulative = 0;
-            for (var i = 0; i < chunkCount; i++)
-            {
-                quadOffsets[i] = cumulative;
-                cumulative += quadCounts[i];
-            }
-            GL.NamedBufferSubData(phase3Buffers.QuadOffsetsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), quadOffsets);
-        }
-        else
-        {
-            if (!useGreedyMeshing) { Log.Debug("Phase GM-1: Skipped (useGreedyMeshing=false)"); }
-            else if (greedyMergeShader == null) { Log.Warn("Phase GM-1: Skipped (greedyMergeShader null)"); }
-            else if (phase3Buffers == null) { Log.Error("Phase GM-1: Skipped (phase3Buffers null)"); }
-        }
-
         // Stage 3.2 Count
         phase3Buffers.BindBuffersForCount();
         // Bind OpaqueCounts buffer (binding 12)
@@ -1637,17 +1552,8 @@ public sealed class ChunkStreamingManager : IDisposable
         // Fetch face/quad counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
         
-        // CRITICAL FIX: When greedy meshing is enabled, read from QuadCountsBuffer instead of CountBuffer
-        // The count shader still counts faces from visibility mask, but greedy meshing produces fewer quads
-        if (useGreedyMeshing)
-        {
-            GL.GetNamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-            Log.Debug($"Phase GM-2: Using quad counts for allocation");
-        }
-        else
-        {
-            GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-        }
+        // Read from CountBuffer (per-face counts)
+        GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
 
         // After computing 'counts' from QuadCountsBuffer in ExecutePhase3_Part2
         // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
@@ -1660,13 +1566,6 @@ public sealed class ChunkStreamingManager : IDisposable
             totalVertices += counts[i] * 4u; // 4 vertices per face/quad
         }
         var totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face/quad
-
-        // CRITICAL: For greedy meshing, make GPU CountBuffer and OpaqueCounts match quad counts
-        if (useGreedyMeshing)
-        {
-            GL.NamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-            GL.NamedBufferSubData(phase3Buffers.OpaqueCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
-        }
 
         var allocatedVertexOffset = phase3Buffers.AllocateVertexRegion(totalVertices);
         var allocatedIndexOffset = phase3Buffers.AllocateIndexRegion(totalIndices);
@@ -1722,19 +1621,9 @@ public sealed class ChunkStreamingManager : IDisposable
         // GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
-        GL.Uniform1(compactShader.GetUniformLocation("uUseGreedyMeshing"), useGreedyMeshing ? 1u : 0u);  // Phase GM-2
         
-        // CRITICAL FIX: Different dispatch for greedy meshing vs per-voxel
-        // Per-voxel: (chunkCount, CHUNK_Y_SIZE, 1) - one workgroup per Y-layer
-        // Greedy mesh HOTFIX: (chunkCount, 1, 1) - single WG per chunk processes all merged quads
-        if (useGreedyMeshing)
-        {
-            GL.DispatchCompute((int)chunkCount, 1, 1);
-        }
-        else
-        {
-            GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
-        }
+        // Standard per-voxel dispatch: (chunkCount, CHUNK_Y_SIZE, 1) - one workgroup per Y-layer
+        GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
         
         GL.MemoryBarrier(MemoryBarrierFlags.VertexAttribArrayBarrierBit | MemoryBarrierFlags.ElementArrayBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
 
