@@ -23,6 +23,11 @@ public class Phase3BufferManager : IDisposable
     private uint opaqueCountsBuffer;   // NEW: per-chunk opaque counts
     private uint waterEmitBuffer;      // NEW: per-chunk water emission counters
 
+    // Phase GM-1: Greedy meshing buffers
+    private uint mergedQuadsBuffer;    // NEW: Merged quad data (8 bytes per quad)
+    private uint quadCountsBuffer;     // NEW: Quad counts per chunk
+    private uint quadOffsetsBuffer;    // NEW: Quad offsets per chunk (prefix sum)
+
     // Buffer sizes
     private int maxChunks;
     private int maxVoxels;
@@ -62,6 +67,11 @@ public class Phase3BufferManager : IDisposable
     public uint WaterEmitBuffer => waterEmitBuffer;       // NEW
     public uint CommandSlotBuffer => commandSlotBuffer;   // NEW: Buffer to pass slots to shader
     public uint ChunkInfoBuffer => chunkInfoBuffer;       // NEW: Buffer to store chunk info per slot
+
+    // Phase GM-1: Greedy meshing accessors
+    public uint MergedQuadsBuffer => mergedQuadsBuffer;   // NEW
+    public uint QuadCountsBuffer => quadCountsBuffer;     // NEW
+    public uint QuadOffsetsBuffer => quadOffsetsBuffer;   // NEW: Prefix sum of quad counts
 
     public int MaxChunks => maxChunks;
     public int MaxVertices => maxVertices;
@@ -206,6 +216,33 @@ public class Phase3BufferManager : IDisposable
         ClearBufferUInt(waterEmitBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, waterEmitBuffer, -1, "water_emit_ssbo");
 
+        // Phase GM-1: Greedy meshing buffers
+        // Worst-case: one quad per face (no merging)
+        var maxQuads = worstCaseFaces;
+        
+        // Merged quads buffer (2 uints per quad = 8 bytes)
+        GL.CreateBuffers(1, out mergedQuadsBuffer);
+        GL.NamedBufferStorage(mergedQuadsBuffer, maxQuads * 2 * sizeof(uint), IntPtr.Zero,
+            BufferStorageFlags.DynamicStorageBit);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, mergedQuadsBuffer, -1, "merged_quads_ssbo");
+        
+        // Quad counts per chunk
+        GL.CreateBuffers(1, out quadCountsBuffer);
+        GL.NamedBufferStorage(quadCountsBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
+            BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
+        ClearBufferUInt(quadCountsBuffer, maxChunks * sizeof(uint), 0);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, quadCountsBuffer, -1, "quad_counts_ssbo");
+        
+        // Quad offsets per chunk (prefix sum for correct indexing)
+        GL.CreateBuffers(1, out quadOffsetsBuffer);
+        GL.NamedBufferStorage(quadOffsetsBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
+            BufferStorageFlags.DynamicStorageBit);
+        ClearBufferUInt(quadOffsetsBuffer, maxChunks * sizeof(uint), 0);
+        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, quadOffsetsBuffer, -1, "quad_offsets_ssbo");
+        
+        var quadsMB = (long)maxQuads * 8 / 1024f / 1024f;
+        Log.Info($"  Greedy meshing: {maxQuads:N0} max quads ({quadsMB:F2} MB)");
+
         Log.CheckGlError();
         Log.Info("Phase3BufferManager: All buffers allocated (Phase 5.3: One command per chunk!)");
     }
@@ -295,6 +332,15 @@ public class Phase3BufferManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.SCAN_TOTALS, scanTotalsBuffer);
     }
 
+    // Phase GM-1: Bind buffers for greedy merge shader
+    public void BindBuffersForGreedyMerge()
+    {
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, 0); // VoxelData bound by caller
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 1, visMaskBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, mergedQuadsBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 11, quadCountsBuffer);
+    }
+
     public void BindBuffersForBuildIndirect()
     {
         // Need baseOffsets (3), counts (2) and indirect buffer as SSBO
@@ -314,11 +360,17 @@ public class Phase3BufferManager : IDisposable
         if (atomicCounterBuffer != 0) GL.DeleteBuffer(atomicCounterBuffer);
         if (perChunkEmitBuffer != 0) GL.DeleteBuffer(perChunkEmitBuffer);
         if (scanTotalsBuffer != 0) GL.DeleteBuffer(scanTotalsBuffer);
+        
+        // Phase GM-1: Dispose greedy meshing buffers
+        if (mergedQuadsBuffer != 0) GL.DeleteBuffer(mergedQuadsBuffer);
+        if (quadCountsBuffer != 0) GL.DeleteBuffer(quadCountsBuffer);
+        if (quadOffsetsBuffer != 0) GL.DeleteBuffer(quadOffsetsBuffer);
 
         visMaskBuffer = countBuffer = offsetBuffer = 0;
         vertexBuffer = indexBuffer = indirectDrawBuffer = atomicCounterBuffer = 0;
         perChunkEmitBuffer = 0;
         scanTotalsBuffer = 0;
+        mergedQuadsBuffer = quadCountsBuffer = 0;
 
         if (chunkInfoBuffer != 0) GL.DeleteBuffer(chunkInfoBuffer);
         

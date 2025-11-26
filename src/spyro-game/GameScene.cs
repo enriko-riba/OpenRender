@@ -255,6 +255,26 @@ internal class GameScene : Scene
             }
         }
 
+        // Toggle Greedy Meshing (F4)
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F4))
+        {
+            if (streamingManager != null)
+            {
+                streamingManager.UseGreedyMeshing = !streamingManager.UseGreedyMeshing;
+                Log.Info($"Greedy Meshing: {(streamingManager.UseGreedyMeshing ? "ENABLED" : "DISABLED")}");
+            }
+        }
+
+        // Toggle Debug Wireframe (F5)
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F5))
+        {
+            if (terrainRenderer != null)
+            {
+                terrainRenderer.DebugWireframe = !terrainRenderer.DebugWireframe;
+                Log.Info($"Debug Wireframe: {(terrainRenderer.DebugWireframe ? "ENABLED" : "DISABLED")}");
+            }
+        }
+
         // Update day/night cycle
         dayNightCycle.Tick(elapsedSeconds);
 
@@ -385,6 +405,7 @@ internal class GameScene : Scene
     public override void RenderFrame(double elapsedSeconds)
     {
         base.RenderFrame(elapsedSeconds);        
+        
         RenderUI();
     }
 
@@ -462,14 +483,11 @@ internal class GameScene : Scene
         WriteLine($"  Loaded: {loadedChunks:N0}", textColor);
         
         // Get visibility stats from terrain renderer (GPU-based)
-        if (terrainRenderer != null)
+        if (terrainRenderer != null && streamingManager != null)
         {
-            var visibleDraws = terrainRenderer.VisibleDraws;
-            
-            // NOTE: After GPU culling optimization, CPU-side visibility flags are not available
-            // The actual frustum culling happens on GPU, so we can only show the total loaded chunks
-            WriteLine($"  Visible: {visibleDraws:N0}", textColor);
-            WriteLine($"  Culling: GPU-based (stats N/A)", new Vector3(0.7f, 0.7f, 0.7f));
+            WriteLine($"  Visible: {streamingManager.StatVisibleChunks:N0}", textColor);
+            WriteLine($"  Frustum Culled: {streamingManager.StatFrustumCulledChunks:N0}", textColor);
+            WriteLine($"  Indices: {streamingManager.StatVisibleIndices:N0} / {streamingManager.StatTotalIndices:N0}", textColor);
         }
         WriteLine("", textColor);
 
@@ -551,6 +569,9 @@ internal class GameScene : Scene
         WriteLine("  Shift/Ctrl - Up/Down", textColor);
         WriteLine("  Mouse - Look", textColor);
         WriteLine("  F - Toggle Ghost/Physics", textColor);
+        WriteLine("  F3 - Toggle Biome Debug", textColor);
+        WriteLine("  F4 - Toggle Greedy Meshing", textColor);
+        WriteLine("  F5 - Toggle Wireframe Debug", textColor);
         WriteLine("  Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
     }

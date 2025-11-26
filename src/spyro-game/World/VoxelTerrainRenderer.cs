@@ -32,6 +32,19 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private uint outlineEbo;
     private readonly Vector3 outlineColor = new(1.0f, 1.0f, 0.0f); // Yellow
 
+    // Debug wireframe rendering
+    private bool debugWireframe = false;
+    
+    /// <summary>
+    /// Gets or sets whether to render terrain in debug wireframe mode.
+    /// When enabled, shows triangle edges and chunk boundaries.
+    /// </summary>
+    public bool DebugWireframe 
+    { 
+        get => debugWireframe;
+        set => debugWireframe = value;
+    }
+    
     /// <summary>
     /// Number of visible chunks (after frustum culling)
     /// </summary>
@@ -64,22 +77,23 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public bool ShowBiomes { get; set; }
 
     // M5: Biome texture handles (bindless)
-    // Flattened array: [BiomeID * 8 + GeologyLayer]
+    // Now stores 3 textures per biome/layer: [BiomeID * 24 + GeologyLayer * 3 + FaceType]
+    // FaceType: 0=Top, 1=Bottom, 2=Sides
     private ulong[]? biomeTextureHandles;
-    private readonly Dictionary<string, Texture> textureCache = [];
+    private readonly Dictionary<string, Texture[]> atlasSplitCache = [];
 
     public void LoadBiomeTextures(TerrainConfig config)
     {
         if (config.Biomes == null || config.Biomes.Count == 0) return;
 
-        // 10 biomes * 8 layers = 80 handles
-        var handleCount = 10 * 8;
+        // 10 biomes * 8 layers * 3 face types = 240 handles
+        var handleCount = 10 * 8 * 3;
         if (biomeTextureHandles == null || biomeTextureHandles.Length != handleCount)
         {
             biomeTextureHandles = new ulong[handleCount];
         }
 
-        // Create a sampler for all terrain textures
+        // Create a sampler for all terrain textures with REPEAT wrap mode for tiling
         var sampler = Sampler.Create(TextureMinFilter.NearestMipmapNearest, TextureMagFilter.Nearest, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
 
         for (var i = 0; i < config.Biomes.Count; i++)
@@ -94,36 +108,43 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
                     var path = biome.TexturePaths[layer];
                     if (string.IsNullOrEmpty(path))
                     {
-                        biomeTextureHandles[biome.Id * 8 + layer] = 0;
+                        // Set all 3 face types to 0 for this layer
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = 0;
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = 0;
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = 0;
                         continue;
                     }
 
-                    if (!textureCache.TryGetValue(path, out var tex))
+                    // Check if we've already split this atlas
+                    if (!atlasSplitCache.TryGetValue(path, out var splitTextures))
                     {
                         try 
                         {
-                            // Use TextureType.Diffuse for all to ensure sRGB if needed, or generic loading
-                            // Actually Texture.FromFile determines format. 
-                            // We want MipMaps for terrain.
-                            tex = Texture.FromFile([path]); 
-                            if (tex != null) textureCache[path] = tex;
+                            // Split the 3×1 atlas into 3 separate textures
+                            splitTextures = Texture.SplitHorizontalAtlas(path, columns: 3, generateMipMap: true);
+                            if (splitTextures != null && splitTextures.Length == 3)
+                            {
+                                atlasSplitCache[path] = splitTextures;
+                            }
                         }
                         catch (Exception ex)
                         {
-                            Log.Error($"Failed to load texture '{path}': {ex.Message}");
+                            Log.Error($"Failed to load and split texture atlas '{path}': {ex.Message}");
                         }
                     }
 
-                    if (tex != null)
+                    if (splitTextures != null && splitTextures.Length == 3)
                     {
-                        biomeTextureHandles[biome.Id * 8 + layer] = tex.GetBindlessHandle(sampler);
+                        // Store handles for all 3 face types: Top (0), Bottom (1), Sides (2)
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = splitTextures[0].GetBindlessHandle(sampler); // Top
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = splitTextures[1].GetBindlessHandle(sampler); // Bottom
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = splitTextures[2].GetBindlessHandle(sampler); // Sides
                     }
                 }
             }
         }
         
-        // Make handles resident? Texture.GetBindlessHandle usually makes it resident.
-        // OpenRender implementation detail: GetBindlessHandle calls MakeTextureHandleResidentARB.
+        Log.Info($"VoxelTerrainRenderer: Loaded {biomeTextureHandles.Count(h => h != 0)} biome texture handles (split from atlases)");
     }
 
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
@@ -407,6 +428,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
         
+        // If wireframe mode is enabled, render as wireframe
+        if (debugWireframe)
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+        }
+        
         // 1. Draw Opaque (Command 1 of each pair)
         // Stride = 2 * sizeof(DrawElementsIndirectCommand) = 2 * 5 * 4 = 40 bytes
         // Offset = 0
@@ -440,13 +467,19 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // GL.DepthMask(true);
         GL.Disable(EnableCap.Blend);
         GL.Disable(EnableCap.CullFace);
+        
+        // Restore fill mode if wireframe was enabled
+        if (debugWireframe)
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+        }
 
         // Render picked block outline (on top of terrain)
         RenderPickedBlockOutline();
 
         Log.CheckGlError();
     }
-
+    
     /// <summary>
     /// Cleanup GPU resources. Call this explicitly when removing from scene.
     /// </summary>
@@ -501,7 +534,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Shared index buffer: always 6 indices * 4 bytes
         var indexBytes = 6 * sizeof(uint);
 
-        // Indirect draw commands: actualFaceCount * 5 uints
+        // Indirect draw commands: actualFaceCount * 5 * sizeof(uint);
         var indirectBytes = actualFaceCount * 5 * sizeof(uint);
 
         return vertexBytes + indexBytes + indirectBytes;

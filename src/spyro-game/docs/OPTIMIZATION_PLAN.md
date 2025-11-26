@@ -100,19 +100,37 @@ Implement Compute-based Occlusion Culling (Hi-Z Culling).
 3.  Update `voxel-terrain.vert` to unpack data. (Done)
 4.  Implement `gl_DrawID` based chunk offset lookup (requires binding `ChunkInfoBuffer` to vertex shader). (Done)
 
-### Phase 3: Greedy Meshing (Est. 16-24 hours)
-1.  Prototype greedy meshing logic (likely on CPU first or simple compute shader).
-2.  Replace `compute-compact.comp` with greedy version.
-3.  Update texture coordinate handling in vertex shader.
+### Phase 3: Greedy Meshing (DROPPED)
+1.  Prototype greedy meshing logic (likely on CPU first or simple compute shader). (Attempted 2025-11-25)
+2.  Replace `compute-compact.comp` with greedy version. (Reverted)
+3.  Update texture coordinate handling in vertex shader. (Reverted)
 
-### Phase 4: Occlusion Culling (Est. 12-16 hours)
-1.  Implement depth pyramid generation (mip-mapping depth buffer).
-2.  Update `compute-frustum.comp` to sample depth map.
-3.  Handle frame latency (reprojection) if necessary.
+**Status:**
+*   **Attempted 2025-11-25:** Implemented 1D greedy meshing (X-axis) in compute shaders.
+*   **Result:** Caused severe rendering artifacts (missing blocks, stretched triangles, voids).
+*   **Reason:** The complexity of handling run transitions, emission logic, and vertex attribute packing within the parallel compute shader environment proved error-prone. Specifically, synchronizing the "end of run" emission with the "start of new run" logic across 4-voxel threads likely had edge cases that were not correctly handled.
+*   **Action:** Reverted to standard meshing (1 quad per face) to restore rendering stability.
+
+### Phase 4: Occlusion Culling (Completed 2025-11-25)
+1.  Implement depth pyramid generation (mip-mapping depth buffer). (Done)
+2.  Update `compute-frustum.comp` to sample depth map. (Done)
+3.  Handle frame latency (reprojection) if necessary. (Done - using previous frame depth)
+
+**Status:**
+*   **Completed:** Implemented Hi-Z Occlusion Culling.
+*   **Details:**
+    *   Created `compute-depth-pyramid.comp` to generate a hierarchical depth buffer (MAX depth).
+    *   Modified `compute-frustum.comp` to check chunk AABBs against the depth pyramid.
+    *   **Fixed:** Corrected mip level calculation (floor -> ceil) and sampling logic in `compute-frustum.comp` to prevent geometry popping.
+    *   Added a Stats Buffer to count visible, occluded, and frustum-culled chunks for debugging and performance tuning.
+    *   Updated `VoxelTerrainRenderer` to manage the depth pyramid texture and capture the depth buffer each frame.
+    *   Updated `ChunkStreamingManager` to accept the depth pyramid texture for culling.
+    *   Updated `GameScene` to trigger depth capture and pass the previous frame's ViewProjection matrix.
+*   **Performance:** Should significantly reduce draw calls and vertex processing for chunks hidden behind mountains or underground.
 
 ### Phase 5: Code Cleanup (Est. 2 hours)
 1.  Remove unused uniforms/buffers.
 2.  Standardize binding points.
 
 ## 4. Immediate Next Steps
-Start with **Phase 3 (Greedy Meshing)** to further reduce vertex count.
+Start with **Phase 4 (Occlusion Culling)** to further improve performance in complex scenes.

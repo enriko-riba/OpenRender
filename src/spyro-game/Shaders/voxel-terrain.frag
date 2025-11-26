@@ -38,8 +38,9 @@ uniform float uMaterialShininess = 16.0;
 
 // Texture samplers
 // M5: Bindless texture handles for biome blending
-// [BiomeID * 8 + GeologyLayer]
-uniform uvec2 uBiomeTextures[80];
+// [BiomeID * 24 + GeologyLayer * 3 + FaceType]
+// FaceType: 0=Top, 1=Bottom, 2=Sides
+uniform uvec2 uBiomeTextures[240];
 
 uniform int uIsUnderwater; // 1 if camera is inside a water block, 0 otherwise
 uniform float uTime;
@@ -47,6 +48,10 @@ uniform int uShowBiomes;
 
 #define IS_FRAGMENT_SHADER
 #include "terrain-common.glsl"
+#include "terrain-noise.glsl"
+#include "terrain-caves.glsl"        // For isCave() used by terrain-generation
+#include "terrain-generation.glsl"  // For getContinentalness()
+#include "terrain-biomes.glsl"      // For getBiomeId()
 
 // Helper to get BlockDescriptor (geology layer index) from block descriptor value
 // BlockDescriptor values map directly to geology layers (0-7)
@@ -55,16 +60,29 @@ uint getBlockDescriptor(uint blockDescriptor) {
     return blockDescriptor;  // Direct mapping: BD_* values ARE the geology layer indices
 }
 
-// Helper to sample biome texture
-vec4 sampleBiomeTexture(uint biomeId, int layer, vec2 uv) {
+// Helper to determine face type from normal for texture selection
+uint getFaceType(vec3 normal) {
+    if (normal.y > 0.5) return 0u;        // Top face
+    if (normal.y < -0.5) return 1u;       // Bottom face
+    return 2u;                             // Side faces
+}
+
+// Helper to sample biome texture - now uses separate textures per face type!
+vec4 sampleBiomeTexture(uint biomeId, int layer, vec2 uv, vec3 normal) {
     if (biomeId >= 10) biomeId = 0; // Safety clamp
-    int index = int(biomeId) * 8 + layer;
+    
+    // Determine which texture to use based on face orientation
+    uint faceType = getFaceType(normal);
+    
+    // Calculate index: BiomeID * 24 + Layer * 3 + FaceType
+    int index = int(biomeId) * 24 + layer * 3 + int(faceType);
     uvec2 handle = uBiomeTextures[index];
     
     if (handle.x == 0u && handle.y == 0u) {
         return vec4(1.0, 0.0, 1.0, 1.0); // Magenta error
     }
     
+    // Simple texture sampling - no atlas math needed! GL_REPEAT handles tiling
     return texture(sampler2D(handle), uv);
 }
 
@@ -161,7 +179,7 @@ void main() {
     // The getBiomeId() function now uses actual terrain height for ocean detection
     // and provides natural boundaries via noise
     uint primaryBiomeId = getBiomeId(voxelCenter);
-    baseColor = sampleBiomeTexture(primaryBiomeId, int(layer), vTexCoord);
+    baseColor = sampleBiomeTexture(primaryBiomeId, int(layer), vTexCoord, N);
     
     // Water specific processing
     if (vBlockDescriptor == BD_WATER) {

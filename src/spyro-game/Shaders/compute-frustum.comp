@@ -36,9 +36,15 @@ layout(std430, binding = 3) readonly buffer CommandSlots
 };
 
 // Indirect draw buffer (to update instanceCount)
-layout(std430, binding = 4) writeonly buffer IndirectDraws
+layout(std430, binding = 4) buffer IndirectDraws
 {
     uint indirectDraws[];
+};
+
+// Stats buffer
+layout(std430, binding = 5) buffer Stats
+{
+    uint stats[]; // 0: Total Indices, 1: Visible Indices, 2: Visible Chunks, 3: Frustum Culled, 4: Unused
 };
 
 // Constants
@@ -121,30 +127,53 @@ void main()
     // Calculate chunk AABB
     vec3 aabbMin, aabbMax;
     getChunkAABB(chunkIndex, aabbMin, aabbMax);
+
+    // Get vertex count (indices) for stats
+    int slot = commandSlots[idx];
+    uint chunkIndicesCount = 0;
+    if (slot >= 0)
+    {
+        uint baseOffset = uint(slot) * 10u;
+        // Opaque count (offset 0) + Transparent count (offset 5)
+        chunkIndicesCount = indirectDraws[baseOffset] + indirectDraws[baseOffset + 5u];
+    }
+    
+    atomicAdd(stats[0], chunkIndicesCount); // Total Indices
     
     // Test against frustum
-    bool isVisible = isAABBInFrustum(aabbMin, aabbMax);
+    bool inFrustum = isAABBInFrustum(aabbMin, aabbMax);
     
+    bool isVisible = inFrustum;
+
     // Write visibility flag
     visibilityFlags[idx] = isVisible ? 1 : 0;
 
     // Update indirect draw command instance count
-    // This effectively culls the chunk from rendering without rebuilding the buffer
-    int slot = commandSlots[idx];
     if (slot >= 0)
     {
         // Indirect command structure: count, instanceCount, firstIndex, baseVertex, baseInstance
         // We update instanceCount (offset 1)
         // Phase 5.3: 2 commands per slot (Opaque + Transparent)
         // Each command is 5 uints. Total slot size = 10 uints.
-        
+
         uint baseOffset = uint(slot) * 10u;
         uint instanceCount = isVisible ? 1u : 0u;
-        
+
         // Update Opaque command (offset 1)
         indirectDraws[baseOffset + 1u] = instanceCount;
-        
+
         // Update Transparent command (offset 6)
         indirectDraws[baseOffset + 6u] = instanceCount;
+    }
+    
+    // Stats
+    if (!inFrustum)
+    {
+        atomicAdd(stats[3], 1); // Frustum Culled
+    }
+    else
+    {
+        atomicAdd(stats[2], 1); // Visible Chunk
+        atomicAdd(stats[1], chunkIndicesCount); // Visible Indices
     }
 }

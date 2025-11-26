@@ -68,6 +68,9 @@ layout(std430, binding = 7) readonly buffer WorldEditsBuffer {
 // ============================================================================
 
 #include "terrain-common.glsl"
+#include "terrain-noise.glsl"
+#include "terrain-caves.glsl"
+#include "terrain-generation.glsl"  // For generateHeight() and generateBlockType()
 
 // ============================================================================
 // Helper Functions

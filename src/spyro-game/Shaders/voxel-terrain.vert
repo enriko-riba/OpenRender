@@ -1,172 +1,101 @@
 // Phase 5.2: Compressed Vertex Format (8 bytes)
-// Input: Compacted vertices from compute-compact.comp
-// Output: Transformed vertices with lighting data for fragment shader
-
+// Greedy meshing UV fix: correct orientation for readable text from outside
 #version 460
 #extension GL_ARB_shader_draw_parameters : require
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-// Face normal lookup table (6 axis-aligned directions)
 const vec3 FACE_NORMALS[6] = vec3[](
-    vec3(1, 0, 0),   // 0: +X (right)
-    vec3(-1, 0, 0),  // 1: -X (left)
-    vec3(0, 1, 0),   // 2: +Y (top)
-    vec3(0, -1, 0),  // 3: -Y (bottom)
-    vec3(0, 0, 1),   // 4: +Z (front)
-    vec3(0, 0, -1)   // 5: -Z (back)
+    vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1)
 );
+const uint FACE_POS_X=0u, FACE_NEG_X=1u, FACE_POS_Y=2u, FACE_NEG_Y=3u, FACE_POS_Z=4u, FACE_NEG_Z=5u;
 
-// Face indices
-const uint FACE_POS_X = 0u;
-const uint FACE_NEG_X = 1u;
-const uint FACE_POS_Y = 2u;
-const uint FACE_NEG_Y = 3u;
-const uint FACE_POS_Z = 4u;
-const uint FACE_NEG_Z = 5u;
+layout(std140,binding=0) uniform camera { mat4 view; mat4 projection; vec3 cameraPos; vec3 cameraDir; };
+layout(std430,binding=13) readonly buffer ChunkInfo { int chunkInfo[]; };
+uniform uint uWorldChunksXZ; uniform int uIsUnderwater; uniform mat4 uChunkTransform=mat4(1.0);
 
-// Texture atlas layout: 3 columns x 1 row (Simplified)
-const float ATLAS_COLS = 3.0;
-const float ATLAS_ROWS = 1.0;
-const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
+layout(location=0) in uvec2 aPackedData;
 
-// ============================================================================
-// Uniforms & Buffers
-// ============================================================================
+out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; flat out uint vBlockDescriptor;
 
-// Camera matrices
-layout(std140, binding = 0) uniform camera {
-    mat4 view;
-    mat4 projection;
-    vec3 cameraPos;
-    vec3 cameraDir;
-};
-
-// Chunk Info Buffer (maps gl_DrawID -> ChunkIndex)
-layout(std430, binding = 13) readonly buffer ChunkInfo {
-    int chunkInfo[];
-};
-
-uniform uint uWorldChunksXZ;
-uniform int uIsUnderwater; // To flip UVs for water
-
-// Per-chunk transform (for now, identity - chunks are in world space)
-uniform mat4 uChunkTransform = mat4(1.0);
-
-// ============================================================================
-// Vertex Input (Compressed)
-// ============================================================================
-
-// Phase 5.2 optimized layout: 2 uints (8 bytes)
-// Uint 0: Pos(X:5, Y:9, Z:5) | Face(3) | AO(3) | Corner(2)
-// Uint 1: BlockType(8) | Padding(24)
-layout(location = 0) in uvec2 aPackedData;
-
-// ============================================================================
-// Vertex Output (to fragment shader)
-// ============================================================================
-
-out vec3 vWorldPos;          // World-space position
-out vec3 vNormal;            // World-space normal (derived from face index)
-out vec2 vTexCoord;          // Texture coordinates
-out float vAO;               // Ambient occlusion
-out vec3 vViewDir;           // Direction to camera
-flat out uint vBlockDescriptor;  // Block descriptor for texture/geology layer selection
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-vec2 getBaseUV(uint corner) {
-    if (corner == 0u) return vec2(0, 1);
-    if (corner == 1u) return vec2(0, 0);
-    if (corner == 2u) return vec2(1, 0);
-    if (corner == 3u) return vec2(1, 1);
-    return vec2(0, 0);
+// Base UV coordinates for corners (standard OpenGL bottom-left origin)
+vec2 getBaseUV(uint c){ 
+    if(c==0u) return vec2(0,0); 
+    if(c==1u) return vec2(0,1); 
+    if(c==2u) return vec2(1,1); 
+    return vec2(1,0); 
 }
 
-vec2 flipV(vec2 uv) { return vec2(uv.x, 1.0 - uv.y); }
-
-ivec2 faceToTile(uint face) {
-    if (face == FACE_POS_Y) return ivec2(0, 0); // Top
-    if (face == FACE_NEG_Y) return ivec2(1, 0); // Bottom
-    return ivec2(2, 0); // Side (Front, Back, Left, Right)
+float unpackAO(uint i){ 
+    if(i==4u) return 1.0; 
+    if(i==3u) return 0.8; 
+    if(i==2u) return 0.6; 
+    if(i==1u) return 0.4; 
+    return 0.33; 
 }
 
-vec2 getAtlasUV(uint face, uint corner) {
-    vec2 uv = getBaseUV(corner);
-    ivec2 tile = faceToTile(face);
-    vec2 offset = vec2(float(tile.x) / ATLAS_COLS, float(tile.y) / ATLAS_ROWS);
-    vec2 finalUv = offset + uv * TILE_SIZE;
-    return flipV(finalUv);
-}
+void main(){
+    uint p1=aPackedData.x; uint p2=aPackedData.y;
+    uint lx=p1&0x1Fu; uint ly=(p1>>5)&0x1FFu; uint lz=(p1>>14)&0x1Fu; 
+    uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
+    vBlockDescriptor=p2&0xFFu;
+    
+    // Extract extents (5 bits each at positions 8 and 13)
+    uint extentX=(p2>>8)&0x1Fu;
+    uint extentZ=(p2>>13)&0x1Fu;
 
-float unpackAO(uint aoIdx) {
-    if (aoIdx == 4u) return 1.0;
-    if (aoIdx == 3u) return 0.8;
-    if (aoIdx == 2u) return 0.6;
-    if (aoIdx == 1u) return 0.4;
-    return 0.33;
-}
-
-// ============================================================================
-// Main Shader
-// ============================================================================
-
-void main() {
-    // Unpack data
-    uint packed1 = aPackedData.x;
-    uint packed2 = aPackedData.y;
+    int chunkIdx=chunkInfo[gl_DrawIDARB]; 
+    int cx=chunkIdx%int(uWorldChunksXZ); 
+    int cz=chunkIdx/int(uWorldChunksXZ);
     
-    uint lx = packed1 & 0x1Fu;
-    uint ly = (packed1 >> 5) & 0x1FFu;
-    uint lz = (packed1 >> 14) & 0x1Fu;
-    uint face = (packed1 >> 19) & 0x7u;
-    uint aoIdx = (packed1 >> 22) & 0x7u;
-    uint corner = (packed1 >> 25) & 0x3u;
+    vec3 localPos=vec3(float(lx),float(ly),float(lz));
+    vec3 worldPos=vec3(float(cx*16),0.0,float(cz*16))+localPos;
     
-    vBlockDescriptor = packed2 & 0xFFu;
+    vec4 finalPos=uChunkTransform*vec4(worldPos,1.0);
+    vWorldPos=finalPos.xyz;
     
-    // Get Chunk Position
-    int chunkIdx = chunkInfo[gl_DrawIDARB]; // Use ARB extension for compatibility
+    vec3 normal=FACE_NORMALS[face];
+    vNormal=mat3(uChunkTransform)*normal;
     
-    // Calculate Chunk World Position
-    // chunkIdx = z * width + x
-    int chunkX = chunkIdx % int(uWorldChunksXZ);
-    int chunkZ = chunkIdx / int(uWorldChunksXZ);
-    
-    // Assuming CHUNK_SIDE_SIZE is 16. We can pass it as uniform or hardcode.
-    // It's hardcoded in compute shaders as 16.
-    float chunkWorldX = float(chunkX * 16);
-    float chunkWorldZ = float(chunkZ * 16);
-    
-    vec3 localPos = vec3(float(lx), float(ly), float(lz));
-    vec3 worldPos = vec3(chunkWorldX, 0.0, chunkWorldZ) + localPos;
-    
-    // Transform to world space (uChunkTransform is usually identity)
-    vec4 finalPos = uChunkTransform * vec4(worldPos, 1.0);
-    vWorldPos = finalPos.xyz;
-    
-    // Normal
-    vec3 normal = FACE_NORMALS[face];
-    vNormal = mat3(uChunkTransform) * normal;
-    
-    // UVs
-    bool isWater = (vBlockDescriptor == 1u); // BD_WATER = 1
-    if (isWater) {
-        vTexCoord = flipV(getBaseUV(corner));
+    // UVs with extent-based tiling and correct orientation
+    bool isWater=(vBlockDescriptor==1u);
+    if(isWater){
+        vTexCoord=getBaseUV(corner);
     } else {
-        vTexCoord = getAtlasUV(face, corner);
+        // Get base corner UV
+        vec2 base=getBaseUV(corner);
+        
+        // Scale UVs by extents for tiling
+        float scaleU, scaleV;
+        if(face==FACE_POS_Y || face==FACE_NEG_Y){
+            // Horizontal faces
+            scaleU = float(extentX);
+            scaleV = float(extentZ);
+        } else if(face==FACE_POS_X || face==FACE_NEG_X){
+            // X-facing sides
+            scaleU = float(extentZ);
+            scaleV = 1.0;
+        } else {
+            // Z-facing sides
+            scaleU = float(extentX);
+            scaleV = 1.0;
+        }
+        
+        base.x *= scaleU;
+        base.y *= scaleV;
+        
+        // Fix mirroring: flip U for faces where text is readable from INSIDE
+        // These faces need flipping to be readable from OUTSIDE:
+        // - NEG_X (-X): flip U
+        // - POS_Z (+Z): flip U
+        // - POS_Y (top): flip U
+        // - NEG_Y (bottom): flip U
+        if(face==FACE_NEG_X || face==FACE_POS_Z || face==FACE_POS_Y || face==FACE_NEG_Y){
+            base.x = scaleU - base.x;
+        }
+        
+        vTexCoord=base;
     }
     
-    // AO
-    vAO = unpackAO(aoIdx);
-    
-    // View Dir
-    vViewDir = normalize(cameraPos - vWorldPos);
-    
-    // Position
-    gl_Position = projection * view * finalPos;
+    vAO=unpackAO(aoIdx);
+    vViewDir=normalize(cameraPos-vWorldPos);
+    gl_Position=projection*view*finalPos;
 }

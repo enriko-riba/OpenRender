@@ -78,6 +78,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private Shader? buildIndirectShader; // Cached build-indirect shader
     private Phase3BufferManager? phase3Buffers;
 
+    // Phase GM-1: Greedy meshing
+    private Shader? greedyMergeShader;
+    private bool useGreedyMeshing = false; // Feature flag for testing
+
     // Phase 4: Rendering
     private VoxelTerrainRenderer? terrainRenderer;
 
@@ -87,11 +91,32 @@ public sealed class ChunkStreamingManager : IDisposable
     private uint visibilityFlagsSSBO;
     private uint cullingChunkIndicesBuffer; // Dedicated buffer for culling to avoid conflicts with generation
     private uint cullingCommandSlotsBuffer; // Buffer for command slots corresponding to chunks being culled
+    private uint cullingStatsBuffer; // Buffer for culling statistics
+    private uint cullingReadbackBuffer; // Buffer for async readback
+    private IntPtr cullingFence; // Fence for async readback
+
+    // Culling Stats
+    public int StatVisibleChunks { get; private set; }
+    public int StatFrustumCulledChunks { get; private set; }
+    public int StatTotalIndices { get; private set; }
+    public int StatVisibleIndices { get; private set; }
+
     private int[]? lastVisibilityFlags;
     private int chunkIndicesBufferCapacity = 0;  // Track allocated capacity
     private int visibilityFlagsCapacity = 0;     // Track visibility buffer capacity
     public int VisibleChunkCount { get; private set; }
     public int CulledChunkCount { get; private set; }
+
+    // Phase GM-1: Greedy meshing feature flag
+    public bool UseGreedyMeshing
+    {
+        get => useGreedyMeshing;
+        set
+        {
+            useGreedyMeshing = value;
+            Log.Info($"Greedy meshing: {(value ? "ENABLED" : "DISABLED")}");
+        }
+    }
 
     // Phase 5: Streaming & Unloading
     // CRITICAL: Unload distance must provide hysteresis but not accumulate too many chunks
@@ -1168,7 +1193,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Use Shader class methods instead of direct GL calls - they handle type checking
         try
         {
-            // generationShader.SetUInt("uSeed", (uint)seed); // Removed - using TerrainParams
+            // generationShader.SetUInt("uSeed", (uint)seed); // Removed
             generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
             // generationShader.SetInt("uTestMode", testMode ? 1 : 0); // Removed
             // Skip uElevOffset and uElevScale - they're not used in shader anymore (hardcoded in height01At)
@@ -1435,6 +1460,33 @@ public sealed class ChunkStreamingManager : IDisposable
         compactShader = new Shader("Shaders/compute-compact.comp", ShaderType.ComputeShader);
         buildIndirectShader = new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
 
+        // Phase GM-1: Load greedy merge shader
+        try
+        {
+            // Clear any previous GL errors
+            while (GL.GetError() != ErrorCode.NoError) { }
+            
+            greedyMergeShader = new Shader("Shaders/compute-greedy-merge.comp", ShaderType.ComputeShader);
+            
+            // Verify shader loaded correctly
+            if (greedyMergeShader.Handle <= 0)
+            {
+                Log.Warn("Greedy merge shader loaded but has invalid handle");
+                greedyMergeShader = null;
+                useGreedyMeshing = false;
+            }
+            else
+            {
+                Log.Info("Greedy merge shader loaded successfully");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Failed to load greedy merge shader (optional): {ex.Message}");
+            greedyMergeShader = null;
+            useGreedyMeshing = false;
+        }
+
         // Allocate Phase 3 buffers
         phase3Buffers = new Phase3BufferManager();
         phase3Buffers.AllocateBuffers(maxChunksPerBatch);
@@ -1482,14 +1534,58 @@ public sealed class ChunkStreamingManager : IDisposable
         // GL.Uniform1(visibilityShader.GetUniformLocation("uHeightSpline"), 6); // Using layout(binding=6)
         // GL.Uniform1(visibilityShader.GetUniformLocation("uBiomeLUT"), 7);     // Using layout(binding=7)
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
-        // GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
         GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
         // GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
 
         // Phase 5.6 FIX: compute-visibility now loops over Y via workgroups (parallel execution)
         // Dispatch (chunkCount, 384, 1)
         GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
+
+        // Phase GM-1: Greedy Meshing (optional, behind feature flag)
+        if (useGreedyMeshing && greedyMergeShader != null && phase3Buffers != null)
+        {
+            Log.Info($"Phase GM-1: Running greedy merge for {chunkCount} chunks");
+
+            // Clear quad counts
+            GL.NamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), new uint[chunkCount]);
+
+            // Bind buffers for greedy merge
+            phase3Buffers.BindBuffersForGreedyMerge();
+            // VoxelData already bound from visibility stage
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
+
+            greedyMergeShader.Use();
+            GL.Uniform1(greedyMergeShader.GetUniformLocation("uChunkCount"), chunkCount);
+
+            // Correct dispatch: per chunk, per Y-layer, per axis (X,Y,Z)
+            GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 3);
+            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
+
+            // Optional: read back and build per-chunk prefix (kept for debugging)
+            var quadCounts = new uint[chunkCount];
+            GL.GetNamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), quadCounts);
+            var totalQuads = quadCounts.Sum(c => (long)c);
+            var avgQuads = (chunkCount > 0) ? totalQuads / (float)chunkCount : 0f;
+            Log.Info($"Phase GM-1: Generated {totalQuads:N0} quads (avg {avgQuads:F1} per chunk)");
+
+            // Build prefix sum of quad counts for potential later use
+            var quadOffsets = new uint[chunkCount];
+            uint cumulative = 0;
+            for (var i = 0; i < chunkCount; i++)
+            {
+                quadOffsets[i] = cumulative;
+                cumulative += quadCounts[i];
+            }
+            GL.NamedBufferSubData(phase3Buffers.QuadOffsetsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), quadOffsets);
+        }
+        else
+        {
+            if (!useGreedyMeshing) { Log.Debug("Phase GM-1: Skipped (useGreedyMeshing=false)"); }
+            else if (greedyMergeShader == null) { Log.Warn("Phase GM-1: Skipped (greedyMergeShader null)"); }
+            else if (phase3Buffers == null) { Log.Error("Phase GM-1: Skipped (phase3Buffers null)"); }
+        }
 
         // Stage 3.2 Count
         phase3Buffers.BindBuffersForCount();
@@ -1538,20 +1634,39 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var chunkCount = (uint)chunkIndices.Length;
 
-        // Fetch face counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
+        // Fetch face/quad counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
-        GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
+        
+        // CRITICAL FIX: When greedy meshing is enabled, read from QuadCountsBuffer instead of CountBuffer
+        // The count shader still counts faces from visibility mask, but greedy meshing produces fewer quads
+        if (useGreedyMeshing)
+        {
+            GL.GetNamedBufferSubData(phase3Buffers.QuadCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
+            Log.Debug($"Phase GM-2: Using quad counts for allocation");
+        }
+        else
+        {
+            GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
+        }
 
+        // After computing 'counts' from QuadCountsBuffer in ExecutePhase3_Part2
         // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
         // We only need to read 'counts'. Base offsets and totals are derived from it.
         var baseOffsets = new uint[chunkCount];
-        uint totalVertices = 0;
+        uint totalVertices =  0;
         for (var i = 0; i < chunkCount; i++)
         {
             baseOffsets[i] = totalVertices;
-            totalVertices += counts[i] * 4u; // 4 vertices per face
+            totalVertices += counts[i] * 4u; // 4 vertices per face/quad
         }
-        var totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face
+        var totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face/quad
+
+        // CRITICAL: For greedy meshing, make GPU CountBuffer and OpaqueCounts match quad counts
+        if (useGreedyMeshing)
+        {
+            GL.NamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
+            GL.NamedBufferSubData(phase3Buffers.OpaqueCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
+        }
 
         var allocatedVertexOffset = phase3Buffers.AllocateVertexRegion(totalVertices);
         var allocatedIndexOffset = phase3Buffers.AllocateIndexRegion(totalIndices);
@@ -1578,10 +1693,10 @@ public sealed class ChunkStreamingManager : IDisposable
         // Bind world edits buffer for neighbor lookup
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
 
-        // Bind Terrain Params (M1/M2) - Binding 10
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+        // Bind Terrain Params (M1/M2) not needed for compaction; avoid clobbering binding=10 used by mergedQuads
+        // GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
 
-        // Bind Textures
+        // Bind Textures (not used by compact, safe but optional)
         GL.ActiveTexture(TextureUnit.Texture6);
         GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
         GL.ActiveTexture(TextureUnit.Texture7);
@@ -1592,6 +1707,11 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
         // Bind WaterEmit buffer (binding 14)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, (int)phase3Buffers.WaterEmitBuffer);
+        // Bind Quad data for greedy path (bindings must match compute-compact.comp)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, (int)phase3Buffers.MergedQuadsBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 11, (int)phase3Buffers.QuadCountsBuffer);
+        // Bind QuadOffsets buffer (binding 15) for greedy meshing
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 15, (int)phase3Buffers.QuadOffsetsBuffer);
 
         compactShader.Use();
         // GL.Uniform1(compactShader.GetUniformLocation("uHeightSpline"), 0); // Using layout(binding=0)
@@ -1602,10 +1722,19 @@ public sealed class ChunkStreamingManager : IDisposable
         // GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
+        GL.Uniform1(compactShader.GetUniformLocation("uUseGreedyMeshing"), useGreedyMeshing ? 1u : 0u);  // Phase GM-2
         
-        // Phase 5.6 FIX: compute-compact uses gl_WorkGroupID.y for Y coordinate.
-        // Must dispatch VoxelHelper.ChunkYSize groups in Y dimension.
-        GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
+        // CRITICAL FIX: Different dispatch for greedy meshing vs per-voxel
+        // Per-voxel: (chunkCount, CHUNK_Y_SIZE, 1) - one workgroup per Y-layer
+        // Greedy mesh HOTFIX: (chunkCount, 1, 1) - single WG per chunk processes all merged quads
+        if (useGreedyMeshing)
+        {
+            GL.DispatchCompute((int)chunkCount, 1, 1);
+        }
+        else
+        {
+            GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
+        }
         
         GL.MemoryBarrier(MemoryBarrierFlags.VertexAttribArrayBarrierBit | MemoryBarrierFlags.ElementArrayBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
 
@@ -1652,7 +1781,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Create fence to track completion of Compaction/Build
         var fence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
 
-        Log.Info($"Phase 3 complete: {chunkCount} chunks (faces total approx={counts.Aggregate(0u, (a, c) => a + c)}) region offsets V={allocatedVertexOffset} I={allocatedIndexOffset}");
+        Log.Info($"Phase 3 complete: {chunkCount} chunks (faces/quads total approx={counts.Aggregate(0u, (a, c) => a + c)}) region offsets V={allocatedVertexOffset} I={allocatedIndexOffset}");
 
         // Return slots so we can update descriptors
         return (allocatedVertexOffset, allocatedIndexOffset, counts, baseOffsets, commandSlots, fence);
@@ -1718,6 +1847,36 @@ public sealed class ChunkStreamingManager : IDisposable
             Log.Info($"Reallocated frustum culling buffers for {maxChunks} chunks");
         }
 
+        // Create dedicated chunk indices buffer for culling
+        if (cullingChunkIndicesBuffer == 0 || chunkIndicesBufferCapacity < maxChunks)
+        {
+            if (cullingChunkIndicesBuffer != 0) GL.DeleteBuffer(cullingChunkIndicesBuffer);
+            
+            GL.CreateBuffers(1, out cullingChunkIndicesBuffer);
+            GL.NamedBufferStorage(cullingChunkIndicesBuffer, maxChunks * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingChunkIndicesBuffer, -1, "culling_chunk_indices_ssbo");
+            
+            chunkIndicesBufferCapacity = maxChunks;
+        }
+
+        // Create stats buffer (fixed size)
+        if (cullingStatsBuffer == 0)
+        {
+            GL.CreateBuffers(1, out cullingStatsBuffer);
+            GL.NamedBufferStorage(cullingStatsBuffer, 5 * sizeof(uint), IntPtr.Zero,
+                BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingStatsBuffer, -1, "culling_stats_ssbo");
+        }
+
+        // Create readback buffer
+        if (cullingReadbackBuffer == 0)
+        {
+            GL.CreateBuffers(1, out cullingReadbackBuffer);
+            GL.NamedBufferStorage(cullingReadbackBuffer, 5 * sizeof(uint), IntPtr.Zero,
+                BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingReadbackBuffer, -1, "culling_readback_ssbo");
+        }
+
         Log.CheckGlError();
         Log.Info($"Frustum culling initialized (capacity: {maxChunks} chunks)");
     }
@@ -1751,6 +1910,27 @@ public sealed class ChunkStreamingManager : IDisposable
             return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         }
 
+        // 1. Check if previous readback is ready (Async Readback)
+        if (cullingFence != IntPtr.Zero)
+        {
+            var status = GL.ClientWaitSync(cullingFence, 0, 0);
+            if (status == WaitSyncStatus.ConditionSatisfied || status == WaitSyncStatus.AlreadySignaled)
+            {
+                // Read back stats from readback buffer (non-blocking now)
+                uint[] stats = new uint[5];
+                GL.GetNamedBufferSubData(cullingReadbackBuffer, IntPtr.Zero, stats.Length * sizeof(uint), stats);
+                
+                StatTotalIndices = (int)stats[0];
+                StatVisibleIndices = (int)stats[1];
+                StatVisibleChunks = (int)stats[2];
+                StatFrustumCulledChunks = (int)stats[3];
+                // StatOccludedChunks = (int)stats[4]; // Removed
+                
+                GL.DeleteSync(cullingFence);
+                cullingFence = IntPtr.Zero;
+            }
+        }
+
         // Update frustum planes UBO
         UpdateFrustumUBO(camera);
 
@@ -1773,6 +1953,11 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, visibilityFlagsSSBO); // Still bound for debug/readback if needed
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, cullingCommandSlotsBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 4, (int)phase3Buffers.IndirectDrawBuffer);
+        
+        // Bind Stats Buffer (Binding 5)
+        // Clear stats first
+        GL.ClearNamedBufferData(cullingStatsBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, cullingStatsBuffer);
 
         // Set uniforms
         frustumShader.Use();
@@ -1780,13 +1965,20 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.Uniform1(frustumShader.GetUniformLocation("chunkSideSize"), VoxelHelper.ChunkSideSize);
         GL.Uniform1(frustumShader.GetUniformLocation("chunkYSize"), VoxelHelper.ChunkYSize);
         GL.Uniform1(frustumShader.GetUniformLocation("worldChunksXZ"), VoxelHelper.WorldChunksXZ);
-
+        
         // Dispatch: 64 threads per workgroup, ceil(chunkCount / 64) workgroups
         var workGroups = (chunkIndices.Length + 63) / 64;
         GL.DispatchCompute(workGroups, 1, 1);
 
-        // Wait for completion
-        GL.MemoryBarrier(MemoryBarrierFlags.CommandBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
+        // Wait for completion of compute (for the copy)
+        GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
+
+        // Copy stats to readback buffer for next frame
+        GL.CopyNamedBufferSubData(cullingStatsBuffer, cullingReadbackBuffer, IntPtr.Zero, IntPtr.Zero, 5 * sizeof(uint));
+        
+        // Create fence for next frame
+        if (cullingFence != IntPtr.Zero) GL.DeleteSync(cullingFence);
+        cullingFence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
 
         // PERFORMANCE FIX: Skip CPU readback - visibility flags are now consumed on GPU
         // The visibility_flags_ssbo remains bound and available for the renderer to use
@@ -1944,6 +2136,10 @@ public sealed class ChunkStreamingManager : IDisposable
         if (frustumUBO != 0) GL.DeleteBuffer(frustumUBO);
         if (visibilityFlagsSSBO != 0) GL.DeleteBuffer(visibilityFlagsSSBO);
         if (cullingCommandSlotsBuffer != 0) GL.DeleteBuffer(cullingCommandSlotsBuffer);
+        if (cullingStatsBuffer != 0) GL.DeleteBuffer(cullingStatsBuffer);
+        if (cullingReadbackBuffer != 0) GL.DeleteBuffer(cullingReadbackBuffer);
+        if (cullingFence != IntPtr.Zero) GL.DeleteSync(cullingFence);
+        if (cullingChunkIndicesBuffer != 0) GL.DeleteBuffer(cullingChunkIndicesBuffer);
 
         // Cleanup Terrain Params (M1)
         if (terrainParamsSSBO != 0) GL.DeleteBuffer(terrainParamsSSBO);
