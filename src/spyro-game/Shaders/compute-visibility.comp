@@ -1,10 +1,7 @@
 #version 460
 #extension GL_ARB_gpu_shader_int64 : require
 
-// VERSION: 2024-01-15-v2 - Fixed redundant bounds check causing missing faces at chunk boundaries
-
-// Restore original layout: process all 16 X columns directly (each invocation handles one column)
-// OPTIMIZATION: Process 4 voxels per thread to enable packed writes (1 uint = 4 masks)
+// Visibility pass: computes per-voxel face mask (6 bits) packed 4 voxels per uint
 layout(local_size_x = 4, local_size_y = 1, local_size_z = 16) in;
 
 // ============================================================================
@@ -32,14 +29,14 @@ uniform uint uWorldChunksXZ;
 // SSBOs (using VoxelHelper.SSBOBindings constants)
 // ============================================================================
 
-// Input: Generated voxel data from Phase 2
+// Input voxel data
 layout(std430, binding = 0) readonly buffer VoxelData {
-    uint voxelData[];  // Packed: blockType(8) | biomeID(8) | light(8) | flags(8)
+    uint voxelData[]; // Packed: blockType(8) | biomeID(8) | light(8) | flags(8)
 };
 
-// Output: Visibility mask (6 bits per voxel)
+// Output visibility mask (6 bits per voxel, packed 4 per uint)
 layout(std430, binding = 1) writeonly buffer VisibilityMask {
-    uint visibilityMask[];  // lower 6 bits used
+    uint visibilityMask[];
 };
 
 // Input: Chunk indices for neighbor calculation
@@ -116,50 +113,59 @@ bool isWater(uint voxel) {
 uint getVoxel(uint chunkIdx, int lx, int ly, int lz) {
     if (ly < 0 || ly >= CHUNK_Y_SIZE) return packSimple(BD_AIR);
 
+    // Fast path: inside current chunk
     if (lx >= 0 && lx < CHUNK_SIDE_SIZE && lz >= 0 && lz < CHUNK_SIDE_SIZE) {
-        uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT +
-                        uint(lx) +
-                        uint(lz) * CHUNK_SIDE_SIZE +
-                        uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
+        uint voxelIdx = chunkIdx * CHUNK_VOXEL_COUNT + uint(lx) + uint(lz) * CHUNK_SIDE_SIZE + uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
         return voxelData[voxelIdx];
     }
 
+    // World coords of neighbor sample
     uint chunkIndexGlobal = chunkIndices[chunkIdx];
     uint chunkX = chunkIndexGlobal % uWorldChunksXZ;
     uint chunkZ = chunkIndexGlobal / uWorldChunksXZ;
-
     int wx = int(chunkX) * CHUNK_SIDE_SIZE + lx;
     int wz = int(chunkZ) * CHUNK_SIDE_SIZE + lz;
 
-    // Compute neighbor chunk coords with floor division for negatives
+    // Neighbor chunk indices
     int neighborChunkX = (wx >= 0) ? (wx / CHUNK_SIDE_SIZE) : ((wx - (CHUNK_SIDE_SIZE - 1)) / CHUNK_SIDE_SIZE);
     int neighborChunkZ = (wz >= 0) ? (wz / CHUNK_SIDE_SIZE) : ((wz - (CHUNK_SIDE_SIZE - 1)) / CHUNK_SIDE_SIZE);
 
-    if (neighborChunkX >= 0 && neighborChunkX < int(uWorldChunksXZ) &&
-        neighborChunkZ >= 0 && neighborChunkZ < int(uWorldChunksXZ)) {
+    bool neighborInWorld = neighborChunkX >= 0 && neighborChunkX < int(uWorldChunksXZ) && neighborChunkZ >= 0 && neighborChunkZ < int(uWorldChunksXZ);
+    if (neighborInWorld) {
         uint neighborGlobalIdx = uint(neighborChunkX) + uint(neighborChunkZ) * uWorldChunksXZ;
-        // Look for neighbor in current batch
+        // Try to find neighbor chunk inside current batch
         for (uint i = 0; i < uChunkCount; i++) {
             if (chunkIndices[i] == neighborGlobalIdx) {
-                // Local coords inside neighbor chunk
                 int nlx = wx - neighborChunkX * CHUNK_SIDE_SIZE;
                 int nlz = wz - neighborChunkZ * CHUNK_SIDE_SIZE;
-                
-                // CRITICAL: Verify local coords are in bounds before reading buffer
                 if (nlx >= 0 && nlx < CHUNK_SIDE_SIZE && nlz >= 0 && nlz < CHUNK_SIDE_SIZE) {
-                    uint neighborVoxelIdx = i * CHUNK_VOXEL_COUNT +
-                                           uint(nlx) +
-                                           uint(nlz) * CHUNK_SIDE_SIZE +
-                                           uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
+                    uint neighborVoxelIdx = i * CHUNK_VOXEL_COUNT + uint(nlx) + uint(nlz) * CHUNK_SIDE_SIZE + uint(ly) * CHUNK_SIDE_SIZE_SQUARED;
                     return voxelData[neighborVoxelIdx];
                 }
-                // If out of bounds, fall through to procedural
-                break;
+                break; // fall through to fallback
             }
         }
     }
 
-    // Procedural fallback (prevents vertical opaque walls & missing corner faces)
+    // --------------------------------------------------------------------
+    // AO EDGE PERFORMANCE FIX:
+    // Only expose the surface layer of an unloaded neighbor as transparent to prevent dark seams
+    // while avoiding generating full extra faces (which caused a performance spike).
+    // Below (height - 1) we return procedural solid to keep face count low.
+    // --------------------------------------------------------------------
+    int surfaceHeight = generateHeight(wx, wz);
+    if (ly > surfaceHeight) {
+        // Above terrain surface -> water if below water level else air
+        if (ly <= WATER_LEVEL) return packSimple(BD_WATER);
+        return packSimple(BD_AIR);
+    }
+    if (ly >= surfaceHeight - 1) {
+        // Expose top layer only to allow border faces & correct AO
+        if (ly <= WATER_LEVEL) return packSimple(BD_WATER);
+        return packSimple(BD_AIR);
+    }
+
+    // Deeper voxels treated as solid to avoid large face bursts
     return proceduralVoxel(wx, ly, wz);
 }
 

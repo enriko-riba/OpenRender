@@ -1606,19 +1606,10 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
         // Bind WaterEmit buffer (binding 14)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 14, (int)phase3Buffers.WaterEmitBuffer);
-        // Bind Quad data for greedy path (bindings must match compute-compact.comp)
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, (int)phase3Buffers.MergedQuadsBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 11, (int)phase3Buffers.QuadCountsBuffer);
-        // Bind QuadOffsets buffer (binding 15) for greedy meshing
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 15, (int)phase3Buffers.QuadOffsetsBuffer);
 
         compactShader.Use();
-        // GL.Uniform1(compactShader.GetUniformLocation("uHeightSpline"), 0); // Using layout(binding=0)
-        // GL.Uniform1(compactShader.GetUniformLocation("uBiomeLUT"), 1);     // Using layout(binding=1)
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
-        // GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
-        // GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
         

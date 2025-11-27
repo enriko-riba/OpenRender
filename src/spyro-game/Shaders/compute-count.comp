@@ -1,7 +1,7 @@
 #version 460
 #include "terrain-common.glsl"
 
-// Expect dispatch groups (chunkCount, CHUNK_Y_SIZE, 1). If Y dimension < CHUNK_Y_SIZE counts will be truncated.
+// Counts total visible faces and opaque (non-water) faces per chunk layer
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 uniform uint uChunkCount;
@@ -27,12 +27,8 @@ void main() {
     }
     barrier();
     
-    // Each thread processes one voxel in this layer
-    // Layer size = 16*16 voxels = 256 voxels.
-    // local_size_x = 64.
-    // So each thread processes 4 voxels (256/64 = 4).
-    
-    uint lx_base = gl_LocalInvocationID.x * 4u; // 0, 4, 8... 252
+    // Each thread processes 4 voxels in this Y layer (256 voxels / 64 threads)
+    uint lx_base = gl_LocalInvocationID.x * 4u;
     
     uint tCount = 0u;
     uint oCount = 0u;

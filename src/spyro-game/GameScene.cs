@@ -28,7 +28,7 @@ internal class GameScene : Scene
     private readonly ITextRenderer textRenderer;
     private VoxelWorld world = default!;
     private Player player = default!;
-    
+
     private ChunkStreamingManager? streamingManager;
     private VoxelTerrainRenderer? terrainRenderer;
     private BlockPickingService? blockPickingService;
@@ -36,7 +36,7 @@ internal class GameScene : Scene
     // Frustum culling throttling
     private double lastCullingTime = -1.0;
     private const double CullingIntervalSeconds = 0.166; // ~6 times per second (166ms)
-    
+
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
     private bool wasLeftButtonDown;
@@ -63,38 +63,38 @@ internal class GameScene : Scene
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
-        
+
         // Pass M4 resources to renderer
         terrainRenderer.TerrainParamsSSBO = streamingManager.TerrainParamsSSBO;
         terrainRenderer.BiomeLutTexture = streamingManager.BiomeLutTexture;
-        
+
         // Add renderer to scene
         AddNode(terrainRenderer);
-        
+
         // Ensure camera is initialized before creating player
         EnsureCameraInitialized();
-        
+
         // Calculate center of world for spawn
         var centerPos = new Vector3(
             VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
             100,
             VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
         );
-        
+
         // Initialize player with world at center position
         // Note: Player expects VoxelWorld, but we are using ChunkStreamingManager.
         // Ideally Player should be refactored to use an interface or ChunkStreamingManager.
         // For now, we pass the world instance from streamingManager if available, or the scene's world.
         var playerWorld = streamingManager.World ?? world;
         player = new Player(camera!, centerPos, playerWorld, streamingManager);
-        
+
         // Initialize block picking service
         // Use the constructor that accepts ChunkStreamingManager
         blockPickingService = new BlockPickingService(streamingManager);
-        
+
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
-        
+
         Log.Info("GameScene: GPU terrain components configured");
     }
 
@@ -218,7 +218,7 @@ internal class GameScene : Scene
             // AddNode(world.ChunkRenderer);
             Log.Warn("GameScene: No GPU terrain renderer, using fallback");
         }
-        
+
         world.Camera = camera!;
         camera!.Invalidate();
 
@@ -285,10 +285,10 @@ internal class GameScene : Scene
             if ((currentTime - lastCullingTime) >= CullingIntervalSeconds)
             {
                 lastCullingTime = currentTime;
-                
+
                 // Generate surrounding chunk indices based on camera position
                 var chunkIndices = GenerateSurroundingChunkIndices();
-                
+
                 // Execute GPU frustum culling
                 var visibilityFlags = streamingManager.ExecuteFrustumCulling(camera, chunkIndices);
                 terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
@@ -301,7 +301,7 @@ internal class GameScene : Scene
             // Call streaming manager every frame to handle chunk loading/unloading
             streamingManager.Update(camera.Position);
         }
-        
+
 
         // Update visibility
         world.UpdateVisibilityFromCamera(camera!);
@@ -312,8 +312,8 @@ internal class GameScene : Scene
             var camPos = camera.Position;
             var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
             var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
-            
-            if (terrainRenderer != null) 
+
+            if (terrainRenderer != null)
             {
                 terrainRenderer.IsCameraUnderwater = isUnderwater;
             }
@@ -322,10 +322,10 @@ internal class GameScene : Scene
 
         // Update player (handles physics, collision, and WASD movement input)
         player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
-        
+
         // Update block below player - find highest solid block at player X/Z regardless of mode
         UpdateBlockBelow();
-        
+
         // Update block picking service (decoupled from rendering)
         blockPickingService?.Update(
             currentTime: SceneManager.Time,
@@ -334,7 +334,7 @@ internal class GameScene : Scene
             screenCenterY: Height / 2,
             maxDistance: 5.0f
         );
-        
+
         // Sync picked block to player (for block breaking)
         if (blockPickingService != null)
         {
@@ -376,7 +376,7 @@ internal class GameScene : Scene
         lastMousePosition = mousePos;
         if (delta.LengthSquared > 0)
         {
-            const float mouseSensitivity = 0.18f; // Decreased by 10%
+            const float mouseSensitivity = 0.05f;
             player.AddRotation(delta.X * mouseSensitivity, delta.Y * mouseSensitivity, 0);
 
             // Re-center mouse when near edge
@@ -394,8 +394,8 @@ internal class GameScene : Scene
 
     public override void RenderFrame(double elapsedSeconds)
     {
-        base.RenderFrame(elapsedSeconds);        
-        
+        base.RenderFrame(elapsedSeconds);
+
         RenderUI();
     }
 
@@ -453,7 +453,7 @@ internal class GameScene : Scene
         // Chunk Stats (FIXED - Show actual generated chunks, not theoretical surrounding)
         int loadedChunks;
         int generatedChunks;  // Actually generated terrain
-        
+
         if (streamingManager != null)
         {
             // GPU terrain - get stats from streaming manager
@@ -467,11 +467,11 @@ internal class GameScene : Scene
             loadedChunks = world.LoadedChunksCount;
             generatedChunks = world.LoadedChunksCount;
         }
-        
+
         WriteLine("Chunks:", highlightColor);
         WriteLine($"  Generated: {generatedChunks:N0}", textColor);
         WriteLine($"  Loaded: {loadedChunks:N0}", textColor);
-        
+
         // Get visibility stats from terrain renderer (GPU-based)
         if (terrainRenderer != null && streamingManager != null)
         {
@@ -497,7 +497,7 @@ internal class GameScene : Scene
         var pLocal = player.ChunkLocalPosition;
         var pChunk = player.CurrentChunk?.Index ?? -1;
         var pGlobal = player.Position;
-        
+
         WriteLine($"  Position: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
 
         // Block Below - Always displayed, shows highest solid block at player X/Z
@@ -508,17 +508,17 @@ internal class GameScene : Scene
             var bbChunk = bb.ChunkIndex;
             var bbChunkOrigin = VoxelHelper.GetChunkPositionGlobal(bbChunk);
             var bbLocal = new Vector3(bbGlobal.X - bbChunkOrigin.X, bbGlobal.Y - bbChunkOrigin.Y, bbGlobal.Z - bbChunkOrigin.Z);
-            
+
             // Get biome name for this block
             var biomeName = GetBiomeNameForBlock(bb);
-            
+
             WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.Descriptor} | {biomeName}", textColor);
         }
         else
         {
             WriteLine($"  Block Below: n/a", textColor);
         }
-        
+
         WriteLine($"  Mode: {(player.IsGhostMode ? "Ghost (Fly)" : "Physics")} ", textColor);
         WriteLine($"  Grounded: {player.IsGrounded}", textColor);
         WriteLine($"  Jumping: {player.IsJumping}", textColor);
@@ -540,10 +540,10 @@ internal class GameScene : Scene
                     globalPos.Y - chunkOrigin.Y,
                     globalPos.Z - chunkOrigin.Z
                 );
-                
+
                 // Get biome name for picked block
                 var biomeName = GetBiomeNameForBlock(b);
-                
+
                 WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.Descriptor} | {biomeName}", textColor);
             }
             else
@@ -552,7 +552,7 @@ internal class GameScene : Scene
             }
             WriteLine("", textColor);
         }
-        
+
         // Controls
         WriteLine("Controls:", highlightColor);
         WriteLine("  WASD - Move", textColor);
@@ -576,32 +576,32 @@ internal class GameScene : Scene
         // For now, we don't have direct biome ID stored in BlockState.
         // We would need to re-query the terrain generation logic to get the biome.
         // As a workaround, we can infer biome from descriptor and elevation:
-        
+
         var elevation = block.GlobalPosition.Y;
         var descriptor = block.Descriptor;
 
         // Hardcoded biome inference based on descriptor and elevation
         // This matches the shader logic in compute-generate.comp
-        
+
         // Ocean biomes
         if (descriptor == BlockDescriptor.Water)
         {
             return elevation < 0 ? "Ocean" : "Water";
         }
-        
+
         // Alpine biome
         if (elevation > 200f)
         {
             return "Alpine";
         }
-        
+
         // Beach/shoreline
-        if (descriptor == BlockDescriptor.ShoreLine || 
+        if (descriptor == BlockDescriptor.ShoreLine ||
             (descriptor == BlockDescriptor.UnderwaterSurface && elevation <= 37f))
         {
             return "Beach";
         }
-        
+
         // For land biomes, we would need to query temperature/humidity which requires
         // recalculating noise. For now, provide generic names based on descriptor.
         return descriptor switch
@@ -629,20 +629,20 @@ internal class GameScene : Scene
     private int[] GenerateSurroundingChunkIndices()
     {
         if (camera == null || streamingManager == null) return [];
-        
+
         // Get only the chunks that have actually been generated
         var (total, pending, generating, ready) = streamingManager.GetStats();
-        
+
         if (ready == 0)
         {
             return []; // No chunks ready yet
         }
-        
+
         // Get chunk indices from streaming manager (only loaded chunks)
         // This avoids testing 2,601 theoretical chunks when only 81 exist
         var readyChunks = streamingManager.GetReadyChunks();
         var indices = readyChunks.Select(c => c.ChunkIndex).ToArray();
-        
+
         return indices;
     }
 

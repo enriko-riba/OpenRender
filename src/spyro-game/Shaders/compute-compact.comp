@@ -1,7 +1,5 @@
 #version 460
-// compute-compact.comp - Phase 3.4: Mesh Compaction
-// Purpose: Build compact vertex buffer from visible faces
-// Version: 5.2 (Greedy Meshing removed)
+// Mesh compaction: builds compact vertex + index buffers from visibility mask
 
 #include "terrain-common.glsl"
 #include "terrain-noise.glsl"
@@ -45,11 +43,13 @@ void getFaceCorners(uint face, vec3 pos, out vec3 corners[4]) {
 }
 
 uint mapAO(float ao){ 
-    if(ao>0.9) return 4u; 
-    if(ao>0.7) return 3u; 
-    if(ao>0.5) return 2u; 
-    if(ao>0.35) return 1u; 
-    return 0u; 
+    // Adjusted thresholds for more subtle AO that doesn't stretch too far
+    // Higher thresholds = less aggressive darkening
+    if(ao > 0.95) return 4u;  // Nearly full brightness (was 0.9)
+    if(ao > 0.85) return 3u;  // Light shade (was 0.7)
+    if(ao > 0.65) return 2u;  // Medium shade (was 0.5)
+    if(ao > 0.45) return 1u;  // Dark shade (was 0.35)
+    return 0u;  // Darkest (corners only)
 }
 
 void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint corner, uint blockType){
@@ -64,50 +64,52 @@ void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint cor
 }
 
 bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
-    if (pos.y < 0) return true; 
-    if (pos.y >= CHUNK_Y_SIZE) return false; 
-    
+    if (pos.y < 0) return true;
+    if (pos.y >= CHUNK_Y_SIZE) return false;
+
     if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-        uint voxel = voxelData[voxelIdx]; 
+        uint voxel = voxelData[voxelIdx];
         return (voxel & 0xFFu) > BD_WATER;
     }
-    
-    uint currentGlobalIdx = chunkIndices[chunkIdx]; 
-    int chunkX = int(currentGlobalIdx % uWorldChunksXZ); 
+
+    uint currentGlobalIdx = chunkIndices[chunkIdx];
+    int chunkX = int(currentGlobalIdx % uWorldChunksXZ);
     int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
-    int nChunkX = chunkX; 
-    int nChunkZ = chunkZ; 
-    int localX = pos.x; 
+    int nChunkX = chunkX;
+    int nChunkZ = chunkZ;
+    int localX = pos.x;
     int localZ = pos.z;
-    
-    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; } 
+
+    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; }
     else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
-    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; } 
+    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; }
     else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
-    
+
     if (nChunkX >= 0 && nChunkX < int(uWorldChunksXZ) && nChunkZ >= 0 && nChunkZ < int(uWorldChunksXZ)) {
         uint nGlobalIdx = uint(nChunkX + nChunkZ * int(uWorldChunksXZ));
-        for (uint i = 0u; i < uChunkCount; i++) { 
-            if (chunkIndices[i] == nGlobalIdx) { 
+        for (uint i = 0u; i < uChunkCount; i++) {
+            if (chunkIndices[i] == nGlobalIdx) {
                 if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
                     uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-                    uint voxel = voxelData[voxelIdx]; 
-                    return (voxel & 0xFFu) > BD_WATER; 
-                } 
-                break; 
-            } 
+                    uint voxel = voxelData[voxelIdx];
+                    return (voxel & 0xFFu) > BD_WATER;
+                }
+                break;
+            }
         }
     }
-    
-    int wx = int(chunkWorldOffset.x) + pos.x; 
-    int wz = int(chunkWorldOffset.z) + pos.z; 
-    int wy = pos.y; 
+
+    // Procedural fallback: MUST use generateBlockType() to match terrain generation exactly.
+    // See docs/terrain/AO_CHUNK_BORDER_FIX.md for detailed explanation.
+    int wx = int(chunkWorldOffset.x) + pos.x;
+    int wz = int(chunkWorldOffset.z) + pos.z;
+    int wy = pos.y;
     int editType = getBlockFromEdits(wx, wy, wz);
-    if (editType != -1) return editType > int(BD_WATER); 
-    
-    int height = generateHeight(wx, wz); 
-    uint blockType = generateBlockType(height, wy, wx, wz); 
+    if (editType != -1) return editType > int(BD_WATER);
+
+    int height = generateHeight(wx, wz);
+    uint blockType = generateBlockType(height, wy, wx, wz);
     return blockType > BD_WATER;
 }
 
@@ -144,13 +146,14 @@ float calculateAO(uint face, uint corner, uint chunkIdx, vec3 chunkWorldOffset, 
         else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(1,0,1);o3=ivec3(1,1,1);} 
         else {o1=ivec3(1,-1,0);o2=ivec3(1,0,1);o3=ivec3(1,-1,1);} 
     }
-    else { 
+    else { // FACE_NEG_X
         if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,-1,1);} 
         else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,1,1);} 
         else if(corner==2u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,1,-1);} 
         else {o1=ivec3(-1,-1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,-1,-1);} 
     }
     
+    // Use isSolid (with procedural fallback) for correct cross-chunk AO
     bool s1=isSolid(p+o1,chunkIdx,chunkWorldOffset); 
     bool s2=isSolid(p+o2,chunkIdx,chunkWorldOffset); 
     bool s3=isSolid(p+o3,chunkIdx,chunkWorldOffset);
@@ -240,14 +243,16 @@ void main(){
         vec3 corners[4]; 
         getFaceCorners(face,voxelPos,corners); 
         
+        // Use voxel position (lx, ly, lz) as the base for AO calculation, not corner position
+        ivec3 voxelLocalPos = ivec3(lx, ly, lz);
+        
         for(uint v=0u; v<4u; v++){ 
-            vec3 worldPos=corners[v]; 
-            vec3 localPosFloat=worldPos-chunkWorldOffset; 
-            ivec3 localPos=ivec3(round(localPosFloat)); 
-            // CRITICAL FIX: Use corner's actual position for AO sampling to handle chunk boundaries
-            // When corner is at position 16.0 (next chunk's 0), AO must sample from that position
-            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,localPos); 
-            uint aoIdx=mapAO(ao); 
+            vec3 worldPos=corners[v];
+            vec3 localPosFloat=worldPos-chunkWorldOffset;
+            ivec3 localPos=ivec3(round(localPosFloat));
+            // Calculate AO from the voxel position, not the corner position
+            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,voxelLocalPos);
+            uint aoIdx=mapAO(ao);
             writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockDescriptor);
         } 
         
