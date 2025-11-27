@@ -76,9 +76,12 @@ internal class GameScene : Scene
 
         // Calculate center of world for spawn
         var centerPos = new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
-            100,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+            //VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
+            //100,
+            //VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+            5133,
+            230,
+            4015
         );
 
         // Initialize player with world at center position
@@ -157,7 +160,7 @@ internal class GameScene : Scene
             player.StreamingManager = streamingManager;
         }
 
-        player.IsGhostMode = true; // Start in ghost mode for easy exploration
+        //player.IsGhostMode = true; // Start in ghost mode for easy exploration
 
         // Mouse centering for FPS controls
         mouseCenter = new Vector2(Width, Height) / 2;

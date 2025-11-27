@@ -142,7 +142,7 @@ public class Player
     /// If true, the player can walk through blocks and is not attached to the terrain.
     /// Reset vertical dynamics when toggled to avoid stale velocities.
     /// </summary>
-    private bool _isGhostMode = true;
+    private bool _isGhostMode;
     public bool IsGhostMode
     {
         get => _isGhostMode;

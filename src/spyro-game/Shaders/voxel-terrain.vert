@@ -25,10 +25,10 @@ vec2 getBaseUV(uint c){
 
 float unpackAO(uint i){ 
     if(i==4u) return 1.0; 
-    if(i==3u) return 0.8; 
-    if(i==2u) return 0.6; 
-    if(i==1u) return 0.4; 
-    return 0.33; 
+    if(i==3u) return 0.9; 
+    if(i==2u) return 0.80; 
+    if(i==1u) return 0.75; 
+    return 0.70; 
 }
 
 void main(){
