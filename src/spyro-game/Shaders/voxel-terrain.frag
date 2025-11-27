@@ -97,6 +97,8 @@ in vec2 vTexCoord;
 in float vAO;
 in vec3 vViewDir;
 flat in uint vBlockDescriptor;  // Renamed from vBlockType to match BlockDescriptor enum
+in float vSkyLight;
+in float vBlockLight;
 
 // ============================================================================
 // Fragment Output
@@ -236,8 +238,21 @@ void main() {
     // Strengthen AO curve
     float aoStrength = pow(vAO, 2.0); // Make dark areas darker
 
-    // Ambient component (modulated by AO)
-    vec3 ambient = dirLight.ambient * texColor * aoStrength;
+    // --- DUAL CHANNEL LIGHTING ---
+    
+    // 1. Sky Light (Sun)
+    // Masks the directional light. If SkyLight is 0 (Cave), Sun is blocked.
+    float skyFactor = vSkyLight;
+    
+    // 2. Block Light (Torches/Lava)
+    // Additive light source. Warm color.
+    vec3 torchColor = vec3(1.0, 0.8, 0.6);
+    vec3 localLight = torchColor * vBlockLight;
+
+    // Ambient component (modulated by AO and Sky Light)
+    // Keep a tiny minimum ambient (0.05) so caves aren't 100% pitch black if unlit
+    // Bumped to 0.2 based on user feedback "nothing visible in dark places"
+    vec3 ambient = dirLight.ambient * texColor * aoStrength * max(skyFactor, 0.2);
     
     // Diffuse component
     float NdotL = max(dot(N, L), 0.0);
@@ -252,7 +267,8 @@ void main() {
     float NdotL_Water = max(dot(lightingNormal, L), 0.0);
     if (isCameraUnderwater) NdotL_Water = NdotL_Water * 0.5 + 0.5;
 
-    vec3 diffuse = dirLight.diffuse * texColor * NdotL_Water * aoStrength;
+    // Apply Sky Factor to Diffuse (Sun)
+    vec3 diffuse = dirLight.diffuse * texColor * NdotL_Water * aoStrength * skyFactor;
     
     // Specular component (Blinn-Phong)
     vec3 specular = vec3(0.0);
@@ -260,7 +276,8 @@ void main() {
         vec3 H = normalize(L + V);
         float NdotH = max(dot(lightingNormal, H), 0.0);
         float specPower = pow(NdotH, uMaterialShininess);
-        specular = dirLight.specular * uMaterialSpecular * specPower * aoStrength;
+        // Apply Sky Factor to Specular (Sun)
+        specular = dirLight.specular * uMaterialSpecular * specPower * aoStrength * skyFactor;
     }
 
     // Attenuate light underwater
@@ -269,8 +286,9 @@ void main() {
         specular *= 0.0; // No specular underwater
     }
     
-    // Combine components
-    vec3 finalColor = ambient + diffuse + specular;
+    // Combine components (Ambient + Sun + Local + Specular)
+    // Local light is added on top
+    vec3 finalColor = ambient + diffuse + specular + (localLight * texColor * aoStrength);
     
 
     // --- ATMOSPHERIC FOG (Above water) ---

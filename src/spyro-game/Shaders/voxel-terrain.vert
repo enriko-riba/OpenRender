@@ -15,8 +15,9 @@ uniform uint uWorldChunksXZ; uniform int uIsUnderwater; uniform mat4 uChunkTrans
 layout(location=0) in uvec2 aPackedData;
 
 out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; flat out uint vBlockDescriptor;
+out float vSkyLight; out float vBlockLight;
 
-vec2 getBaseUV(uint c){ 
+vec2 getBaseUV(uint c){
     if(c==0u) return vec2(0,0); 
     if(c==1u) return vec2(0,1); 
     if(c==2u) return vec2(1,1); 
@@ -36,8 +37,12 @@ void main(){
     uint lx=p1&0x1Fu; uint ly=(p1>>5)&0x1FFu; uint lz=(p1>>14)&0x1Fu; 
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
     vBlockDescriptor=p2&0xFFu;
+    
+    uint lightByte = (p2 >> 8) & 0xFFu;
+    vSkyLight = float(lightByte & 0xF) / 15.0;
+    vBlockLight = float((lightByte >> 4) & 0xF) / 15.0;
 
-    int chunkIdx=chunkInfo[gl_DrawIDARB]; 
+    int chunkIdx=chunkInfo[gl_DrawIDARB];
     int cx=chunkIdx%int(uWorldChunksXZ); 
     int cz=chunkIdx/int(uWorldChunksXZ);
     

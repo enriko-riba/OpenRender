@@ -35,6 +35,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
     // Phase 2: GPU generation shader
     private Shader? generationShader;
+    // Phase 2.1: Lighting
+    private Shader? lightShader;
     // Phase 2.5: Column Spans
     private Shader? columnSpansShader;
     private readonly uint[] columnSpansBuffers = new uint[2];
@@ -1155,6 +1157,7 @@ public sealed class ChunkStreamingManager : IDisposable
         try
         {
             generationShader = new Shader("Shaders/compute-generate.comp", ShaderType.ComputeShader);
+            lightShader = new Shader("Shaders/compute-light.comp", ShaderType.ComputeShader);
             columnSpansShader = new Shader("Shaders/compute-column-spans.comp", ShaderType.ComputeShader);
             applyEditsShader = new Shader("Shaders/compute-apply-edits.comp", ShaderType.ComputeShader);
             Log.Info("Generation shaders compiled successfully");
@@ -1373,6 +1376,22 @@ public sealed class ChunkStreamingManager : IDisposable
             // Clear world edits count if no edits
             var header = new int[4] { 0, 0, 0, 0 };
             GL.NamedBufferSubData(worldEditsBuffer, IntPtr.Zero, 16, header);
+        }
+
+        // Phase 2.1: Calculate Lighting
+        if (lightShader != null)
+        {
+            lightShader.Use();
+            lightShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
+            lightShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
+
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 9, chunkIndicesBuffers[bufferIndex]);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
+
+            // Dispatch: one work-group per chunk (16x1x16 threads)
+            // The shader handles the Y-loop internally for column initialization
+            GL.DispatchCompute(chunkIndices.Length, 1, 1);
+            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
         }
 
         // Phase 2.5: Generate Column Spans

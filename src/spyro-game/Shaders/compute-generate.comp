@@ -81,8 +81,12 @@ void main() {
     for (int i = 0; i < 4; i++) {
         uint blockType = generateBlockType(heights[i], int(ly), wx_base + i, wz);
         
+        // Ensure bits 8-31 are cleared (Biome, Light, Flags)
+        // Light (bits 16-23) must be 0 for the lighting pass to work correctly
+        uint packedVoxel = blockType & 0xFFu;
+        
         uint packedIdx = packedChunkOffset + uint(ly) * packedYStride + packedZOffset + (lx_base + i);
-        voxelData[packedIdx] = blockType;
+        voxelData[packedIdx] = packedVoxel;
     }
 }
 
