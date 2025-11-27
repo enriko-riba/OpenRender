@@ -1,0 +1,200 @@
+#version 460
+
+layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
+
+#include "terrain-common.glsl"
+
+uniform uint uChunkCount;
+uniform uint uWorldChunksXZ;
+
+layout(std430, binding = 9) readonly buffer ChunkIndicesBuffer {
+    uint chunkIndices[];
+};
+
+layout(std430, binding = 0) buffer VoxelDataBuffer {
+    uint voxelData[];
+};
+
+// Helper to pack light: Sky (4 bits) | Block (4 bits)
+// We use bits 16-23 of the voxel uint.
+// Sky: 16-19, Block: 20-23
+void setLight(uint chunkIdx, int lx, int ly, int lz, uint skyLight, uint blockLight) {
+    uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(lx) + uint(lz) * uint(CHUNK_SIDE_SIZE) + uint(ly) * uint(CHUNK_SIDE_SIZE_SQUARED);
+    uint voxel = voxelData[voxelIdx];
+    
+    // Clear bits 16-23
+    voxel &= ~(0xFFu << 16);
+    
+    // Set new light values
+    uint packedLight = (skyLight & 0xF) | ((blockLight & 0xF) << 4);
+    voxel |= (packedLight << 16);
+    
+    voxelData[voxelIdx] = voxel;
+}
+
+uint getBlockType(uint chunkIdx, int lx, int ly, int lz) {
+    uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(lx) + uint(lz) * uint(CHUNK_SIDE_SIZE) + uint(ly) * uint(CHUNK_SIDE_SIZE_SQUARED);
+    return voxelData[voxelIdx] & 0xFFu;
+}
+
+bool isTransparent(uint blockType) {
+    return blockType == BD_AIR || blockType == BD_WATER;
+}
+
+uint getEmissiveLevel(uint blockType) {
+    // TODO: Add proper emissive block types
+    // For now, let's say we don't have torches yet, but we can test with a specific block if needed.
+    // If we had lava (e.g. BD_LAVA), we would return 15.
+    return 0u;
+}
+
+uint getLight(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
+    if (pos.y >= CHUNK_Y_SIZE) return 0x0Fu; // Sky 15
+    if (pos.y < 0) return 0u;
+
+    // Fast path: Local chunk
+    if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
+        uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+        return (voxelData[voxelIdx] >> 16) & 0xFFu;
+    }
+    
+    // Neighbor lookup
+    uint currentGlobalIdx = chunkIndices[chunkIdx];
+    int chunkX = int(currentGlobalIdx % uWorldChunksXZ);
+    int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
+    int nChunkX = chunkX;
+    int nChunkZ = chunkZ;
+    int localX = pos.x;
+    int localZ = pos.z;
+
+    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; }
+    else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
+    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; }
+    else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
+
+    if (nChunkX >= 0 && nChunkX < int(uWorldChunksXZ) && nChunkZ >= 0 && nChunkZ < int(uWorldChunksXZ)) {
+        uint nGlobalIdx = uint(nChunkX + nChunkZ * int(uWorldChunksXZ));
+        // Linear search for neighbor in current batch
+        // Note: This is slow O(N), but N is small (batch size ~64).
+        // For better performance, we should use a map or grid, but this works for V1.
+        for (uint i = 0u; i < uChunkCount; i++) {
+            if (chunkIndices[i] == nGlobalIdx) {
+                uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+                return (voxelData[voxelIdx] >> 16) & 0xFFu;
+            }
+        }
+    }
+    
+    return 0u; // Neighbor not in batch
+}
+
+void main() {
+    uint chunkIdx = gl_WorkGroupID.x;
+    if (chunkIdx >= uChunkCount) return;
+
+    int lx = int(gl_LocalInvocationID.x);
+    int lz = int(gl_LocalInvocationID.z);
+    
+    // 1. Sky Light Initialization (Top-Down Raycast)
+    // We iterate from top to bottom for this column
+    
+    bool skyVisible = true;
+    uint currentSkyLight = 15u;
+    
+    for (int ly = CHUNK_Y_SIZE - 1; ly >= 0; ly--) {
+        uint blockType = getBlockType(chunkIdx, lx, ly, lz);
+        uint blockLight = getEmissiveLevel(blockType);
+        
+        if (skyVisible) {
+            if (!isTransparent(blockType)) {
+                skyVisible = false;
+                currentSkyLight = 0u; // Entered solid block
+            }
+        } else {
+            currentSkyLight = 0u; // Shadow
+        }
+        
+        // Water attenuation for Sky Light
+        if (skyVisible && blockType == BD_WATER) {
+             // If we hit water, we are still "sky visible" but light decays fast
+             // Actually, for simple top-down, let's just keep it 15 until we hit solid, 
+             // or maybe reduce it? 
+             // Minecraft logic: Water reduces light by 3 per block.
+             // But here we are just doing the "Source" initialization.
+             // If we want proper water darkness, we should treat water as "semi-solid" for the raycast?
+             // Let's keep it simple: Water is transparent for "Sky Source", 
+             // but propagation will handle the decay.
+             // Wait, if I set it to 15 deep underwater, it will be bright.
+             // So I should decay it here if I'm not doing full propagation.
+             // Let's decay sky light in water immediately for this vertical pass.
+             if (currentSkyLight >= 3u) currentSkyLight -= 3u;
+             else currentSkyLight = 0u;
+        }
+        
+        setLight(chunkIdx, lx, ly, lz, currentSkyLight, blockLight);
+    }
+    
+    // 2. Propagation (Iterative Flood Fill)
+    // We run multiple passes to spread light horizontally and vertically.
+    // Since we can't use a queue, we iterate. 15 iterations covers the max light radius.
+    // We sync threads within the chunk (workgroup) using barriers.
+    
+    for (int iter = 0; iter < 16; iter++) {
+        bool changed = false;
+        
+        // We need to ensure all writes from previous iteration are visible
+        memoryBarrierBuffer();
+        barrier();
+        
+        // Iterate over the column
+        for (int ly = 0; ly < CHUNK_Y_SIZE; ly++) {
+            uint blockType = getBlockType(chunkIdx, lx, ly, lz);
+            if (!isTransparent(blockType)) continue; // Solids don't propagate light
+            
+            // Read current light
+            uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(lx) + uint(lz) * uint(CHUNK_SIDE_SIZE) + uint(ly) * uint(CHUNK_SIDE_SIZE_SQUARED);
+            uint voxel = voxelData[voxelIdx];
+            uint currentPacked = (voxel >> 16) & 0xFFu;
+            uint sky = currentPacked & 0xF;
+            uint block = (currentPacked >> 4) & 0xF;
+            
+            uint newSky = sky;
+            uint newBlock = block;
+            
+            // Check 6 neighbors
+            ivec3 pos = ivec3(lx, ly, lz);
+            ivec3 offsets[6] = {
+                ivec3(1,0,0), ivec3(-1,0,0),
+                ivec3(0,1,0), ivec3(0,-1,0),
+                ivec3(0,0,1), ivec3(0,0,-1)
+            };
+            
+            for (int i = 0; i < 6; i++) {
+                uint neighborPacked = getLight(pos + offsets[i], chunkIdx, vec3(0)); // chunkWorldOffset not needed for getLight logic
+                uint nSky = neighborPacked & 0xF;
+                uint nBlock = (neighborPacked >> 4) & 0xF;
+                
+                // Decay logic
+                // Air: -1, Water: -3
+                uint decay = (blockType == BD_WATER) ? 3u : 1u;
+                
+                if (nSky > decay && (nSky - decay) > newSky) newSky = nSky - decay;
+                if (nBlock > decay && (nBlock - decay) > newBlock) newBlock = nBlock - decay;
+            }
+            
+            if (newSky != sky || newBlock != block) {
+                setLight(chunkIdx, lx, ly, lz, newSky, newBlock);
+                changed = true;
+            }
+        }
+        
+        // Optimization: If no thread in the workgroup changed anything, we can stop early?
+        // Requires a reduction or shared variable.
+        // shared bool groupChanged;
+        // if (gl_LocalInvocationIndex == 0) groupChanged = false;
+        // barrier();
+        // if (changed) groupChanged = true;
+        // barrier();
+        // if (!groupChanged) break;
+    }
+}

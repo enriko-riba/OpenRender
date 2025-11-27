@@ -1,416 +1,349 @@
 #version 460
-// compute-compact.comp - Phase 3.4: Mesh Compaction
-// Purpose: Build compact vertex buffer from visible faces
-// Version: 4.0 (Phase 5.3: Per-chunk index buffers - one command per chunk)
-//
-// Phase 5.3: Per-Chunk Index Buffers - generates indices per face (restored efficient batching)
-// Phase 5.2: Face Index Encoding - removed normal vectors (saved memory)
-//
-// New vertex layout: position(12) + texCoord(8) + ao(4) + faceIndex(4) = 28 bytes
-// Old vertex layout: position(12) + normal(12) + texCoord(8) + ao(4) = 36 bytes
-// Savings: 8 bytes per vertex = 22 percent reduction
-//
-// PHASE 5.3 KEY CHANGE:
-// Now generates 6 indices per face (not shared across faces)
-// Enables one indirect command per chunk instead of per face
-// Result: ~1000 commands instead of 2.5M for full terrain
+// Mesh compaction: builds compact vertex + index buffers from visibility mask
 
 #include "terrain-common.glsl"
+#include "terrain-noise.glsl"
+#include "terrain-caves.glsl"
+#include "terrain-generation.glsl"
 
 layout(local_size_x = 16, local_size_y = 1, local_size_z = 16) in;
 
-// ============================================================================
-// Constants
-// ============================================================================
+const uint FACE_POS_X = 0u; const uint FACE_NEG_X = 1u; const uint FACE_POS_Y = 2u; const uint FACE_NEG_Y = 3u; const uint FACE_POS_Z = 4u; const uint FACE_NEG_Z = 5u;
+uniform uint uChunkCount; uniform uint uWorldChunksXZ; uniform uint uVertexRegionOffset; uniform uint uIndexRegionOffset;
 
-// Face indices
-const uint FACE_POS_X = 0u;
-const uint FACE_NEG_X = 1u;
-const uint FACE_POS_Y = 2u;
-const uint FACE_NEG_Y = 3u;
-const uint FACE_POS_Z = 4u;
-const uint FACE_NEG_Z = 5u;
+layout(std430, binding = 9) readonly buffer ChunkIndices { uint chunkIndices[]; };
+layout(std430, binding = 0) readonly buffer VoxelData { uint voxelData[]; };
+layout(std430, binding = 1) readonly buffer VisibilityMask { uint visibilityMask[]; };
+layout(std430, binding = 3) readonly buffer BaseOffsets { uint baseOffsets[]; };
+layout(std430, binding = 4) writeonly buffer CompactVertices { uint compactVertices[]; };
+layout(std430, binding = 7) writeonly buffer CompactIndices { uint compactIndices[]; };
+layout(std430, binding = 8) buffer PerChunkEmit { uint perChunkEmit[]; };
+layout(std430, binding = 12) readonly buffer OpaqueCounts { uint opaqueCounts[]; };
+layout(std430, binding = 14) buffer WaterEmit { uint waterEmit[]; };
 
-// Texture atlas layout: 3 columns x 2 rows
-// Order (left->right, top->bottom): top, bottom, front, left, right, back
-const float ATLAS_COLS = 3.0;
-const float ATLAS_ROWS = 2.0;
-const vec2 TILE_SIZE = vec2(1.0 / ATLAS_COLS, 1.0 / ATLAS_ROWS);
+struct WorldEdit { int x, y, z, type; };
+layout(std430, binding = 13) readonly buffer WorldEdits { int editCount; int _pad1; int _pad2; int _pad3; WorldEdit edits[]; };
 
-// ============================================================================
-// Uniforms
-// ============================================================================
-uniform uint uChunkCount;
-uniform uint uWorldChunksXZ;  // For calculating chunk world position
-uniform uint uSeed;
-uniform int uTestMode;
-uniform uint uVertexRegionOffset; // start vertex index for this batch region
-uniform uint uIndexRegionOffset;  // start index for this batch region
+shared uint s_OpaqueCount; shared uint s_WaterCount; shared uint s_OpaqueBase; shared uint s_WaterBase;
 
-// ============================================================================
-// SSBOs (using VoxelHelper.SSBOBindings constants)
-// ============================================================================
-
-// Input: Chunk indices
-layout(std430, binding = 6) readonly buffer ChunkIndices {
-    uint chunkIndices[];
-};
-
-// Input: Voxel data
-layout(std430, binding = 0) readonly buffer VoxelData {
-    uint voxelData[];
-};
-
-// Input: Visibility mask
-layout(std430, binding = 1) readonly buffer VisibilityMask {
-    uint visibilityMask[];
-};
-
-// Input: Base offsets (from prefix sum)
-layout(std430, binding = 3) readonly buffer BaseOffsets {
-    uint baseOffsets[];
-};
-
-// Output: Compacted vertices (Phase 5.2: position, texCoord, ao, faceIndex)
-layout(std430, binding = 4) writeonly buffer CompactVertices {
-    // vec3 pos, vec2 uv, float ao, uint faceIdx = 7 floats = 28 bytes
-    // faceIndex stored as float via uintBitsToFloat for simpler buffer layout
-    float compactVertices[];
-};
-
-// PHASE 5.3: Per-chunk index buffer (restored for efficient batching)
-layout(std430, binding = 7) writeonly buffer CompactIndices {
-    uint compactIndices[];
-};
-
-layout(std430, binding = 8) buffer PerChunkEmit {
-    uint perChunkEmit[];
-}; // per-chunk face emission counters
-
-// Input: Opaque counts (from compute-count)
-layout(std430, binding = 12) readonly buffer OpaqueCounts {
-    uint opaqueCounts[];
-};
-
-// Atomic counters for water emission
-layout(std430, binding = 14) buffer WaterEmit {
-    uint waterEmit[];
-};
-
-// Atomic counters
-layout(std430, binding = 5) buffer AtomicCounters {
-    uint vertexCounter;
-    uint indexCounter;
-    uint faceCounter;
-};
-
-struct WorldEdit {
-    int x, y, z, type;
-};
-
-layout(std430, binding = 13) readonly buffer WorldEdits {
-    int editCount;
-    int _pad1, _pad2, _pad3;
-    WorldEdit edits[];
-};
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-int getBlockFromEdits(int wx, int wy, int wz) {
-    for (int i = 0; i < editCount; i++) {
-        if (edits[i].x == wx && edits[i].y == wy && edits[i].z == wz) {
-            return edits[i].type;
-        }
-    }
-    return -1; // Not found
-}
-
-vec3 getFaceNormal(uint face) {
-    if (face == FACE_POS_X) return vec3(1, 0, 0);
-    if (face == FACE_NEG_X) return vec3(-1, 0, 0);
-    if (face == FACE_POS_Y) return vec3(0, 1, 0);
-    if (face == FACE_NEG_Y) return vec3(0, -1, 0);
-    if (face == FACE_POS_Z) return vec3(0, 0, 1);
-    if (face == FACE_NEG_Z) return vec3(0, 0, -1);
-    return vec3(0, 1, 0);
+int getBlockFromEdits(int wx, int wy, int wz) { 
+    for (int i=0;i<editCount;i++){ 
+        if(edits[i].x==wx && edits[i].y==wy && edits[i].z==wz) return edits[i].type; 
+    } 
+    return -1; 
 }
 
 void getFaceCorners(uint face, vec3 pos, out vec3 corners[4]) {
-    if (face == FACE_POS_X) {
-        corners[0] = pos + vec3(1, 0, 0);
-        corners[1] = pos + vec3(1, 1, 0);
-        corners[2] = pos + vec3(1, 1, 1);
-        corners[3] = pos + vec3(1, 0, 1);
-    }
-    else if (face == FACE_NEG_X) {
-        corners[0] = pos + vec3(0, 0, 1);
-        corners[1] = pos + vec3(0, 1, 1);
-        corners[2] = pos + vec3(0, 1, 0);
-        corners[3] = pos + vec3(0, 0, 0);
-    }
-    else if (face == FACE_POS_Y) {
-        corners[0] = pos + vec3(0, 1, 0);
-        corners[1] = pos + vec3(0, 1, 1);
-        corners[2] = pos + vec3(1, 1, 1);
-        corners[3] = pos + vec3(1, 1, 0);
-    }
-    else if (face == FACE_NEG_Y) {
-        corners[0] = pos + vec3(0, 0, 1);
-        corners[1] = pos + vec3(0, 0, 0);
-        corners[2] = pos + vec3(1, 0, 0);
-        corners[3] = pos + vec3(1, 0, 1);
-    }
-    else if (face == FACE_POS_Z) {
-        corners[0] = pos + vec3(1, 0, 1);
-        corners[1] = pos + vec3(1, 1, 1);
-        corners[2] = pos + vec3(0, 1, 1);
-        corners[3] = pos + vec3(0, 0, 1);
-    }
-    else if (face == FACE_NEG_Z) {
-        corners[0] = pos + vec3(0, 0, 0);
-        corners[1] = pos + vec3(0, 1, 0);
-        corners[2] = pos + vec3(1, 1, 0);
-        corners[3] = pos + vec3(1, 0, 0);
-    }
+    if (face==FACE_POS_X){ corners[0]=pos+vec3(1,0,0); corners[1]=pos+vec3(1,1,0); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,0,1);} 
+    else if (face==FACE_NEG_X){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(0,1,0); corners[3]=pos+vec3(0,0,0);} 
+    else if (face==FACE_POS_Y){ corners[0]=pos+vec3(0,1,0); corners[1]=pos+vec3(0,1,1); corners[2]=pos+vec3(1,1,1); corners[3]=pos+vec3(1,1,0);} 
+    else if (face==FACE_NEG_Y){ corners[0]=pos+vec3(0,0,1); corners[1]=pos+vec3(0,0,0); corners[2]=pos+vec3(1,0,0); corners[3]=pos+vec3(1,0,1);} 
+    else if (face==FACE_POS_Z){ corners[0]=pos+vec3(1,0,1); corners[1]=pos+vec3(1,1,1); corners[2]=pos+vec3(0,1,1); corners[3]=pos+vec3(0,0,1);} 
+    else { corners[0]=pos+vec3(0,0,0); corners[1]=pos+vec3(0,1,0); corners[2]=pos+vec3(1,1,0); corners[3]=pos+vec3(1,0,0);} 
 }
 
-vec2 getBaseUV(uint corner) {
-    if (corner == 0u) return vec2(0, 1);
-    if (corner == 1u) return vec2(0, 0);
-    if (corner == 2u) return vec2(1, 0);
-    if (corner == 3u) return vec2(1, 1);
-    return vec2(0, 0);
+uint mapAO(float ao){ 
+    // Adjusted thresholds for more subtle AO that doesn't stretch too far
+    // Higher thresholds = less aggressive darkening
+    if(ao > 0.95) return 4u;  // Nearly full brightness (was 0.9)
+    if(ao > 0.85) return 3u;  // Light shade (was 0.7)
+    if(ao > 0.65) return 2u;  // Medium shade (was 0.5)
+    if(ao > 0.45) return 1u;  // Dark shade (was 0.35)
+    return 0u;  // Darkest (corners only)
 }
 
-vec2 flipV(vec2 uv) { return vec2(uv.x, 1.0 - uv.y); }
-
-ivec2 faceToTile(uint face) {
-    if (face == FACE_POS_Y) return ivec2(0, 0);
-    if (face == FACE_NEG_Y) return ivec2(1, 0);
-    if (face == FACE_POS_Z) return ivec2(2, 0);
-    if (face == FACE_NEG_X) return ivec2(0, 1);
-    if (face == FACE_POS_X) return ivec2(1, 1);
-    return ivec2(2, 1);
-}
-
-vec2 getAtlasUV(uint face, uint corner) {
-    vec2 uv = getBaseUV(corner);
-    ivec2 tile = faceToTile(face);
-    vec2 offset = vec2(float(tile.x) / ATLAS_COLS, float(tile.y) / ATLAS_ROWS);
-    vec2 finalUv = offset + uv * TILE_SIZE;
-    return flipV(finalUv);
+void writeVertex(uint vertexIdx, ivec3 localPos, uint aoIdx, uint face, uint corner, uint blockType, uint lightData){
+    uint x=uint(localPos.x)&0x1Fu; 
+    uint y=uint(localPos.y)&0x1FFu; 
+    uint z=uint(localPos.z)&0x1Fu; 
+    uint packed1=x|(y<<5)|(z<<14)|((face&0x7u)<<19)|((aoIdx&0x7u)<<22)|((corner&0x3u)<<25);
+    uint packed2=(blockType&0xFFu) | (lightData << 8);
+    uint baseIdx=vertexIdx*2u; 
+    compactVertices[baseIdx]=packed1; 
+    compactVertices[baseIdx+1u]=packed2;
 }
 
 bool isSolid(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
-    if (pos.y < 0) return true; // Bottom is solid
-    if (pos.y >= CHUNK_Y_SIZE) return false; // Top is air
+    if (pos.y < 0) return true;
+    if (pos.y >= CHUNK_Y_SIZE) return false;
 
-    // Check if inside current chunk
     if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
         uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
         uint voxel = voxelData[voxelIdx];
-        // Water is NOT solid for AO purposes (it doesn't occlude solid blocks)
-        return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
-    } 
-    
-    // Outside current chunk - try to find neighbor in current batch
+        return (voxel & 0xFFu) > BD_WATER;
+    }
+
     uint currentGlobalIdx = chunkIndices[chunkIdx];
     int chunkX = int(currentGlobalIdx % uWorldChunksXZ);
     int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
-    
     int nChunkX = chunkX;
     int nChunkZ = chunkZ;
     int localX = pos.x;
     int localZ = pos.z;
-    
+
     if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; }
     else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
-    
     if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; }
     else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
-    
-    // Check world bounds
+
     if (nChunkX >= 0 && nChunkX < int(uWorldChunksXZ) && nChunkZ >= 0 && nChunkZ < int(uWorldChunksXZ)) {
         uint nGlobalIdx = uint(nChunkX + nChunkZ * int(uWorldChunksXZ));
-        
-        // Linear search in batch (batch size is small, ~64)
         for (uint i = 0u; i < uChunkCount; i++) {
             if (chunkIndices[i] == nGlobalIdx) {
-                // Found neighbor in batch! Read its data.
-                uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
-                uint voxel = voxelData[voxelIdx];
-                return (voxel & 0xFFu) > BLOCK_WATER_LEVEL;
+                if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
+                    uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+                    uint voxel = voxelData[voxelIdx];
+                    return (voxel & 0xFFu) > BD_WATER;
+                }
+                break;
             }
         }
     }
 
-    // Fallback: Outside chunk and not in batch - use procedural generation
+    // Procedural fallback: MUST use generateBlockType() to match terrain generation exactly.
+    // See docs/terrain/AO_CHUNK_BORDER_FIX.md for detailed explanation.
     int wx = int(chunkWorldOffset.x) + pos.x;
     int wz = int(chunkWorldOffset.z) + pos.z;
     int wy = pos.y;
-
-    // Check edits first
     int editType = getBlockFromEdits(wx, wy, wz);
-    if (editType != -1) {
-        return editType > int(BLOCK_WATER_LEVEL);
+    if (editType != -1) return editType > int(BD_WATER);
+
+    int height = generateHeight(wx, wz);
+    uint blockType = generateBlockType(height, wy, wx, wz);
+    return blockType > BD_WATER;
+}
+
+uint getLight(ivec3 pos, uint chunkIdx, vec3 chunkWorldOffset) {
+    if (pos.y >= CHUNK_Y_SIZE) return 0x0Fu; // Full Sky Light above world
+    if (pos.y < 0) return 0u; // No light below world
+
+    if (pos.x >= 0 && pos.x < CHUNK_SIDE_SIZE && pos.z >= 0 && pos.z < CHUNK_SIDE_SIZE) {
+        uint voxelIdx = chunkIdx * uint(CHUNK_VOXEL_COUNT) + uint(pos.x) + uint(pos.z) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+        uint voxel = voxelData[voxelIdx];
+        return (voxel >> 16) & 0xFFu;
     }
 
-    int height;
-    if (uTestMode == 1) {
-        int neighborChunkX = wx / CHUNK_SIDE_SIZE;
-        int neighborChunkZ = wz / CHUNK_SIDE_SIZE;
-        height = 40 + int((uint(neighborChunkX) + uint(neighborChunkZ)) % 8u);
-    } else {
-        height = generateHeight(wx, wz, uSeed);
+    uint currentGlobalIdx = chunkIndices[chunkIdx];
+    int chunkX = int(currentGlobalIdx % uWorldChunksXZ);
+    int chunkZ = int(currentGlobalIdx / uWorldChunksXZ);
+    int nChunkX = chunkX;
+    int nChunkZ = chunkZ;
+    int localX = pos.x;
+    int localZ = pos.z;
+
+    if (pos.x < 0) { nChunkX--; localX += CHUNK_SIDE_SIZE; }
+    else if (pos.x >= CHUNK_SIDE_SIZE) { nChunkX++; localX -= CHUNK_SIDE_SIZE; }
+    if (pos.z < 0) { nChunkZ--; localZ += CHUNK_SIDE_SIZE; }
+    else if (pos.z >= CHUNK_SIDE_SIZE) { nChunkZ++; localZ -= CHUNK_SIDE_SIZE; }
+
+    if (nChunkX >= 0 && nChunkX < int(uWorldChunksXZ) && nChunkZ >= 0 && nChunkZ < int(uWorldChunksXZ)) {
+        uint nGlobalIdx = uint(nChunkX + nChunkZ * int(uWorldChunksXZ));
+        for (uint i = 0u; i < uChunkCount; i++) {
+            if (chunkIndices[i] == nGlobalIdx) {
+                if (localX >= 0 && localX < CHUNK_SIDE_SIZE && localZ >= 0 && localZ < CHUNK_SIDE_SIZE) {
+                    uint voxelIdx = i * uint(CHUNK_VOXEL_COUNT) + uint(localX) + uint(localZ) * uint(CHUNK_SIDE_SIZE) + uint(pos.y) * uint(CHUNK_SIDE_SIZE_SQUARED);
+                    uint voxel = voxelData[voxelIdx];
+                    return (voxel >> 16) & 0xFFu;
+                }
+                break;
+            }
+        }
+    }
+
+    // Fallback for unloaded chunks:
+    // If the neighbor is not in the batch, we must guess its light level.
+    // We use the procedural generation to check if it's solid.
+    // If it's Solid -> Light 0.
+    // If it's Air/Water -> Assume Sky Light 15 (Daylight).
+    // This prevents "Dark Walls" on chunk boundaries (cliffs).
+    // Side effect: Cave endings at chunk borders will appear bright (light bleeding),
+    // but this is preferable to dark artifacts on the surface.
+    
+    // Re-use isSolid logic (which handles edits + procedural)
+    // We need to reconstruct the world position for isSolid
+    // chunkWorldOffset is passed in.
+    // But isSolid takes local pos. We have local pos (which might be -1 or 16).
+    // isSolid handles out-of-bounds local pos by doing its own neighbor lookup.
+    // But we want the PROCEDURAL fallback of isSolid.
+    
+    // Let's just call isSolid directly. It has the logic.
+    if (isSolid(pos, chunkIdx, chunkWorldOffset)) {
+        return 0u; // Solid blocks are dark
     }
     
-    // Procedural: Solid if y <= height AND not water level
-    // generateBlockType returns WATER for y <= WATER_LEVEL.
-    // So if y <= WATER_LEVEL, it is water (not solid).
-    // If y > WATER_LEVEL and y <= height, it is solid.
-    // Wait, generateBlockType returns SAND for y < WATER_LEVEL - 2.
-    // So deep underwater is solid.
-    // But for simple AO, let's assume water level is water.
-    if (pos.y <= WATER_LEVEL) return false; // Water is not solid
+    // It's transparent (Air/Water).
+    // Check if it's above the terrain height (Sky) or below (Cave/Overhang).
+    int wx = int(chunkWorldOffset.x) + pos.x;
+    int wz = int(chunkWorldOffset.z) + pos.z;
+    int height = generateHeight(wx, wz);
     
-    return pos.y <= height;
+    if (pos.y > height) return 0x0Fu; // Above terrain -> Sky Light 15
+    
+    // Below terrain (Cave or Overhang shadow) -> Dark
+    return 0u;
 }
 
 float calculateAO(uint face, uint corner, uint chunkIdx, vec3 chunkWorldOffset, ivec3 p) {
-    ivec3 o1, o2, o3;
+    ivec3 o1,o2,o3;
     
-    if (face == FACE_POS_Y) { // Top
-        if (corner == 0u) { o1=ivec3(-1,1,0); o2=ivec3(0,1,-1); o3=ivec3(-1,1,-1); }
-        else if (corner == 1u) { o1=ivec3(-1,1,0); o2=ivec3(0,1,1); o3=ivec3(-1,1,1); }
-        else if (corner == 2u) { o1=ivec3(1,1,0); o2=ivec3(0,1,1); o3=ivec3(1,1,1); }
-        else { o1=ivec3(1,1,0); o2=ivec3(0,1,-1); o3=ivec3(1,1,-1); }
+    if (face==FACE_POS_Y){ 
+        if(corner==0u){o1=ivec3(-1,1,0);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} 
+        else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} 
+        else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} 
+        else {o1=ivec3(1,1,0);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} 
     }
-    else if (face == FACE_NEG_Y) { // Bottom
-        if (corner == 0u) { o1=ivec3(-1,-1,0); o2=ivec3(0,-1,1); o3=ivec3(-1,-1,1); }
-        else if (corner == 1u) { o1=ivec3(-1,-1,0); o2=ivec3(0,-1,-1); o3=ivec3(-1,-1,-1); }
-        else if (corner == 2u) { o1=ivec3(1,-1,0); o2=ivec3(0,-1,-1); o3=ivec3(1,-1,-1); }
-        else { o1=ivec3(1,-1,0); o2=ivec3(0,-1,1); o3=ivec3(1,-1,1); }
+    else if (face==FACE_NEG_Y){ 
+        if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} 
+        else if(corner==1u){o1=ivec3(-1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} 
+        else if(corner==2u){o1=ivec3(1,-1,0);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} 
+        else {o1=ivec3(1,-1,0);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} 
     }
-    else if (face == FACE_POS_Z) { // Front
-        if (corner == 0u) { o1=ivec3(1,0,1); o2=ivec3(0,-1,1); o3=ivec3(1,-1,1); }
-        else if (corner == 1u) { o1=ivec3(1,0,1); o2=ivec3(0,1,1); o3=ivec3(1,1,1); }
-        else if (corner == 2u) { o1=ivec3(-1,0,1); o2=ivec3(0,1,1); o3=ivec3(-1,1,1); }
-        else { o1=ivec3(-1,0,1); o2=ivec3(0,-1,1); o3=ivec3(-1,-1,1); }
+    else if (face==FACE_POS_Z){ 
+        if(corner==0u){o1=ivec3(1,0,1);o2=ivec3(0,-1,1);o3=ivec3(1,-1,1);} 
+        else if(corner==1u){o1=ivec3(1,0,1);o2=ivec3(0,1,1);o3=ivec3(1,1,1);} 
+        else if(corner==2u){o1=ivec3(-1,0,1);o2=ivec3(0,1,1);o3=ivec3(-1,1,1);} 
+        else {o1=ivec3(-1,0,1);o2=ivec3(0,-1,1);o3=ivec3(-1,-1,1);} 
     }
-    else if (face == FACE_NEG_Z) { // Back
-        if (corner == 0u) { o1=ivec3(-1,0,-1); o2=ivec3(0,-1,-1); o3=ivec3(-1,-1,-1); }
-        else if (corner == 1u) { o1=ivec3(-1,0,-1); o2=ivec3(0,1,-1); o3=ivec3(-1,1,-1); }
-        else if (corner == 2u) { o1=ivec3(1,0,-1); o2=ivec3(0,1,-1); o3=ivec3(1,1,-1); }
-        else { o1=ivec3(1,0,-1); o2=ivec3(0,-1,-1); o3=ivec3(1,-1,-1); }
+    else if (face==FACE_NEG_Z){ 
+        if(corner==0u){o1=ivec3(-1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(-1,-1,-1);} 
+        else if(corner==1u){o1=ivec3(-1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(-1,1,-1);} 
+        else if(corner==2u){o1=ivec3(1,0,-1);o2=ivec3(0,1,-1);o3=ivec3(1,1,-1);} 
+        else {o1=ivec3(1,0,-1);o2=ivec3(0,-1,-1);o3=ivec3(1,-1,-1);} 
     }
-    else if (face == FACE_POS_X) { // Right
-        if (corner == 0u) { o1=ivec3(1,-1,0); o2=ivec3(1,0,-1); o3=ivec3(1,-1,-1); }
-        else if (corner == 1u) { o1=ivec3(1,1,0); o2=ivec3(1,0,-1); o3=ivec3(1,1,-1); }
-        else if (corner == 2u) { o1=ivec3(1,1,0); o2=ivec3(1,0,1); o3=ivec3(1,1,1); }
-        else { o1=ivec3(1,-1,0); o2=ivec3(1,0,1); o3=ivec3(1,-1,1); }
+    else if (face==FACE_POS_X){ 
+        if(corner==0u){o1=ivec3(1,-1,0);o2=ivec3(1,0,-1);o3=ivec3(1,-1,-1);} 
+        else if(corner==1u){o1=ivec3(1,1,0);o2=ivec3(1,0,-1);o3=ivec3(1,1,-1);} 
+        else if(corner==2u){o1=ivec3(1,1,0);o2=ivec3(1,0,1);o3=ivec3(1,1,1);} 
+        else {o1=ivec3(1,-1,0);o2=ivec3(1,0,1);o3=ivec3(1,-1,1);} 
     }
-    else { // Left (FACE_NEG_X)
-        if (corner == 0u) { o1=ivec3(-1,-1,0); o2=ivec3(-1,0,1); o3=ivec3(-1,-1,1); }
-        else if (corner == 1u) { o1=ivec3(-1,1,0); o2=ivec3(-1,0,1); o3=ivec3(-1,1,1); }
-        else if (corner == 2u) { o1=ivec3(-1,1,0); o2=ivec3(-1,0,-1); o3=ivec3(-1,1,-1); }
-        else { o1=ivec3(-1,-1,0); o2=ivec3(-1,0,-1); o3=ivec3(-1,-1,-1); }
+    else { // FACE_NEG_X
+        if(corner==0u){o1=ivec3(-1,-1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,-1,1);} 
+        else if(corner==1u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,1);o3=ivec3(-1,1,1);} 
+        else if(corner==2u){o1=ivec3(-1,1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,1,-1);} 
+        else {o1=ivec3(-1,-1,0);o2=ivec3(-1,0,-1);o3=ivec3(-1,-1,-1);} 
     }
-
-    bool s1 = isSolid(p + o1, chunkIdx, chunkWorldOffset);
-    bool s2 = isSolid(p + o2, chunkIdx, chunkWorldOffset);
-    bool s3 = isSolid(p + o3, chunkIdx, chunkWorldOffset);
-
-    if (s1 && s2) return 0.33;
-    int count = (s1?1:0) + (s2?1:0) + (s3?1:0);
-    if (count == 0) return 1.0;
-    if (count == 1) return 0.8;
-    if (count == 2) return 0.6;
+    
+    // Use isSolid (with procedural fallback) for correct cross-chunk AO
+    bool s1=isSolid(p+o1,chunkIdx,chunkWorldOffset); 
+    bool s2=isSolid(p+o2,chunkIdx,chunkWorldOffset); 
+    bool s3=isSolid(p+o3,chunkIdx,chunkWorldOffset);
+    
+    if(s1 && s2) return 0.33; 
+    int count=(s1?1:0)+(s2?1:0)+(s3?1:0); 
+    if(count==0) return 1.0; 
+    if(count==1) return 0.8; 
+    if(count==2) return 0.6; 
     return 0.4;
 }
 
-void writeVertex(uint vertexIdx, vec3 position, vec2 uv, float ao, uint faceIdx) {
-    uint baseIdx = vertexIdx * 7u;
-    compactVertices[baseIdx + 0u] = position.x;
-    compactVertices[baseIdx + 1u] = position.y;
-    compactVertices[baseIdx + 2u] = position.z;
-    compactVertices[baseIdx + 3u] = uv.x;
-    compactVertices[baseIdx + 4u] = uv.y;
-    compactVertices[baseIdx + 5u] = ao;
-    compactVertices[baseIdx + 6u] = uintBitsToFloat(faceIdx);
-}
-
-// ============================================================================
-// Main Shader
-// ============================================================================
-
-void main(){
-    uint chunkIdx = gl_WorkGroupID.x;
-    uint workGroupY = gl_WorkGroupID.y;
-    if(chunkIdx>=uChunkCount||workGroupY>=uint(CHUNK_Y_SIZE)) return;
-    uint actualChunkIdx = chunkIndices[chunkIdx];
-    uint chunkX = actualChunkIdx % uWorldChunksXZ;
-    uint chunkZ = actualChunkIdx / uWorldChunksXZ;
-    vec3 chunkWorldOffset = vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
-    int lx=int(gl_LocalInvocationID.x);
-    int lz=int(gl_LocalInvocationID.z);
+void main(){ 
+    uint chunkIdx=gl_WorkGroupID.x; 
+    if(chunkIdx>=uChunkCount) return; 
+    
+    uint actualChunkIdx=chunkIndices[chunkIdx]; 
+    uint chunkX=actualChunkIdx%uWorldChunksXZ; 
+    uint chunkZ=actualChunkIdx/uWorldChunksXZ; 
+    vec3 chunkWorldOffset=vec3(float(chunkX*CHUNK_SIDE_SIZE),0.0,float(chunkZ*CHUNK_SIDE_SIZE));
+    
+    uint workGroupY=gl_WorkGroupID.y; 
+    if(workGroupY>=uint(CHUNK_Y_SIZE)) return; 
+    
+    int lx=int(gl_LocalInvocationID.x); 
+    int lz=int(gl_LocalInvocationID.z); 
     int ly=int(workGroupY);
-    uint voxelIdx = chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED);
-    uint voxel = voxelData[voxelIdx];
-    uint blockType = voxel & 0xFFu;
-    uint mask = visibilityMask[voxelIdx];
-    if(mask==0u||blockType==0u) return;
-
-    bool isWater = (blockType == BLOCK_WATER_LEVEL);
-
-    uint vertexChunkBase = baseOffsets[chunkIdx];
-    uint indexChunkBase  = (vertexChunkBase / 4u) * 6u;
     
-    // Calculate base index offset for this face type
-    // Opaque starts at 0, Water starts after all opaque faces
-    uint opaqueCount = opaqueCounts[chunkIdx];
+    if(gl_LocalInvocationIndex==0u){ 
+        s_OpaqueCount=0u; 
+        s_WaterCount=0u; 
+    } 
+    barrier();
     
-    vec3 voxelPos = chunkWorldOffset + vec3(float(lx),float(ly),float(lz));
-    for(uint face=0u; face<6u; face++){
-        uint faceBit=1u<<face;
-        if((mask & faceBit)==0u) continue;
+    uint voxelIdx=chunkIdx*uint(CHUNK_VOXEL_COUNT)+uint(lx)+uint(lz)*uint(CHUNK_SIDE_SIZE)+uint(ly)*uint(CHUNK_SIDE_SIZE_SQUARED); 
+    uint voxel=voxelData[voxelIdx]; 
+    uint blockDescriptor=voxel&0xFFu; 
+    uint mask=getPackedVisMask(voxelIdx,visibilityMask); 
+    
+    bool hasFaces=(mask!=0u && blockDescriptor!=0u); 
+    bool isWater=(blockDescriptor==BD_WATER); 
+    uint faceCount=0u; 
+    
+    if(hasFaces){ 
+        faceCount=uint(bitCount(mask&0x3Fu)); 
+        if(faceCount>0u){ 
+            if(isWater) atomicAdd(s_WaterCount,faceCount); 
+            else atomicAdd(s_OpaqueCount,faceCount);
+        } 
+    } 
+    
+    barrier(); 
+    
+    if(gl_LocalInvocationIndex==0u){ 
+        if(s_OpaqueCount>0u) s_OpaqueBase=atomicAdd(perChunkEmit[chunkIdx],s_OpaqueCount); 
+        if(s_WaterCount>0u) s_WaterBase=atomicAdd(waterEmit[chunkIdx],s_WaterCount);
+    } 
+    
+    barrier(); 
+    
+    if(!hasFaces||faceCount==0u) return; 
+    
+    uint localFaceIdx; 
+    if(isWater){ 
+        uint opaqueChunkCount=opaqueCounts[chunkIdx]; 
+        localFaceIdx=opaqueChunkCount+atomicAdd(s_WaterBase,faceCount);
+    } else { 
+        localFaceIdx=atomicAdd(s_OpaqueBase,faceCount); 
+        uint opaqueChunkCount=opaqueCounts[chunkIdx]; 
+        if(localFaceIdx>=opaqueChunkCount) return; 
+    }
+    
+    uint vertexChunkBase=baseOffsets[chunkIdx]; 
+    uint indexChunkBase=(vertexChunkBase/4u)*6u; 
+    vec3 voxelPos=chunkWorldOffset+vec3(float(lx),float(ly),float(lz)); 
+    uint currentFaceOffset=0u; 
+    
+    for(uint face=0u; face<6u; face++){ 
+        uint faceBit=1u<<face; 
+        if((mask&faceBit)==0u) continue; 
         
-        uint localFaceIdx;
-        if (isWater) {
-            localFaceIdx = opaqueCount + atomicAdd(waterEmit[chunkIdx], 1u);
-        } else {
-            localFaceIdx = atomicAdd(perChunkEmit[chunkIdx], 1u);
-        }
+        uint finalFaceIdx=localFaceIdx+currentFaceOffset; 
+        currentFaceOffset++; 
+        uint vertBaseAbs=uVertexRegionOffset+vertexChunkBase+finalFaceIdx*4u; 
+        uint idxWriteBase=uIndexRegionOffset+indexChunkBase+finalFaceIdx*6u; 
         
-        uint vertBaseAbs = uVertexRegionOffset + vertexChunkBase + localFaceIdx*4u;
-        uint idxWriteBase = uIndexRegionOffset + indexChunkBase + localFaceIdx*6u;
-        atomicAdd(faceCounter,1u);
-        vec3 corners[4];
-        getFaceCorners(face, voxelPos, corners);
+        vec3 corners[4]; 
+        getFaceCorners(face,voxelPos,corners); 
         
-        // Pack blockType into face index (bits 8-15)
-        // Bit 8 was previously isWater, now we use 8 bits for type
-        uint facePacked = face | (blockType << 8);
-
+        // Use voxel position (lx, ly, lz) as the base for AO calculation, not corner position
+        ivec3 voxelLocalPos = ivec3(lx, ly, lz);
+        
+        // Extract light data from NEIGHBOR (the air block in front of the face)
+        // We must use the light level of the space the face is facing into, not the solid block itself (which is dark)
+        ivec3 faceOffset;
+        if (face == FACE_POS_X) faceOffset = ivec3(1, 0, 0);
+        else if (face == FACE_NEG_X) faceOffset = ivec3(-1, 0, 0);
+        else if (face == FACE_POS_Y) faceOffset = ivec3(0, 1, 0);
+        else if (face == FACE_NEG_Y) faceOffset = ivec3(0, -1, 0);
+        else if (face == FACE_POS_Z) faceOffset = ivec3(0, 0, 1);
+        else faceOffset = ivec3(0, 0, -1);
+        
+        uint lightData = getLight(voxelLocalPos + faceOffset, chunkIdx, chunkWorldOffset);
+        
         for(uint v=0u; v<4u; v++){
-            vec2 uv;
-            if (isWater) {
-                // Water uses full texture, not atlas
-                uv = flipV(getBaseUV(v));
-            } else {
-                uv = getAtlasUV(face,v);
-            }
-            
-            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,ivec3(lx,ly,lz));
-            writeVertex(vertBaseAbs+v,corners[v],uv,ao,facePacked);
+            vec3 worldPos=corners[v];
+            vec3 localPosFloat=worldPos-chunkWorldOffset;
+            ivec3 localPos=ivec3(round(localPosFloat));
+            // Calculate AO from the voxel position, not the corner position
+            float ao=calculateAO(face,v,chunkIdx,chunkWorldOffset,voxelLocalPos);
+            uint aoIdx=mapAO(ao);
+            writeVertex(vertBaseAbs+v,localPos,aoIdx,face,v,blockDescriptor,lightData);
         }
-        uint localVertBase = localFaceIdx*4u;
-        compactIndices[idxWriteBase+0u]=localVertBase+0u;
-        compactIndices[idxWriteBase+1u]=localVertBase+1u;
-        compactIndices[idxWriteBase+2u]=localVertBase+2u;
-        compactIndices[idxWriteBase+3u]=localVertBase+2u;
-        compactIndices[idxWriteBase+4u]=localVertBase+3u;
-        compactIndices[idxWriteBase+5u]=localVertBase+0u;
+        
+        uint localVertBase=finalFaceIdx*4u; 
+        compactIndices[idxWriteBase+0u]=localVertBase+0u; 
+        compactIndices[idxWriteBase+1u]=localVertBase+1u; 
+        compactIndices[idxWriteBase+2u]=localVertBase+2u; 
+        compactIndices[idxWriteBase+3u]=localVertBase+2u; 
+        compactIndices[idxWriteBase+4u]=localVertBase+3u; 
+        compactIndices[idxWriteBase+5u]=localVertBase+0u; 
     }
 }

@@ -17,8 +17,9 @@ src/spyro-game/
 ├── Shaders/           # Compute and rendering shaders
 ├── World/             # Voxel world system (terrain, chunks, etc.)
 ├── docs/              # Project documentation
-│   ├── TERRAIN_PROGRESS.md      # 🎯 Current work tracking
-│   └── terrain/                 # Terrain system docs
+│   ├── terrain/
+│   │   ├── PLAN_TERRAIN_AND_BIOMES.md   # Architecture & detailed plan
+│   │   └── PROGRESS.md                   # Progress tracker & next steps
 ├── MainScene.cs       # Main game scene
 └── LoadingScene2.cs   # Loading screen
 ```
@@ -30,8 +31,8 @@ src/spyro-game/
 **Timeline**: Week 1 of 5  
 **Goal**: Replace CPU-based terrain with GPU-first streaming system
 
-📋 **[Track Progress →](docs/TERRAIN_PROGRESS.md)**  
-📖 **[Architecture →](../../docs/GPU-Terrain-Architecture.md)**
+📋 **[Track Progress →](docs/terrain/PROGRESS.md)**  
+📖 **[Architecture/Plan →](docs/terrain/PLAN_TERRAIN_AND_BIOMES.md)**
 
 ### Known Issues
 - Terrain generation is slow (~45ms per 64 chunks)
@@ -75,9 +76,9 @@ New (in development):
 
 ## Documentation
 
-- **[Terrain Progress Tracker](docs/TERRAIN_PROGRESS.md)** - Current work status
-- **[GPU Architecture](../../docs/GPU-Terrain-Architecture.md)** - Technical design
-- **[Original Terrain Doc](docs/terrain/VoxelWorld-Streaming-Terrain-Doc.md)** - Requirements
+- **[Terrain Progress Tracker](docs/terrain/PROGRESS.md)** - Current work status
+- **[Terrain Plan](docs/terrain/PLAN_TERRAIN_AND_BIOMES.md)** - Detailed architecture/plan
+- **[Terrain Architecture (legacy CPU notes)](docs/terrain/terrain_generation_architecture.md)** - Prior design for reference
 
 ## Development Notes
 

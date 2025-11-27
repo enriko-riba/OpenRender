@@ -196,6 +196,57 @@ public class Texture : IDisposable
         return texture;
     }
 
+    /// <summary>
+    /// Splits a horizontal texture atlas into separate textures.
+    /// </summary>
+    /// <param name="atlasPath">Path to the atlas texture</param>
+    /// <param name="columns">Number of columns in the atlas</param>
+    /// <param name="generateMipMap">Whether to generate mipmaps for split textures</param>
+    /// <returns>Array of split textures, one per column</returns>
+    public static Texture[] SplitHorizontalAtlas(string atlasPath, int columns, bool generateMipMap = true)
+    {
+        if (columns <= 1) throw new ArgumentException("Atlas must have at least 2 columns", nameof(columns));
+
+        // Load the atlas image
+        StbImage.stbi_set_flip_vertically_on_load(1);
+        using var stream = File.OpenRead(atlasPath);
+        var atlasImage = ImageResult.FromStream(stream, ColorComponents.RedGreenBlueAlpha);
+
+        var tileWidth = atlasImage.Width / columns;
+        var tileHeight = atlasImage.Height;
+        var bytesPerPixel = 4; // RGBA
+
+        var textures = new Texture[columns];
+
+        for (var col = 0; col < columns; col++)
+        {
+            // Extract tile data
+            var tileData = new byte[tileWidth * tileHeight * bytesPerPixel];
+            
+            for (var y = 0; y < tileHeight; y++)
+            {
+                var srcOffset = (y * atlasImage.Width + col * tileWidth) * bytesPerPixel;
+                var dstOffset = y * tileWidth * bytesPerPixel;
+                Array.Copy(atlasImage.Data, srcOffset, tileData, dstOffset, tileWidth * bytesPerPixel);
+            }
+
+            // Create texture from tile data
+            var tileName = $"{atlasPath}_col{col}";
+            textures[col] = FromByteArray(
+                tileData,
+                tileWidth,
+                tileHeight,
+                tileName,
+                generateMipMap,
+                TextureTarget.Texture2D,
+                SizedInternalFormat.Srgb8Alpha8,
+                ignoreCache: false
+            );
+        }
+
+        return textures;
+    }
+
     public void Dispose()
     {
         GL.DeleteTexture(Handle);

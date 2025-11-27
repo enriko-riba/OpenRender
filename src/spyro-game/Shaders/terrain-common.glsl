@@ -1,23 +1,113 @@
 // terrain-common.glsl
-// Shared terrain generation logic for compute shaders
+// Core constants, types, and helpers shared by all terrain shaders
+// 
+// This file contains ONLY:
+// - Constants (chunk sizes, water level, block descriptors)
+// - Basic macros (packed voxel access)
+// - Bindings (textures, UBOs, SSBOs)
+// - Hash function (used by all modules)
+//
+// For specific functionality, include the appropriate module:
+// - terrain-noise.glsl: Noise generation (2D/3D, FBM, domain warp)
+// - terrain-caves.glsl: Cave generation (cheese, spaghetti)
+// - terrain-generation.glsl: Terrain height, density, block types
+// - terrain-biomes.glsl: Climate, biomes, region mixing
+// - terrain-greedy-meshing.glsl: Greedy meshing pack/unpack
 
+#ifndef TERRAIN_COMMON_GLSL
+#define TERRAIN_COMMON_GLSL
+
+// ============================================================================
 // Constants
+// ============================================================================
+
 const int CHUNK_SIDE_SIZE = 16;
-const int CHUNK_Y_SIZE = 128;
+const int CHUNK_Y_SIZE = 384;
 const int CHUNK_SIDE_SIZE_SQUARED = CHUNK_SIDE_SIZE * CHUNK_SIDE_SIZE;
 const int CHUNK_VOXEL_COUNT = CHUNK_SIDE_SIZE_SQUARED * CHUNK_Y_SIZE;
+const int PACKED_CHUNK_VOXEL_COUNT = CHUNK_VOXEL_COUNT; // UNPACKED
 const int WATER_LEVEL = 35;
 
-// Block types
-const uint BLOCK_NONE = 0u;
-const uint BLOCK_WATER_LEVEL = 1u;
-const uint BLOCK_ROCK = 2u;
-const uint BLOCK_SAND = 3u;
-const uint BLOCK_DIRT = 4u;
-const uint BLOCK_GRASS_DIRT = 5u;
-const uint BLOCK_BEDROCK = 8u; // Added BedRock
+// ============================================================================
+// Block Descriptors
+// ============================================================================
 
-// Simple hash function
+// Block descriptors (matches BlockDescriptor C# enum)
+// These represent geology layers for biome texture selection
+const uint BD_AIR = 0u;                    // Air (empty space)
+const uint BD_WATER = 1u;                  // Water
+const uint BD_SURFACE = 2u;                // Surface layer (grass, snow, sand at surface)
+const uint BD_SUBSURFACE = 3u;             // Subsurface layer (dirt below surface)
+const uint BD_DEEP_SUBSURFACE = 4u;        // Deep subsurface (rock/stone)
+const uint BD_UNDERWATER_SURFACE = 5u;     // Underwater surface (ocean floor)
+const uint BD_UNDERWATER_SUBSURFACE = 6u;  // Underwater subsurface (bedrock)
+const uint BD_SHORELINE = 7u;              // Shoreline (beach sand)
+
+// ============================================================================
+// Helper Macros
+// ============================================================================
+
+// Helper to read packed voxel (UNPACKED: 1 voxel per uint)
+#define getPackedVoxel(idx, buf) (buf[idx] & 0xFFu)
+
+// Helper to read packed visibility mask (PACKED: 4 masks per uint)
+// idx is the voxel index. We shift right by 2 to get uint index, and use bottom 2 bits for byte shift.
+#define getPackedVisMask(idx, buf) ((buf[idx >> 2] >> ((idx & 3u) * 8u)) & 0xFFu)
+
+// Helper to write packed voxel (UNPACKED: 1 voxel per uint)
+#define setPackedVoxel(idx, val, buf) { buf[idx] = val; }
+
+// Atomic write for packed voxel (UNPACKED: 1 voxel per uint)
+#define atomicSetPackedVoxel(idx, val, buf) { buf[idx] = val; }
+
+// ============================================================================
+// Bindings (Textures and UBOs)
+// ============================================================================
+
+// Bindings (M1/M2)
+layout(binding = 6) uniform sampler1D uHeightSpline;
+layout(binding = 7) uniform usampler2D uBiomeLUT;
+
+layout(std430, binding = 10) readonly buffer TerrainParams {
+    uint uSeed;
+    float uWorldScale;
+    float uMacroScale;
+    float uContScale; float uErodeScale; float uRidgeScale;
+    float uWarpScale; float uWarpStrength;
+    float uBaseTemp; float uLapseRate; float uBaseHum; float uCoastDry;
+    float uClimateScale; float uClimateWarp;
+    float uRegionCellSize; float uRegionJitter; float uRegionFeather; uint uMaxRegionMix;
+    float uCheeseFreq; float uCheeseAmp; float uSpaghettiFreq; float uSpaghettiAmp;
+    float uCaveThreshold; float uCurlScale; float uCurlStrength;
+    // Terrain shaping parameters
+    float uCoastThreshold;
+    float uMountainThreshold;
+    float uCliffFreq;
+    float uCliffAmp;
+    float uOverhangFreq;
+    float uOverhangAmp;
+    float uShorelineRange;
+    float uSubsurfaceDepth;
+    float uCaveDepthFade;
+    float uCaveSlopeFadeMin;
+    float uCaveSlopeFadeMax;
+    float uCaveFloodExt;
+    // NEW: Ocean/Land/Altitude thresholds for biome system
+    float uOceanThreshold;
+    float uDeepOceanThreshold;
+    float uAlpineElevation;
+    float uCoastRange;
+    // Overhang range parameters
+    float uOverhangDepthRange;
+    float uOverhangHeightRange;
+    float uOverhangFalloffRange;
+} params;
+
+// ============================================================================
+// Core Hash Function
+// ============================================================================
+
+// Simple hash function (used by all noise/terrain modules)
 uint hash(uint x, uint seed) {
     x += seed;
     x = ((x >> 16) ^ x) * 0x45d9f3bu;
@@ -26,114 +116,4 @@ uint hash(uint x, uint seed) {
     return x;
 }
 
-// Simple 2D noise  
-float noise2D(int x, int z, uint seed) {
-    uint n = hash(uint(x) + hash(uint(z), seed), seed);
-    return float(n) / float(0xFFFFFFFFu) * 2.0 - 1.0;
-}
-
-// Bilinear interpolation
-float interpolatedNoise(float x, float z, uint seed) {
-    int ix = int(floor(x));
-    int iz = int(floor(z));
-    float fx = fract(x);
-    float fz = fract(z);
-    
-    // Smooth the interpolation
-    fx = fx * fx * (3.0 - 2.0 * fx);
-    fz = fz * fz * (3.0 - 2.0 * fz);
-    
-    float v00 = noise2D(ix, iz, seed);
-    float v10 = noise2D(ix + 1, iz, seed);
-    float v01 = noise2D(ix, iz + 1, seed);
-    float v11 = noise2D(ix + 1, iz + 1, seed);
-    
-    float v0 = mix(v00, v10, fx);
-    float v1 = mix(v01, v11, fx);
-    return mix(v0, v1, fz);
-}
-
-// Multi-octave noise
-float multiOctaveNoise(float x, float z, uint seed, int octaves) {
-    float total = 0.0;
-    float frequency = 1.0;
-    float amplitude = 1.0;
-    float maxValue = 0.0;
-    
-    for (int i = 0; i < octaves; i++) {
-        total += interpolatedNoise(x * frequency, z * frequency, seed + uint(i * 100)) * amplitude;
-        maxValue += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    
-    return total / maxValue;
-}
-
-// Generate terrain height
-int generateHeight(int wx, int wz, uint seed) {
-    // Base terrain (large features)
-    float baseScale = 0.005;  // 1/200
-    float baseNoise = multiOctaveNoise(float(wx) * baseScale, float(wz) * baseScale, seed, 4);
-    
-    // Detail noise (small features)
-    float detailScale = 0.02;  // 1/50
-    float detailNoise = multiOctaveNoise(float(wx) * detailScale, float(wz) * detailScale, seed + 1000u, 3);
-    
-    // Combine: base terrain + 30% detail
-    float combined = baseNoise + detailNoise * 0.3;
-    
-    // Map to height range: water level ±40 blocks = range of 80 blocks
-    float h01 = combined * 0.5 + 0.5;  // Map [-1,1] to [0,1]
-    int height = int(float(WATER_LEVEL) + (h01 - 0.5) * 80.0);
-    
-    // Clamp to valid range
-    return clamp(height, 0, CHUNK_Y_SIZE - 1);
-}
-
-// Check if water is nearby (radius 3)
-bool isNearWater(int wx, int wz, uint seed) {
-    // Check neighbors in radius 3
-    // Optimization: check sparse points first
-    for (int dz = -3; dz <= 3; dz+=3) {
-        for (int dx = -3; dx <= 3; dx+=3) {
-            if (dx == 0 && dz == 0) continue;
-            int h = generateHeight(wx + dx, wz + dz, seed);
-            if (h <= WATER_LEVEL) return true;
-        }
-    }
-    // Check closer points if needed (optional for performance)
-    return false;
-}
-
-uint generateBlockType(int height, int y, int wx, int wz, uint seed) {
-    if (y > height) {
-        if (y <= WATER_LEVEL) {
-            return BLOCK_WATER_LEVEL;
-        }
-        return BLOCK_NONE;
-    } 
-    
-    // Solid blocks (y <= height)
-    
-    // Surface block
-    if (y == height) {
-        if (y < WATER_LEVEL) {
-            // Underwater surface
-            if (y >= WATER_LEVEL - 1) return BLOCK_SAND; // 1 block below water
-            return BLOCK_BEDROCK; // Deep underwater
-        } else {
-            // Above water surface
-            if (y <= WATER_LEVEL + 2) {
-                // Shoreline check
-                if (isNearWater(wx, wz, seed)) return BLOCK_SAND;
-            }
-            return BLOCK_GRASS_DIRT;
-        }
-    }
-    
-    // Sub-surface
-    int depth = height - y;
-    if (depth <= 2) return BLOCK_DIRT;
-    return BLOCK_ROCK;
-}
+#endif // TERRAIN_COMMON_GLSL

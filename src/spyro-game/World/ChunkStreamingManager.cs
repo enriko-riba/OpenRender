@@ -35,6 +35,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
     // Phase 2: GPU generation shader
     private Shader? generationShader;
+    // Phase 2.1: Lighting
+    private Shader? lightShader;
     // Phase 2.5: Column Spans
     private Shader? columnSpansShader;
     private readonly uint[] columnSpansBuffers = new uint[2];
@@ -45,13 +47,27 @@ public sealed class ChunkStreamingManager : IDisposable
     private uint worldEditsBuffer; // NEW: Buffer for neighbor edits
     private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
 
+    // Terrain Config & Params (M1)
+    private TerrainConfig terrainConfig = new();
+    private uint terrainParamsSSBO;
+    private int heightSplineTexture;
+    private int biomeLutTexture;
+
+    public uint TerrainParamsSSBO => terrainParamsSSBO;
+    public int BiomeLutTexture => biomeLutTexture;
+
+    private FileSystemWatcher? configWatcher;
+    private volatile bool pendingConfigReload;
+    private const string ConfigFileName = "terrain_config.json";
+
     private int generationSeed;
-    private bool generationTestMode;
+    // private bool generationTestMode; // Removed
     private readonly uint[] chunkIndicesBuffers = new uint[2];
     private readonly uint[] voxelDataBuffers = new uint[2];
     private readonly uint[] columnHeightsBuffers = new uint[2];
     private readonly uint[] columnMetaBuffers = new uint[2];
-    private int nextBufferIndex = 0; // Phase 5.3: Toggle for double buffering
+    // Note: Removed nextBufferIndex - double buffering disabled due to neighbor lookup issues
+    // See docs/terrain/BUG_FIX_MISSING_FACES.md for details
 
     // Phase 3: dedicated chunk indices buffer to avoid races with Phase 2 uploads
     private uint compactionChunkIndicesBuffer;
@@ -73,12 +89,23 @@ public sealed class ChunkStreamingManager : IDisposable
     private uint visibilityFlagsSSBO;
     private uint cullingChunkIndicesBuffer; // Dedicated buffer for culling to avoid conflicts with generation
     private uint cullingCommandSlotsBuffer; // Buffer for command slots corresponding to chunks being culled
+    private uint cullingStatsBuffer; // Buffer for culling statistics
+    private uint cullingReadbackBuffer; // Buffer for async readback
+    private IntPtr cullingFence; // Fence for async readback
+
+    // Culling Stats
+    public int StatVisibleChunks { get; private set; }
+    public int StatFrustumCulledChunks { get; private set; }
+    public int StatTotalIndices { get; private set; }
+    public int StatVisibleIndices { get; private set; }
+
     private int[]? lastVisibilityFlags;
     private int chunkIndicesBufferCapacity = 0;  // Track allocated capacity
     private int visibilityFlagsCapacity = 0;     // Track visibility buffer capacity
     public int VisibleChunkCount { get; private set; }
     public int CulledChunkCount { get; private set; }
 
+    // Phase GM-1: Greedy meshing feature flag
     // Phase 5: Streaming & Unloading
     // CRITICAL: Unload distance must provide hysteresis but not accumulate too many chunks
     // Load distance: 16 chunks radius (1089 chunks in 33x33 grid)
@@ -135,6 +162,33 @@ public sealed class ChunkStreamingManager : IDisposable
     public void Update(Vector3 cameraPosition)
     {
         currentFrame++;
+
+        // Handle hot-reload
+        if (pendingConfigReload)
+        {
+            pendingConfigReload = false;
+            // Add small delay/retry to avoid file lock issues
+            try
+            {
+                var configPath = Path.Combine(Environment.CurrentDirectory, ConfigFileName);
+                terrainConfig = TerrainConfig.Load(configPath);
+                UploadTerrainConfig();
+                Log.Info("TerrainConfig hot-reloaded");
+
+                // Mark all chunks as dirty to force regeneration with new params
+                foreach (var kvp in activeChunks)
+                {
+                    if (kvp.Value.State == TerrainChunkState.Ready)
+                    {
+                        MarkChunkDirty(kvp.Key);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to hot-reload TerrainConfig: {ex.Message}");
+            }
+        }
 
         // 1. Poll completed batches
         PollCompletedBatches();
@@ -337,15 +391,15 @@ public sealed class ChunkStreamingManager : IDisposable
                         for (var s = 0; s < count; s++)
                         {
                             var packed = *(uint*)(bytePtr + offset + 4 + s * 4);
-                            var startY = (byte)(packed & 0xFF);
-                            var endY = (byte)((packed >> 8) & 0xFF);
-                            var blockType = (byte)((packed >> 16) & 0xFF);
+                            var startY = (short)(packed & 0x1FF);
+                            var endY = (short)((packed >> 9) & 0x1FF);
+                            var blockType = (byte)((packed >> 18) & 0xFF);
 
                             data.Spans[col * 16 + s] = new ColumnSpan
                             {
                                 StartY = startY,
                                 EndY = endY,
-                                BlockType = blockType
+                                BlockDescriptor = blockType // This is BlockDescriptor from GPU
                             };
 
                             // Populate Chunk.cs arrays (exclusive upper bound)
@@ -369,16 +423,17 @@ public sealed class ChunkStreamingManager : IDisposable
                         Log.Warn($"ChunkStreamingManager: Chunk {chunkIdx} not found in VoxelWorld during readback!");
                     }
                 }
-               // Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
+                // Log.Debug($"ChunkStreamingManager: Readback complete for {chunksUpdated}/{chunkIndices.Length} chunks.");
             }
         }
     }
 
     private void SubmitPendingBatches()
     {
-        // Don't submit if we have too many in-flight batches (pipeline full)
-        // We have 2 buffers, so we can handle at most 2 batches in the entire pipeline
-        if (totalBatchesInPipeline >= MAX_IN_FLIGHT_BATCHES)
+        // CRITICAL FIX: With single-buffer approach, only allow 1 batch at a time
+        // This prevents buffer 0 from being overwritten while a previous batch is processing
+        // See docs/terrain/BUG_FIX_MISSING_FACES.md for details
+        if (totalBatchesInPipeline >= 1)
             return;
 
         // Check if we have any pending chunks
@@ -448,10 +503,11 @@ public sealed class ChunkStreamingManager : IDisposable
             }
         }
 
-        // CRITICAL FIX: Actually dispatch GPU generation!
-        // Use double buffering for generation buffers
-        var bufferIndex = nextBufferIndex;
-        nextBufferIndex = (nextBufferIndex + 1) % 2;
+        // CRITICAL FIX: Always use buffer 0 to avoid neighbor lookup issues
+        // Double-buffering disabled - neighbor chunks must be in the same buffer
+        // for the visibility shader to correctly read their voxel data
+        // See docs/terrain/BUG_FIX_MISSING_FACES.md for details
+        const int bufferIndex = 0;
 
         var fence = DispatchGenerationAsync([.. batchIndices], bufferIndex);
 
@@ -467,7 +523,7 @@ public sealed class ChunkStreamingManager : IDisposable
         inFlightBatches.Enqueue(submission);
         totalBatchesInPipeline++;
 
-        Log.Info($"ChunkStreamingManager: Submitted batch of {batchIndices.Count} chunks (frame {currentFrame})");
+        Log.Info($"ChunkStreamingManager: Submitted batch of {batchIndices.Count} chunks (frame {currentFrame}, bufferIndex={bufferIndex})");
     }
 
     private void PollCompletedBatches()
@@ -773,6 +829,23 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
+    /// Get detailed streaming progress information for loading screens.
+    /// </summary>
+    public (int targetChunks, int loadedChunks, int pendingChunks, int generatingChunks, float progressPercent) GetStreamingProgress()
+    {
+        var (total, pending, generating, ready) = GetStats();
+        
+        // Calculate target based on current load distance
+        var targetChunks = (2 * LoadDistance + 1) * (2 * LoadDistance + 1);
+        
+        // Progress is based on ready chunks vs target
+        var progressPercent = ready / (float)Math.Max(1, targetChunks) * 100f;
+        progressPercent = Math.Clamp(progressPercent, 0f, 100f);
+        
+        return (targetChunks, ready, pending, generating, progressPercent);
+    }
+
+    /// <summary>
     /// Get memory usage statistics (Phase 5)
     /// </summary>
     public (long totalBytes, long voxelBytes, long visibilityBytes, long compactBytes) GetMemoryStats()
@@ -837,6 +910,12 @@ public sealed class ChunkStreamingManager : IDisposable
         // Log.Debug($"ApplyBlockEdit: local({localX},{localY},{localZ}) -> voxelIdx {voxelIdx} (Y*256 + Z*16 + X)");
 
         // Mark voxel as edited in edit mask
+        // FIX: If breaking a block underwater, replace with Water instead of Air
+        if (isBreaking && (int)worldPosition.Y <= VoxelHelper.WaterLevel)
+        {
+            blockType = BlockType.WaterLevel;
+        }
+
         MarkVoxelEdited(chunkIdx, voxelIdx, blockType, isBreaking);
 
         // Mark chunk as dirty (needs regeneration)
@@ -869,9 +948,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
-        
+
         // Save edits immediately to prevent data loss
-        SaveEdits();
+        SaveChunkEdits(chunkIdx);
     }
 
     /// <summary>
@@ -927,10 +1006,10 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Initialize GPU resources for terrain generation.
     /// Pre-allocates buffers for maximum view distance to eliminate progressive resizing.
     /// </summary>
-    public void InitializeGpuGeneration(int seed, bool testMode = false, int maxChunks = 0)
+    public void InitializeGpuGeneration(int seed, int maxChunks = 0)
     {
         generationSeed = seed;
-        generationTestMode = testMode;
+        // generationTestMode = testMode; // Removed
 
         // Pre-allocate for max view distance if not specified
         if (maxChunks == 0)
@@ -992,7 +1071,11 @@ public sealed class ChunkStreamingManager : IDisposable
             for (var i = 0; i < 2; i++)
             {
                 GL.NamedBufferStorage(chunkIndicesBuffers[i], maxChunks * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-                GL.NamedBufferStorage(voxelDataBuffers[i], maxChunks * voxelsPerChunk * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+                // UNPACKED Voxel Data: 1 voxel per uint (32 bits per voxel)
+                // Was: maxChunks * VoxelHelper.PackedChunkVoxelCount * sizeof(uint)
+                // Now: maxChunks * VoxelHelper.ChunkVoxelCount * sizeof(uint)
+                // Note: VoxelHelper.PackedChunkVoxelCount is now equal to ChunkVoxelCount in VoxelHelper.cs
+                GL.NamedBufferStorage(voxelDataBuffers[i], maxChunks * VoxelHelper.ChunkVoxelCount * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
                 GL.NamedBufferStorage(columnHeightsBuffers[i], maxChunks * VoxelHelper.ChunkSideSizeSquare * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
                 GL.NamedBufferStorage(columnMetaBuffers[i], maxChunks * VoxelHelper.ChunkSideSizeSquare * sizeof(uint) * 4, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
                 // 68 bytes per column (struct ColumnSpans { uint count; uint spans[16]; })
@@ -1015,6 +1098,49 @@ public sealed class ChunkStreamingManager : IDisposable
             Log.Info($"Reallocated generation buffers for {maxChunks} chunks (Double Buffered)");
         }
 
+        // Initialize Terrain Params (M1)
+        // Load config from disk or save default
+        var configPath = Path.Combine(Environment.CurrentDirectory, ConfigFileName);
+        if (File.Exists(configPath))
+        {
+            terrainConfig = TerrainConfig.Load(configPath);
+            Log.Info($"Loaded TerrainConfig from {configPath}");
+        }
+        else
+        {
+            terrainConfig.Save(configPath);
+            Log.Info($"Saved default TerrainConfig to {configPath}");
+        }
+
+        // Setup FileSystemWatcher
+        if (configWatcher == null)
+        {
+            try
+            {
+                configWatcher = new FileSystemWatcher(Environment.CurrentDirectory, ConfigFileName)
+                {
+                    NotifyFilter = NotifyFilters.LastWrite
+                };
+                configWatcher.Changed += (s, e) => pendingConfigReload = true;
+                configWatcher.EnableRaisingEvents = true;
+                Log.Info("TerrainConfig hot-reload enabled");
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Failed to setup config watcher: {ex.Message}");
+            }
+        }
+
+        if (terrainParamsSSBO == 0)
+        {
+            GL.CreateBuffers(1, out terrainParamsSSBO);
+            var paramsSize = System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.GpuParams>();
+            GL.NamedBufferStorage(terrainParamsSSBO, paramsSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+        }
+
+        // Upload Terrain Params
+        UploadTerrainConfig();
+
         Log.CheckGlError();
 
         // FORCE shader reload by clearing cache
@@ -1031,6 +1157,7 @@ public sealed class ChunkStreamingManager : IDisposable
         try
         {
             generationShader = new Shader("Shaders/compute-generate.comp", ShaderType.ComputeShader);
+            lightShader = new Shader("Shaders/compute-light.comp", ShaderType.ComputeShader);
             columnSpansShader = new Shader("Shaders/compute-column-spans.comp", ShaderType.ComputeShader);
             applyEditsShader = new Shader("Shaders/compute-apply-edits.comp", ShaderType.ComputeShader);
             Log.Info("Generation shaders compiled successfully");
@@ -1055,9 +1182,9 @@ public sealed class ChunkStreamingManager : IDisposable
         // Use Shader class methods instead of direct GL calls - they handle type checking
         try
         {
-            generationShader.SetUInt("uSeed", (uint)seed);
+            // generationShader.SetUInt("uSeed", (uint)seed); // Removed
             generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
-            generationShader.SetInt("uTestMode", testMode ? 1 : 0);
+            // generationShader.SetInt("uTestMode", testMode ? 1 : 0); // Removed
             // Skip uElevOffset and uElevScale - they're not used in shader anymore (hardcoded in height01At)
             Log.Info("Shader uniforms set successfully");
         }
@@ -1068,9 +1195,53 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         Log.CheckGlError();
-        Log.Info($"GPU terrain generation initialized (testMode={testMode})");
+        Log.Info($"GPU terrain generation initialized");
 
         LoadEdits(); // Load edits after initialization
+    }
+
+    private void UploadTerrainConfig()
+    {
+        // Ensure seed is not 0 (which might cause issues or be uninitialized)
+        if (generationSeed == 0) generationSeed = 1337;
+
+        // Upload Terrain Params
+        var gpuParams = terrainConfig.GetGpuParams();
+        gpuParams.uSeed = (uint)generationSeed; // Keep the seed consistent with init
+
+        Log.Info($"Uploading TerrainParams: Seed={gpuParams.uSeed}, ContScale={gpuParams.uContScale}, WarpScale={gpuParams.uWarpScale}");
+
+        GL.NamedBufferSubData(terrainParamsSSBO, IntPtr.Zero, System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.GpuParams>(), ref gpuParams);
+
+        // Create and upload Height Spline Texture (1D)
+        if (heightSplineTexture == 0)
+        {
+            GL.CreateTextures(TextureTarget.Texture1D, 1, out heightSplineTexture);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            // Initial storage allocation
+            GL.TextureStorage1D(heightSplineTexture, 1, SizedInternalFormat.R32f, 256);
+        }
+        var heightData = terrainConfig.BakeHeightSplineLut(256);
+        GL.TextureSubImage1D(heightSplineTexture, 0, 0, 256, PixelFormat.Red, PixelType.Float, heightData);
+
+        // Create and upload Biome LUT Texture (2D)
+        if (biomeLutTexture == 0)
+        {
+            GL.CreateTextures(TextureTarget.Texture2D, 1, out biomeLutTexture);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            // Initial storage allocation
+            GL.TextureStorage2D(biomeLutTexture, 1, SizedInternalFormat.R8ui, 256, 256);
+        }
+        var biomeData = terrainConfig.BuildBiomeIdLut(256);
+        GL.TextureSubImage2D(biomeLutTexture, 0, 0, 0, 256, 256, PixelFormat.RedInteger, PixelType.UnsignedByte, biomeData);
+
+        // M5: Reload biome textures if renderer is active (hot reload)
+        terrainRenderer?.LoadBiomeTextures(terrainConfig);
     }
 
     /// <summary>
@@ -1086,20 +1257,33 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.NamedBufferSubData(chunkIndicesBuffers[bufferIndex], IntPtr.Zero, chunkIndices.Length * sizeof(int), chunkIndices);
 
         // Bind SSBOs with correct bindings matching shader
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 6, chunkIndicesBuffers[bufferIndex]);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 9, chunkIndicesBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, columnHeightsBuffers[bufferIndex]);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, columnMetaBuffers[bufferIndex]);
 
+        // Bind Terrain Params (M1/M2) - Binding 10 as per terrain-common.glsl
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+
+        // Bind Textures
+        GL.ActiveTexture(TextureUnit.Texture6);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        GL.ActiveTexture(TextureUnit.Texture7);
+        GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
+
         // Set ALL uniforms every dispatch
         generationShader.Use();
+        // generationShader.SetInt("uHeightSpline", 6); // Using layout(binding=6)
+        // generationShader.SetInt("uBiomeLUT", 7);     // Using layout(binding=7)
         generationShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
         generationShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
-        generationShader.SetUInt("uSeed", (uint)generationSeed);
-        generationShader.SetInt("uTestMode", generationTestMode ? 1 : 0);
+        // generationShader.SetUInt("uSeed", (uint)generationSeed); // Removed
+        // generationShader.SetInt("uTestMode", generationTestMode ? 1 : 0); // Removed
 
-        // Dispatch: one work-group per chunk, matching layout (16,1,16)
-        GL.DispatchCompute(chunkIndices.Length, 1, 1);
+        // Dispatch: one work-group per chunk Y-slice
+        // Phase 5.6 FIX: compute-generate now loops over Y via workgroups (parallel execution)
+        // Dispatch (chunkCount, 384, 1)
+        GL.DispatchCompute(chunkIndices.Length, VoxelHelper.ChunkYSize, 1);
 
         // Memory barrier to ensure writes complete before fence
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
@@ -1192,6 +1376,22 @@ public sealed class ChunkStreamingManager : IDisposable
             // Clear world edits count if no edits
             var header = new int[4] { 0, 0, 0, 0 };
             GL.NamedBufferSubData(worldEditsBuffer, IntPtr.Zero, 16, header);
+        }
+
+        // Phase 2.1: Calculate Lighting
+        if (lightShader != null)
+        {
+            lightShader.Use();
+            lightShader.SetUInt("uChunkCount", (uint)chunkIndices.Length);
+            lightShader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
+
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 9, chunkIndicesBuffers[bufferIndex]);
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
+
+            // Dispatch: one work-group per chunk (16x1x16 threads)
+            // The shader handles the Y-loop internally for column initialization
+            GL.DispatchCompute(chunkIndices.Length, 1, 1);
+            GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
         }
 
         // Phase 2.5: Generate Column Spans
@@ -1298,25 +1498,46 @@ public sealed class ChunkStreamingManager : IDisposable
         // Bind world edits buffer for neighbor correction (Phase 5.5 FIX)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 7, worldEditsBuffer);
 
+        // Bind Terrain Params (M1/M2) - Binding 10
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+
+        // Bind Textures
+        GL.ActiveTexture(TextureUnit.Texture6);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        GL.ActiveTexture(TextureUnit.Texture7);
+        GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
+
         phase3Buffers.BindBuffersForVisibility();
         visibilityShader.Use();
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uHeightSpline"), 6); // Using layout(binding=6)
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uBiomeLUT"), 7);     // Using layout(binding=7)
         GL.Uniform1(visibilityShader.GetUniformLocation("uChunkCount"), chunkCount);
-        GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed);
         GL.Uniform1(visibilityShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
-        GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uSeed"), (uint)generationSeed); // Removed
+        // GL.Uniform1(visibilityShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0); // Removed
 
-        GL.DispatchCompute((int)chunkCount, 128, 1);
+        // Phase 5.6 FIX: compute-visibility now loops over Y via workgroups (parallel execution)
+        // Dispatch (chunkCount, 384, 1)
+        GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
 
         // Stage 3.2 Count
         phase3Buffers.BindBuffersForCount();
         // Bind OpaqueCounts buffer (binding 12)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
+        // Bind VoxelData buffer (binding 0) - Needed to distinguish water/opaque
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 0, voxelDataBuffers[bufferIndex]);
+
+        // CRITICAL: Clear count buffers before atomic accumulation
+        GL.NamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), new uint[chunkCount]);
+        GL.NamedBufferSubData(phase3Buffers.OpaqueCountsBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), new uint[chunkCount]);
 
         countShader.Use();
         GL.Uniform1(countShader.GetUniformLocation("uChunkCount"), chunkCount);
-        var countWorkGroups = (chunkCount + 255) / 256;
-        GL.DispatchCompute((int)countWorkGroups, 1, 1);
+        
+        // Phase 5.6 FIX: compute-count now loops over Y via workgroups (parallel reduction)
+        // Dispatch (chunkCount, 384, 1)
+        GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
         GL.MemoryBarrier(MemoryBarrierFlags.ShaderStorageBarrierBit);
 
         // Stage 3.3 Prefix Sum (GPU)
@@ -1347,35 +1568,57 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var chunkCount = (uint)chunkIndices.Length;
 
-        // Fetch face counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
+        // Fetch face/quad counts for each chunk (needed to set VisibleVoxelCount for indirect commands)
         var counts = new uint[chunkCount];
+        
+        // Read from CountBuffer (per-face counts)
         GL.GetNamedBufferSubData(phase3Buffers.CountBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), counts);
 
+        // After computing 'counts' from QuadCountsBuffer in ExecutePhase3_Part2
         // OPTIMIZATION: Calculate offsets and totals on CPU to avoid 2 extra readbacks
         // We only need to read 'counts'. Base offsets and totals are derived from it.
         var baseOffsets = new uint[chunkCount];
-        uint totalVertices = 0;
+        uint totalVertices =  0;
         for (var i = 0; i < chunkCount; i++)
         {
             baseOffsets[i] = totalVertices;
-            totalVertices += counts[i] * 4u; // 4 vertices per face
+            totalVertices += counts[i] * 4u; // 4 vertices per face/quad
         }
-        var totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face
+        var totalIndices = (totalVertices / 4u) * 6u; // 6 indices per face/quad
 
         var allocatedVertexOffset = phase3Buffers.AllocateVertexRegion(totalVertices);
         var allocatedIndexOffset = phase3Buffers.AllocateIndexRegion(totalIndices);
 
+        // CRITICAL FIX: Upload CPU-calculated baseOffsets (vertex offsets) to GPU
+        // compute-scan produces face counts, but compute-compact expects vertex offsets (face count * 4)
+        // Since we calculated the correct vertex offsets on CPU, we must upload them.
+        GL.NamedBufferSubData(phase3Buffers.OffsetBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), baseOffsets);
+
         // Stage 3.4 Compaction
         phase3Buffers.ResetAtomicCounters();
-        GL.ClearNamedBufferData(phase3Buffers.PerChunkEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
-        GL.ClearNamedBufferData(phase3Buffers.WaterEmitBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+
+        // Clear counters with SubData instead of ClearNamedBufferData to avoid format errors
+        // We only need to clear the first chunkCount entries as the shader uses gl_WorkGroupID.x
+        var zeros = new uint[chunkCount];
+        GL.NamedBufferSubData(phase3Buffers.PerChunkEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
+        GL.NamedBufferSubData(phase3Buffers.WaterEmitBuffer, IntPtr.Zero, (int)(chunkCount * sizeof(uint)), zeros);
+
         GL.NamedBufferData(compactionChunkIndicesBuffer, chunkIndices.Length * sizeof(int), chunkIndices, BufferUsageHint.DynamicDraw);
         GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 9, compactionChunkIndicesBuffer);
         // Bind the correct voxel data buffer for compaction
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VOXEL_DATA, voxelDataBuffers[bufferIndex]);
         // Bind world edits buffer for neighbor lookup
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, worldEditsBuffer);
+
+        // Bind Terrain Params (M1/M2) not needed for compaction; avoid clobbering binding=10 used by mergedQuads
+        // GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, terrainParamsSSBO);
+
+        // Bind Textures (not used by compact, safe but optional)
+        GL.ActiveTexture(TextureUnit.Texture6);
+        GL.BindTexture(TextureTarget.Texture1D, heightSplineTexture);
+        GL.ActiveTexture(TextureUnit.Texture7);
+        GL.BindTexture(TextureTarget.Texture2D, biomeLutTexture);
 
         phase3Buffers.BindBuffersForCompaction();
         // Bind OpaqueCounts buffer (binding 12)
@@ -1386,11 +1629,12 @@ public sealed class ChunkStreamingManager : IDisposable
         compactShader.Use();
         GL.Uniform1(compactShader.GetUniformLocation("uChunkCount"), chunkCount);
         GL.Uniform1(compactShader.GetUniformLocation("uWorldChunksXZ"), (uint)VoxelHelper.WorldChunksXZ);
-        GL.Uniform1(compactShader.GetUniformLocation("uSeed"), (uint)generationSeed);
-        GL.Uniform1(compactShader.GetUniformLocation("uTestMode"), generationTestMode ? 1 : 0);
         GL.Uniform1(compactShader.GetUniformLocation("uVertexRegionOffset"), allocatedVertexOffset);
         GL.Uniform1(compactShader.GetUniformLocation("uIndexRegionOffset"), allocatedIndexOffset);
-        GL.DispatchCompute((int)chunkCount, 128, 1);
+        
+        // Standard per-voxel dispatch: (chunkCount, CHUNK_Y_SIZE, 1) - one workgroup per Y-layer
+        GL.DispatchCompute((int)chunkCount, VoxelHelper.ChunkYSize, 1);
+        
         GL.MemoryBarrier(MemoryBarrierFlags.VertexAttribArrayBarrierBit | MemoryBarrierFlags.ElementArrayBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
 
         // Stage 3.5 Build indirect commands on GPU
@@ -1421,6 +1665,8 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.CHUNK_INDICES, compactionChunkIndicesBuffer);
         // Bind OpaqueCounts buffer (binding 12)
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 12, (int)phase3Buffers.OpaqueCountsBuffer);
+        // Bind ChunkInfo buffer (binding 13)
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, (int)phase3Buffers.ChunkInfoBuffer);
 
         buildIndirectShader ??= new Shader("Shaders/compute-build-indirect.comp", ShaderType.ComputeShader);
         buildIndirectShader.Use();
@@ -1434,7 +1680,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Create fence to track completion of Compaction/Build
         var fence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
 
-        Log.Info($"Phase 3 complete: {chunkCount} chunks (faces total approx={counts.Aggregate(0u, (a, c) => a + c)}) region offsets V={allocatedVertexOffset} I={allocatedIndexOffset}");
+        Log.Info($"Phase 3 complete: {chunkCount} chunks (faces/quads total approx={counts.Aggregate(0u, (a, c) => a + c)}) region offsets V={allocatedVertexOffset} I={allocatedIndexOffset}");
 
         // Return slots so we can update descriptors
         return (allocatedVertexOffset, allocatedIndexOffset, counts, baseOffsets, commandSlots, fence);
@@ -1446,6 +1692,8 @@ public sealed class ChunkStreamingManager : IDisposable
     public void InitializePhase4()
     {
         terrainRenderer = new VoxelTerrainRenderer();
+        // M5: Load biome textures
+        terrainRenderer.LoadBiomeTextures(terrainConfig);
         Log.Info("Phase 4 rendering initialized");
     }
 
@@ -1498,6 +1746,36 @@ public sealed class ChunkStreamingManager : IDisposable
             Log.Info($"Reallocated frustum culling buffers for {maxChunks} chunks");
         }
 
+        // Create dedicated chunk indices buffer for culling
+        if (cullingChunkIndicesBuffer == 0 || chunkIndicesBufferCapacity < maxChunks)
+        {
+            if (cullingChunkIndicesBuffer != 0) GL.DeleteBuffer(cullingChunkIndicesBuffer);
+            
+            GL.CreateBuffers(1, out cullingChunkIndicesBuffer);
+            GL.NamedBufferStorage(cullingChunkIndicesBuffer, maxChunks * sizeof(int), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingChunkIndicesBuffer, -1, "culling_chunk_indices_ssbo");
+            
+            chunkIndicesBufferCapacity = maxChunks;
+        }
+
+        // Create stats buffer (fixed size)
+        if (cullingStatsBuffer == 0)
+        {
+            GL.CreateBuffers(1, out cullingStatsBuffer);
+            GL.NamedBufferStorage(cullingStatsBuffer, 5 * sizeof(uint), IntPtr.Zero,
+                BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingStatsBuffer, -1, "culling_stats_ssbo");
+        }
+
+        // Create readback buffer
+        if (cullingReadbackBuffer == 0)
+        {
+            GL.CreateBuffers(1, out cullingReadbackBuffer);
+            GL.NamedBufferStorage(cullingReadbackBuffer, 5 * sizeof(uint), IntPtr.Zero,
+                BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, cullingReadbackBuffer, -1, "culling_readback_ssbo");
+        }
+
         Log.CheckGlError();
         Log.Info($"Frustum culling initialized (capacity: {maxChunks} chunks)");
     }
@@ -1531,6 +1809,27 @@ public sealed class ChunkStreamingManager : IDisposable
             return [.. Enumerable.Repeat(1, chunkIndices.Length)];
         }
 
+        // 1. Check if previous readback is ready (Async Readback)
+        if (cullingFence != IntPtr.Zero)
+        {
+            var status = GL.ClientWaitSync(cullingFence, 0, 0);
+            if (status == WaitSyncStatus.ConditionSatisfied || status == WaitSyncStatus.AlreadySignaled)
+            {
+                // Read back stats from readback buffer (non-blocking now)
+                uint[] stats = new uint[5];
+                GL.GetNamedBufferSubData(cullingReadbackBuffer, IntPtr.Zero, stats.Length * sizeof(uint), stats);
+                
+                StatTotalIndices = (int)stats[0];
+                StatVisibleIndices = (int)stats[1];
+                StatVisibleChunks = (int)stats[2];
+                StatFrustumCulledChunks = (int)stats[3];
+                // StatOccludedChunks = (int)stats[4]; // Removed
+                
+                GL.DeleteSync(cullingFence);
+                cullingFence = IntPtr.Zero;
+            }
+        }
+
         // Update frustum planes UBO
         UpdateFrustumUBO(camera);
 
@@ -1553,6 +1852,11 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 2, visibilityFlagsSSBO); // Still bound for debug/readback if needed
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 3, cullingCommandSlotsBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 4, (int)phase3Buffers.IndirectDrawBuffer);
+        
+        // Bind Stats Buffer (Binding 5)
+        // Clear stats first
+        GL.ClearNamedBufferData(cullingStatsBuffer, PixelInternalFormat.R32ui, PixelFormat.RedInteger, PixelType.UnsignedInt, IntPtr.Zero);
+        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 5, cullingStatsBuffer);
 
         // Set uniforms
         frustumShader.Use();
@@ -1560,13 +1864,20 @@ public sealed class ChunkStreamingManager : IDisposable
         GL.Uniform1(frustumShader.GetUniformLocation("chunkSideSize"), VoxelHelper.ChunkSideSize);
         GL.Uniform1(frustumShader.GetUniformLocation("chunkYSize"), VoxelHelper.ChunkYSize);
         GL.Uniform1(frustumShader.GetUniformLocation("worldChunksXZ"), VoxelHelper.WorldChunksXZ);
-
+        
         // Dispatch: 64 threads per workgroup, ceil(chunkCount / 64) workgroups
         var workGroups = (chunkIndices.Length + 63) / 64;
         GL.DispatchCompute(workGroups, 1, 1);
 
-        // Wait for completion
-        GL.MemoryBarrier(MemoryBarrierFlags.CommandBarrierBit | MemoryBarrierFlags.ShaderStorageBarrierBit);
+        // Wait for completion of compute (for the copy)
+        GL.MemoryBarrier(MemoryBarrierFlags.BufferUpdateBarrierBit);
+
+        // Copy stats to readback buffer for next frame
+        GL.CopyNamedBufferSubData(cullingStatsBuffer, cullingReadbackBuffer, IntPtr.Zero, IntPtr.Zero, 5 * sizeof(uint));
+        
+        // Create fence for next frame
+        if (cullingFence != IntPtr.Zero) GL.DeleteSync(cullingFence);
+        cullingFence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
 
         // PERFORMANCE FIX: Skip CPU readback - visibility flags are now consumed on GPU
         // The visibility_flags_ssbo remains bound and available for the renderer to use
@@ -1608,147 +1919,95 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public VoxelTerrainRenderer? GetTerrainRenderer() => terrainRenderer;
 
-    /// <summary>
-    /// Execute complete pipeline: Generation → Visibility → Compaction → Setup Rendering
-    /// Phase 5.1: Uses face count instead of index count.
-    /// This is the end-to-end Phase 2-4 integration.
-    /// Also registers chunks as ready in the streaming manager.
-    /// </summary>
-    public void ExecuteCompletePipeline(int[] chunkIndices)
+    public void SaveChunkEdits(int chunkIdx)
     {
-        if (chunkIndices.Length == 0) return;
+        if (!chunkEdits.TryGetValue(chunkIdx, out var edits) || edits.Count == 0) return;
 
-        // CRITICAL FIX: Process in batches to avoid overflowing Phase 3 buffers
-        // Phase 3 buffers are allocated with size MAX_CHUNKS_PER_BATCH (default 64)
-        // Initial load might request hundreds of chunks, causing buffer overflow and corruption
-        // Reduced batch size to 32 to be safe and avoid TDR
-        var batchSize = VoxelHelper.INITIAL_LOAD_BATCH_SIZE;
-        Log.Info($"ExecuteCompletePipeline: Processing {chunkIndices.Length} chunks in batches of {batchSize}");
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
 
-        for (var i = 0; i < chunkIndices.Length; i += batchSize)
-        {
-            var count = Math.Min(batchSize, chunkIndices.Length - i);
-            var batchIndices = new int[count];
-            Array.Copy(chunkIndices, i, batchIndices, 0, count);
+        var folderName = $"{worldName}_{seed}";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.bin";
+        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
 
-            Log.Debug($"  Batch {i / batchSize}: {count} chunks");
-
-            DispatchGeneration(batchIndices);
-
-            // Synchronous execution for initial load (blocking is acceptable here)
-            // Use buffer 0 for synchronous execution
-            var fence = ExecutePhase3_Part1(batchIndices, 0);
-            var waitResult = GL.ClientWaitSync(fence, ClientWaitSyncFlags.SyncFlushCommandsBit, 1000000000); // 1s timeout
-            if (waitResult == WaitSyncStatus.TimeoutExpired) Log.Warn("ExecutePhase3_Part1 timeout");
-            GL.DeleteSync(fence);
-
-            var (allocatedVtx, allocatedIdx, counts, baseOffsets, commandSlots, compactFence) = ExecutePhase3_Part2(batchIndices, 0);
-
-            // Wait for compaction to finish (since this is synchronous pipeline)
-            waitResult = GL.ClientWaitSync(compactFence, ClientWaitSyncFlags.SyncFlushCommandsBit, 1000000000); // 1s timeout
-            if (waitResult == WaitSyncStatus.TimeoutExpired) Log.Warn("ExecutePhase3_Part2 timeout");
-            GL.DeleteSync(compactFence);
-
-
-
-            // Assign descriptor offsets similar to PollCompletedBatches
-            if (phase3Buffers != null)
-            {
-                for (var j = 0; j < batchIndices.Length; j++)
-                {
-                    var chunkIdx = batchIndices[j];
-                    if (activeChunks.TryGetValue(chunkIdx, out var desc))
-                    {
-                        desc.AtlasOffset = (int)(allocatedVtx + baseOffsets[j]);
-                        uint indexPrefix = 0; for (var k = 0; k < j; k++) indexPrefix += counts[k] * 6;
-                        desc.IndexOffset = (int)(allocatedIdx + indexPrefix);
-                        desc.VisibleVoxelCount = (int)counts[j];
-                        desc.CommandSlot = (int)commandSlots[j];
-                        desc.State = TerrainChunkState.Ready;
-                        activeChunks[chunkIdx] = desc;
-                    }
-                    else
-                    {
-                        activeChunks[chunkIdx] = new ChunkDescriptor
-                        {
-                            ChunkIndex = chunkIdx,
-                            AtlasOffset = (int)(allocatedVtx + baseOffsets[j]),
-                            IndexOffset = (int)(allocatedIdx + counts.Take(j).Aggregate(0u, (a, c) => a + c * 6)),
-                            VisibleVoxelCount = (int)counts[j],
-                            CommandSlot = (int)commandSlots[j],
-                            State = TerrainChunkState.Ready
-                        };
-                    }
-                }
-            }
-        }
-
-        var totalFaces = activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready).Sum(c => (long)c.VisibleVoxelCount);
-        var totalVertices = phase3Buffers?.CurrentVertexBufferEnd ?? 0;
-
-        if (terrainRenderer != null && phase3Buffers != null && totalVertices > 0)
-        {
-            terrainRenderer.SetupBuffers(phase3Buffers, totalVertices, (uint)totalFaces, activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready));
-            Log.Info($"Complete pipeline executed: {chunkIndices.Length} chunks processed in batches");
-        }
-    }
-
-    public void SaveEdits()
-    {
-        var fileName = $"world-{generationSeed}_edits.bin";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", fileName);
         var dirName = Path.GetDirectoryName(path);
         if (dirName is not null) Directory.CreateDirectory(dirName);
 
         using var stream = File.Create(path);
         using var writer = new BinaryWriter(stream);
 
-        writer.Write(chunkEdits.Count);
-        foreach (var chunkKvp in chunkEdits)
+        writer.Write(edits.Count);
+        foreach (var kvp in edits)
         {
-            writer.Write(chunkKvp.Key);
-            writer.Write(chunkKvp.Value.Count);
-            foreach (var voxelKvp in chunkKvp.Value)
-            {
-                writer.Write(voxelKvp.Key);
-                writer.Write((byte)voxelKvp.Value);
-            }
+            writer.Write(kvp.Key);
+            writer.Write((byte)kvp.Value);
         }
-        Log.Info($"Saved edits for {chunkEdits.Count} chunks to {path}");
+    }
+
+    public void SaveEdits()
+    {
+        foreach (var chunkIdx in chunkEdits.Keys)
+        {
+            SaveChunkEdits(chunkIdx);
+        }
+        Log.Info($"Saved edits for {chunkEdits.Count} chunks");
     }
 
     public void LoadEdits()
     {
-        var fileName = $"world-{generationSeed}_edits.bin";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", fileName);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
+        var folderName = $"{worldName}_{seed}";
+        var dirPath = Path.Combine(Environment.CurrentDirectory, "save", folderName);
 
-        if (!File.Exists(path)) return;
+        if (!Directory.Exists(dirPath)) return;
 
-        try
+        var files = Directory.GetFiles(dirPath, "chunk_*.bin");
+        foreach (var file in files)
         {
-            using var stream = File.OpenRead(path);
-            using var reader = new BinaryReader(stream);
-
-            var chunkCount = reader.ReadInt32();
-            for (var i = 0; i < chunkCount; i++)
+            try
             {
-                var chunkIdx = reader.ReadInt32();
-                var voxelCount = reader.ReadInt32();
-                var edits = new Dictionary<int, BlockType>(voxelCount);
-                for (var j = 0; j < voxelCount; j++)
+                var name = Path.GetFileNameWithoutExtension(file);
+                var parts = name.Split('_');
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var worldX) && int.TryParse(parts[2], out var worldZ))
                 {
-                    var voxelIdx = reader.ReadInt32();
-                    var type = (BlockType)reader.ReadByte();
-                    edits[voxelIdx] = type;
+                    // CRITICAL FIX: Convert world coordinates to chunk indices
+                    // SaveChunkEdits saves as world block coordinates (chunkPos.X, chunkPos.Z)
+                    // We must divide by ChunkSideSize to get chunk indices
+                    var chunkX = worldX / VoxelHelper.ChunkSideSize;
+                    var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+
+                    if (chunkX >= 0 && chunkX < VoxelHelper.WorldChunksXZ && chunkZ >= 0 && chunkZ < VoxelHelper.WorldChunksXZ)
+                    {
+                        var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
+
+                        using var stream = File.OpenRead(file);
+                        using var reader = new BinaryReader(stream);
+
+                        var count = reader.ReadInt32();
+                        var edits = new Dictionary<int, BlockType>(count);
+                        for (var k = 0; k < count; k++)
+                        {
+                            var voxelIdx = reader.ReadInt32();
+                            var type = (BlockType)reader.ReadByte();
+                            edits[voxelIdx] = type;
+                        }
+                        chunkEdits[chunkIdx] = edits;
+                        Log.Debug($"Loaded {count} edits for chunk {chunkIdx} (world coords {worldX},{worldZ} → chunk indices {chunkX},{chunkZ})");
+                    }
+                    else
+                    {
+                        Log.Warn($"Skipping edit file {name}: chunk indices ({chunkX},{chunkZ}) out of bounds");
+                    }
                 }
-                chunkEdits[chunkIdx] = edits;
             }
-            Log.Info($"Loaded edits for {chunkCount} chunks from {path}");
+            catch (Exception ex)
+            {
+                Log.Error($"Failed to load edits from {file}: {ex.Message}");
+            }
         }
-        catch (Exception ex)
-        {
-            Log.Error($"Failed to load edits: {ex.Message}");
-        }
+        Log.Info($"Loaded edits for {chunkEdits.Count} chunks from {dirPath}");
     }
 
     public void Dispose()
@@ -1776,6 +2035,15 @@ public sealed class ChunkStreamingManager : IDisposable
         if (frustumUBO != 0) GL.DeleteBuffer(frustumUBO);
         if (visibilityFlagsSSBO != 0) GL.DeleteBuffer(visibilityFlagsSSBO);
         if (cullingCommandSlotsBuffer != 0) GL.DeleteBuffer(cullingCommandSlotsBuffer);
+        if (cullingStatsBuffer != 0) GL.DeleteBuffer(cullingStatsBuffer);
+        if (cullingReadbackBuffer != 0) GL.DeleteBuffer(cullingReadbackBuffer);
+        if (cullingFence != IntPtr.Zero) GL.DeleteSync(cullingFence);
+        if (cullingChunkIndicesBuffer != 0) GL.DeleteBuffer(cullingChunkIndicesBuffer);
+
+        // Cleanup Terrain Params (M1)
+        if (terrainParamsSSBO != 0) GL.DeleteBuffer(terrainParamsSSBO);
+        if (heightSplineTexture != 0) GL.DeleteTexture(heightSplineTexture);
+        if (biomeLutTexture != 0) GL.DeleteTexture(biomeLutTexture);
 
         // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
         phase3Buffers?.Dispose();

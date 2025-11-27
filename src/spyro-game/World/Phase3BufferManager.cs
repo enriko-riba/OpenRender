@@ -15,13 +15,13 @@ public class Phase3BufferManager : IDisposable
     private uint countBuffer;
     private uint offsetBuffer;
     private uint vertexBuffer;
-    private uint indexBuffer;          // Phase 5.3: Now a giant per-chunk index buffer
+    private uint indexBuffer;
     private uint atomicCounterBuffer;
     private uint indirectDrawBuffer;
-    private uint perChunkEmitBuffer;   // NEW: per-chunk face emission counters
-    private uint scanTotalsBuffer;     // NEW: 2 uints [totalVertices, totalIndices]
-    private uint opaqueCountsBuffer;   // NEW: per-chunk opaque counts
-    private uint waterEmitBuffer;      // NEW: per-chunk water emission counters
+    private uint perChunkEmitBuffer;
+    private uint scanTotalsBuffer;
+    private uint opaqueCountsBuffer;
+    private uint waterEmitBuffer;
 
     // Buffer sizes
     private int maxChunks;
@@ -36,53 +36,51 @@ public class Phase3BufferManager : IDisposable
         public uint Size;
     }
     private List<BufferRegion> freeVertexRegions = [];
-    private List<BufferRegion> freeIndexRegions = [];  // NEW: Track free index regions
-    private readonly Queue<int> freeCommandSlots = new();          // NEW: Track free command slots
-    private int nextCommandSlot = 0;                      // NEW: Next available command slot
-    private uint currentVertexBufferEnd = 0;              // Renamed for clarity
-    private uint currentIndexBufferEnd = 0;                // NEW: Track index buffer end
+    private List<BufferRegion> freeIndexRegions = [];
+    private readonly Queue<int> freeCommandSlots = new();
+    private int nextCommandSlot = 0;
+    private uint currentVertexBufferEnd = 0;
+    private uint currentIndexBufferEnd = 0;
     private uint vertexBufferCapacity = 0;
-    private uint indexBufferCapacity = 0;                  // NEW: Track index buffer capacity
-    private uint commandSlotCapacity = 0;                  // NEW: Track command buffer capacity
+    private uint indexBufferCapacity = 0;
+    private uint commandSlotCapacity = 0;
 
-    // Vertex stride from VoxelHelper (position=12, normal=12, texCoord=8, ao=4 = 36 bytes)
-    private const int VERTEX_STRIDE = VoxelHelper.VERTEX_STRIDE_BYTES;
+    // Vertex stride: PackedPos+Data (4 bytes each) = 8 bytes
+    private const int VERTEX_STRIDE = 8;
 
     public uint VisMaskBuffer => visMaskBuffer;
     public uint CountBuffer => countBuffer;
     public uint OffsetBuffer => offsetBuffer;
     public uint VertexBuffer => vertexBuffer;
-    public uint IndexBuffer => indexBuffer;                // Phase 5.3: Returns per-chunk IBO
+    public uint IndexBuffer => indexBuffer;
     public uint AtomicCounterBuffer => atomicCounterBuffer;
     public uint IndirectDrawBuffer => indirectDrawBuffer;
-    public uint PerChunkEmitBuffer => perChunkEmitBuffer; // NEW
-    public uint ScanTotalsBuffer => scanTotalsBuffer;     // NEW
-    public uint OpaqueCountsBuffer => opaqueCountsBuffer; // NEW
-    public uint WaterEmitBuffer => waterEmitBuffer;       // NEW
-    public uint CommandSlotBuffer => commandSlotBuffer;   // NEW: Buffer to pass slots to shader
-    public uint ChunkInfoBuffer => chunkInfoBuffer;       // NEW: Buffer to store chunk info per slot
+    public uint PerChunkEmitBuffer => perChunkEmitBuffer;
+    public uint ScanTotalsBuffer => scanTotalsBuffer;
+    public uint OpaqueCountsBuffer => opaqueCountsBuffer;
+    public uint WaterEmitBuffer => waterEmitBuffer;
+    public uint CommandSlotBuffer => commandSlotBuffer;
+    public uint ChunkInfoBuffer => chunkInfoBuffer;
 
     public int MaxChunks => maxChunks;
     public int MaxVertices => maxVertices;
     public int MaxIndices => maxIndices;
 
-    // Phase 5: Public accessors for buffer reuse
+    // Public accessors for buffer reuse
     public uint VertexBufferCapacity => vertexBufferCapacity;
-    public uint IndexBufferCapacity => indexBufferCapacity;  // NEW
-    public uint CommandSlotCapacity => commandSlotCapacity;  // NEW
-    public uint CurrentVertexBufferEnd => currentVertexBufferEnd;  // Renamed
-    public uint CurrentIndexBufferEnd => currentIndexBufferEnd;    // NEW
-    public int FreeVertexRegionCount => freeVertexRegions.Count;  // Renamed
-    public int FreeIndexRegionCount => freeIndexRegions.Count;    // NEW
-    public int FreeCommandSlotCount => freeCommandSlots.Count;    // NEW
+    public uint IndexBufferCapacity => indexBufferCapacity;
+    public uint CommandSlotCapacity => commandSlotCapacity;
+    public uint CurrentVertexBufferEnd => currentVertexBufferEnd;
+    public uint CurrentIndexBufferEnd => currentIndexBufferEnd;
+    public int FreeVertexRegionCount => freeVertexRegions.Count;
+    public int FreeIndexRegionCount => freeIndexRegions.Count;
+    public int FreeCommandSlotCount => freeCommandSlots.Count;
 
-    private uint commandSlotBuffer; // NEW: Buffer to pass slots to shader
-    private uint chunkInfoBuffer;   // NEW: Buffer to store chunk info per slot
+    private uint commandSlotBuffer;
+    private uint chunkInfoBuffer;
 
     /// <summary>
     /// Allocate all Phase 3 buffers with explicit initialization.
-    /// Phase 5.3: Per-chunk index buffers for efficient batching (one command per chunk!)
-    /// Phase 5.2: Optimized vertex format (28 bytes vs 36 bytes = 22% reduction!)
     /// </summary>
     public void AllocateBuffers(int maxChunksInBatch)
     {
@@ -90,36 +88,37 @@ public class Phase3BufferManager : IDisposable
         maxVoxels = maxChunks * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize * VoxelHelper.ChunkYSize;
 
         // Worst-case: 6 visible faces per voxel (isolated voxel)
-        var worstCaseFaces = maxVoxels * 6; // 6 faces/voxel
-        maxVertices = worstCaseFaces * 4;   // 4 vertices per face
-        maxIndices = worstCaseFaces * 6;    // PHASE 5.3: 6 indices per face (per-chunk IBOs!)
+        var worstCaseFaces = maxVoxels * 6;
+        maxVertices = worstCaseFaces * 4;
+        maxIndices = worstCaseFaces * 6;
         
-        // Phase 5: Initialize buffer tracking
+        // Initialize buffer tracking
         vertexBufferCapacity = (uint)maxVertices;
-        indexBufferCapacity = (uint)maxIndices;  // NEW
+        indexBufferCapacity = (uint)maxIndices;
         currentVertexBufferEnd = 0;
-        currentIndexBufferEnd = 0;               // NEW
+        currentIndexBufferEnd = 0;
         freeVertexRegions.Clear();
-        freeIndexRegions.Clear();                // NEW
-        freeCommandSlots.Clear();                // NEW
+        freeIndexRegions.Clear();
+        freeCommandSlots.Clear();
 
         // Calculate memory usage
         var vertexMB = (long)maxVertices * VERTEX_STRIDE / 1024f / 1024f;
         var indexMB = (long)maxIndices * sizeof(uint) / 1024f / 1024f;
         var totalMB = vertexMB + indexMB;
 
-        Log.Info($"Phase3BufferManager: Allocating buffers for {maxChunks} chunks (Phase 5.3: Per-Chunk Meshes)");
+        Log.Info($"Phase3BufferManager: Allocating buffers for {maxChunks} chunks");
         Log.Info($"  Max voxels: {maxVoxels:N0}");
         Log.Info($"  Worst-case faces: {worstCaseFaces:N0}");
         Log.Info($"  Max vertices: {maxVertices:N0} ({vertexMB:F2} MB)");
         Log.Info($"  Max indices: {maxIndices:N0} ({indexMB:F2} MB)");
         Log.Info($"  Total mesh memory: {totalMB:F2} MB");
 
-        // Visibility mask (1 uint per voxel, lower 6 bits used)
+        // Visibility mask (1 uint per 4 voxels, 8 bits per voxel)
+        // We pack 4 voxels into 1 uint (8 bits each) to save 4x memory bandwidth.
         GL.CreateBuffers(1, out visMaskBuffer);
-        GL.NamedBufferStorage(visMaskBuffer, maxVoxels * sizeof(uint), IntPtr.Zero,
+        GL.NamedBufferStorage(visMaskBuffer, maxChunks * (VoxelHelper.PackedChunkVoxelCount / 4) * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
-        ClearBufferUInt(visMaskBuffer, maxVoxels * sizeof(uint), 0);
+        ClearBufferUInt(visMaskBuffer, maxChunks * (VoxelHelper.PackedChunkVoxelCount / 4) * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, visMaskBuffer, -1, "vis_mask_ssbo");
 
         // Visible counts (1 uint per chunk)
@@ -129,7 +128,7 @@ public class Phase3BufferManager : IDisposable
         ClearBufferUInt(countBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, countBuffer, -1, "count_visible_ssbo");
 
-        // NEW: Per-chunk face emission counters (reset each compaction)
+        // Per-chunk face emission counters (reset each compaction)
         GL.CreateBuffers(1, out perChunkEmitBuffer);
         GL.NamedBufferStorage(perChunkEmitBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
@@ -149,15 +148,14 @@ public class Phase3BufferManager : IDisposable
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vertexBuffer, -1, "compact_vertices_vbo");
 
-        // PHASE 5.3: Per-chunk index buffer (one contiguous buffer for all chunks)
+        // Per-chunk index buffer (one contiguous buffer for all chunks)
         GL.CreateBuffers(1, out indexBuffer);
         GL.NamedBufferStorage(indexBuffer, (nint)maxIndices * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indexBuffer, -1, "per_chunk_indices_ibo");
 
         // Multi-draw indirect command buffer
-        // Initial size is small, will be resized by ResizeIndirectDrawBuffer
-        // Phase 5.3: 2 commands per slot (Opaque + Transparent)
+        // 2 commands per slot (Opaque + Transparent)
         GL.CreateBuffers(1, out indirectDrawBuffer);
         var indirectSize = maxChunks * 2 * 5 * sizeof(uint);
         GL.NamedBufferStorage(indirectDrawBuffer, indirectSize, IntPtr.Zero,
@@ -165,18 +163,18 @@ public class Phase3BufferManager : IDisposable
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indirectDrawBuffer, -1, "indirect_draw_commands");
         commandSlotCapacity = (uint)maxChunks;
 
-        // NEW: Command Slot Buffer (to pass slots to shader)
+        // Command Slot Buffer (to pass slots to shader)
         GL.CreateBuffers(1, out commandSlotBuffer);
         if (commandSlotBuffer == 0) Log.Error("Phase3BufferManager: Failed to create commandSlotBuffer!");
         GL.NamedBufferStorage(commandSlotBuffer, maxChunks * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, commandSlotBuffer, -1, "command_slot_ssbo");
 
-        // NEW: Chunk Info Buffer (maps slot -> chunk index/info)
+        // Chunk Info Buffer (maps slot -> chunk index/info)
         GL.CreateBuffers(1, out chunkInfoBuffer);
         GL.NamedBufferStorage(chunkInfoBuffer, maxChunks * sizeof(int), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
-        ClearBufferUInt(chunkInfoBuffer, maxChunks * sizeof(int), 0xFFFFFFFF); // Initialize to -1
+        ClearBufferUInt(chunkInfoBuffer, maxChunks * sizeof(int), 0xFFFFFFFF);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, chunkInfoBuffer, -1, "chunk_info_ssbo");
 
         // Atomic counters (3 uints: vertex counter, index counter, face counter)
@@ -186,26 +184,26 @@ public class Phase3BufferManager : IDisposable
         ClearBufferUInt(atomicCounterBuffer, 3 * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, atomicCounterBuffer, -1, "atomic_counters_ssbo");
 
-        // NEW: totals buffer (2 uints)
+        // Totals buffer (2 uints)
         GL.CreateBuffers(1, out scanTotalsBuffer);
         GL.NamedBufferStorage(scanTotalsBuffer, 2 * sizeof(uint), IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit | BufferStorageFlags.MapReadBit | BufferStorageFlags.ClientStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, scanTotalsBuffer, -1, "scan_totals_ssbo");
 
-        // NEW: Opaque Counts (1 uint per chunk)
+        // Opaque Counts (1 uint per chunk)
         GL.CreateBuffers(1, out opaqueCountsBuffer);
         GL.NamedBufferStorage(opaqueCountsBuffer, maxChunks * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         ClearBufferUInt(opaqueCountsBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, opaqueCountsBuffer, -1, "opaque_counts_ssbo");
 
-        // NEW: Water Emit Counter (1 uint per chunk)
+        // Water Emit Counter (1 uint per chunk)
         GL.CreateBuffers(1, out waterEmitBuffer);
         GL.NamedBufferStorage(waterEmitBuffer, maxChunks * sizeof(uint), IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
         ClearBufferUInt(waterEmitBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, waterEmitBuffer, -1, "water_emit_ssbo");
 
         Log.CheckGlError();
-        Log.Info("Phase3BufferManager: All buffers allocated (Phase 5.3: One command per chunk!)");
+        Log.Info("Phase3BufferManager: All buffers allocated");
     }
 
     /// <summary>
@@ -221,7 +219,6 @@ public class Phase3BufferManager : IDisposable
 
     /// <summary>
     /// Reset atomic counters to zero before compaction pass.
-    /// Phase 5.3: Now has 3 counters (vertex, index, face)
     /// </summary>
     public void ResetAtomicCounters()
     {
@@ -231,7 +228,6 @@ public class Phase3BufferManager : IDisposable
 
     /// <summary>
     /// Read back actual vertex/index/face counts from atomic counters.
-    /// Phase 5.3: Now returns vertex count, index count, and face count.
     /// </summary>
     public (uint vertexCount, uint indexCount, uint faceCount) ReadAtomicCounters()
     {
@@ -267,7 +263,6 @@ public class Phase3BufferManager : IDisposable
         // Compaction shader needs: voxel data, visibility mask, offsets (input)
         // and vertices, indices, atomic counters (output)
         // Note: voxelData bound by caller
-        // Phase 5.3: Binds both vertex and index buffers for per-chunk mesh generation
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
             VoxelHelper.SSBOBindings.VISIBILITY_MASK, visMaskBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
@@ -278,24 +273,19 @@ public class Phase3BufferManager : IDisposable
             VoxelHelper.SSBOBindings.COMPACT_INDICES, indexBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
             VoxelHelper.SSBOBindings.ATOMIC_COUNTERS, atomicCounterBuffer);
-        // NEW: per-chunk emit
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
             VoxelHelper.SSBOBindings.PER_CHUNK_FACE_EMIT, perChunkEmitBuffer);
     }
 
     public void BindBuffersForScan()
     {
-        // counts at binding 2
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VISIBLE_COUNTS, countBuffer);
-        // base offsets at binding 3
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.BASE_OFFSETS, offsetBuffer);
-        // scan totals at binding 9
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.SCAN_TOTALS, scanTotalsBuffer);
     }
 
     public void BindBuffersForBuildIndirect()
     {
-        // Need baseOffsets (3), counts (2) and indirect buffer as SSBO
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.BASE_OFFSETS, offsetBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VISIBLE_COUNTS, countBuffer);
         GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.INDIRECT_COMMANDS, indirectDrawBuffer);
@@ -312,7 +302,7 @@ public class Phase3BufferManager : IDisposable
         if (atomicCounterBuffer != 0) GL.DeleteBuffer(atomicCounterBuffer);
         if (perChunkEmitBuffer != 0) GL.DeleteBuffer(perChunkEmitBuffer);
         if (scanTotalsBuffer != 0) GL.DeleteBuffer(scanTotalsBuffer);
-
+        
         visMaskBuffer = countBuffer = offsetBuffer = 0;
         vertexBuffer = indexBuffer = indirectDrawBuffer = atomicCounterBuffer = 0;
         perChunkEmitBuffer = 0;
@@ -324,14 +314,14 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Get total GPU memory allocated for Phase 3 buffers (Phase 5)
+    /// Get total GPU memory allocated for Phase 3 buffers
     /// </summary>
     public long GetAllocatedBytes()
     {
         long total = 0;
         
-        // Visibility mask: 1 uint per voxel
-        total += maxVoxels * sizeof(uint);
+        // Visibility mask: 1 uint per 4 voxels
+        total += maxChunks * (VoxelHelper.PackedChunkVoxelCount / 4) * sizeof(uint);
         
         // Count buffer: 1 uint per chunk
         total += maxChunks * sizeof(uint);
@@ -351,18 +341,18 @@ public class Phase3BufferManager : IDisposable
         // Atomic counter buffer: 3 uints
         total += 3 * sizeof(uint);
         
-        // perChunkEmitBuffer: 1 uint per chunk
-        total += maxChunks * sizeof(uint); // perChunkEmitBuffer
+        // Per-chunk emit buffer: 1 uint per chunk
+        total += maxChunks * sizeof(uint);
         
         return total;
     }
 
     // ========================================================================
-    // Phase 5: Incremental Updates & Buffer Reuse
+    // Incremental Updates & Buffer Reuse
     // ========================================================================
 
     /// <summary>
-    /// Allocate a vertex buffer region, reusing freed space if available (Phase 5)
+    /// Allocate a vertex buffer region, reusing freed space if available
     /// Returns the offset into the vertex buffer where the region starts
     /// </summary>
     public uint AllocateVertexRegion(uint requestedSize)
@@ -413,7 +403,7 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Allocate an index buffer region, reusing freed space if available (Phase 5.3)
+    /// Allocate an index buffer region, reusing freed space if available
     /// Returns the offset into the index buffer where the region starts
     /// </summary>
     public uint AllocateIndexRegion(uint requestedSize)
@@ -464,7 +454,7 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Mark a vertex buffer region as free for reuse (Phase 5)
+    /// Mark a vertex buffer region as free for reuse
     /// </summary>
     public void FreeVertexRegion(uint baseOffset, uint size)
     {
@@ -484,7 +474,7 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Mark an index buffer region as free for reuse (Phase 5.3)
+    /// Mark an index buffer region as free for reuse
     /// </summary>
     public void FreeIndexRegion(uint baseOffset, uint size)
     {
@@ -504,7 +494,7 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Merge adjacent free regions to reduce fragmentation (Phase 5)
+    /// Merge adjacent free regions to reduce fragmentation
     /// </summary>
     private static void MergeFreeRegions(ref List<BufferRegion> regions)
     {
@@ -543,7 +533,7 @@ public class Phase3BufferManager : IDisposable
     }
 
     /// <summary>
-    /// Resize the vertex buffer to accommodate more vertices (Phase 5)
+    /// Resize the vertex buffer to accommodate more vertices
     /// This is expensive and should be avoided by pre-allocating enough space
     /// </summary>
     private void ResizeVertexBuffer(uint newCapacity)

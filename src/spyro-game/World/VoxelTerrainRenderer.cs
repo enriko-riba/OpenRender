@@ -32,6 +32,19 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     private uint outlineEbo;
     private readonly Vector3 outlineColor = new(1.0f, 1.0f, 0.0f); // Yellow
 
+    // Debug wireframe rendering
+    private bool debugWireframe = false;
+    
+    /// <summary>
+    /// Gets or sets whether to render terrain in debug wireframe mode.
+    /// When enabled, shows triangle edges and chunk boundaries.
+    /// </summary>
+    public bool DebugWireframe 
+    { 
+        get => debugWireframe;
+        set => debugWireframe = value;
+    }
+    
     /// <summary>
     /// Number of visible chunks (after frustum culling)
     /// </summary>
@@ -58,6 +71,81 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// Controls underwater fog and lighting effects.
     /// </summary>
     public bool IsCameraUnderwater { get; set; }
+
+    public uint TerrainParamsSSBO { get; set; }
+    public int BiomeLutTexture { get; set; }
+    public bool ShowBiomes { get; set; }
+
+    // M5: Biome texture handles (bindless)
+    // Now stores 3 textures per biome/layer: [BiomeID * 24 + GeologyLayer * 3 + FaceType]
+    // FaceType: 0=Top, 1=Bottom, 2=Sides
+    private ulong[]? biomeTextureHandles;
+    private readonly Dictionary<string, Texture[]> atlasSplitCache = [];
+
+    public void LoadBiomeTextures(TerrainConfig config)
+    {
+        if (config.Biomes == null || config.Biomes.Count == 0) return;
+
+        // 10 biomes * 8 layers * 3 face types = 240 handles
+        var handleCount = 10 * 8 * 3;
+        if (biomeTextureHandles == null || biomeTextureHandles.Length != handleCount)
+        {
+            biomeTextureHandles = new ulong[handleCount];
+        }
+
+        // Create a sampler for all terrain textures with REPEAT wrap mode for tiling
+        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapNearest, TextureMagFilter.Nearest, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
+
+        for (var i = 0; i < config.Biomes.Count; i++)
+        {
+            var biome = config.Biomes[i];
+            if (biome.Id >= 10) continue; // Max 10 biomes supported in shader for now
+
+            for (var layer = 0; layer < 8; layer++)
+            {
+                if (layer < biome.TexturePaths.Count)
+                {
+                    var path = biome.TexturePaths[layer];
+                    if (string.IsNullOrEmpty(path))
+                    {
+                        // Set all 3 face types to 0 for this layer
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = 0;
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = 0;
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = 0;
+                        continue;
+                    }
+
+                    // Check if we've already split this atlas
+                    if (!atlasSplitCache.TryGetValue(path, out var splitTextures))
+                    {
+                        try 
+                        {
+                            // Split the 3×1 atlas into 3 separate textures
+                            splitTextures = Texture.SplitHorizontalAtlas(path, columns: 3, generateMipMap: true);
+                            if (splitTextures != null && splitTextures.Length == 3)
+                            {
+                                atlasSplitCache[path] = splitTextures;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"Failed to load and split texture atlas '{path}': {ex.Message}");
+                        }
+                    }
+
+                    if (splitTextures != null && splitTextures.Length == 3)
+                    {
+                        // Store handles for all 3 face types: Top (0), Bottom (1), Sides (2)
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = splitTextures[0].GetBindlessHandle(sampler); // Top
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = splitTextures[1].GetBindlessHandle(sampler); // Bottom
+                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = splitTextures[2].GetBindlessHandle(sampler); // Sides
+                    }
+                }
+            }
+        }
+        
+        Log.Info($"VoxelTerrainRenderer: Loaded {biomeTextureHandles.Count(h => h != 0)} biome texture handles (split from atlases)");
+    }
 
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
     {
@@ -99,34 +187,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
         GL.EnableVertexArrayAttrib(vao, 0);
-        GL.VertexArrayAttribFormat(vao, 0, 3, VertexAttribType.Float, false, 0);
+        // Phase 5.2: Compressed format (2 uints)
+        // Use VertexAttribIFormat for integer attributes
+        GL.VertexArrayAttribIFormat(vao, 0, 2, VertexAttribIType.UnsignedInt, 0);
         GL.VertexArrayAttribBinding(vao, 0, 0);
 
-        GL.EnableVertexArrayAttrib(vao, 1);
-        GL.VertexArrayAttribFormat(vao, 1, 2, VertexAttribType.Float, false, 12);
-        GL.VertexArrayAttribBinding(vao, 1, 0);
-
-        GL.EnableVertexArrayAttrib(vao, 2);
-        GL.VertexArrayAttribFormat(vao, 2, 1, VertexAttribType.Float, false, 20);
-        GL.VertexArrayAttribBinding(vao, 2, 0);
-
-        GL.EnableVertexArrayAttrib(vao, 3);
-        // Phase 5.2: Face Index is stored as float (uintBitsToFloat) in the buffer.
-        // We want the raw bits in the shader (uint).
-        // VertexAttribType.Float tells GL to read 32-bit float and convert to float/int.
-        // If shader input is uint, GL converts float value to uint (e.g. 1.0f -> 1u).
-        // BUT we stored bits! uintBitsToFloat(1) is 1.4e-45. GL converts 1.4e-45 to 0u.
-        // FIX: Use VertexAttribPointer with type FLOAT but shader input as float, then floatBitsToUint.
-        // OR: Use VertexAttribIPointer with type UNSIGNED_INT?
-        // If we use VertexAttribIPointer(..., GL_UNSIGNED_INT, ...), GL reads 32 bits as uint.
-        // Since the buffer contains the raw bits of the uint (just cast to float for storage),
-        // reading them as uint will recover the original uint value!
-        // So VertexAttribIFormat with UnsignedInt is correct IF the buffer data is binary compatible.
-        // float and uint are both 32-bit. uintBitsToFloat preserves the bit pattern.
-        // So the buffer contains the bits of the uint.
-        // Reading as UnsignedInt retrieves the bits.
-        GL.VertexArrayAttribIFormat(vao, 3, 1, VertexAttribIType.UnsignedInt, 24);
-        GL.VertexArrayAttribBinding(vao, 3, 0);
+        // Disable unused attributes
+        GL.DisableVertexArrayAttrib(vao, 1);
+        GL.DisableVertexArrayAttrib(vao, 2);
+        GL.DisableVertexArrayAttrib(vao, 3);
 
         if (buffers.VertexBuffer == 0 || buffers.IndexBuffer == 0)
         {
@@ -287,45 +356,50 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // Bind textures
-        if (Material.Textures != null)
+        // M5: Bind Biome Texture Handles
+        if (biomeTextureHandles != null)
         {
-            // Only bind the first 6 textures as used by the shader
-            var count = Math.Min(Material.Textures.Length, 6);
-            for (var i = 0; i < count; i++)
+            // Try array syntax first, then flat
+            var loc = shader.GetUniformLocation("uBiomeTextures[0]");
+            if (loc == -1) loc = shader.GetUniformLocation("uBiomeTextures");
+
+            if (loc != -1)
             {
-                if (Material.Textures[i] != null)
+                // Convert ulong[] to uint[] for uvec2 array
+                var uints = new uint[biomeTextureHandles.Length * 2];
+                for (var i = 0; i < biomeTextureHandles.Length; i++)
                 {
-                    GL.ActiveTexture(TextureUnit.Texture0 + i);
-                    GL.BindTexture(TextureTarget.Texture2D, Material.Textures[i].Handle);
-                    // Uniforms: uTextures[0], uTextures[1], etc.
-                    // Or individual names: uTexGrass, uTexWater, etc.
-                    // Let's use individual names for clarity in shader
-                    var uniformName = i switch
-                    {
-                        0 => "uTexGrass",
-                        1 => "uTexWater",
-                        2 => "uTexDirt",
-                        3 => "uTexRock",
-                        4 => "uTexSand",
-                        5 => "uTexBedRock",
-                        _ => $"uTex{i}"
-                    };
-                    shader.SetInt(uniformName, i);
+                    var h = biomeTextureHandles[i];
+                    uints[i * 2] = (uint)(h & 0xFFFFFFFF);
+                    uints[i * 2 + 1] = (uint)(h >> 32);
                 }
+
+                // Set the uniform array
+                // Note: Some drivers/OpenTK versions might have issues with count > 1 if they don't detect array correctly
+                GL.Uniform2(loc, biomeTextureHandles.Length, uints);
             }
         }
 
-        // Enable blending for water transparency
-        // GL.Enable(EnableCap.Blend);
-        // GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        // M5: Bind Biome LUT (Unit 7)
+        if (BiomeLutTexture != 0)
+        {
+            GL.ActiveTexture(TextureUnit.Texture7);
+            GL.BindTexture(TextureTarget.Texture2D, BiomeLutTexture);
+            // Reset active texture to 0 to avoid side effects
+            GL.ActiveTexture(TextureUnit.Texture0);
+        }
 
-        // Set material uniforms
-        var matSpecular = new Vector3(0.1f, 0.1f, 0.1f);
-        shader.SetVector3("uMaterialSpecular", ref matSpecular);
-        shader.SetFloat("uMaterialShininess", 8.0f);
-        shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
-        shader.SetFloat("uTime", (float)Scene!.SceneManager.Time);
+        // M5: Bind Terrain Params (Binding 10)
+        if (TerrainParamsSSBO != 0)
+        {
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
+        }
+
+        // Phase 5.2: Bind ChunkInfo Buffer (Binding 13)
+        if (bufferManager != null && bufferManager.ChunkInfoBuffer != 0)
+        {
+            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, bufferManager.ChunkInfoBuffer);
+        }
 
         // Chunk transform (identity for now - chunks in world space)
         var identity = Matrix4.Identity;
@@ -333,6 +407,11 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // Bind VAO (has per-chunk IBO bound)
         GL.BindVertexArray(vao);
+
+        // Set debug uniforms
+        shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
+        shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
+        shader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
 
         // DEBUG: Verify buffer binding
         if (bufferManager.IndirectDrawBuffer == 0)
@@ -348,6 +427,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         var drawCount = bufferManager.GetCommandSlotHighWaterMark();
 
         GL.BindBuffer(BufferTarget.DrawIndirectBuffer, bufferManager.IndirectDrawBuffer);
+        
+        // If wireframe mode is enabled, render as wireframe
+        if (debugWireframe)
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+        }
         
         // 1. Draw Opaque (Command 1 of each pair)
         // Stride = 2 * sizeof(DrawElementsIndirectCommand) = 2 * 5 * 4 = 40 bytes
@@ -382,13 +467,19 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // GL.DepthMask(true);
         GL.Disable(EnableCap.Blend);
         GL.Disable(EnableCap.CullFace);
+        
+        // Restore fill mode if wireframe was enabled
+        if (debugWireframe)
+        {
+            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+        }
 
         // Render picked block outline (on top of terrain)
         RenderPickedBlockOutline();
 
         Log.CheckGlError();
     }
-
+    
     /// <summary>
     /// Cleanup GPU resources. Call this explicitly when removing from scene.
     /// </summary>
@@ -443,7 +534,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Shared index buffer: always 6 indices * 4 bytes
         var indexBytes = 6 * sizeof(uint);
 
-        // Indirect draw commands: actualFaceCount * 5 uints
+        // Indirect draw commands: actualFaceCount * 5 * sizeof(uint);
         var indirectBytes = actualFaceCount * 5 * sizeof(uint);
 
         return vertexBytes + indexBytes + indirectBytes;
@@ -460,71 +551,13 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
     private static Material CreateDummyMaterial()
     {
-        // Create material with the voxel terrain shader and grass-dirt texture atlas (3x2 layout)
+        // Create material with the voxel terrain shader
+        // Textures are now loaded per-biome via LoadBiomeTextures() from TerrainConfig
         var shader = new Shader("Shaders/voxel-terrain.vert", "Shaders/voxel-terrain.frag");
         
-        // Get paths from VoxelWorld configuration
-        var grassPath = VoxelWorld.textures[BlockType.GrassDirt];
-        var waterPath = VoxelWorld.textures[BlockType.WaterLevel];
-        var dirtPath = VoxelWorld.textures[BlockType.Dirt];
-        var rockPath = VoxelWorld.textures[BlockType.Rock];
-        var sandPath = VoxelWorld.textures[BlockType.Sand];
-        var bedrockPath = VoxelWorld.textures[BlockType.BedRock];
-        
-        // Slot 0: GrassDirt
-        var grassDesc = new TextureDescriptor(grassPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Diffuse, // Slot 0
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
-
-        // Slot 1: Water
-        var waterDesc = new TextureDescriptor(waterPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Detail, // Slot 1
-            TextureWrapS: TextureWrapMode.Repeat,
-            TextureWrapT: TextureWrapMode.Repeat,
-            GenerateMipMap: true);
-
-        // Slot 2: Dirt
-        var dirtDesc = new TextureDescriptor(dirtPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Normal, // Slot 2
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
-
-        // Slot 3: Rock
-        var rockDesc = new TextureDescriptor(rockPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Specular, // Slot 3
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
-
-        // Slot 4: Sand
-        var sandDesc = new TextureDescriptor(sandPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Bump, // Slot 4
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
-
-        // Slot 5: BedRock
-        var bedrockDesc = new TextureDescriptor(bedrockPath,
-            MinFilter: TextureMinFilter.Nearest,
-            MagFilter: TextureMagFilter.Nearest,
-            TextureType: TextureType.Additional2, // Slot 5
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: false);
-
-        return Material.Create(shader, [grassDesc, waterDesc, dirtDesc, rockDesc, sandDesc, bedrockDesc]);
+        // Use default placeholder textures (will be overridden by biome textures)
+        // NOTE: Actual terrain textures are loaded dynamically via LoadBiomeTextures()
+        // based on TerrainConfig biome definitions
+        return Material.Create(shader, (TextureDescriptor[]?)null);
     }
 }

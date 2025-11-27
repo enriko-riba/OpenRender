@@ -11,6 +11,8 @@ layout(std430, binding = 3) readonly buffer Offsets { uint baseOffsets[]; };
 layout(std430, binding = 11) readonly buffer CommandSlots { uint commandSlots[]; };
 layout(std430, binding = 10) writeonly buffer Indirect { uint cmd[]; };
 layout(std430, binding = 12) readonly buffer OpaqueCounts { uint opaqueCounts[]; };
+layout(std430, binding = 9) readonly buffer ChunkIndices { uint chunkIndices[]; };
+layout(std430, binding = 13) writeonly buffer ChunkInfo { int chunkInfo[]; };
 
 uniform uint uChunkCount;
 uniform uint uVertexRegionOffset;
@@ -34,6 +36,10 @@ void main(){
     // Write 2 commands starting at commandSlots[i]*2*5
     // Use the allocated slot index instead of batch index 'i'
     uint slot = commandSlots[i];
+    
+    // Write chunk index to ChunkInfo buffer for vertex shader lookup
+    chunkInfo[slot] = int(chunkIndices[i]);
+    
     uint o = slot * 2u * 5u;
     
     // Command 1: Opaque

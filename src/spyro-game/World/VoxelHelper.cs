@@ -30,7 +30,7 @@ public static class VoxelHelper
 
     public const int WorldChunksXZ = 9600 / ChunkSideSize;
     public const int ChunkSideSize = 16;
-    public const int ChunkYSize = 128;
+    public const int ChunkYSize = 384;
 
     public const int WaterLevel = 35;
     //public const float NoiseFrequency = 0.0012f;
@@ -40,11 +40,13 @@ public static class VoxelHelper
     public const int MaxBlockPositionXZ = WorldChunksXZ * ChunkSideSize - 1;
     public const int MaxBlockPositionY = ChunkYSize - 1;
     public const int TotalChunks = WorldChunksXZ * WorldChunksXZ;
+    public const int ChunkVoxelCount = ChunkSideSizeSquare * ChunkYSize;
+    public const int PackedChunkVoxelCount = ChunkVoxelCount; // 1 voxel per uint (UNPACKED)
 
     // GPU Pipeline Constants (Phase 2-5)
     public const int DEFAULT_MAX_CHUNKS_PER_BATCH = 64;
     public const int INITIAL_LOAD_BATCH_SIZE = 32; // Reduced batch size for initial load to avoid TDR
-    public const int VERTEX_STRIDE_BYTES = 7 * sizeof(float); // Phase 5.2: pos(3) + uv(2) + ao(1) + faceIndex(1) = 28 bytes
+    public const int VERTEX_STRIDE_BYTES = 8; // Phase 5.2: Compressed vertex format (8 bytes)
 
     // Shared quad indices for instanced rendering
     //public static readonly uint[] SHARED_QUAD_INDICES = [0, 1, 2, 2, 3, 0];
