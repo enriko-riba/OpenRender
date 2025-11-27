@@ -1,86 +1,91 @@
-# Minecraft-Style Voxel Lighting Implementation Plan
+# Minecraft-Style Voxel Lighting Implementation Plan (Dual Channel)
 
 ## Overview
-This document outlines the plan to implement Minecraft-style flood-fill lighting (levels 0-15) to solve light bleeding issues in caves and enclosed structures. The system will utilize the existing unused 8-bit light channel in the voxel data structure.
+This document outlines the plan to implement a dual-channel flood-fill lighting system (Sky Light + Block Light) to solve light bleeding in caves while supporting local light sources (torches, lava).
 
 ## Core Concept
-Instead of relying solely on global directional lighting (which causes bleeding through walls), we will calculate a per-voxel "Sunlight" value.
-- **Sunlight (0-15):** Represents direct exposure to the sun and its propagation.
-- **Integration:** This value will act as a visibility factor for the Directional Light in the fragment shader.
-  - Level 15: Full sunlight (1.0 multiplier).
-  - Level 0: Complete darkness/shadow (0.0 multiplier).
+We will split the lighting data into two separate channels to handle their distinct behaviors:
+1.  **Sky Light (0-15):** Represents sunlight. Masks the global Directional Light.
+2.  **Block Light (0-15):** Represents artificial light (torches). Adds local illumination independent of the sun.
 
 ## 1. Data Structure
 **Current State:** `voxelData` is a packed `uint`.
 - Bits 0-7: Block ID
 - Bits 8-15: Biome ID
-- **Bits 16-23: Light Level (Currently unused/hardcoded to 15)**
+- **Bits 16-23: Light Data (Split)**
+  - **Bits 16-19: Sky Light (0-15)**
+  - **Bits 20-23: Block Light (0-15)**
 - Bits 24-31: Flags
-
-**Action:** No structural changes needed. We will start writing meaningful data to bits 16-23.
 
 ## 2. Compute Shader Pipeline Updates
 
 ### A. New Shader: `compute-light.comp`
-A new compute shader pass is required between **Generation** and **Meshing**.
+This shader will handle propagation for *both* channels.
 
-**Stage 1: Initialization (Column-based)**
-- For each X,Z column in the chunk:
-  - Cast a ray from Top (Y=384) down.
-  - **Sky Logic:** Mark voxels as "Sun Source" (Level 15) until the first solid block is hit.
-  - **Solid Blocks:** Set Light = 0.
-  - **Below Solid:** Set Light = 0 (Shadow).
+**Stage 1: Initialization**
+- **Sky Light:**
+  - Raycast from Top (Y=384).
+  - If Sky: Set SkyLight = 15.
+  - If Solid/Below: Set SkyLight = 0.
+- **Block Light:**
+  - Check Block ID.
+  - If Emissive (Torch, Lava): Set BlockLight = 15 (or specific emission level).
+  - Else: Set BlockLight = 0.
 
 **Stage 2: Propagation (BFS Flood Fill)**
-- Iterative pass (or single pass with work queue if using advanced compute features, but iterative is simpler for starters).
-- For each voxel with Light > 0:
-  - Spread to 6 neighbors (Up, Down, Left, Right, Forward, Back).
-  - Neighbor Light = `Current Light - 1`.
-  - **Constraint:** Only propagate if `Neighbor Light < Current Light - 1` and Neighbor is not solid.
-  - **Opacity:** Water reduces light by 2 or 3 levels instead of 1 to create depth darkness.
+- Propagate both channels independently in the same pass.
+- **Rule:** `Neighbor.Light = max(Neighbor.Light, Current.Light - Decay)`
+- **Decay:**
+  - Air: -1
+  - Water: -2 or -3 (darkens faster)
+  - Solid: Blocks propagation.
 
 ### B. Pipeline Integration
 1. `compute-generate.comp`: Generates blocks.
-2. **`compute-light.comp`**: Calculates light levels (NEW).
-3. `compute-visibility.comp`: (Existing) Calculates face visibility.
-4. `compute-compact.comp`: (Existing) Packs vertices. **Update needed:** Read the light level from `voxelData` and pack it into the vertex data.
+2. **`compute-light.comp`**: Calculates Sky and Block light levels.
+3. `compute-visibility.comp`: Calculates face visibility.
+4. `compute-compact.comp`: Packs `(SkyLight << 4 | BlockLight)` into the vertex data.
 
 ## 3. Vertex Shader Updates (`voxel-terrain.vert`)
-- **Input:** The packed vertex data now contains the Light Level.
-- **Logic:** Unpack the light level (0-15).
-- **Output:** Pass `vSunLight` (float 0.0 - 1.0) to the fragment shader.
-  - `vSunLight = float(lightLevel) / 15.0;`
+- **Input:** Packed light byte.
+- **Logic:** Unpack two floats.
+  - `vSkyLight = float(packed & 0xF) / 15.0;`
+  - `vBlockLight = float((packed >> 4) & 0xF) / 15.0;`
+- **Output:** Pass both to fragment shader.
 
 ## 4. Fragment Shader Updates (`voxel-terrain.frag`)
-Combine the new Voxel Light with the existing Directional Light.
+Combine the two light channels with the Directional Light.
 
 ```glsl
-// Current
-vec3 diffuse = dirLight.diffuse * texColor * NdotL * aoStrength;
+// 1. Sun/Directional Contribution (Masked by Sky Light)
+// Only visible if Sky Light is present.
+float skyFactor = vSkyLight;
+vec3 sunLight = dirLight.diffuse * NdotL * skyFactor;
 
-// New
-float sunFactor = vSunLight; // 0.0 to 1.0 derived from voxel light
-// Optional: Non-linear curve for better aesthetics (e.g., pow(sunFactor, 1.4))
+// 2. Block/Torch Contribution (Additive)
+// Independent of the sun. Always visible if Block Light is present.
+// Use a warm color for torch light.
+vec3 torchColor = vec3(1.0, 0.8, 0.6); 
+vec3 localLight = torchColor * vBlockLight; 
 
-// Apply to Directional Light (Sun)
-// If sunFactor is 0 (Cave), the directional light is effectively blocked.
-vec3 finalDiffuse = dirLight.diffuse * texColor * NdotL * aoStrength * sunFactor;
+// 3. Ambient (Base)
+// Ambient is usually sky-dependent.
+vec3 ambient = dirLight.ambient * max(skyFactor, 0.05);
 
-// Apply to Ambient
-// Ambient should also be darkened, but maybe keep a tiny minimum for gameplay visibility
-vec3 finalAmbient = dirLight.ambient * texColor * aoStrength * max(sunFactor, 0.05);
+// Final Combination
+// (Sun + Local + Ambient) * Texture * AO
+vec3 finalLight = (sunLight + localLight + ambient);
+vec3 finalColor = finalLight * texColor * aoStrength;
 ```
 
-## 5. Handling Chunk Borders (The Hard Part)
-Light propagation must cross chunk boundaries.
-- **Solution:** The `compute-light.comp` must run on a 3x3 chunk area or have a "border exchange" step.
-- **Simplification (Phase 1):** Run lighting *after* generation but *before* meshing. When a chunk is generated, it initializes its light. When neighbors are present, a "Light Update" pass propagates light across borders.
-- **Optimization:** Use a "Light Map" texture or buffer if voxel traversal is too slow, but direct voxel writing is preferred for the current architecture.
+## 5. Handling Chunk Borders
+- The propagation logic must handle chunk boundaries.
+- **Phase 1:** Simple intra-chunk lighting (borders might be dark).
+- **Phase 2:** Multi-pass or 3x3 chunk neighborhood for correct border propagation.
 
 ## Implementation Steps
-1.  **Modify `compute-generate.comp`**: Ensure bits 16-23 are initialized to 0 (not 15).
-2.  **Create `compute-light.comp`**: Implement the Top-Down Sky check + Propagation.
-3.  **Update `VoxelTerrainRenderer.cs`**: Dispatch the new compute shader.
-4.  **Update `compute-compact.comp`**: Extract light bits and pack into vertex.
-5.  **Update Shaders**: Visualize the light level to debug.
-6.  **Refine**: Tune propagation (water absorption, etc.).
+1.  **Modify `compute-generate.comp`**: Initialize bits 16-23 to 0.
+2.  **Create `compute-light.comp`**: Implement dual-channel propagation.
+3.  **Update `VoxelTerrainRenderer.cs`**: Dispatch lighting pass.
+4.  **Update `compute-compact.comp`**: Pack split light data.
+5.  **Update Shaders**: Implement the combined lighting formula.
