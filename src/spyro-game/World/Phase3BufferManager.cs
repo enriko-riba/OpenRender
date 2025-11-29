@@ -1,5 +1,6 @@
 using OpenRender;
 using OpenTK.Graphics.OpenGL4;
+using System.Runtime.InteropServices;
 
 namespace SpyroGame.World;
 
@@ -78,6 +79,22 @@ public class Phase3BufferManager : IDisposable
 
     private uint commandSlotBuffer;
     private uint chunkInfoBuffer;
+
+    private const int UploadChannelCount = 2;
+
+    private struct MeshUploadChannel
+    {
+        public uint VertexBuffer;
+        public uint IndexBuffer;
+        public IntPtr VertexPtr;
+        public IntPtr IndexPtr;
+        public IntPtr Fence;
+    }
+
+    private readonly MeshUploadChannel[] uploadChannels = new MeshUploadChannel[UploadChannelCount];
+    private int nextUploadChannel;
+    private int maxChunkVertexBytes;
+    private int maxChunkIndexBytes;
 
     /// <summary>
     /// Allocate all Phase 3 buffers with explicit initialization.
@@ -202,6 +219,8 @@ public class Phase3BufferManager : IDisposable
         ClearBufferUInt(waterEmitBuffer, maxChunks * sizeof(uint), 0);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, waterEmitBuffer, -1, "water_emit_ssbo");
 
+        InitializeUploadChannels();
+
         Log.CheckGlError();
         Log.Info("Phase3BufferManager: All buffers allocated");
     }
@@ -238,6 +257,8 @@ public class Phase3BufferManager : IDisposable
 
     public void Dispose()
     {
+        DisposeUploadChannels();
+
         if (visMaskBuffer != 0) GL.DeleteBuffer(visMaskBuffer);
         if (countBuffer != 0) GL.DeleteBuffer(countBuffer);
         if (offsetBuffer != 0) GL.DeleteBuffer(offsetBuffer);
@@ -290,6 +311,182 @@ public class Phase3BufferManager : IDisposable
         total += maxChunks * sizeof(uint);
         
         return total;
+    }
+
+    private void InitializeUploadChannels()
+    {
+        maxChunkVertexBytes = Math.Max(VoxelHelper.ChunkVoxelCount * 6 * 4 * VERTEX_STRIDE, 256);
+        maxChunkIndexBytes = Math.Max(VoxelHelper.ChunkVoxelCount * 6 * 6 * sizeof(uint), 256);
+
+        for (var i = 0; i < uploadChannels.Length; i++)
+        {
+            ref var channel = ref uploadChannels[i];
+
+            if (channel.VertexBuffer != 0)
+            {
+                continue;
+            }
+
+            GL.CreateBuffers(1, out channel.VertexBuffer);
+            GL.NamedBufferStorage(channel.VertexBuffer, maxChunkVertexBytes, IntPtr.Zero,
+                BufferStorageFlags.MapWriteBit |
+                BufferStorageFlags.MapPersistentBit |
+                BufferStorageFlags.MapCoherentBit |
+                BufferStorageFlags.DynamicStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, channel.VertexBuffer, -1, $"mesh_upload_vertex_staging_{i}");
+
+            GL.CreateBuffers(1, out channel.IndexBuffer);
+            GL.NamedBufferStorage(channel.IndexBuffer, maxChunkIndexBytes, IntPtr.Zero,
+                BufferStorageFlags.MapWriteBit |
+                BufferStorageFlags.MapPersistentBit |
+                BufferStorageFlags.MapCoherentBit |
+                BufferStorageFlags.DynamicStorageBit);
+            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, channel.IndexBuffer, -1, $"mesh_upload_index_staging_{i}");
+
+            channel.VertexPtr = GL.MapNamedBufferRange(channel.VertexBuffer, IntPtr.Zero, maxChunkVertexBytes,
+                BufferAccessMask.MapWriteBit |
+                BufferAccessMask.MapPersistentBit |
+                BufferAccessMask.MapCoherentBit);
+            channel.IndexPtr = GL.MapNamedBufferRange(channel.IndexBuffer, IntPtr.Zero, maxChunkIndexBytes,
+                BufferAccessMask.MapWriteBit |
+                BufferAccessMask.MapPersistentBit |
+                BufferAccessMask.MapCoherentBit);
+
+            if (channel.VertexPtr == IntPtr.Zero || channel.IndexPtr == IntPtr.Zero)
+            {
+                Log.Warn($"Phase3BufferManager: failed to map staging buffer {i}");
+            }
+
+            channel.Fence = IntPtr.Zero;
+        }
+
+        nextUploadChannel = 0;
+    }
+
+    private void DisposeUploadChannels()
+    {
+        for (var i = 0; i < uploadChannels.Length; i++)
+        {
+            ref var channel = ref uploadChannels[i];
+
+            if (channel.Fence != IntPtr.Zero)
+            {
+                GL.DeleteSync(channel.Fence);
+                channel.Fence = IntPtr.Zero;
+            }
+
+            if (channel.VertexPtr != IntPtr.Zero && channel.VertexBuffer != 0)
+            {
+                GL.UnmapNamedBuffer(channel.VertexBuffer);
+                channel.VertexPtr = IntPtr.Zero;
+            }
+
+            if (channel.IndexPtr != IntPtr.Zero && channel.IndexBuffer != 0)
+            {
+                GL.UnmapNamedBuffer(channel.IndexBuffer);
+                channel.IndexPtr = IntPtr.Zero;
+            }
+
+            if (channel.VertexBuffer != 0)
+            {
+                GL.DeleteBuffer(channel.VertexBuffer);
+                channel.VertexBuffer = 0;
+            }
+
+            if (channel.IndexBuffer != 0)
+            {
+                GL.DeleteBuffer(channel.IndexBuffer);
+                channel.IndexBuffer = 0;
+            }
+        }
+    }
+
+    private int AcquireUploadChannel()
+    {
+        var channelIndex = nextUploadChannel;
+        ref var channel = ref uploadChannels[channelIndex];
+
+        WaitForChannelFence(ref channel);
+
+        nextUploadChannel = (channelIndex + 1) % uploadChannels.Length;
+        return channelIndex;
+    }
+
+    private void WaitForChannelFence(ref MeshUploadChannel channel)
+    {
+        if (channel.Fence == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var waitResult = GL.ClientWaitSync(channel.Fence, ClientWaitSyncFlags.SyncFlushCommandsBit, 0);
+        while (waitResult == WaitSyncStatus.TimeoutExpired)
+        {
+            waitResult = GL.ClientWaitSync(channel.Fence, ClientWaitSyncFlags.None, 1_000_000);
+        }
+
+        GL.DeleteSync(channel.Fence);
+        channel.Fence = IntPtr.Zero;
+    }
+
+    private unsafe int CopyToMappedBuffer(IntPtr destination, ReadOnlySpan<uint> source, int capacityBytes, string label)
+    {
+        if (destination == IntPtr.Zero || source.Length == 0)
+        {
+            return 0;
+        }
+
+        var srcBytes = MemoryMarshal.AsBytes(source);
+        var bytesToCopy = Math.Min(srcBytes.Length, capacityBytes);
+        if (srcBytes.Length > capacityBytes)
+        {
+            Log.Warn($"Phase3BufferManager: {label} upload truncated ({srcBytes.Length}B > {capacityBytes}B)");
+        }
+
+        var destSpan = new Span<byte>((void*)destination, bytesToCopy);
+        srcBytes[..bytesToCopy].CopyTo(destSpan);
+        return bytesToCopy;
+    }
+
+    public void UploadMeshData(ReadOnlySpan<uint> vertexData, int vertexOffset, ReadOnlySpan<uint> indexData, int indexOffset)
+    {
+        if ((vertexData.Length == 0 || vertexOffset < 0) && (indexData.Length == 0 || indexOffset < 0))
+        {
+            return;
+        }
+
+        var channelIndex = AcquireUploadChannel();
+        ref var channel = ref uploadChannels[channelIndex];
+        var issuedCopy = false;
+
+        if (vertexData.Length > 0 && vertexOffset >= 0)
+        {
+            var vertexByteOffset = (IntPtr)(vertexOffset * VoxelHelper.VERTEX_STRIDE_BYTES);
+            var vertexBytes = CopyToMappedBuffer(channel.VertexPtr, vertexData, maxChunkVertexBytes, "vertex");
+            if (vertexBytes > 0)
+            {
+                GL.MemoryBarrier(MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+                GL.CopyNamedBufferSubData(channel.VertexBuffer, vertexBuffer, IntPtr.Zero, vertexByteOffset, (nint)vertexBytes);
+                issuedCopy = true;
+            }
+        }
+
+        if (indexData.Length > 0 && indexOffset >= 0)
+        {
+            var indexByteOffset = (IntPtr)(indexOffset * sizeof(uint));
+            var indexBytes = CopyToMappedBuffer(channel.IndexPtr, indexData, maxChunkIndexBytes, "index");
+            if (indexBytes > 0)
+            {
+                GL.MemoryBarrier(MemoryBarrierFlags.ClientMappedBufferBarrierBit);
+                GL.CopyNamedBufferSubData(channel.IndexBuffer, indexBuffer, IntPtr.Zero, indexByteOffset, (nint)indexBytes);
+                issuedCopy = true;
+            }
+        }
+
+        if (issuedCopy)
+        {
+            channel.Fence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
+        }
     }
 
     // ========================================================================

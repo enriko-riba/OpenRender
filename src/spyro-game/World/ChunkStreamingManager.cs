@@ -912,19 +912,22 @@ public sealed class ChunkStreamingManager : IDisposable
             return;
         }
 
+        ReadOnlySpan<uint> vertexSpan = ReadOnlySpan<uint>.Empty;
         if (vertexCount > 0 && vertexOffset >= 0 && mesh.VertexData.Length > 0)
         {
-            var vertexByteOffset = (nint)(vertexOffset * VoxelHelper.VERTEX_STRIDE_BYTES);
-            var vertexByteCount = mesh.VertexData.Length * sizeof(uint);
-            GL.NamedBufferSubData((int)phase3Buffers.VertexBuffer, (IntPtr)vertexByteOffset, vertexByteCount, mesh.VertexData);
+            var expectedEntries = vertexCount * 2;
+            var safeLength = Math.Min(expectedEntries, mesh.VertexData.Length);
+            vertexSpan = mesh.VertexData.AsSpan(0, safeLength);
         }
 
+        ReadOnlySpan<uint> indexSpan = ReadOnlySpan<uint>.Empty;
         if (indexCount > 0 && indexOffset >= 0 && mesh.IndexData.Length > 0)
         {
-            var indexByteOffset = (nint)(indexOffset * sizeof(uint));
-            var indexByteCount = mesh.IndexData.Length * sizeof(uint);
-            GL.NamedBufferSubData((int)phase3Buffers.IndexBuffer, (IntPtr)indexByteOffset, indexByteCount, mesh.IndexData);
+            var safeLength = Math.Min(indexCount, mesh.IndexData.Length);
+            indexSpan = mesh.IndexData.AsSpan(0, safeLength);
         }
+
+        phase3Buffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset);
     }
 
     private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces)
