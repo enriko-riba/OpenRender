@@ -56,7 +56,6 @@ void main(){
     vNormal=mat3(uChunkTransform)*normal;
     
     // Simple UVs for 1×1 faces
-    bool isWater=(vBlockDescriptor==1u);
     vTexCoord=getBaseUV(corner);
     
     vAO=unpackAO(aoIdx);

@@ -241,7 +241,7 @@ internal class TerrainLoadingScene : Scene
                     if (gameScene is GameScene gs)
                     {
                         Log.Info($"TerrainLoadingScene: Passing terrain to GameScene");
-                        gs.SetupGpuTerrain(streamingManager, terrainRenderer);
+                        gs.SetupCpuTerrain(streamingManager, terrainRenderer);
                     }
                     else
                     {

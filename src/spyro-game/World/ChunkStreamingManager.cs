@@ -837,6 +837,8 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         var faceCount = Math.Max(0, mesh.VisibleFaceCount);
+        var translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, faceCount);
+        var opaqueFaceCount = Math.Max(0, faceCount - translucentFaceCount);
         var vertexCount = faceCount * 4;
         var indexCount = faceCount * 6;
 
@@ -869,7 +871,7 @@ public sealed class ChunkStreamingManager : IDisposable
         UploadCpuMeshData(mesh, vertexOffset, vertexCount, indexOffset, indexCount);
 
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : phase3Buffers.AllocateCommandSlot();
-        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)faceCount, 0);
+        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)translucentFaceCount);
 
         var placeholderMask = mesh.PlaceholderMask;
         if (placeholderMasksInFlight.TryGetValue(mesh.ChunkIndex, out var inflightMask))
@@ -878,7 +880,7 @@ public sealed class ChunkStreamingManager : IDisposable
             placeholderMasksInFlight.Remove(mesh.ChunkIndex);
         }
 
-        Log.Info($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
+        Log.Info($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
 
         var refreshedDescriptor = new ChunkDescriptor
         {
@@ -912,7 +914,7 @@ public sealed class ChunkStreamingManager : IDisposable
             return;
         }
 
-        ReadOnlySpan<uint> vertexSpan = ReadOnlySpan<uint>.Empty;
+        var vertexSpan = ReadOnlySpan<uint>.Empty;
         if (vertexCount > 0 && vertexOffset >= 0 && mesh.VertexData.Length > 0)
         {
             var expectedEntries = vertexCount * 2;
@@ -920,7 +922,7 @@ public sealed class ChunkStreamingManager : IDisposable
             vertexSpan = mesh.VertexData.AsSpan(0, safeLength);
         }
 
-        ReadOnlySpan<uint> indexSpan = ReadOnlySpan<uint>.Empty;
+        var indexSpan = ReadOnlySpan<uint>.Empty;
         if (indexCount > 0 && indexOffset >= 0 && mesh.IndexData.Length > 0)
         {
             var safeLength = Math.Min(indexCount, mesh.IndexData.Length);

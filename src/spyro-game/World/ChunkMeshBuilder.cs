@@ -59,8 +59,10 @@ internal static class ChunkMeshBuilder
             Log.Warn($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
         }
 
-        var vertexScratch = new List<uint>(8192);
-        var indexScratch = new List<uint>(8192);
+        var opaqueVertices = new List<uint>(8192);
+        var opaqueIndices = new List<uint>(8192);
+        var translucentVertices = new List<uint>(1024);
+        var translucentIndices = new List<uint>(1024);
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
 
         for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
@@ -70,22 +72,26 @@ internal static class ChunkMeshBuilder
                 for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
                     var descriptor = sampler.SampleDescriptor(x, y, z);
-                    if (!IsSolid(descriptor))
+                    if (!HasRenderableGeometry(descriptor))
                     {
                         continue;
                     }
+
+                    var isTranslucent = IsTranslucent(descriptor);
+                    var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
+                    var targetIndexList = isTranslucent ? translucentIndices : opaqueIndices;
 
                     for (uint face = 0; face < FaceDirections.Length; face++)
                     {
                         var (dx, dy, dz) = FaceDirections[(int)face];
                         var neighborDescriptor = sampler.SampleDescriptor(x + dx, y + dy, z + dz);
-                        if (IsSolid(neighborDescriptor))
+                        if (!ShouldEmitFace(descriptor, neighborDescriptor))
                         {
                             continue;
                         }
 
-                        AppendFace(vertexScratch, indexScratch, sampler, descriptor, x, y, z, face);
-                        sampler.IncrementFaceCount();
+                        AppendFace(targetVertexList, targetIndexList, sampler, descriptor, x, y, z, face);
+                        sampler.IncrementFaceCount(isTranslucent);
                     }
                 }
             }
@@ -102,17 +108,33 @@ internal static class ChunkMeshBuilder
             Log.Debug($"ChunkMeshBuilder: chunk {workItem.ChunkIndex} built empty mesh with placeholder mask 0x{workItem.PlaceholderMask:X2} seq={workItem.EnqueueId} build={workItem.BuildId}");
         }
 
+        var mergedVertices = new uint[opaqueVertices.Count + translucentVertices.Count];
+        opaqueVertices.CopyTo(mergedVertices, 0);
+        translucentVertices.CopyTo(mergedVertices, opaqueVertices.Count);
+
+        var mergedIndices = new uint[opaqueIndices.Count + translucentIndices.Count];
+        opaqueIndices.CopyTo(mergedIndices, 0);
+        if (translucentIndices.Count > 0)
+        {
+            var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
+            for (var i = 0; i < translucentIndices.Count; i++)
+            {
+                mergedIndices[opaqueIndices.Count + i] = translucentIndices[i] + (uint)vertexOffset;
+            }
+        }
+
         if (VerboseBuilderLogging)
         {
-            Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+            Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
         }
 
         mesh = new CpuChunkMesh(
             workItem.ChunkIndex,
             workItem.PlaceholderMask,
-            [.. vertexScratch],
-            [.. indexScratch],
+            mergedVertices,
+            mergedIndices,
             faceCount,
+            sampler.TranslucentFaceCount,
             chunkView.Version,
             workItem.EnqueueId,
             workItem.BuildId);
@@ -120,7 +142,40 @@ internal static class ChunkMeshBuilder
         return true;
     }
 
-    private static bool IsSolid(byte descriptor) => descriptor > (byte)BlockDescriptor.Water;
+    private static bool HasRenderableGeometry(byte descriptor) => descriptor > (byte)BlockDescriptor.Air;
+
+    private static bool IsOpaque(byte descriptor) => descriptor > (byte)BlockDescriptor.Water;
+
+    private static bool IsTranslucent(byte descriptor) => descriptor == (byte)BlockDescriptor.Water;
+
+    private static bool ShouldEmitFace(byte descriptor, byte neighborDescriptor)
+    {
+        if (!HasRenderableGeometry(descriptor))
+        {
+            return false;
+        }
+
+        if (!HasRenderableGeometry(neighborDescriptor))
+        {
+            return true;
+        }
+
+        if (descriptor == neighborDescriptor)
+        {
+            return false;
+        }
+
+        var descriptorOpaque = IsOpaque(descriptor);
+        var neighborOpaque = IsOpaque(neighborDescriptor);
+
+        // Opaque blocks mutually occlude each other.
+        if (descriptorOpaque && neighborOpaque)
+        {
+            return false;
+        }
+
+        return true;
+    }
 
     private static void AppendFace(List<uint> vertexScratch, List<uint> indexScratch, ChunkVoxelSampler sampler, byte descriptor, int x, int y, int z, uint face)
     {
@@ -177,8 +232,16 @@ internal static class ChunkMeshBuilder
         }
 
         public int FaceCount { get; private set; }
+        public int TranslucentFaceCount { get; private set; }
 
-        public void IncrementFaceCount() => FaceCount++;
+        public void IncrementFaceCount(bool isTranslucent)
+        {
+            FaceCount++;
+            if (isTranslucent)
+            {
+                TranslucentFaceCount++;
+            }
+        }
 
         public byte SampleDescriptor(int x, int y, int z)
         {

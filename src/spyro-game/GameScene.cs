@@ -58,9 +58,9 @@ internal class GameScene : Scene
     }
 
     /// <summary>
-    /// Called by TerrainLoadingScene to pass initialized GPU terrain components.
+    /// Called by TerrainLoadingScene to pass initialized CPU terrain streaming components.
     /// </summary>
-    public void SetupGpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer)
+    public void SetupCpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer)
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
@@ -144,7 +144,7 @@ internal class GameScene : Scene
 
         EnsureCameraInitialized();
 
-        // Player is initialized in SetupGpuTerrain if coming from loading screen
+        // Player is initialized in SetupCpuTerrain if coming from loading screen
         // If not (e.g. direct load), initialize here
         if (player == null)
         {
@@ -210,7 +210,7 @@ internal class GameScene : Scene
         if (terrainRenderer != null)
         {
             // Use GPU terrain renderer from loading scene
-            // Note: Already added in SetupGpuTerrain, but check just in case
+            // Note: Already added in SetupCpuTerrain, but check just in case
             if (terrainRenderer.Scene == null)
             {
                 AddNode(terrainRenderer);

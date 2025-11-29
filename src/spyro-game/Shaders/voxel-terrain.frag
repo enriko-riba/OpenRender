@@ -126,10 +126,13 @@ void main() {
     // Sample texture based on block descriptor
     vec4 baseColor = vec4(0.0);
     
+    bool isWater = vBlockDescriptor == BD_WATER;
+    bool isTopFace = N.y > 0.5;
+
     // Procedural Water Normal
     vec3 waterNormal = N;
     
-    if (vBlockDescriptor == BD_WATER) {
+    if (isWater && isTopFace) {
         // Improved wave animation - Higher frequency and more random
         float speed = 2.5;
         
@@ -157,14 +160,14 @@ void main() {
     // CRITICAL FIX: Water blocks have their top face at the UPPER edge (Y+1)
     // We need to sample the biome INSIDE the water block, not in the air above it
     vec3 voxelCenter;
-    if (vBlockDescriptor == BD_WATER) {
+    if (isWater) {
         // Water block biome sampling:
         // The top face vertices are at Y+1 (top of water block)
         // We need to sample at the water block's Y position, not Y+1
         vec3 samplePos = vWorldPos;
         
         // If this is a top face (normal pointing up), shift down into water
-        if (N.y > 0.5) {
+        if (isTopFace) {
             samplePos.y -= 0.5;  // Move from top edge into water block
         }
         
@@ -180,8 +183,8 @@ void main() {
     uint primaryBiomeId = getBiomeId(voxelCenter);
     baseColor = sampleBiomeTexture(primaryBiomeId, int(layer), vTexCoord, N);
     
-    // Water specific processing
-    if (vBlockDescriptor == BD_WATER) {
+        // Water specific processing
+        if (isWater) {
         // Water opacity increases with distance to hide underwater culling artifacts
         float dist = length(vWorldPos - cameraPos);
         
@@ -213,9 +216,18 @@ void main() {
         float nightOpacityBoost = 1.0 - smoothstep(0.05, 0.2, brightness);
         baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.3, 0.0, 1.0);
 
+        if (!isCameraUnderwater && isTopFace) {
+            vec3 viewDir = normalize(vViewDir);
+            float fresnel = pow(1.0 - clamp(abs(dot(waterNormal, viewDir)), 0.0, 1.0), 3.0);
+            vec3 surfaceTint = mix(vec3(0.05, 0.15, 0.25), vec3(0.35, 0.6, 0.9), fresnel);
+            baseColor.rgb = mix(baseColor.rgb, surfaceTint, 0.65);
+            float minAlpha = mix(0.55, 0.85, fresnel);
+            baseColor.a = max(baseColor.a, minAlpha);
+        }
+
         // Sun Specular Reflection (Blinn-Phong)
         // Only visible from above
-        if (!isCameraUnderwater) {
+        if (!isCameraUnderwater && isTopFace) {
             vec3 H = normalize(L + V);
             float specAngle = max(dot(H, waterNormal), 0.0);
             // High shininess for water
@@ -224,6 +236,22 @@ void main() {
             
             // Add specular to base color
             baseColor.rgb += sunSpecular;
+        }
+
+        // Outside view absorption to limit visibility into water volume
+        if (!isCameraUnderwater) {
+            float absorption = exp(-dist * 0.12);
+            vec3 absorptionColor = dirLight.ambient * vec3(0.10, 0.18, 0.30);
+            baseColor.rgb = mix(absorptionColor, baseColor.rgb, absorption);
+            float opacityBoost = mix(0.45, 0.95, 1.0 - absorption);
+            baseColor.a = max(baseColor.a, opacityBoost);
+        }
+
+        // Submerged side walls should look uniform and opaque to hide meshing seams
+        if (!isTopFace) {
+            vec3 wallColor = dirLight.ambient * vec3(0.07, 0.12, 0.18);
+            baseColor.rgb = mix(baseColor.rgb, wallColor, 0.8);
+            baseColor.a = max(baseColor.a, 0.95);
         }
     } else {
         // Solid blocks are opaque
