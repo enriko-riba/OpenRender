@@ -268,6 +268,11 @@ internal class GameScene : Scene
             }
         }
 
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F6) && streamingManager != null)
+        {
+            streamingManager.FlushVoxelCache("F6 hotkey");
+        }
+
         // Update day/night cycle
         dayNightCycle.Tick(elapsedSeconds);
 
@@ -316,11 +321,8 @@ internal class GameScene : Scene
             var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
             var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
 
-            if (terrainRenderer != null)
-            {
-                terrainRenderer.IsCameraUnderwater = isUnderwater;
-            }
-            if (skyBox != null) skyBox.IsCameraUnderwater = isUnderwater;
+            terrainRenderer?.IsCameraUnderwater = isUnderwater;
+            skyBox?.IsCameraUnderwater = isUnderwater;
         }
 
         // Update player (handles physics, collision, and WASD movement input)
@@ -584,7 +586,7 @@ internal class GameScene : Scene
         var descriptor = block.Descriptor;
 
         // Hardcoded biome inference based on descriptor and elevation
-        // This matches the shader logic in compute-generate.comp
+        // Mirrors the CPU terrain generator logic (legacy compute shader behavior)
 
         // Ocean biomes
         if (descriptor == BlockDescriptor.Water)

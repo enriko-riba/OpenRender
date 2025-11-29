@@ -236,61 +236,6 @@ public class Phase3BufferManager : IDisposable
         return (counts[0], counts[1], counts[2]);
     }
 
-    /// <summary>
-    /// Bind all Phase 3 buffers to their designated binding points.
-    /// Uses centralized constants from VoxelHelper.SSBOBindings.
-    /// </summary>
-    public void BindBuffersForVisibility() =>
-        // Visibility shader needs: voxel data (input), visibility mask (output)
-        // Note: voxelData buffer bound by caller (from Phase 2)
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.VISIBILITY_MASK, visMaskBuffer);
-
-    public void BindBuffersForCount()
-    {
-        // Count shader needs: visibility mask (input), counts (output)
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.VISIBILITY_MASK, visMaskBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.VISIBLE_COUNTS, countBuffer);
-        // expose totals for scan compute (may be unused by count shader)
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.SCAN_TOTALS, scanTotalsBuffer);
-    }
-
-    public void BindBuffersForCompaction()
-    {
-        // Compaction shader needs: voxel data, visibility mask, offsets (input)
-        // and vertices, indices, atomic counters (output)
-        // Note: voxelData bound by caller
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.VISIBILITY_MASK, visMaskBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.BASE_OFFSETS, offsetBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.COMPACT_VERTICES, vertexBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.COMPACT_INDICES, indexBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.ATOMIC_COUNTERS, atomicCounterBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer,
-            VoxelHelper.SSBOBindings.PER_CHUNK_FACE_EMIT, perChunkEmitBuffer);
-    }
-
-    public void BindBuffersForScan()
-    {
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VISIBLE_COUNTS, countBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.BASE_OFFSETS, offsetBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.SCAN_TOTALS, scanTotalsBuffer);
-    }
-
-    public void BindBuffersForBuildIndirect()
-    {
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.BASE_OFFSETS, offsetBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.VISIBLE_COUNTS, countBuffer);
-        GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, VoxelHelper.SSBOBindings.INDIRECT_COMMANDS, indirectDrawBuffer);
-    }
-
     public void Dispose()
     {
         if (visMaskBuffer != 0) GL.DeleteBuffer(visMaskBuffer);

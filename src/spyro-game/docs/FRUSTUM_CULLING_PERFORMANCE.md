@@ -1,118 +1,38 @@
 # Frustum Culling Performance Notes
 
-## Issue: GPU→CPU Transfer Warnings
+## State After GPU Removal
 
-**Problem:** When running frustum culling every frame, we see thousands of OpenGL performance warnings:
+The compute-based frustum culling path has been fully removed. `ChunkStreamingManager.ExecuteFrustumCulling()` now keeps the entire operation on the CPU using the `CameraFrustum` helper and chunk AABBs from `ChunkWorld`. No GL buffers are read back, and the visibility flags written into the indirect draw commands come straight from CPU logic.
+
+### Why the Change?
+1. **Eliminate stalls:** The previous compute shader forced a GPU→CPU sync so the CPU could decide which commands to submit. This created the warning spam shown below and stalled every frame.
+2. **Match CPU pipeline:** Chunk generation/meshing already happens on worker threads. Keeping culling on the CPU simplifies coordination and keeps phase-three command buffers coherent.
+3. **Asset cleanup:** Removing compute shaders (e.g., `compute-frustum.comp`) means this doc should no longer direct engineers to assets that no longer exist.
+
 ```
-Buffer performance warning: Buffer object visibility_flags_ssbo is being copied/moved 
+Old warning for historical context:
+Buffer performance warning: Buffer object visibility_flags_ssbo is being copied/moved
 from VIDEO memory to HOST memory.
 ```
 
-**Root Cause:** The `ExecuteFrustumCulling()` method uses `GL.GetNamedBufferSubData()` to read back visibility flags from GPU to CPU every frame. This causes:
-1. **Pipeline stalls** - GPU must finish compute shader before CPU can read
-2. **Bandwidth waste** - Copying data GPU→CPU every frame (60+ times/sec)
-3. **Unnecessary work** - We're not even using the flags to skip rendering yet
+## Current Implementation (Phase 5+)
+- `ChunkStreamingManager.ExecuteFrustumCulling()` iterates the active chunk indices, runs `CameraFrustum.IsBoxVisible`, and toggles the matching indirect command's `instanceCount` between 0/1.
+- `VoxelTerrainRenderer.SetVisibilityFlags()` simply mirrors that data into the command buffer without any GPU readback.
+- Visibility updates run every frame without throttling because the work is just a few hundred AABB tests on the CPU.
 
-## Solution: Throttled Readback
+### Performance Impact
+- ✅ No GPU→CPU transfers or pipeline stalls.
+- ✅ Visibility reflects the latest camera transform every frame.
+- ✅ Indirect draw buffer stays GPU-resident; only CPU-side copies write to it when culling masks change.
 
-**Quick Fix (Phase 4.5):**
-- Only read back visibility flags every **10 frames** instead of every frame
-- Reduces readback frequency from 60/sec → 6/sec
-- Statistics update slightly less frequently, but still responsive
-- Eliminates performance warnings
+### Future Ideas
+If we revisit GPU-side culling later, it would be to reduce CPU cost for extremely large scenes. That would require a fresh compute (or mesh shader) implementation that **writes indirect commands directly** without any CPU readback. Until then, the CPU path is the canonical implementation.
 
-**Implementation:**
-```csharp
-// In GpuTerrainTestScene.UpdateFrame()
-private int frameCounter = 0;
-private const int FrustumCullingUpdateInterval = 10;
-
-frameCounter++;
-if (camera != null && frameCounter >= FrustumCullingUpdateInterval)
-{
-    frameCounter = 0;
-    var visibilityFlags = streamingManager.ExecuteFrustumCulling(camera, chunkIndices);
-    terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
-}
-```
-
-## Future Optimization: GPU-Only Culling (Phase 5)
-
-**Best Solution:** Use visibility flags directly on GPU for rendering:
-
-### Phase 5 Approach:
-1. **Keep visibility flags on GPU** - Don't read back to CPU
-2. **Use indirect rendering** - `glMultiDrawElementsIndirect`
-3. **GPU controls draw count** - Visibility shader updates `instanceCount` field
-4. **Zero CPU overhead** - All culling happens on GPU
-
-### Benefits:
-- ✅ No GPU→CPU transfers
-- ✅ No pipeline stalls
-- ✅ Better performance scaling
-- ✅ Can handle thousands of chunks efficiently
-
-### Implementation Sketch (Phase 5):
-```glsl
-// In compute-frustum.comp - write directly to indirect commands
-layout(std430, binding = 3) writeonly buffer IndirectCommands
-{
-    DrawElementsIndirectCommand commands[];
-};
-
-void main()
-{
-    // ... frustum test ...
-    
-    // Write instance count (1 = visible, 0 = culled)
-    commands[idx].instanceCount = isVisible ? 1 : 0;
-}
-```
-
-```csharp
-// In VoxelTerrainRenderer.OnDraw()
-// GPU decides which chunks to render
-GL.MultiDrawElementsIndirect(PrimitiveType.Triangles, 
-    DrawElementsType.UnsignedInt, IntPtr.Zero, chunkCount, 0);
-```
-
-## Performance Impact
-
-### Before Throttling:
-- Readback: 60 times/second
-- GPU→CPU bandwidth: ~256 bytes/frame × 60 = ~15 KB/sec
-- Pipeline stalls: Every frame
-- Warnings: Thousands per second
-
-### After Throttling:
-- Readback: 6 times/second
-- GPU→CPU bandwidth: ~256 bytes/frame × 6 = ~1.5 KB/sec
-- Pipeline stalls: Every 10th frame
-- Warnings: Eliminated ✅
-
-### Future (Phase 5 GPU-Only):
-- Readback: Never (0 times/second)
-- GPU→CPU bandwidth: 0 KB/sec
-- Pipeline stalls: None
-- Warnings: None
-- Bonus: Supports 1000+ chunks with zero overhead
-
-## Testing
-
-**Expected behavior after fix:**
-1. ✅ No more performance warnings in console
-2. ✅ Statistics still update (just slightly delayed)
-3. ✅ Smooth 60 FPS with no stuttering
-4. ✅ Culling still works correctly
-
-**To verify:**
-1. Run the test scene
-2. Move camera around
-3. Check console - should see DEBUG messages but NO performance warnings
-4. Statistics should update smoothly every ~150ms (10 frames @ 60fps)
+## Testing Checklist
+1. Run `spyro-game` and move the camera past chunk boundaries.
+2. The debug overlay should report consistent chunk counts with no GL warnings.
+3. Breakpoints in `ChunkStreamingManager.ExecuteFrustumCulling()` should fire each frame, confirming CPU execution.
 
 ## References
-
-- **Current Implementation:** `GpuTerrainTestScene.UpdateFrame()` line ~138
-- **Culling Method:** `ChunkStreamingManager.ExecuteFrustumCulling()` line ~597
-- **Phase 5 Design:** See `docs/GPU-Terrain-Architecture.md` Section 9.3
+- `src/spyro-game/ChunkStreamingManager.cs` — look at `ExecuteFrustumCulling()` and `UpdateCommandVisibility()`.
+- `src/spyro-game/VoxelTerrainRenderer.cs` — applies CPU visibility results to indirect command buffers.

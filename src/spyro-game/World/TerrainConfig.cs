@@ -420,94 +420,93 @@ public sealed class TerrainConfig
     }
 
     /// <summary>
-    /// Struct matching the std430 layout in the GPU shader.
-    /// Pack carefully to match GLSL alignment: vec4 = 16-byte aligned, vec3 uses 16 bytes, etc.
+    /// Packed terrain parameter block consumed by CPU generation (and the legacy SSBO upload path).
+    /// Field order must stay in sync with terrain-common.glsl's std430 buffer.
     /// </summary>
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    public struct GpuParams
+    public struct TerrainGenerationParams
     {
-        public uint uSeed;
-        public float uWorldScale;
-        public float uMacroScale;
-        public float uContScale; public float uErodeScale; public float uRidgeScale;
-        public float uWarpScale; public float uWarpStrength;
-        public float uBaseTemp; public float uLapseRate; public float uBaseHum; public float uCoastDry;
-        public float uClimateScale; public float uClimateWarp;
-        public float uRegionCellSize; public float uRegionJitter; public float uRegionFeather; public uint uMaxRegionMix;
-        public float uCheeseFreq; public float uCheeseAmp; public float uSpaghettiFreq; public float uSpaghettiAmp;
-        public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; 
-        
-        public float uCoastThreshold;
-        public float uMountainThreshold;
-        public float uCliffFreq;
-        public float uCliffAmp;
-        public float uOverhangFreq;
-        public float uOverhangAmp;
-        public float uShorelineRange;
-        public float uSubsurfaceDepth;
-        public float uCaveDepthFade;
-        public float uCaveSlopeFadeMin;
-        public float uCaveSlopeFadeMax;
-        public float uCaveFloodExt;
-        
-        public float uOceanThreshold;
-        public float uDeepOceanThreshold;
-        public float uAlpineElevation;
-        public float uCoastRange;
-        
-        public float uOverhangDepthRange;
-        public float uOverhangHeightRange;
-        public float uOverhangFalloffRange;
+        public uint Seed;
+        public float WorldScale;
+        public float MacroScale;
+        public float ContinentalScale; public float ErosionScale; public float RidgeScale;
+        public float WarpScale; public float WarpStrength;
+        public float BaseTemperature; public float TemperatureLapseRate; public float BaseHumidity; public float CoastDrying;
+        public float ClimateScale; public float ClimateWarp;
+        public float RegionCellSize; public float RegionJitter; public float RegionFeatherWidth; public uint MaxRegionMix;
+        public float CheeseFrequency; public float CheeseAmplitude; public float SpaghettiFrequency; public float SpaghettiAmplitude;
+        public float CaveCarveThreshold; public float CurlScale; public float CurlStrength;
+
+        public float CoastThreshold;
+        public float MountainThreshold;
+        public float CliffFrequency;
+        public float CliffAmplitude;
+        public float OverhangFrequency;
+        public float OverhangAmplitude;
+        public float ShorelineRange;
+        public float SubsurfaceDepth;
+        public float CaveDepthFade;
+        public float CaveSlopeFadeMin;
+        public float CaveSlopeFadeMax;
+        public float CaveFloodExtension;
+
+        public float OceanThreshold;
+        public float DeepOceanThreshold;
+        public float AlpineElevation;
+        public float CoastRange;
+
+        public float OverhangDepthRange;
+        public float OverhangHeightRange;
+        public float OverhangFalloffRange;
     }
 
-    public GpuParams GetGpuParams()
+    public TerrainGenerationParams GetGenerationParams()
     {
-        return new GpuParams
+        return new TerrainGenerationParams
         {
-            uSeed = (uint)Seed,
-            uWorldScale = WorldScale,
-            uMacroScale = 1.0f,
-            uContScale = ContinentalnessScale,
-            uErodeScale = ErosionScale,
-            uRidgeScale = RidgeScale,
-            uWarpScale = WarpScale,
-            uWarpStrength = WarpStrength,
-            uBaseTemp = BaseTemperature,
-            uLapseRate = LapseRate,
-            uBaseHum = BaseHumidity,
-            uCoastDry = CoastDrying,
-            uClimateScale = ClimateScale,
-            uClimateWarp = ClimateWarp,
-            uRegionCellSize = BiomeRegions.CellSizeChunks,
-            uRegionJitter = BiomeRegions.JitterStrength,
-            uRegionFeather = BiomeRegions.FeatherWidth,
-            uMaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
-            uCheeseFreq = Caves.CheeseFrequency,
-            uCheeseAmp = Caves.CheeseAmplitude,
-            uSpaghettiFreq = Caves.SpaghettiFrequency,
-            uSpaghettiAmp = Caves.SpaghettiAmplitude,
-            uCaveThreshold = Caves.CarveThreshold,
-            uCurlScale = Caves.CurlScale,
-            uCurlStrength = Caves.CurlStrength,
-            uCoastThreshold = CoastThreshold,
-            uMountainThreshold = MountainThreshold,
-            uCliffFreq = CliffFrequency,
-            uCliffAmp = CliffAmplitude,
-            uOverhangFreq = OverhangFrequency,
-            uOverhangAmp = OverhangAmplitude,
-            uShorelineRange = ShorelineRange,
-            uSubsurfaceDepth = SubsurfaceDepth,
-            uCaveDepthFade = CaveDepthFade,
-            uCaveSlopeFadeMin = CaveSlopeFade.Min,
-            uCaveSlopeFadeMax = CaveSlopeFade.Max,
-            uCaveFloodExt = CaveFloodingExtension,
-            uOceanThreshold = OceanThreshold,
-            uDeepOceanThreshold = DeepOceanThreshold,
-            uAlpineElevation = AlpineElevation,
-            uCoastRange = CoastRange,
-            uOverhangDepthRange = OverhangDepthRange,
-            uOverhangHeightRange = OverhangHeightRange,
-            uOverhangFalloffRange = OverhangFalloffRange,
+            Seed = (uint)this.Seed,
+            WorldScale = this.WorldScale,
+            MacroScale = 1.0f,
+            ContinentalScale = this.ContinentalnessScale,
+            ErosionScale = this.ErosionScale,
+            RidgeScale = this.RidgeScale,
+            WarpScale = this.WarpScale,
+            WarpStrength = this.WarpStrength,
+            BaseTemperature = this.BaseTemperature,
+            TemperatureLapseRate = this.LapseRate,
+            BaseHumidity = this.BaseHumidity,
+            CoastDrying = this.CoastDrying,
+            ClimateScale = this.ClimateScale,
+            ClimateWarp = this.ClimateWarp,
+            RegionCellSize = this.BiomeRegions.CellSizeChunks,
+            RegionJitter = this.BiomeRegions.JitterStrength,
+            RegionFeatherWidth = this.BiomeRegions.FeatherWidth,
+            MaxRegionMix = (uint)this.BiomeRegions.MaxRegionMix,
+            CheeseFrequency = this.Caves.CheeseFrequency,
+            CheeseAmplitude = this.Caves.CheeseAmplitude,
+            SpaghettiFrequency = this.Caves.SpaghettiFrequency,
+            SpaghettiAmplitude = this.Caves.SpaghettiAmplitude,
+            CaveCarveThreshold = this.Caves.CarveThreshold,
+            CurlScale = this.Caves.CurlScale,
+            CurlStrength = this.Caves.CurlStrength,
+            CoastThreshold = this.CoastThreshold,
+            MountainThreshold = this.MountainThreshold,
+            CliffFrequency = this.CliffFrequency,
+            CliffAmplitude = this.CliffAmplitude,
+            OverhangFrequency = this.OverhangFrequency,
+            OverhangAmplitude = this.OverhangAmplitude,
+            ShorelineRange = this.ShorelineRange,
+            SubsurfaceDepth = this.SubsurfaceDepth,
+            CaveDepthFade = this.CaveDepthFade,
+            CaveSlopeFadeMin = this.CaveSlopeFade.Min,
+            CaveSlopeFadeMax = this.CaveSlopeFade.Max,
+            CaveFloodExtension = this.CaveFloodingExtension,
+            OceanThreshold = this.OceanThreshold,
+            DeepOceanThreshold = this.DeepOceanThreshold,
+            AlpineElevation = this.AlpineElevation,
+            CoastRange = this.CoastRange,
+            OverhangDepthRange = this.OverhangDepthRange,
+            OverhangHeightRange = this.OverhangHeightRange,
+            OverhangFalloffRange = this.OverhangFalloffRange,
         };
     }
 }

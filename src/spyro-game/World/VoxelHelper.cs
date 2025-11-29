@@ -51,23 +51,6 @@ public static class VoxelHelper
     // Shared quad indices for instanced rendering
     //public static readonly uint[] SHARED_QUAD_INDICES = [0, 1, 2, 2, 3, 0];
 
-    // SSBO Binding Points (Phase 3+)
-    public static class SSBOBindings
-    {
-        public const int VOXEL_DATA = 0;
-        public const int VISIBILITY_MASK = 1;
-        public const int VISIBLE_COUNTS = 2;
-        public const int BASE_OFFSETS = 3;
-        public const int COMPACT_VERTICES = 4;
-        public const int ATOMIC_COUNTERS = 5;
-        public const int CHUNK_INDICES = 6;
-        public const int COMPACT_INDICES = 7;
-        public const int PER_CHUNK_FACE_EMIT = 8;
-        public const int SCAN_TOTALS = 9;
-        public const int INDIRECT_COMMANDS = 10; // NEW: target buffer for build-indirect
-        public const int COMMAND_SLOTS = 11;     // NEW: input buffer for build-indirect (slot indices)
-    }
-
     //public static (Vertex[], uint[]) CreateVoxelCube()
     //{
     //    Vertex[] vertices =

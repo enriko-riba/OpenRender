@@ -55,6 +55,12 @@ public struct ChunkDescriptor
     public long GenerationStartFrame;
 
     /// <summary>
+    /// Bitmask of neighbors that were assumed solid because their chunks were missing when this chunk was generated.
+    /// Bits: 1=+X, 2=-X, 4=+Z, 8=-Z.
+    /// </summary>
+    public byte PlaceholderMask;
+
+    /// <summary>
     /// Get total vertex count for this chunk (4 vertices per face)
     /// </summary>
     //public readonly int VertexCount => VisibleVoxelCount * 4;
@@ -65,7 +71,7 @@ public struct ChunkDescriptor
     //public readonly int IndexCount => VisibleVoxelCount * 6;
 
     public override readonly string ToString() 
-        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, PlaceholderMask={PlaceholderMask}";
 }
 
 /// <summary>

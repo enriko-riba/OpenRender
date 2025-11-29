@@ -9,8 +9,8 @@ using System.Diagnostics;
 namespace SpyroGame;
 
 /// <summary>
-/// Loading scene for GPU-based procedural terrain generation.
-/// Uses ChunkStreamingManager (NEW GPU system) for modern voxel generation.
+/// Loading scene for CPU-based procedural terrain generation.
+/// Uses ChunkStreamingManager's CPU pipeline for voxel generation while keeping GPU rendering.
 /// Transitions to GameScene when terrain is ready with detailed 0-100% progress tracking.
 /// </summary>
 internal class TerrainLoadingScene : Scene
@@ -59,7 +59,7 @@ internal class TerrainLoadingScene : Scene
             VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
         );
 
-        Log.Info("TerrainLoadingScene: Starting GPU terrain generation with enhanced progress tracking...");
+        Log.Info("TerrainLoadingScene: Starting CPU terrain generation with enhanced progress tracking...");
     }
 
     private bool isStreamingTerrain = false;
@@ -74,7 +74,7 @@ internal class TerrainLoadingScene : Scene
         
         // Define progress ranges for each operation
         progressTracker.AddOperation("Initialize Streaming Manager", 0f, 10f);
-        progressTracker.AddOperation("Initialize GPU Generation", 10f, 25f);
+        progressTracker.AddOperation("Initialize Terrain Generation", 10f, 25f);
         progressTracker.AddOperation("Initialize Visibility & Compaction", 25f, 40f);
         progressTracker.AddOperation("Initialize Terrain Renderer", 40f, 50f);
         progressTracker.AddOperation("Initialize Frustum Culling", 50f, 60f);
@@ -94,13 +94,13 @@ internal class TerrainLoadingScene : Scene
         }));
 
         // Phase 2: GPU Pipeline initialization
-        operationQueue.Enqueue(("Initialize GPU Generation", () =>
+        operationQueue.Enqueue(("Initialize Terrain Generation", () =>
         {
-            progressTracker.UpdateOperation("Initialize GPU Generation", 0.3f, "Allocating buffers...");
+            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.3f, "Allocating buffers...");
             streamingManager!.InitializeGpuGeneration(world.Seed);
-            progressTracker.UpdateOperation("Initialize GPU Generation", 0.9f, "Compiling shaders...");
-            progressTracker.CompleteOperation("Initialize GPU Generation");
-            Log.Info($"GPU generation initialized (PROCEDURAL MODE) with pre-allocated buffers");
+            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.9f, "Preparing CPU pipeline...");
+            progressTracker.CompleteOperation("Initialize Terrain Generation");
+            Log.Info($"CPU terrain generation initialized with pre-allocated buffers");
         }));
 
         operationQueue.Enqueue(("Initialize Visibility & Compaction", () =>

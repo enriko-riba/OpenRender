@@ -473,7 +473,7 @@ public class Player
         var obstacleTop = obstacle.Aabb.Max.Y;
         var stepHeight = obstacleTop - position.Y;
 
-        if (stepHeight > 0 && stepHeight <= 1.1f)
+        if (stepHeight is > 0 and <= 1.1f)
         {
             // Check if the obstacle itself is blocked above (wall > 1 block high)
             var blockAbove = world.GetBlockByPositionGlobalSafe((int)obstacle.GlobalPosition.X, (int)obstacle.GlobalPosition.Y + 1, (int)obstacle.GlobalPosition.Z);

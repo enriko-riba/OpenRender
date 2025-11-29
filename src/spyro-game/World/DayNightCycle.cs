@@ -17,7 +17,6 @@ internal class DayNightCycle : IDayNightTimeProvider
     private readonly Scene scene;
     private LightUniform dirLight;
     private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(7));
-    private bool isInitialized = false;
 
     public DayNightCycle(Scene scene)
     {
@@ -34,7 +33,6 @@ internal class DayNightCycle : IDayNightTimeProvider
 
         // Add the light to the scene immediately
         scene.AddLight(dirLight);
-        isInitialized = true;
     }
 
     public float SunPathTilt { get; set; } = 0.35f;
@@ -44,12 +42,6 @@ internal class DayNightCycle : IDayNightTimeProvider
     // Call this *each frame* with elapsedSeconds
     public void Tick(double elapsedSeconds)
     {
-        if (!isInitialized)
-        {
-            // Shouldn't happen, but safety check
-            return;
-        }
-
         // 1 real second = 1 game minute
         timeOfDay = timeOfDay.AddMinutes(elapsedSeconds);
         UpdateSunDirection(timeOfDay);
