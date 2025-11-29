@@ -26,7 +26,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
     public ChunkMeshingJobSystem(ChunkVoxelDataCache voxelCache, int workerCount = 0)
     {
         this.voxelCache = voxelCache ?? throw new ArgumentNullException(nameof(voxelCache));
-        var effectiveWorkers = workerCount > 0 ? workerCount : Math.Max(1, Environment.ProcessorCount - 2);
+        var effectiveWorkers = workerCount > 0 ? workerCount : Math.Max(1, Environment.ProcessorCount / 4);
         workers = new Task[effectiveWorkers];
 
         for (var i = 0; i < workers.Length; i++)
@@ -82,31 +82,39 @@ public sealed class ChunkMeshingJobSystem : IDisposable
     {
         try
         {
-            foreach (var item in workQueue.GetConsumingEnumerable(cancellationSource.Token))
+            while (!cancellationSource.Token.IsCancellationRequested)
             {
-                try
+                if (workQueue.TryTake(out var meshItem, 50, cancellationSource.Token))
                 {
-                    var buildId = Interlocked.Increment(ref buildCounter);
-                    var executingItem = item with { BuildId = buildId };
-
-                    if (ChunkMeshBuilder.TryBuild(executingItem, voxelCache, out var mesh))
-                    {
-                        completedMeshes.Enqueue(mesh);
-                    }
-                    else
-                    {
-                        Log.Warn($"CpuMeshing: builder skipped chunk {item.ChunkIndex} (seq={item.EnqueueId}, build={buildId})");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"CPU meshing failed for chunk {item.ChunkIndex}: {ex.Message}");
+                    ProcessMeshItem(meshItem);
                 }
             }
         }
         catch (OperationCanceledException)
         {
             // Expected during shutdown.
+        }
+    }
+
+    private void ProcessMeshItem(ChunkMeshWorkItem item)
+    {
+        try
+        {
+            var buildId = Interlocked.Increment(ref buildCounter);
+            var executingItem = item with { BuildId = buildId };
+
+            if (ChunkMeshBuilder.TryBuild(executingItem, voxelCache, out var mesh))
+            {
+                completedMeshes.Enqueue(mesh);
+            }
+            else
+            {
+                Log.Warn($"CpuMeshing: builder skipped chunk {item.ChunkIndex} (seq={item.EnqueueId}, build={buildId})");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"CPU meshing failed for chunk {item.ChunkIndex}: {ex.Message}");
         }
     }
 

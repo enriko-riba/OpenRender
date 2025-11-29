@@ -24,7 +24,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
     {
         this.voxelCache = voxelCache ?? throw new ArgumentNullException(nameof(voxelCache));
         config = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
-        workers = new Task[workerCount > 0 ? workerCount : Math.Max(1, Environment.ProcessorCount / 2)];
+        workers = new Task[workerCount > 0 ? workerCount : Math.Max(1, Environment.ProcessorCount / 4)];
 
         for (var i = 0; i < workers.Length; i++)
         {

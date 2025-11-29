@@ -15,6 +15,14 @@ internal sealed class CpuTerrainGenerator
     private const int ColumnCount = VoxelHelper.ChunkSideSizeSquare;
     private const int ColumnHeightWords = ColumnCount * VoxelHelper.ChunkYSize;
 
+    // Sparse 3D sampling constants (Minecraft-style optimization)
+    // Sample every 4 blocks and trilinear interpolate for ~40x speedup
+    private const int SparseStep = 4;
+    private const int SparseSamplesXZ = VoxelHelper.ChunkSideSize / SparseStep + 1; // 5 samples: 0,4,8,12,16
+    private const int SparseSamplesY = VoxelHelper.ChunkYSize / SparseStep + 1;      // 97 samples: 0,4,8,...,384
+    private const int SparseSampleCount = SparseSamplesXZ * SparseSamplesXZ;         // 25 samples per Y slice
+    private const int SparseVolumeSize = SparseSampleCount * SparseSamplesY;         // 25 * 97 = 2425 total
+
     private TerrainConfig config = null!;
     private TerrainConfig.TerrainGenerationParams terrainParams;
     private readonly float[] heightSpline = new float[HeightSplineResolution];
@@ -40,6 +48,15 @@ internal sealed class CpuTerrainGenerator
     private readonly float[] spaghettiVolume = new float[ColumnHeightWords];
     private readonly float[] overhangVolume = new float[ColumnHeightWords];
     private readonly float[] scratch3DOutput = new float[VoxelHelper.ChunkYSize];
+
+    // Sparse sampling buffers (reused each chunk)
+    private readonly float[] sparseSampleX = new float[SparseSampleCount];
+    private readonly float[] sparseSampleZ = new float[SparseSampleCount];
+    private readonly float[] sparseCheeseGrid = new float[SparseVolumeSize];
+    private readonly float[] sparseSpaghettiA = new float[SparseVolumeSize];
+    private readonly float[] sparseSpaghettiB = new float[SparseVolumeSize];
+    private readonly float[] sparseOverhangGrid = new float[SparseVolumeSize];
+    private readonly float[] sparseSliceScratch = new float[SparseSampleCount];
 
     private int currentChunkX;
     private int currentChunkZ;
@@ -282,41 +299,200 @@ internal sealed class CpuTerrainGenerator
 
     private void BuildColumnVolumes()
     {
-        var chunkY = VoxelHelper.ChunkYSize;
-        var columnCount = ColumnCount;
-        var xSpan = columnWorldX.AsSpan();
-        var zSpan = columnWorldZ.AsSpan();
-        var cheeseRow = scratch2DB.AsSpan();
-        var spaghettiRowA = scratch2DC.AsSpan();
-        var spaghettiRowB = scratch2DOutput.AsSpan();
-        var overhangRow = sampleScratch2D.AsSpan();
+        // Minecraft-style optimization: sample noise at sparse intervals and trilinear interpolate.
+        // This reduces 3D noise samples from 98,304 to 2,425 per noise type (~40x reduction).
 
-        for (var y = 0; y < chunkY; y++)
+        var baseX = currentChunkX * VoxelHelper.ChunkSideSize;
+        var baseZ = currentChunkZ * VoxelHelper.ChunkSideSize;
+
+        // Build sparse sample coordinates (5x5 grid at 4-block intervals)
+        var sparseIdx = 0;
+        for (var sz = 0; sz < SparseSamplesXZ; sz++)
         {
-            SampleValueNoiseSlice(cheeseRow, xSpan, y, zSpan, terrainParams.CheeseFrequency, terrainParams.Seed + 300u, octaves: 2, persistence: 0.6f, lacunarity: 1.9f);
-            SampleValueNoiseSlice(spaghettiRowA, xSpan, y, zSpan, terrainParams.SpaghettiFrequency, terrainParams.Seed + 400u, octaves: 1, persistence: 1f, lacunarity: 2f);
-            SampleValueNoiseSlice(spaghettiRowB, xSpan, y, zSpan, terrainParams.SpaghettiFrequency, terrainParams.Seed + 500u, octaves: 1, persistence: 1f, lacunarity: 2f);
-            SampleValueNoiseSlice(overhangRow, xSpan, y, zSpan, terrainParams.OverhangFrequency, terrainParams.Seed + 2000u, octaves: 2, persistence: 0.55f, lacunarity: 2f);
-
-            for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
+            var worldZ = baseZ + sz * SparseStep;
+            for (var sx = 0; sx < SparseSamplesXZ; sx++)
             {
-                var sliceOffset = columnIndex * chunkY + y;
-
-                var cheeseSample = (cheeseRow[columnIndex] * 2f - 1f) * terrainParams.CheeseAmplitude;
-                cheeseVolume[sliceOffset] = Math.Clamp(cheeseSample, -1f, 1f);
-
-                var n1 = spaghettiRowA[columnIndex] * 2f - 1f;
-                var n2 = spaghettiRowB[columnIndex] * 2f - 1f;
-                var dist = MathF.Sqrt(n1 * n1 + n2 * n2);
-                var amp = Math.Clamp(terrainParams.SpaghettiAmplitude, 0.2f, 4f);
-                var ampT = (amp - 0.2f) / 3.8f;
-                var widthFactor = Lerp(2.8f, 1.1f, ampT);
-                var tunnelWidth = 1f - dist * widthFactor;
-                spaghettiVolume[sliceOffset] = Math.Clamp(tunnelWidth, -1f, 1f);
-
-                var overhangSample = (overhangRow[columnIndex] * 2f - 1f) * terrainParams.OverhangAmplitude;
-                overhangVolume[sliceOffset] = Math.Clamp(overhangSample, -1f, 1f);
+                sparseSampleX[sparseIdx] = baseX + sx * SparseStep;
+                sparseSampleZ[sparseIdx] = worldZ;
+                sparseIdx++;
             }
+        }
+
+        // Sample sparse 3D grid for each noise type
+        for (var sy = 0; sy < SparseSamplesY; sy++)
+        {
+            var worldY = sy * SparseStep;
+            var sliceOffset = sy * SparseSampleCount;
+
+            // Cheese caves
+            SampleValueNoiseSliceSparse(
+                sparseSliceScratch,
+                sparseSampleX.AsSpan(),
+                worldY,
+                sparseSampleZ.AsSpan(),
+                terrainParams.CheeseFrequency,
+                terrainParams.Seed + 300u,
+                octaves: 2, persistence: 0.6f, lacunarity: 1.9f);
+            sparseSliceScratch.AsSpan().CopyTo(sparseCheeseGrid.AsSpan(sliceOffset, SparseSampleCount));
+
+            // Spaghetti tunnels (two noise channels)
+            SampleValueNoiseSliceSparse(
+                sparseSliceScratch,
+                sparseSampleX.AsSpan(),
+                worldY,
+                sparseSampleZ.AsSpan(),
+                terrainParams.SpaghettiFrequency,
+                terrainParams.Seed + 400u,
+                octaves: 1, persistence: 1f, lacunarity: 2f);
+            sparseSliceScratch.AsSpan().CopyTo(sparseSpaghettiA.AsSpan(sliceOffset, SparseSampleCount));
+
+            SampleValueNoiseSliceSparse(
+                sparseSliceScratch,
+                sparseSampleX.AsSpan(),
+                worldY,
+                sparseSampleZ.AsSpan(),
+                terrainParams.SpaghettiFrequency,
+                terrainParams.Seed + 500u,
+                octaves: 1, persistence: 1f, lacunarity: 2f);
+            sparseSliceScratch.AsSpan().CopyTo(sparseSpaghettiB.AsSpan(sliceOffset, SparseSampleCount));
+
+            // Overhangs
+            SampleValueNoiseSliceSparse(
+                sparseSliceScratch,
+                sparseSampleX.AsSpan(),
+                worldY,
+                sparseSampleZ.AsSpan(),
+                terrainParams.OverhangFrequency,
+                terrainParams.Seed + 2000u,
+                octaves: 2, persistence: 0.55f, lacunarity: 2f);
+            sparseSliceScratch.AsSpan().CopyTo(sparseOverhangGrid.AsSpan(sliceOffset, SparseSampleCount));
+        }
+
+        // Trilinear interpolate sparse samples into full-resolution volumes
+        InterpolateSparseVolumes();
+    }
+
+    /// <summary>
+    /// Interpolate sparse 3D noise samples into full-resolution volumes using trilinear interpolation.
+    /// </summary>
+    private void InterpolateSparseVolumes()
+    {
+        var chunkY = VoxelHelper.ChunkYSize;
+
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            // Find sparse Z indices and interpolation factor
+            var sz0 = lz / SparseStep;
+            var sz1 = Math.Min(sz0 + 1, SparseSamplesXZ - 1);
+            var tz = (lz % SparseStep) / (float)SparseStep;
+
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+
+                // Find sparse X indices and interpolation factor
+                var sx0 = lx / SparseStep;
+                var sx1 = Math.Min(sx0 + 1, SparseSamplesXZ - 1);
+                var tx = (lx % SparseStep) / (float)SparseStep;
+
+                // Precompute XZ corner indices in sparse grid
+                var idx00 = sz0 * SparseSamplesXZ + sx0;
+                var idx10 = sz0 * SparseSamplesXZ + sx1;
+                var idx01 = sz1 * SparseSamplesXZ + sx0;
+                var idx11 = sz1 * SparseSamplesXZ + sx1;
+
+                for (var y = 0; y < chunkY; y++)
+                {
+                    var sliceOffset = columnIndex * chunkY + y;
+
+                    // Find sparse Y indices and interpolation factor
+                    var sy0 = y / SparseStep;
+                    var sy1 = Math.Min(sy0 + 1, SparseSamplesY - 1);
+                    var ty = (y % SparseStep) / (float)SparseStep;
+
+                    var yOffset0 = sy0 * SparseSampleCount;
+                    var yOffset1 = sy1 * SparseSampleCount;
+
+                    // Trilinear interpolate cheese
+                    var cheeseRaw = TrilinearSample(sparseCheeseGrid, idx00, idx10, idx01, idx11, yOffset0, yOffset1, tx, ty, tz);
+                    var cheeseSample = (cheeseRaw * 2f - 1f) * terrainParams.CheeseAmplitude;
+                    cheeseVolume[sliceOffset] = Math.Clamp(cheeseSample, -1f, 1f);
+
+                    // Trilinear interpolate spaghetti channels
+                    var n1Raw = TrilinearSample(sparseSpaghettiA, idx00, idx10, idx01, idx11, yOffset0, yOffset1, tx, ty, tz);
+                    var n2Raw = TrilinearSample(sparseSpaghettiB, idx00, idx10, idx01, idx11, yOffset0, yOffset1, tx, ty, tz);
+                    var n1 = n1Raw * 2f - 1f;
+                    var n2 = n2Raw * 2f - 1f;
+                    var dist = MathF.Sqrt(n1 * n1 + n2 * n2);
+                    var amp = Math.Clamp(terrainParams.SpaghettiAmplitude, 0.2f, 4f);
+                    var ampT = (amp - 0.2f) / 3.8f;
+                    var widthFactor = Lerp(2.8f, 1.1f, ampT);
+                    var tunnelWidth = 1f - dist * widthFactor;
+                    spaghettiVolume[sliceOffset] = Math.Clamp(tunnelWidth, -1f, 1f);
+
+                    // Trilinear interpolate overhang
+                    var overhangRaw = TrilinearSample(sparseOverhangGrid, idx00, idx10, idx01, idx11, yOffset0, yOffset1, tx, ty, tz);
+                    var overhangSample = (overhangRaw * 2f - 1f) * terrainParams.OverhangAmplitude;
+                    overhangVolume[sliceOffset] = Math.Clamp(overhangSample, -1f, 1f);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Trilinear interpolation from 8 sparse grid corners.
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float TrilinearSample(
+        float[] grid,
+        int idx00, int idx10, int idx01, int idx11,
+        int yOffset0, int yOffset1,
+        float tx, float ty, float tz)
+    {
+        // Sample 8 corners
+        var c000 = grid[yOffset0 + idx00];
+        var c100 = grid[yOffset0 + idx10];
+        var c010 = grid[yOffset0 + idx01];
+        var c110 = grid[yOffset0 + idx11];
+        var c001 = grid[yOffset1 + idx00];
+        var c101 = grid[yOffset1 + idx10];
+        var c011 = grid[yOffset1 + idx01];
+        var c111 = grid[yOffset1 + idx11];
+
+        // Interpolate along X
+        var x00 = c000 + (c100 - c000) * tx;
+        var x10 = c010 + (c110 - c010) * tx;
+        var x01 = c001 + (c101 - c001) * tx;
+        var x11 = c011 + (c111 - c011) * tx;
+
+        // Interpolate along Z
+        var z0 = x00 + (x10 - x00) * tz;
+        var z1 = x01 + (x11 - x01) * tz;
+
+        // Interpolate along Y
+        return z0 + (z1 - z0) * ty;
+    }
+
+    private void SampleValueNoiseSliceSparse(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    {
+        var count = destination.Length;
+        for (var i = 0; i < count; i++)
+        {
+            var amplitude = 1f;
+            var frequency = baseFrequency;
+            var accum = 0f;
+            var totalAmp = 0f;
+
+            for (var octave = 0; octave < octaves; octave++)
+            {
+                var sample = ValueNoise3D(xCoords[i] * frequency, yCoord * frequency, zCoords[i] * frequency, seed + (uint)(octave * 1013));
+                accum += sample * amplitude;
+                totalAmp += amplitude;
+                amplitude *= persistence;
+                frequency *= lacunarity;
+            }
+
+            destination[i] = totalAmp > 0f ? accum / totalAmp : 0f;
         }
     }
 
@@ -437,29 +613,6 @@ internal sealed class CpuTerrainGenerator
         z[0] = p.Z;
         SampleFbm3D(x, y, z, baseFrequency, seed, octaves, persistence, lacunarity, output);
         return output[0];
-    }
-
-    private void SampleValueNoiseSlice(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
-    {
-        var count = destination.Length;
-        for (var i = 0; i < count; i++)
-        {
-            var amplitude = 1f;
-            var frequency = baseFrequency;
-            var accum = 0f;
-            var totalAmp = 0f;
-
-            for (var octave = 0; octave < octaves; octave++)
-            {
-                var sample = ValueNoise3D(xCoords[i] * frequency, yCoord * frequency, zCoords[i] * frequency, seed + (uint)(octave * 1013));
-                accum += sample * amplitude;
-                totalAmp += amplitude;
-                amplitude *= persistence;
-                frequency *= lacunarity;
-            }
-
-            destination[i] = totalAmp > 0f ? accum / totalAmp : 0f;
-        }
     }
 
     private static float ValueNoise3D(float x, float y, float z, uint seed)

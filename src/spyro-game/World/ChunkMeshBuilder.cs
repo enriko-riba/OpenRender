@@ -1,4 +1,6 @@
 using System;
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using OpenRender;
 
@@ -7,6 +9,7 @@ namespace SpyroGame.World;
 /// <summary>
 /// CPU implementation of the Phase 3 visibility + meshing logic.
 /// Produces packed vertex/index buffers compatible with the existing renderer.
+/// Performance optimized with List pooling to reduce GC pressure.
 /// </summary>
 internal static class ChunkMeshBuilder
 {
@@ -17,6 +20,14 @@ internal static class ChunkMeshBuilder
     private const bool MirrorMissingNeighbors = false;
     private const uint DisabledLightValue = 0x0Fu;
     private static bool VerboseBuilderLogging = false;
+    private static bool DebugWaterFaces = true;
+    [ThreadStatic] private static int t_debugNeighborMisses;
+
+    // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
+    [ThreadStatic] private static List<uint>? t_opaqueVertices;
+    [ThreadStatic] private static List<uint>? t_opaqueIndices;
+    [ThreadStatic] private static List<uint>? t_translucentVertices;
+    [ThreadStatic] private static List<uint>? t_translucentIndices;
 
     private static readonly (int dx, int dy, int dz)[] FaceDirections =
     [
@@ -37,6 +48,25 @@ internal static class ChunkMeshBuilder
         [(1, 0, 1), (1, 1, 1), (0, 1, 1), (0, 0, 1)], // +Z
         [(0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0)]  // -Z
     ];
+
+    /// <summary>
+    /// Get or create thread-local pooled lists for mesh building.
+    /// </summary>
+    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx) GetPooledLists()
+    {
+        t_opaqueVertices ??= new List<uint>(16384);
+        t_opaqueIndices ??= new List<uint>(16384);
+        t_translucentVertices ??= new List<uint>(2048);
+        t_translucentIndices ??= new List<uint>(2048);
+
+        // Clear for reuse
+        t_opaqueVertices.Clear();
+        t_opaqueIndices.Clear();
+        t_translucentVertices.Clear();
+        t_translucentIndices.Clear();
+
+        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices);
+    }
 
     public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out CpuChunkMesh mesh)
     {
@@ -59,12 +89,11 @@ internal static class ChunkMeshBuilder
             Log.Warn($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
         }
 
-        var opaqueVertices = new List<uint>(8192);
-        var opaqueIndices = new List<uint>(8192);
-        var translucentVertices = new List<uint>(1024);
-        var translucentIndices = new List<uint>(1024);
+        // Performance optimization: Use thread-local pooled lists instead of allocating new ones
+        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
 
+       
         for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
@@ -96,7 +125,6 @@ internal static class ChunkMeshBuilder
                 }
             }
         }
-
         var faceCount = sampler.FaceCount;
         var faceExplosionThreshold = VoxelHelper.ChunkVoxelCount * 5;
         if (faceCount > faceExplosionThreshold)
@@ -126,6 +154,12 @@ internal static class ChunkMeshBuilder
         if (VerboseBuilderLogging)
         {
             Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+        }
+
+        // Debug: Log neighbor misses and water face count
+        if (DebugWaterFaces && (sampler.NeighborMisses > 0 || sampler.TranslucentFaceCount > 0))
+        {
+            Log.Info($"ChunkMeshBuilder DEBUG: chunk={workItem.ChunkIndex} waterFaces={sampler.TranslucentFaceCount} neighborMisses={sampler.NeighborMisses}");
         }
 
         mesh = new CpuChunkMesh(
@@ -233,6 +267,7 @@ internal static class ChunkMeshBuilder
 
         public int FaceCount { get; private set; }
         public int TranslucentFaceCount { get; private set; }
+        public int NeighborMisses { get; private set; }
 
         public void IncrementFaceCount(bool isTranslucent)
         {
@@ -268,6 +303,9 @@ internal static class ChunkMeshBuilder
 
             if (ShouldTreatAsPlaceholderEdge(x, z))
             {
+                // When neighbor is missing (placeholder edge), treat as AIR so faces ARE emitted.
+                // When the neighbor loads, edge seam refresh will check if faces need to be
+                // removed (if neighbor turned out to be solid) and trigger a remesh if needed.
                 return (byte)BlockDescriptor.Air;
             }
 
@@ -279,6 +317,8 @@ internal static class ChunkMeshBuilder
                 }
             }
 
+            // Neighbor lookup failed - track this for debugging
+            NeighborMisses++;
             return (byte)BlockDescriptor.Air;
         }
 

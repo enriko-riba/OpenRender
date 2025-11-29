@@ -37,10 +37,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private static readonly bool HeightCacheEnabled = true;
     private const string ConfigFileName = "terrain_config.json";
 
-    private const byte PLACEHOLDER_POS_X = 1 << 0;
-    private const byte PLACEHOLDER_NEG_X = 1 << 1;
-    private const byte PLACEHOLDER_POS_Z = 1 << 2;
-    private const byte PLACEHOLDER_NEG_Z = 1 << 3;
+    // MINECRAFT-STYLE MESHING:
+    // 1. When voxel data completes, mesh immediately (treat missing neighbors as air)
+    // 2. Notify neighbors - they re-mesh when their neighbor data becomes available
+    // 3. No waiting, no guard bands - simple and robust
 
     private readonly VoxelWorld world;
     private readonly ChunkVoxelDataCache chunkVoxelCache;
@@ -51,7 +51,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Queue<int> lowPriorityPending = new();
     private readonly HashSet<int> pendingSeamRefresh = [];
     private readonly Dictionary<int, long> lastSeamRefreshFrame = [];
-    private readonly Dictionary<int, byte> placeholderMasksInFlight = [];
     private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = [];
     private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
@@ -98,12 +97,12 @@ public sealed class ChunkStreamingManager : IDisposable
 
         chunkVoxelCache = new ChunkVoxelDataCache();
 
-        var generationWorkers = Math.Max(1, Environment.ProcessorCount);
-        cpuGenerationJobs = new ChunkGenerationJobSystem(chunkVoxelCache, terrainConfig, generationWorkers);
-        maxConcurrentCpuGenerations = generationWorkers;
+        // Use default worker counts (ProcessorCount/2 each) to avoid thread contention.
+        // Generation and meshing share CPU resources, so total workers ≈ ProcessorCount.
+        cpuGenerationJobs = new ChunkGenerationJobSystem(chunkVoxelCache, terrainConfig);
+        maxConcurrentCpuGenerations = cpuGenerationJobs.WorkerCount;
 
-        var meshingWorkers = Math.Max(1, Environment.ProcessorCount);
-        cpuMeshingJobs = new ChunkMeshingJobSystem(chunkVoxelCache, meshingWorkers);
+        cpuMeshingJobs = new ChunkMeshingJobSystem(chunkVoxelCache);
 
         lastCameraPosition = Vector3.Zero;
     }
@@ -150,14 +149,15 @@ public sealed class ChunkStreamingManager : IDisposable
     public int StatVisibleIndices { get; private set; }
 
     public IEnumerable<ChunkDescriptor> GetReadyChunks()
-        => activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready);
+        => activeChunks.Values.Where(c => c.State is TerrainChunkState.Ready or TerrainChunkState.Dirty);
 
     public (int total, int pending, int generating, int ready) GetStats()
     {
         var total = activeChunks.Count;
-        var pending = activeChunks.Values.Count(c => c.State is TerrainChunkState.Pending or TerrainChunkState.Dirty);
+        var pending = activeChunks.Values.Count(c => c.State is TerrainChunkState.Pending);
         var generating = activeChunks.Values.Count(c => c.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility);
-        var ready = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
+        // Dirty chunks are renderable (have a mesh) - they just might need re-mesh later
+        var ready = activeChunks.Values.Count(c => c.State is TerrainChunkState.Ready or TerrainChunkState.Dirty);
         return (total, pending, generating, ready);
     }
 
@@ -166,7 +166,6 @@ public sealed class ChunkStreamingManager : IDisposable
         var cachedEntries = chunkVoxelCache.ActiveEntryCount;
         chunkVoxelCache.Clear();
         cpuMeshResults.Clear();
-        placeholderMasksInFlight.Clear();
         pendingSeamRefresh.Clear();
         cpuMeshingJobs.DrainPendingWorkItems();
         ClearPendingCpuMeshingQueue();
@@ -587,98 +586,107 @@ public sealed class ChunkStreamingManager : IDisposable
 
         SubmitPendingBatches();
         PollCompletedBatches();
+        ProcessDirtyChunks(); // Re-mesh dirty chunks (e.g., neighbors that loaded)
         DrainCompletedCpuMeshes();
         UnloadDistantChunks(cameraPosition, visibleChunks);
         LogHeightCacheStatsIfNeeded();
         AccumulateHeightCacheShaderCounters();
     }
 
-    private byte ComputePlaceholderMask(int chunkIdx, HashSet<int> batchSet)
+    // Re-meshing is deferred for chunks at the edge of visible distance.
+    // Only chunks within (loadDistance - RemeshProximityMargin) are re-meshed immediately.
+    // This avoids wasted work on far chunks that may be unloaded when player turns.
+    private const int RemeshProximityMargin = 2;
+    
+    /// <summary>
+    /// Process chunks marked Dirty - re-mesh them to pick up neighbor data.
+    /// Only re-meshes chunks that are close enough to the camera.
+    /// Far chunks stay Dirty until they get closer or are unloaded.
+    /// </summary>
+    private void ProcessDirtyChunks()
     {
-        byte mask = 0;
+        // Calculate the proximity threshold - only re-mesh chunks within this distance
+        var loadDistance = GetActiveLoadDistance();
+        var remeshDistanceSq = (loadDistance - RemeshProximityMargin) * (loadDistance - RemeshProximityMargin);
+        
+        // Get camera chunk position
+        var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
+        var clampedX = Math.Clamp(lastCameraPosition.X, 0, worldSizeInBlocks - 1);
+        var clampedZ = Math.Clamp(lastCameraPosition.Z, 0, worldSizeInBlocks - 1);
+        var cameraChunkX = (int)(clampedX / VoxelHelper.ChunkSideSize);
+        var cameraChunkZ = (int)(clampedZ / VoxelHelper.ChunkSideSize);
+        
+        var dirtyChunks = activeChunks.Values
+            .Where(c => c.State == TerrainChunkState.Dirty)
+            .Where(c =>
+            {
+                // Only re-mesh chunks that are close enough to camera
+                var chunkX = c.ChunkIndex % VoxelHelper.WorldChunksXZ;
+                var chunkZ = c.ChunkIndex / VoxelHelper.WorldChunksXZ;
+                var dx = chunkX - cameraChunkX;
+                var dz = chunkZ - cameraChunkZ;
+                return dx * dx + dz * dz <= remeshDistanceSq;
+            })
+            .OrderBy(c => CalculatePriority(c.ChunkIndex))
+            .Take(4) // Reduced from 8 to further limit per-frame work
+            .ToList();
+
+        foreach (var desc in dirtyChunks)
+        {
+            var chunkIdx = desc.ChunkIndex;
+            
+            // Update state before scheduling to prevent re-processing
+            var updatedDesc = desc;
+            updatedDesc.State = TerrainChunkState.CountingVisibility;
+            activeChunks[chunkIdx] = updatedDesc;
+            
+            ScheduleCpuMeshing(chunkIdx);
+            Log.Debug($"Re-meshing dirty chunk {chunkIdx} (close to camera)");
+        }
+    }
+
+    /// <summary>
+    /// Mark a chunk as dirty to trigger re-mesh (e.g., when neighbor loads).
+    /// Only marks Ready chunks - others are already being processed.
+    /// </summary>
+    private void MarkChunkDirty(int chunkIdx, string reason)
+    {
+        if (!activeChunks.TryGetValue(chunkIdx, out var desc))
+            return;
+            
+        if (desc.State != TerrainChunkState.Ready)
+            return;
+            
+        desc.State = TerrainChunkState.Dirty;
+        activeChunks[chunkIdx] = desc;
+        Log.Debug($"Marked chunk {chunkIdx} dirty: {reason}");
+    }
+
+    /// <summary>
+    /// Notify neighbors that this chunk's voxel data is now available.
+    /// Neighbors that are Ready will be marked Dirty to re-mesh with correct boundary data.
+    /// </summary>
+    private void NotifyNeighborsChunkReady(int chunkIdx)
+    {
         var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
 
-        void CheckNeighbor(int dx, int dz, byte bit)
+        void NotifyNeighbor(int dx, int dz)
         {
             var nx = chunkX + dx;
             var nz = chunkZ + dz;
             if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
-            {
                 return;
-            }
-
             var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
-            if (batchSet.Contains(neighborIdx))
-            {
-                return;
-            }
-
-            if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc))
-            {
-                if (neighborDesc.State is TerrainChunkState.Ready or TerrainChunkState.Dirty)
-                {
-                    return;
-                }
-
-                // Avoid placeholder churn when the neighbor already finished generation and is
-                // only waiting on CPU meshing uploads (CountingVisibility state).
-                if (neighborDesc.State == TerrainChunkState.CountingVisibility)
-                {
-                    return;
-                }
-            }
-
-            mask |= bit;
+            MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
         }
 
-        CheckNeighbor(1, 0, PLACEHOLDER_POS_X);
-        CheckNeighbor(-1, 0, PLACEHOLDER_NEG_X);
-        CheckNeighbor(0, 1, PLACEHOLDER_POS_Z);
-        CheckNeighbor(0, -1, PLACEHOLDER_NEG_Z);
-
-        return mask;
+        NotifyNeighbor(-1, 0);
+        NotifyNeighbor(1, 0);
+        NotifyNeighbor(0, -1);
+        NotifyNeighbor(0, 1);
     }
-
-    private void ResolvePlaceholderDependencies(int chunkIdx)
-    {
-        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
-        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
-
-        void ClearNeighborBit(int dx, int dz, byte oppositeBit)
-        {
-            var nx = chunkX + dx;
-            var nz = chunkZ + dz;
-            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
-            {
-                return;
-            }
-
-            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
-            if (!activeChunks.TryGetValue(neighborIdx, out var neighborDesc))
-            {
-                return;
-            }
-
-            if ((neighborDesc.PlaceholderMask & oppositeBit) == 0)
-            {
-                return;
-            }
-
-            neighborDesc.PlaceholderMask &= (byte)~oppositeBit;
-            activeChunks[neighborIdx] = neighborDesc;
-
-            // Let the normal seam refresh cooldown handle this neighbor so we avoid
-            // immediately thrashing the same few chunks while loading.
-            RequestSeamRefresh(neighborIdx, $"Neighbor {chunkIdx} resolved seam edge", force: false);
-        }
-
-        ClearNeighborBit(-1, 0, PLACEHOLDER_POS_X);
-        ClearNeighborBit(1, 0, PLACEHOLDER_NEG_X);
-        ClearNeighborBit(0, -1, PLACEHOLDER_POS_Z);
-        ClearNeighborBit(0, 1, PLACEHOLDER_NEG_Z);
-    }
-
+    /// <summary>
     private void ProcessPendingSeamRefreshes()
     {
         if (!SeamRefreshEnabled)
@@ -782,8 +790,8 @@ public sealed class ChunkStreamingManager : IDisposable
         cpuMeshingJobs.Enqueue(chunkIdx, mask, cacheVersion);
     }
 
-    private byte GetPlaceholderMaskForChunk(int chunkIdx)
-        => placeholderMasksInFlight.TryGetValue(chunkIdx, out var mask) ? mask : (byte)0;
+    // Placeholder mask system removed - meshing now waits for all neighbors
+    private byte GetPlaceholderMaskForChunk(int chunkIdx) => 0;
 
     private void DrainCompletedCpuMeshes()
     {
@@ -873,12 +881,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : phase3Buffers.AllocateCommandSlot();
         WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)translucentFaceCount);
 
-        var placeholderMask = mesh.PlaceholderMask;
-        if (placeholderMasksInFlight.TryGetValue(mesh.ChunkIndex, out var inflightMask))
-        {
-            placeholderMask = inflightMask;
-            placeholderMasksInFlight.Remove(mesh.ChunkIndex);
-        }
+        // Placeholder mask is always 0 now - we wait for all neighbors before meshing
+        byte placeholderMask = 0;
 
         Log.Info($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
 
@@ -896,8 +900,6 @@ public sealed class ChunkStreamingManager : IDisposable
         };
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
         lastUploadedPlaceholderMasks[mesh.ChunkIndex] = placeholderMask;
-
-        ResolvePlaceholderDependencies(mesh.ChunkIndex);
 
         if (pendingSeamRefresh.Contains(mesh.ChunkIndex))
         {
@@ -1285,28 +1287,14 @@ public sealed class ChunkStreamingManager : IDisposable
         if (batchIndices.Count == 0)
             return;
 
-        var batchSet = batchIndices.ToHashSet();
-        for (var i = 0; i < batchIndices.Count; i++)
-        {
-            var idx = batchIndices[i];
-            var mask = ComputePlaceholderMask(idx, batchSet);
-
-            if (mask != 0)
-            {
-                placeholderMasksInFlight[idx] = mask;
-            }
-            else
-            {
-                placeholderMasksInFlight.Remove(idx);
-            }
-        }
+        // Sort by distance to camera for priority (closest first)
+        batchIndices.Sort((a, b) => CalculatePriority(a).CompareTo(CalculatePriority(b)));
 
         var submitted = 0;
         foreach (var idx in batchIndices)
         {
             if (!TryBeginChunkGeneration(idx))
             {
-                placeholderMasksInFlight.Remove(idx);
                 RequeueChunk(idx);
                 continue;
             }
@@ -1397,25 +1385,30 @@ public sealed class ChunkStreamingManager : IDisposable
 
             if (!activeChunks.TryGetValue(chunkIdx, out var descriptor))
             {
-                placeholderMasksInFlight.Remove(chunkIdx);
                 chunkVoxelCache.TryRelease(chunkIdx);
                 continue;
             }
 
             if (descriptor.State != TerrainChunkState.Generating)
             {
-                placeholderMasksInFlight.Remove(chunkIdx);
                 chunkVoxelCache.TryRelease(chunkIdx);
                 Log.Debug($"ChunkStreamingManager: Dropping CPU generation result for chunk {chunkIdx} (state={descriptor.State})");
                 continue;
             }
 
+            ApplyCollisionResults(chunkIdx, result.Generation);
+            
+            // MINECRAFT-STYLE: Mesh immediately, treat missing neighbors as air
+            // Then notify neighbors so they can re-mesh with correct boundary data
             descriptor.State = TerrainChunkState.CountingVisibility;
             descriptor.GenerationStartFrame = currentFrame;
             activeChunks[chunkIdx] = descriptor;
-
-            ApplyCollisionResults(chunkIdx, result.Generation);
+            
             ScheduleCpuMeshing(chunkIdx);
+            
+            // Notify neighbors - they will re-mesh to pick up this chunk's data
+            NotifyNeighborsChunkReady(chunkIdx);
+            
             processed++;
         }
 
@@ -1559,6 +1552,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var unloadDistanceSq = unloadRadius * unloadRadius;
         var retentionRadius = GetRetentionDistanceChunks();
         var retentionDistanceSq = retentionRadius * retentionRadius;
+        
         var chunksToUnload = new List<int>();
 
         // Find chunks beyond unload distance
@@ -1567,10 +1561,13 @@ public sealed class ChunkStreamingManager : IDisposable
             var chunkIdx = kvp.Key;
             var desc = kvp.Value;
 
-            // Don't unload chunks that are still generating or pending
+            // Don't unload chunks that are still in-flight (actively being processed)
             if (desc.State is TerrainChunkState.Generating or
-                TerrainChunkState.Pending)
+                TerrainChunkState.Pending or
+                TerrainChunkState.CountingVisibility)
                 continue;
+            
+            // Dirty chunks CAN be unloaded if they're far away - they'll re-generate when needed
 
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
@@ -1580,26 +1577,18 @@ public sealed class ChunkStreamingManager : IDisposable
             var distanceSq = dx * dx + dz * dz;
 
             if (visibleChunks.Contains(chunkIdx))
-            {
                 continue;
-            }
 
-            var lastSeen = chunkLastVisibleFrame.TryGetValue(chunkIdx, out var frame)
-                ? frame
-                : long.MinValue;
+            var lastSeen = chunkLastVisibleFrame.TryGetValue(chunkIdx, out var frame) ? frame : long.MinValue;
             var framesSinceVisible = lastSeen == long.MinValue ? long.MaxValue : currentFrame - frame;
             var outsideUnload = distanceSq > unloadDistanceSq;
             var outsideRetention = distanceSq > retentionDistanceSq;
 
             if (!outsideUnload && !outsideRetention && framesSinceVisible < RETENTION_FRAME_DELAY)
-            {
                 continue;
-            }
 
             if (!outsideUnload && framesSinceVisible < RETENTION_FRAME_DELAY)
-            {
                 continue;
-            }
 
             chunksToUnload.Add(chunkIdx);
         }
@@ -1934,7 +1923,6 @@ public sealed class ChunkStreamingManager : IDisposable
             activeChunks.Clear();
         }
 
-        placeholderMasksInFlight.Clear();
         pendingSeamRefresh.Clear();
         chunkVoxelCache.Clear();
         ClearPendingCpuMeshingQueue();

@@ -80,7 +80,7 @@ public class Phase3BufferManager : IDisposable
     private uint commandSlotBuffer;
     private uint chunkInfoBuffer;
 
-    private const int UploadChannelCount = 2;
+    private const int UploadChannelCount = 4; // Increased from 2 for better async upload handling
 
     private struct MeshUploadChannel
     {
