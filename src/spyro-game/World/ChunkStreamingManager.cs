@@ -19,8 +19,10 @@ public sealed class ChunkStreamingManager : IDisposable
 {
     private const int MAX_CHUNKS_PER_BATCH = 64;
     private const int HIGH_PRIORITY_DISTANCE = 2;
-    private const int UNLOAD_DISTANCE_CHUNKS = VoxelHelper.MaxDistanceInChunks + 4;
+    private const int BASE_UNLOAD_PADDING_CHUNKS = 4;
     private const int MAX_UNLOADS_PER_FRAME = 32;
+    private const int PREFETCH_MARGIN_DEFAULT = 0;
+    private const int PREFETCH_MARGIN_MAX = 4;
     private const int SeamRefreshCooldownFrames = 240;
     private const int HeightCacheWordsPerChunk = VoxelHelper.ChunkSideSizeSquare / 2;
     private const ushort HeightCacheHeightMask = 0x03FF;
@@ -44,12 +46,12 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Dictionary<int, ChunkDescriptor> activeChunks = [];
     private readonly Queue<int> highPriorityPending = new();
     private readonly Queue<int> lowPriorityPending = new();
-    private readonly HashSet<int> pendingSeamRefresh = new();
-    private readonly Dictionary<int, long> lastSeamRefreshFrame = new();
-    private readonly Dictionary<int, byte> placeholderMasksInFlight = new();
-    private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = new();
-    private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = new();
-    private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = new();
+    private readonly HashSet<int> pendingSeamRefresh = [];
+    private readonly Dictionary<int, long> lastSeamRefreshFrame = [];
+    private readonly Dictionary<int, byte> placeholderMasksInFlight = [];
+    private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = [];
+    private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
+    private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Queue<int> freeHeightCacheSlots = new();
 
     private Phase3BufferManager? phase3Buffers;
@@ -103,7 +105,36 @@ public sealed class ChunkStreamingManager : IDisposable
 
     public VoxelWorld World => world;
     public CollisionManager CollisionManager { get; }
-    public int LoadDistance { get; set; } = VoxelHelper.MaxDistanceInChunks;
+    private int loadDistance = VoxelHelper.MaxDistanceInChunks;
+    private int prefetchMarginChunks = PREFETCH_MARGIN_DEFAULT;
+    public int LoadDistance
+    {
+        get => loadDistance;
+        set
+        {
+            var clamped = Math.Clamp(value, 1, VoxelHelper.MaxDistanceInChunks);
+            if (clamped == loadDistance)
+            {
+                return;
+            }
+
+            loadDistance = clamped;
+            UpdateVisibilityBudgetCapacity();
+        }
+    }
+
+    public void SetPrefetchMargin(int margin)
+    {
+        var clamped = Math.Clamp(margin, PREFETCH_MARGIN_DEFAULT, PREFETCH_MARGIN_MAX);
+        if (clamped == prefetchMarginChunks)
+        {
+            return;
+        }
+
+        prefetchMarginChunks = clamped;
+        Log.Info($"ChunkStreamingManager: Prefetch margin set to {prefetchMarginChunks} (LoadDistance={loadDistance})");
+        UpdateVisibilityBudgetCapacity();
+    }
     public uint TerrainParamsSSBO => terrainParamsSSBO;
     public int BiomeLutTexture => biomeLutTexture;
     public int VisibleChunkCount { get; private set; }
@@ -265,10 +296,22 @@ public sealed class ChunkStreamingManager : IDisposable
         };
     }
 
+    private int GetActiveLoadDistance()
+    {
+        var maxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX, 1, VoxelHelper.WorldChunksXZ);
+        return Math.Clamp(loadDistance + prefetchMarginChunks, 1, maxRadius);
+    }
+
+    private int GetUnloadDistanceChunks()
+    {
+        var maxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX + BASE_UNLOAD_PADDING_CHUNKS, 1, VoxelHelper.WorldChunksXZ);
+        return Math.Clamp(loadDistance + prefetchMarginChunks + BASE_UNLOAD_PADDING_CHUNKS, 1, maxRadius);
+    }
+
     private HashSet<int> DetermineVisibleChunks(Vector3 cameraPosition)
     {
         var result = new HashSet<int>();
-        var viewDistance = LoadDistance;
+        var viewDistance = GetActiveLoadDistance();
         var viewDistanceSq = viewDistance * viewDistance;
 
         var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
@@ -302,12 +345,40 @@ public sealed class ChunkStreamingManager : IDisposable
         return result;
     }
 
+    private void UpdateVisibilityBudgetCapacity()
+    {
+        if (!HeightCacheEnabled)
+        {
+            return;
+        }
+
+        var desiredCapacity = CalculateMaxViewChunks();
+
+        if (heightCacheBuffer == 0)
+        {
+            // Not initialized yet; InitializeGpuGeneration will size buffers using the new value.
+            return;
+        }
+
+        if (desiredCapacity <= heightCacheCapacity)
+        {
+            return;
+        }
+
+        Log.Info($"ChunkStreamingManager: expanding height cache to {desiredCapacity} slots (was {heightCacheCapacity}) due to visibility budget change");
+        InitializeHeightCache(desiredCapacity);
+        RestoreHeightCacheForActiveChunks();
+    }
+
     private int CalculateMaxViewChunks()
     {
-        var radius = Math.Clamp(LoadDistance, 1, VoxelHelper.WorldChunksXZ);
-        var span = 2 * radius + 1;
-        var count = span * span;
-        return Math.Clamp(count, 1, VoxelHelper.TotalChunks);
+        return CalculateMaxViewChunksForRadius(GetActiveLoadDistance());
+    }
+
+    private int CalculateMaxViewChunksForRadius(int radius)
+    {
+        var clamped = Math.Clamp(radius, 1, VoxelHelper.WorldChunksXZ);
+        return Math.Clamp(VoxelHelper.CalculateCircularChunkCount(clamped), 1, VoxelHelper.TotalChunks);
     }
 
     private void QueueNewChunks(HashSet<int> visibleChunks)
@@ -442,7 +513,7 @@ public sealed class ChunkStreamingManager : IDisposable
             neighborDesc.PlaceholderMask &= (byte)~oppositeBit;
             activeChunks[neighborIdx] = neighborDesc;
 
-            RequestSeamRefresh(neighborIdx, $"Neighbor {chunkIdx} resolved seam edge");
+            RequestSeamRefresh(neighborIdx, $"Neighbor {chunkIdx} resolved seam edge", force: true);
         }
 
         ClearNeighborBit(-1, 0, PLACEHOLDER_POS_X);
@@ -485,7 +556,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    private void RequestSeamRefresh(int chunkIdx, string reason)
+    private void RequestSeamRefresh(int chunkIdx, string reason, bool force = false)
     {
         pendingSeamRefresh.Remove(chunkIdx);
 
@@ -496,7 +567,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (desc.State == TerrainChunkState.Ready)
         {
-            if (lastSeamRefreshFrame.TryGetValue(chunkIdx, out var lastFrame) &&
+            if (!force &&
+                lastSeamRefreshFrame.TryGetValue(chunkIdx, out var lastFrame) &&
                 currentFrame - lastFrame < SeamRefreshCooldownFrames)
             {
                 if (pendingSeamRefresh.Add(chunkIdx))
@@ -659,7 +731,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (pendingSeamRefresh.Contains(mesh.ChunkIndex))
         {
-            RequestSeamRefresh(mesh.ChunkIndex, "Deferred seam dependency resolved");
+            RequestSeamRefresh(mesh.ChunkIndex, "Deferred seam dependency resolved", force: true);
         }
 
         return true;
@@ -818,6 +890,30 @@ public sealed class ChunkStreamingManager : IDisposable
         heightCacheShaderMissesTotal = 0;
         heightCacheShaderHitsAtLastLog = 0;
         heightCacheShaderMissesAtLastLog = 0;
+    }
+
+    private void RestoreHeightCacheForActiveChunks()
+    {
+        if (!HeightCacheEnabled)
+        {
+            return;
+        }
+
+        var restored = 0;
+        foreach (var chunkIdx in activeChunks.Keys)
+        {
+            var chunk = world[chunkIdx];
+            if (chunk != null && chunk.TryGetSpanData(out var spanPairs, out var spanCounts, out var spanTypes))
+            {
+                UploadHeightCacheFromSpans(chunkIdx, spanPairs, spanCounts, spanTypes);
+                restored++;
+            }
+        }
+
+        if (restored > 0)
+        {
+            Log.Info($"ChunkStreamingManager: restored height cache data for {restored} active chunks after resizing");
+        }
     }
 
     private void DisposeHeightCacheStatsReadbackBuffer()
@@ -1286,7 +1382,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var cameraChunkX = (int)(cameraPosition.X / VoxelHelper.ChunkSideSize);
         var cameraChunkZ = (int)(cameraPosition.Z / VoxelHelper.ChunkSideSize);
 
-        var unloadDistanceSq = UNLOAD_DISTANCE_CHUNKS * UNLOAD_DISTANCE_CHUNKS;
+        var unloadRadius = GetUnloadDistanceChunks();
+        var unloadDistanceSq = unloadRadius * unloadRadius;
         var chunksToUnload = new List<int>();
 
         // Find chunks beyond unload distance
@@ -1409,8 +1506,8 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         var (total, pending, generating, ready) = GetStats();
 
-        // Calculate target based on current load distance
-        var targetChunks = (2 * LoadDistance + 1) * (2 * LoadDistance + 1);
+        // Calculate target based on current (prefetch-aware) load distance
+        var targetChunks = VoxelHelper.CalculateCircularChunkCount(GetActiveLoadDistance());
 
         // Progress is based on ready chunks vs target
         var progressPercent = ready / (float)Math.Max(1, targetChunks) * 100f;
@@ -1648,7 +1745,8 @@ public sealed class ChunkStreamingManager : IDisposable
         phase3Buffers = new Phase3BufferManager();
         phase3Buffers.AllocateBuffers(maxChunksPerBatch);
 
-        var maxActiveChunks = CalculateMaxViewChunks();
+        var absoluteMaxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX, 1, VoxelHelper.WorldChunksXZ);
+        var maxActiveChunks = CalculateMaxViewChunksForRadius(absoluteMaxRadius);
         phase3Buffers.ResizeIndirectDrawBuffer((uint)maxActiveChunks);
 
         Log.Info($"Phase 3 buffers initialized for CPU meshing (batch cap {maxChunksPerBatch}, indirect capacity {maxActiveChunks})");
@@ -1674,7 +1772,8 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         if (maxChunks == 0)
         {
-            maxChunks = CalculateMaxViewChunks();
+            var absoluteMaxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX, 1, VoxelHelper.WorldChunksXZ);
+            maxChunks = CalculateMaxViewChunksForRadius(absoluteMaxRadius);
         }
 
         visibilityFlagsCapacity = maxChunks;
@@ -1689,7 +1788,7 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         if (chunkIndices.Length == 0)
         {
-            return Array.Empty<int>();
+            return [];
         }
 
         var planes = (Vector4[])camera.Frustum.Planes.Clone();

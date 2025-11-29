@@ -66,11 +66,13 @@ internal class TerrainLoadingScene : Scene
     private bool isWaitingForProgressAnimation = false;
     private const int INITIAL_LOAD_DISTANCE = 5;
     private int initialChunkCount = 0;
+    private int minimumReadyChunksForTransition;
+    private const int MaxOutstandingChunksForTransition = 4;
 
     private void BuildOperationQueue()
     {
-        // Calculate target chunk count
-        targetChunkCount = (2 * INITIAL_LOAD_DISTANCE + 1) * (2 * INITIAL_LOAD_DISTANCE + 1);
+        minimumReadyChunksForTransition = VoxelHelper.CalculateCircularChunkCount(INITIAL_LOAD_DISTANCE);
+        targetChunkCount = minimumReadyChunksForTransition;
         
         // Define progress ranges for each operation
         progressTracker.AddOperation("Initialize Streaming Manager", 0f, 10f);
@@ -89,6 +91,7 @@ internal class TerrainLoadingScene : Scene
             {
                 LoadDistance = INITIAL_LOAD_DISTANCE
             };
+            streamingManager.SetPrefetchMargin(0);
             progressTracker.CompleteOperation("Initialize Streaming Manager");
             Log.Info("ChunkStreamingManager created");
         }));
@@ -139,6 +142,7 @@ internal class TerrainLoadingScene : Scene
 
         Log.Info($"TerrainLoadingScene: Queued {operationQueue.Count} operations");
     }
+    
 
     public override void UpdateFrame(double elapsedSeconds)
     {
@@ -177,12 +181,16 @@ internal class TerrainLoadingScene : Scene
                 currentStage = $"Streaming terrain: {ready}/{targetChunkCount} chunks";
 
                 // Check if streaming is complete
-                if (ready >= targetChunkCount || (ready > 0 && pending == 0 && generating == 0))
+                var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
+                var outstanding = pending + generating;
+                var areaReady = ready >= requiredReadyChunks && outstanding <= MaxOutstandingChunksForTransition;
+
+                if (areaReady)
                 {
                     isStreamingTerrain = false;
                     isWaitingForProgressAnimation = true; // NEW: Wait for animation to catch up
                     progressTracker.CompleteOperation("Stream Initial Terrain");
-                    Log.Info($"Initial terrain streaming complete. Ready: {ready}/{targetChunkCount}. Waiting for progress animation...");
+                    Log.Info($"Initial terrain streaming complete. Ready: {ready}/{requiredReadyChunks}. Waiting for progress animation...");
                 }
                 else
                 {
@@ -259,11 +267,6 @@ internal class TerrainLoadingScene : Scene
 
     private void RenderUI()
     {
-        void WriteLine(string text, Vector3 color, int fontSize, int x, int y)
-        {
-            textRenderer.Render(text, fontSize, x, y, color);
-        }
-
         void WriteLineCentered(string text, Vector3 color, int fontSize, int y)
         {
             var size = textRenderer.Measure(text, fontSize);
@@ -273,7 +276,7 @@ internal class TerrainLoadingScene : Scene
         // Fixed positions for each section
         var titleY = 50;
         var stageY = 120;
-        var detailedStatusY = 160;
+        var detailedStatusY = 180;
         var progressBarY = 220;
         var statsY = 300;
         var errorMessagesY = Height - 200; // Bottom half, leaving room for spinner
@@ -288,7 +291,7 @@ internal class TerrainLoadingScene : Scene
         // Detailed Status - Centered (if available)
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
-            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 18, detailedStatusY);
+            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 20, detailedStatusY);
         }
 
         // Progress Bar - Centered

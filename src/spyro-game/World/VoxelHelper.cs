@@ -1,4 +1,5 @@
-﻿using OpenTK.Mathematics;
+﻿using System;
+using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
 
@@ -201,5 +202,19 @@ public static class VoxelHelper
         var x = (chunkIndex % WorldChunksXZ) * ChunkSideSize;
         var z = (chunkIndex / (WorldChunksXZ) * ChunkSideSize);
         return new Vector3i(x, 0, z);
+    }
+
+    public static int CalculateCircularChunkCount(int radius)
+    {
+        var clamped = Math.Clamp(radius, 0, WorldChunksXZ);
+        var count = 0;
+
+        for (var dz = -clamped; dz <= clamped; dz++)
+        {
+            var maxDx = (int)MathF.Floor(MathF.Sqrt(clamped * clamped - dz * dz));
+            count += maxDx * 2 + 1;
+        }
+
+        return Math.Max(count, 1);
     }
 }

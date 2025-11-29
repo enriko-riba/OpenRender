@@ -65,17 +65,6 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
 
     public bool TryDequeueResult(out ChunkGenerationJobResult result) => completedResults.TryDequeue(out result);
 
-    public void DrainPendingWorkItems()
-    {
-        while (workQueue.TryTake(out _, 0))
-        {
-        }
-
-        while (completedResults.TryDequeue(out _))
-        {
-        }
-    }
-
     private void WorkerLoop()
     {
         var generator = new CpuTerrainGenerator(config);

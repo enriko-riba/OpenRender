@@ -1,3 +1,4 @@
+using System;
 using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
@@ -81,6 +82,22 @@ public class Chunk(int index)
             }
         }
         HasGpuColumns = true;
+    }
+
+    internal bool TryGetSpanData(out int[] spansPairs, out byte[] counts, out byte[] types)
+    {
+        if (columnSpanPairs != null && columnSpanCounts != null && columnSpanTypes != null)
+        {
+            spansPairs = columnSpanPairs;
+            counts = columnSpanCounts;
+            types = columnSpanTypes;
+            return true;
+        }
+
+        spansPairs = [];
+        counts = [];
+        types = [];
+        return false;
     }
 
     /// <summary>

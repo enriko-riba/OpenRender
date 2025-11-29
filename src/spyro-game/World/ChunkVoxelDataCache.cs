@@ -16,7 +16,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     private readonly ConcurrentDictionary<int, ChunkVoxelBuffer> chunkBuffers = new();
     private readonly ArrayPool<uint> voxelPool = pool ?? ArrayPool<uint>.Shared;
     private long globalStoreVersion;
-    private static bool EnableVerboseLogging = false;
+    private static readonly bool EnableVerboseLogging = false;
 
     public int ActiveEntryCount => chunkBuffers.Count;
 
@@ -180,7 +180,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
             disposed = true;
 
             var array = data;
-            data = Array.Empty<uint>();
+            data = [];
             if (array.Length > 0)
             {
                 pool.Return(array, clearArray: false);
@@ -199,7 +199,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
         {
             ChunkIndex = chunkIndex;
             Version = version;
-            this.data = data ?? Array.Empty<uint>();
+            this.data = data ?? [];
         }
 
         public int ChunkIndex { get; }

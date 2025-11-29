@@ -36,6 +36,7 @@ internal class GameScene : Scene
     // Frustum culling throttling
     private double lastCullingTime = -1.0;
     private const double CullingIntervalSeconds = 0.166; // ~6 times per second (166ms)
+    private const int GameplayPrefetchMarginChunks = 2;
 
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
@@ -97,6 +98,7 @@ internal class GameScene : Scene
 
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
+        streamingManager.SetPrefetchMargin(GameplayPrefetchMarginChunks);
 
         Log.Info("GameScene: GPU terrain components configured");
     }
