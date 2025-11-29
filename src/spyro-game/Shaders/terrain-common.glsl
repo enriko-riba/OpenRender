@@ -8,10 +8,7 @@
 // - Hash function (used by all modules)
 //
 // For specific functionality, include the appropriate module:
-// - terrain-noise.glsl: Noise generation (2D/3D, FBM, domain warp)
-// - terrain-caves.glsl: Cave generation (cheese, spaghetti)
-// - terrain-generation.glsl: Terrain height, density, block types
-// - terrain-biomes.glsl: Climate, biomes, region mixing
+// - terrain-climate.glsl: Noise generation, macro fields, and biome selection helpers
 // - terrain-greedy-meshing.glsl: Greedy meshing pack/unpack
 
 #ifndef TERRAIN_COMMON_GLSL

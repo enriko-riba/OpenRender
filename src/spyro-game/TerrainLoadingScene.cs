@@ -283,7 +283,7 @@ internal class TerrainLoadingScene : Scene
         var spinnerY = Height - 60;
 
         // Title - Centered
-        WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
+        //WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
 
         // Current Stage - Centered
         WriteLineCentered(currentStage, progressColor, 20, stageY);
@@ -321,7 +321,7 @@ internal class TerrainLoadingScene : Scene
         
         // Line 2: Est. Remaining (always reserve space)
         var line2Y = line1Y + 45;
-        if (progressTracker.Progress > 1f && progressTracker.Progress < 99f)
+        if (progressTracker.Progress is > 1f and < 99f)
         {
             var eta = progressTracker.EstimatedTimeRemaining;
             WriteLineCentered($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, line2Y);

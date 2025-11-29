@@ -48,10 +48,7 @@ uniform int uShowBiomes;
 
 #define IS_FRAGMENT_SHADER
 #include "terrain-common.glsl"
-#include "terrain-noise.glsl"
-#include "terrain-caves.glsl"        // For isCave() used by terrain-generation
-#include "terrain-generation.glsl"  // For getContinentalness()
-#include "terrain-biomes.glsl"      // For getBiomeId()
+#include "terrain-climate.glsl"
 
 // Helper to get BlockDescriptor (geology layer index) from block descriptor value
 // BlockDescriptor values map directly to geology layers (0-7)
