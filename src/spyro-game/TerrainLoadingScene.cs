@@ -168,6 +168,7 @@ internal class TerrainLoadingScene : Scene
             {
                 streamingManager.Update(startPosition);
                 var (total, pending, generating, ready) = streamingManager.GetStats();
+                var queued = pending + generating;
 
                 // Calculate streaming progress (60% to 95%)
                 var streamingProgress = ready / (float)targetChunkCount;
@@ -176,9 +177,9 @@ internal class TerrainLoadingScene : Scene
                 progressTracker.UpdateOperation(
                     "Stream Initial Terrain", 
                     streamingProgress, 
-                    $"{ready}/{targetChunkCount} chunks ready (Pending: {pending}, Generating: {generating})");
+                    $"{ready}/{targetChunkCount} chunks ready (Queued: {queued})");
 
-                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} chunks";
+                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} ready (+{queued} queued)";
 
                 // Check if streaming is complete
                 var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
@@ -332,15 +333,18 @@ internal class TerrainLoadingScene : Scene
         WriteLineCentered($"Target Chunks: {targetChunkCount}", dimColor, 22, line3Y);
         
         // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
-        var line4Y = line3Y + 45; // Changed from 45 to match consistent spacing
+        var line4Y = line3Y + 45;
         if (streamingManager != null)
         {
-            var (_, _, _, ready) = streamingManager.GetStats();
+            var (_, pending, generating, ready) = streamingManager.GetStats();
+            var queued = pending + generating;
             WriteLineCentered($"Chunks Ready: {ready}", dimColor, 22, line4Y);
+            WriteLineCentered($"Chunks Queued: {queued}", dimColor, 22, line4Y + 40);
+            line4Y += 40;
         }
 
-        // Line 5: GPU Memory - SAME SPACING as other lines (45px)
-        var line5Y = line4Y + 60; // Changed from 60 to match consistent spacing
+        // Line 5: GPU Memory - maintain spacing below queued stats
+        var line5Y = line4Y + 60;
         if (streamingManager != null)
         {
             var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();

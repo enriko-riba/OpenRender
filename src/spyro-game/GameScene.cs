@@ -458,15 +458,15 @@ internal class GameScene : Scene
         WriteLine("", textColor);
 
         // Chunk Stats (FIXED - Show actual generated chunks, not theoretical surrounding)
-        int loadedChunks;
-        int generatedChunks;
+        int readyChunks;
+        int queuedChunks;
         int targetChunks;
 
         if (streamingManager != null)
         {
-            var (total, pending, _, ready) = streamingManager.GetStats();
-            generatedChunks = Math.Max(0, total - pending); // Chunks that have started processing or finished
-            loadedChunks = ready;
+            var (total, pending, generating, ready) = streamingManager.GetStats();
+            readyChunks = ready;
+            queuedChunks = pending + generating;
 
             var (target, _, _, _, _) = streamingManager.GetStreamingProgress();
             targetChunks = target;
@@ -474,13 +474,13 @@ internal class GameScene : Scene
         else
         {
             // Fallback to VoxelWorld (old system)
-            loadedChunks = world.LoadedChunksCount;
-            generatedChunks = world.LoadedChunksCount;
+            readyChunks = world.LoadedChunksCount;
+            queuedChunks = 0;
             targetChunks = world.LoadedChunksCount;
         }
 
         WriteLine("Chunks:", highlightColor);
-        WriteLine($"  Generated: {generatedChunks:N0} | Loaded: {loadedChunks:N0} | Total: {targetChunks:N0}", textColor);
+        WriteLine($"  GPU Ready: {readyChunks:N0} | Queued: {queuedChunks:N0} | Target: {targetChunks:N0}", textColor);
 
         // Get visibility stats from terrain renderer (GPU-based)
         if (terrainRenderer != null && streamingManager != null)
