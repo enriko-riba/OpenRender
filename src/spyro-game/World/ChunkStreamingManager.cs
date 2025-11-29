@@ -23,7 +23,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private const int MAX_UNLOADS_PER_FRAME = 32;
     private const int PREFETCH_MARGIN_DEFAULT = 0;
     private const int PREFETCH_MARGIN_MAX = 4;
+    private const int RETENTION_PADDING_CHUNKS = 2;
+    private const int RETENTION_FRAME_DELAY = 180;
     private const int SeamRefreshCooldownFrames = 240;
+    private static readonly bool SeamRefreshEnabled = false;
     private const int HeightCacheWordsPerChunk = VoxelHelper.ChunkSideSizeSquare / 2;
     private const ushort HeightCacheHeightMask = 0x03FF;
     private const ushort HeightCacheWaterFlag = 1 << 10;
@@ -31,7 +34,7 @@ public sealed class ChunkStreamingManager : IDisposable
     private const int HeightCacheStatsWordCount = 4;
     private const int HeightCacheStatsByteSize = HeightCacheStatsWordCount * sizeof(uint);
     private const int HeightCacheLogIntervalFrames = 600;
-    private const bool HeightCacheEnabled = true;
+    private static readonly bool HeightCacheEnabled = true;
     private const string ConfigFileName = "terrain_config.json";
 
     private const byte PLACEHOLDER_POS_X = 1 << 0;
@@ -52,12 +55,14 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = [];
     private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
+    private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
     private readonly Queue<int> freeHeightCacheSlots = new();
 
     private Phase3BufferManager? phase3Buffers;
     private VoxelTerrainRenderer? terrainRenderer;
 
     private long currentFrame;
+    private long lastRetentionGuardLogFrame = long.MinValue;
     private Vector3 lastCameraPosition;
     private int maxConcurrentCpuGenerations;
     private int inFlightCpuGenerations;
@@ -302,10 +307,17 @@ public sealed class ChunkStreamingManager : IDisposable
         return Math.Clamp(loadDistance + prefetchMarginChunks, 1, maxRadius);
     }
 
+    private int GetRetentionDistanceChunks()
+    {
+        var maxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX + RETENTION_PADDING_CHUNKS, 1, VoxelHelper.WorldChunksXZ);
+        return Math.Clamp(loadDistance + prefetchMarginChunks + RETENTION_PADDING_CHUNKS, 1, maxRadius);
+    }
+
     private int GetUnloadDistanceChunks()
     {
-        var maxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX + BASE_UNLOAD_PADDING_CHUNKS, 1, VoxelHelper.WorldChunksXZ);
-        return Math.Clamp(loadDistance + prefetchMarginChunks + BASE_UNLOAD_PADDING_CHUNKS, 1, maxRadius);
+        var retention = GetRetentionDistanceChunks();
+        var maxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX + RETENTION_PADDING_CHUNKS + BASE_UNLOAD_PADDING_CHUNKS, 1, VoxelHelper.WorldChunksXZ);
+        return Math.Clamp(retention + BASE_UNLOAD_PADDING_CHUNKS, 1, maxRadius);
     }
 
     private HashSet<int> DetermineVisibleChunks(Vector3 cameraPosition)
@@ -381,6 +393,136 @@ public sealed class ChunkStreamingManager : IDisposable
         return Math.Clamp(VoxelHelper.CalculateCircularChunkCount(clamped), 1, VoxelHelper.TotalChunks);
     }
 
+    private int GetRetentionCapacity() => CalculateMaxViewChunksForRadius(GetRetentionDistanceChunks());
+
+    private void TrackChunkVisibility(HashSet<int> visibleChunks)
+    {
+        foreach (var chunkIdx in visibleChunks)
+        {
+            if (activeChunks.ContainsKey(chunkIdx))
+            {
+                chunkLastVisibleFrame[chunkIdx] = currentFrame;
+            }
+        }
+    }
+
+    private bool EnsureRetentionCapacity(HashSet<int> visibleChunks)
+    {
+        var retentionCapacity = GetRetentionCapacity();
+        if (activeChunks.Count < retentionCapacity)
+        {
+            return true;
+        }
+
+        if (TryEvictRetainedChunk(visibleChunks))
+        {
+            return true;
+        }
+
+        if (currentFrame - lastRetentionGuardLogFrame >= 120)
+        {
+            lastRetentionGuardLogFrame = currentFrame;
+            Log.Warn($"ChunkStreamingManager: Retention budget reached (active={activeChunks.Count}, capacity={retentionCapacity}); deferring new chunk submissions");
+        }
+
+        return false;
+    }
+
+    private bool TryEvictRetainedChunk(HashSet<int> visibleChunks)
+    {
+        if (activeChunks.Count == 0)
+        {
+            return false;
+        }
+
+        var cameraChunkX = Math.Clamp((int)(lastCameraPosition.X / VoxelHelper.ChunkSideSize), 0, VoxelHelper.WorldChunksXZ - 1);
+        var cameraChunkZ = Math.Clamp((int)(lastCameraPosition.Z / VoxelHelper.ChunkSideSize), 0, VoxelHelper.WorldChunksXZ - 1);
+        var retentionDistance = GetRetentionDistanceChunks();
+        var retentionDistanceSq = retentionDistance * retentionDistance;
+        var unloadDistance = GetUnloadDistanceChunks();
+        var unloadDistanceSq = unloadDistance * unloadDistance;
+
+        var candidate = -1;
+        var oldestFrame = long.MaxValue;
+
+        foreach (var entry in activeChunks.ToArray())
+        {
+            var chunkIdx = entry.Key;
+            if (visibleChunks.Contains(chunkIdx))
+            {
+                continue;
+            }
+
+            var descriptor = entry.Value;
+            if (descriptor.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility)
+            {
+                continue;
+            }
+
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            var dx = chunkX - cameraChunkX;
+            var dz = chunkZ - cameraChunkZ;
+            var distanceSq = dx * dx + dz * dz;
+
+            var lastSeen = chunkLastVisibleFrame.TryGetValue(chunkIdx, out var frame)
+                ? frame
+                : long.MinValue;
+            var framesSinceVisible = lastSeen == long.MinValue ? long.MaxValue : currentFrame - lastSeen;
+
+            if (distanceSq > unloadDistanceSq || (distanceSq > retentionDistanceSq && framesSinceVisible >= RETENTION_FRAME_DELAY))
+            {
+                candidate = chunkIdx;
+                break;
+            }
+
+            if (framesSinceVisible >= RETENTION_FRAME_DELAY)
+            {
+                candidate = chunkIdx;
+                break;
+            }
+
+            if (lastSeen < oldestFrame)
+            {
+                oldestFrame = lastSeen;
+                candidate = chunkIdx;
+            }
+        }
+
+        if (candidate < 0)
+        {
+            return false;
+        }
+
+        UnloadChunk(candidate);
+        chunkLastVisibleFrame.Remove(candidate);
+        return true;
+    }
+
+    private void RemoveChunkFromPendingQueues(int chunkIndex)
+    {
+        RemoveFromQueue(highPriorityPending, chunkIndex);
+        RemoveFromQueue(lowPriorityPending, chunkIndex);
+    }
+
+    private static void RemoveFromQueue(Queue<int> queue, int chunkIndex)
+    {
+        if (queue.Count == 0)
+        {
+            return;
+        }
+
+        var items = queue.Count;
+        for (var i = 0; i < items; i++)
+        {
+            var value = queue.Dequeue();
+            if (value != chunkIndex)
+            {
+                queue.Enqueue(value);
+            }
+        }
+    }
+
     private void QueueNewChunks(HashSet<int> visibleChunks)
     {
         var newChunks = visibleChunks.Except(activeChunks.Keys).ToList();
@@ -391,6 +533,11 @@ public sealed class ChunkStreamingManager : IDisposable
 
             foreach (var chunkIdx in newChunks)
             {
+                if (!EnsureRetentionCapacity(visibleChunks))
+                {
+                    break;
+                }
+
                 world.GetOrCreateChunkContainer(chunkIdx);
 
                 var descriptor = new ChunkDescriptor
@@ -436,11 +583,12 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var visibleChunks = DetermineVisibleChunks(cameraPosition);
         QueueNewChunks(visibleChunks);
+        TrackChunkVisibility(visibleChunks);
 
         SubmitPendingBatches();
         PollCompletedBatches();
         DrainCompletedCpuMeshes();
-        UnloadDistantChunks(cameraPosition);
+        UnloadDistantChunks(cameraPosition, visibleChunks);
         LogHeightCacheStatsIfNeeded();
         AccumulateHeightCacheShaderCounters();
     }
@@ -469,6 +617,13 @@ public sealed class ChunkStreamingManager : IDisposable
             if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc))
             {
                 if (neighborDesc.State is TerrainChunkState.Ready or TerrainChunkState.Dirty)
+                {
+                    return;
+                }
+
+                // Avoid placeholder churn when the neighbor already finished generation and is
+                // only waiting on CPU meshing uploads (CountingVisibility state).
+                if (neighborDesc.State == TerrainChunkState.CountingVisibility)
                 {
                     return;
                 }
@@ -513,7 +668,9 @@ public sealed class ChunkStreamingManager : IDisposable
             neighborDesc.PlaceholderMask &= (byte)~oppositeBit;
             activeChunks[neighborIdx] = neighborDesc;
 
-            RequestSeamRefresh(neighborIdx, $"Neighbor {chunkIdx} resolved seam edge", force: true);
+            // Let the normal seam refresh cooldown handle this neighbor so we avoid
+            // immediately thrashing the same few chunks while loading.
+            RequestSeamRefresh(neighborIdx, $"Neighbor {chunkIdx} resolved seam edge", force: false);
         }
 
         ClearNeighborBit(-1, 0, PLACEHOLDER_POS_X);
@@ -524,6 +681,12 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void ProcessPendingSeamRefreshes()
     {
+        if (!SeamRefreshEnabled)
+        {
+            pendingSeamRefresh.Clear();
+            return;
+        }
+
         if (pendingSeamRefresh.Count == 0)
         {
             return;
@@ -558,6 +721,11 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void RequestSeamRefresh(int chunkIdx, string reason, bool force = false)
     {
+        if (!SeamRefreshEnabled)
+        {
+            return;
+        }
+
         pendingSeamRefresh.Remove(chunkIdx);
 
         if (!activeChunks.TryGetValue(chunkIdx, out var desc))
@@ -1374,7 +1542,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Unload chunks that are too far from camera (Phase 5)
     /// Uses hysteresis to avoid thrashing (load/unload cycles)
     /// </summary>
-    private void UnloadDistantChunks(Vector3 cameraPosition)
+    private void UnloadDistantChunks(Vector3 cameraPosition, HashSet<int> visibleChunks)
     {
         if (activeChunks.Count == 0)
             return;
@@ -1384,6 +1552,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var unloadRadius = GetUnloadDistanceChunks();
         var unloadDistanceSq = unloadRadius * unloadRadius;
+        var retentionRadius = GetRetentionDistanceChunks();
+        var retentionDistanceSq = retentionRadius * retentionRadius;
         var chunksToUnload = new List<int>();
 
         // Find chunks beyond unload distance
@@ -1404,10 +1574,29 @@ public sealed class ChunkStreamingManager : IDisposable
             var dz = chunkZ - cameraChunkZ;
             var distanceSq = dx * dx + dz * dz;
 
-            if (distanceSq > unloadDistanceSq)
+            if (visibleChunks.Contains(chunkIdx))
             {
-                chunksToUnload.Add(chunkIdx);
+                continue;
             }
+
+            var lastSeen = chunkLastVisibleFrame.TryGetValue(chunkIdx, out var frame)
+                ? frame
+                : long.MinValue;
+            var framesSinceVisible = lastSeen == long.MinValue ? long.MaxValue : currentFrame - frame;
+            var outsideUnload = distanceSq > unloadDistanceSq;
+            var outsideRetention = distanceSq > retentionDistanceSq;
+
+            if (!outsideUnload && !outsideRetention && framesSinceVisible < RETENTION_FRAME_DELAY)
+            {
+                continue;
+            }
+
+            if (!outsideUnload && framesSinceVisible < RETENTION_FRAME_DELAY)
+            {
+                continue;
+            }
+
+            chunksToUnload.Add(chunkIdx);
         }
 
         if (chunksToUnload.Count == 0)
@@ -1450,6 +1639,8 @@ public sealed class ChunkStreamingManager : IDisposable
         if (!activeChunks.TryGetValue(chunkIndex, out var desc))
             return;
 
+        RemoveChunkFromPendingQueues(chunkIndex);
+
         // Clean up fence if present
         if (desc.Fence != IntPtr.Zero)
         {
@@ -1486,6 +1677,7 @@ public sealed class ChunkStreamingManager : IDisposable
         pendingSeamRefresh.Remove(chunkIndex);
         lastSeamRefreshFrame.Remove(chunkIndex);
         lastUploadedPlaceholderMasks.Remove(chunkIndex);
+        chunkLastVisibleFrame.Remove(chunkIndex);
 
         // Release cached height data slot
         InvalidateHeightCache(chunkIndex);

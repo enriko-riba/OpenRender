@@ -39,11 +39,6 @@ internal sealed class CpuTerrainGenerator
     private readonly float[] cheeseVolume = new float[ColumnHeightWords];
     private readonly float[] spaghettiVolume = new float[ColumnHeightWords];
     private readonly float[] overhangVolume = new float[ColumnHeightWords];
-    private readonly float[] lineX3D = new float[VoxelHelper.ChunkYSize];
-    private readonly float[] lineY3D = new float[VoxelHelper.ChunkYSize];
-    private readonly float[] lineZ3D = new float[VoxelHelper.ChunkYSize];
-    private readonly float[] scratch3DA = new float[VoxelHelper.ChunkYSize];
-    private readonly float[] scratch3DB = new float[VoxelHelper.ChunkYSize];
     private readonly float[] scratch3DOutput = new float[VoxelHelper.ChunkYSize];
 
     private int currentChunkX;
@@ -52,10 +47,6 @@ internal sealed class CpuTerrainGenerator
     public CpuTerrainGenerator(TerrainConfig config)
     {
         UpdateConfig(config);
-        for (var i = 0; i < lineY3D.Length; i++)
-        {
-            lineY3D[i] = i;
-        }
     }
 
     public void UpdateConfig(TerrainConfig newConfig)
@@ -292,35 +283,40 @@ internal sealed class CpuTerrainGenerator
     private void BuildColumnVolumes()
     {
         var chunkY = VoxelHelper.ChunkYSize;
-        var ySpan = lineY3D.AsSpan();
-        for (var columnIndex = 0; columnIndex < ColumnCount; columnIndex++)
+        var columnCount = ColumnCount;
+        var xSpan = columnWorldX.AsSpan();
+        var zSpan = columnWorldZ.AsSpan();
+        var cheeseRow = scratch2DB.AsSpan();
+        var spaghettiRowA = scratch2DC.AsSpan();
+        var spaghettiRowB = scratch2DOutput.AsSpan();
+        var overhangRow = sampleScratch2D.AsSpan();
+
+        for (var y = 0; y < chunkY; y++)
         {
-            var xValue = columnWorldX[columnIndex];
-            var zValue = columnWorldZ[columnIndex];
-            for (var y = 0; y < chunkY; y++)
+            SampleValueNoiseSlice(cheeseRow, xSpan, y, zSpan, terrainParams.CheeseFrequency, terrainParams.Seed + 300u, octaves: 2, persistence: 0.6f, lacunarity: 1.9f);
+            SampleValueNoiseSlice(spaghettiRowA, xSpan, y, zSpan, terrainParams.SpaghettiFrequency, terrainParams.Seed + 400u, octaves: 1, persistence: 1f, lacunarity: 2f);
+            SampleValueNoiseSlice(spaghettiRowB, xSpan, y, zSpan, terrainParams.SpaghettiFrequency, terrainParams.Seed + 500u, octaves: 1, persistence: 1f, lacunarity: 2f);
+            SampleValueNoiseSlice(overhangRow, xSpan, y, zSpan, terrainParams.OverhangFrequency, terrainParams.Seed + 2000u, octaves: 2, persistence: 0.55f, lacunarity: 2f);
+
+            for (var columnIndex = 0; columnIndex < columnCount; columnIndex++)
             {
-                lineX3D[y] = xValue;
-                lineZ3D[y] = zValue;
+                var sliceOffset = columnIndex * chunkY + y;
+
+                var cheeseSample = (cheeseRow[columnIndex] * 2f - 1f) * terrainParams.CheeseAmplitude;
+                cheeseVolume[sliceOffset] = Math.Clamp(cheeseSample, -1f, 1f);
+
+                var n1 = spaghettiRowA[columnIndex] * 2f - 1f;
+                var n2 = spaghettiRowB[columnIndex] * 2f - 1f;
+                var dist = MathF.Sqrt(n1 * n1 + n2 * n2);
+                var amp = Math.Clamp(terrainParams.SpaghettiAmplitude, 0.2f, 4f);
+                var ampT = (amp - 0.2f) / 3.8f;
+                var widthFactor = Lerp(2.8f, 1.1f, ampT);
+                var tunnelWidth = 1f - dist * widthFactor;
+                spaghettiVolume[sliceOffset] = Math.Clamp(tunnelWidth, -1f, 1f);
+
+                var overhangSample = (overhangRow[columnIndex] * 2f - 1f) * terrainParams.OverhangAmplitude;
+                overhangVolume[sliceOffset] = Math.Clamp(overhangSample, -1f, 1f);
             }
-
-            var sliceOffset = columnIndex * chunkY;
-            var cheeseSlice = cheeseVolume.AsSpan(sliceOffset, chunkY);
-            SampleFbm3D(lineX3D.AsSpan(), ySpan, lineZ3D.AsSpan(), terrainParams.CheeseFrequency, terrainParams.Seed + 300u, 2, 0.5f, 2f, cheeseSlice);
-
-            var n1 = scratch3DA.AsSpan();
-            var n2 = scratch3DB.AsSpan();
-            SampleFbm3D(lineX3D.AsSpan(), ySpan, lineZ3D.AsSpan(), terrainParams.SpaghettiFrequency, terrainParams.Seed + 400u, 2, 0.5f, 2f, n1);
-            SampleFbm3D(lineX3D.AsSpan(), ySpan, lineZ3D.AsSpan(), terrainParams.SpaghettiFrequency, terrainParams.Seed + 500u, 2, 0.5f, 2f, n2);
-
-            var spaghettiSlice = spaghettiVolume.AsSpan(sliceOffset, chunkY);
-            for (var y = 0; y < chunkY; y++)
-            {
-                var dist = MathF.Sqrt(n1[y] * n1[y] + n2[y] * n2[y]);
-                spaghettiSlice[y] = 1f - dist * 4f;
-            }
-
-            var overhangSlice = overhangVolume.AsSpan(sliceOffset, chunkY);
-            SampleFbm3D(lineX3D.AsSpan(), ySpan, lineZ3D.AsSpan(), terrainParams.OverhangFrequency, terrainParams.Seed + 2000u, 3, 0.5f, 2f, overhangSlice);
         }
     }
 
@@ -441,6 +437,83 @@ internal sealed class CpuTerrainGenerator
         z[0] = p.Z;
         SampleFbm3D(x, y, z, baseFrequency, seed, octaves, persistence, lacunarity, output);
         return output[0];
+    }
+
+    private void SampleValueNoiseSlice(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    {
+        var count = destination.Length;
+        for (var i = 0; i < count; i++)
+        {
+            var amplitude = 1f;
+            var frequency = baseFrequency;
+            var accum = 0f;
+            var totalAmp = 0f;
+
+            for (var octave = 0; octave < octaves; octave++)
+            {
+                var sample = ValueNoise3D(xCoords[i] * frequency, yCoord * frequency, zCoords[i] * frequency, seed + (uint)(octave * 1013));
+                accum += sample * amplitude;
+                totalAmp += amplitude;
+                amplitude *= persistence;
+                frequency *= lacunarity;
+            }
+
+            destination[i] = totalAmp > 0f ? accum / totalAmp : 0f;
+        }
+    }
+
+    private static float ValueNoise3D(float x, float y, float z, uint seed)
+    {
+        var xi = (int)MathF.Floor(x);
+        var yi = (int)MathF.Floor(y);
+        var zi = (int)MathF.Floor(z);
+
+        var fx = x - xi;
+        var fy = y - yi;
+        var fz = z - zi;
+
+        var c000 = Hash3(xi, yi, zi, seed);
+        var c100 = Hash3(xi + 1, yi, zi, seed);
+        var c010 = Hash3(xi, yi + 1, zi, seed);
+        var c110 = Hash3(xi + 1, yi + 1, zi, seed);
+        var c001 = Hash3(xi, yi, zi + 1, seed);
+        var c101 = Hash3(xi + 1, yi, zi + 1, seed);
+        var c011 = Hash3(xi, yi + 1, zi + 1, seed);
+        var c111 = Hash3(xi + 1, yi + 1, zi + 1, seed);
+
+        var u = Fade(fx);
+        var v = Fade(fy);
+        var w = Fade(fz);
+
+        var x00 = Lerp(c000, c100, u);
+        var x10 = Lerp(c010, c110, u);
+        var x01 = Lerp(c001, c101, u);
+        var x11 = Lerp(c011, c111, u);
+
+        var y0 = Lerp(x00, x10, v);
+        var y1 = Lerp(x01, x11, v);
+
+        return Lerp(y0, y1, w);
+    }
+
+    private static float Fade(float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return t * t * t * (t * (t * 6f - 15f) + 10f);
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    private static float Hash3(int x, int y, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + y * 668265263 + z * 2147483647);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f; // [0,1)
+        }
     }
 
     private static bool TryCommitSpan(

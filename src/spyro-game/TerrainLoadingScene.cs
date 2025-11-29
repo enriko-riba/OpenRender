@@ -283,7 +283,7 @@ internal class TerrainLoadingScene : Scene
         var spinnerY = Height - 60;
 
         // Title - Centered
-        //WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
+        WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
 
         // Current Stage - Centered
         WriteLineCentered(currentStage, progressColor, 20, stageY);

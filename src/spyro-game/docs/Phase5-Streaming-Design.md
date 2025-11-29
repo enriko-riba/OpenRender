@@ -44,6 +44,55 @@ Phase 5 completes the terrain streaming system by adding:
 └───────────────────────┘
 ```
 
+### Terrain Streaming Data Flow (CPU-first pipeline)
+
+```
+Camera / Player Motion
+    │      world-space focus (Vec3)
+    ▼
+ChunkStreamingManager.Update()
+    │  chunk indices + priority budget
+    ├────► DetermineVisibleChunks / QueueNewChunks
+    │          │   populate high/low priority queues
+    │          ▼
+    │    ChunkGenerationJobSystem
+    │          │  CpuTerrainGenerator fills spans + voxels
+    │          ├────► ChunkVoxelDataCache (versioned buffers)
+    │          └────► CollisionManager & Height Cache upload
+    │
+    ├────► ChunkMeshingJobSystem
+    │          │  ChunkMeshBuilder pulls cached voxels
+    │          ▼
+    │    CpuChunkMesh results (face counts, vertex/index data, placeholder masks)
+    │          │
+    │          ▼
+    ├────► Phase3BufferManager (Allocate/Free vertex, index, command slots)
+    │          │
+    │          ▼
+    ├────► VoxelTerrainRenderer + Frustum Culling buffers
+    │          │  ready chunk descriptors + visibility flags
+    │          ▼
+    └────► GameScene HUD / TerrainLoadingScene progress (GetStats / GetStreamingProgress)
+```
+
+#### Component responsibilities & data contracts
+
+| Component | Produces | Consumes | Notes/Key Interactions |
+| --- | --- | --- | --- |
+| `ChunkStreamingManager` (`World/ChunkStreamingManager.cs`) | Chunk life-cycle state, placeholder masks, chunk stats, GPU upload instructions | Camera pose, `VoxelWorld` container, job system completions, frustum feedback | `SubmitPendingBatches()` gates priority queues; `PollCompletedBatches()` hands results to meshing and height cache; `UnloadChunk()` also frees GPU + cache resources to prevent churn. |
+| `ChunkGenerationJobSystem` + `CpuTerrainGenerator` | Column spans (`SpanPairs`, `SpanCounts`, `SpanTypes`), voxel arrays (via `ChunkVoxelDataCache`), collision payloads | Chunk indices + edit descriptors from streaming manager | Writes into pooled buffers and immediately stores them in `ChunkVoxelDataCache` with monotonically increasing cache versions used later by meshing to detect stale data. |
+| `ChunkVoxelDataCache` (`World/ChunkVoxelDataCache.cs`) | Versioned voxel buffers exposed as read-only spans; cache statistics | Generation workers rent/write buffers; meshing workers read them | Acts as the synchronization point between CPU generation threads and CPU meshing threads, ensuring placeholder-aware meshes can be built without GPU readbacks. |
+| `ChunkMeshingJobSystem` + `ChunkMeshBuilder` | `CpuChunkMesh` records (vertex/index arrays, visible face counts, placeholder mask echo, cache version) | Chunk indices scheduled by streaming manager, voxel cache views | Emits CPU-ready mesh payloads that `ProcessCpuMeshResults()` uploads into Phase 3 buffers; also signals seam refresh triggers when placeholder dependencies resolve. |
+| `Phase3BufferManager` (`World/Phase3BufferManager.cs`) | GPU buffer offsets, compacted vertex/index/indirect command regions, allocation stats | CPU mesh uploads, unload notifications, dirty chunk frees | `TryUploadCpuMesh()` allocates/frees regions per chunk; `FreeVertexRegion`/`FreeIndexRegion` make unloaded space immediately available, keeping memory stable while exploring. |
+| `VoxelTerrainRenderer` + frustum culling shaders | Draw commands bound to VAO, per-chunk visibility flags, renderer stats | Phase 3 buffers, camera matrices, chunk descriptors | Consumes `WriteIndirectCommands()` output and frustum flags to render ready chunks; exposes stats to HUD along with `VisibleChunkCount`/`CulledChunkCount`. |
+| Height cache subsystem (`EnsureHeightCacheSlot`, `UploadHeightCacheFromSpans`) | Packed 10-bit column heights + water/edit bits stored in SSBO slots | CPU column span output, `VoxelWorld` chunk data on restore | Shared with GPU sampling to skip recomputing moisture/height lookups; slots are reclaimed when chunks unload via `InvalidateHeightCache()`. |
+| `TerrainLoadingScene` / `GameScene` overlays | Player-facing progress text, HUD chunk totals | `ChunkStreamingManager.GetStreamingProgress()` / `.GetStats()` | Loading scene drives staged progress (init → stream) and transitions once `ready >= target`; HUD in `GameScene` mirrors totals so players can see churn vs target radius. |
+
+**Cross-system notes**
+- Placeholder masks flow from `ComputePlaceholderMask()` → meshing job → upload, guaranteeing seams stay hidden until neighbors finish. Masks live in `placeholderMasksInFlight` until `TryUploadCpuMesh()` resolves dependencies.
+- The same chunk events update multiple consumers: CPU generation completion triggers collision refresh + height cache upload, while CPU meshing completion drives GPU uploads and optional seam refresh scheduling. Documenting this fan-out keeps churn investigations grounded in real data paths.
+- Streaming throttles are distance-aware: `CalculatePriority()` sorts candidates, `GetUnloadDistanceChunks()` maintains a guard band so reactive unloading does not outpace generation, and TerrainLoadingScene’s progress uses `VoxelHelper.CalculateCircularChunkCount(GetActiveLoadDistance())` so UX reflects real budgets.
+
 ### Issues to Fix
 
 #### 1. **No Incremental Updates** ❌

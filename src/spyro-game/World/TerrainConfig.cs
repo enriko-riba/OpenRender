@@ -896,13 +896,13 @@ public sealed class CaveParams
     /// - 1/50: Smaller, more frequent chambers
     /// Technical: Applied as fbm3D(position * CheeseFrequency).
     /// </summary>
-    public float CheeseFrequency { get; set; } = 1f / 100f;
+    public float CheeseFrequency { get; set; } = 1f / 140f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for cheese cave density.
-    /// Currently unused (fixed at 1.0). Reserved for future cave intensity control.
+    /// Higher values emphasize large hollow pockets, lower values keep caverns tighter.
     /// </summary>
-    public float CheeseAmplitude { get; set; } = 1.0f;
+    public float CheeseAmplitude { get; set; } = 1.1f;
 
     /// <summary>
     /// Gets or sets the frequency of spaghetti cave noise (inverse of feature size).
@@ -912,13 +912,13 @@ public sealed class CaveParams
     /// - 1/40: Shorter, tighter tunnels
     /// Technical: Uses two perpendicular noise fields to create worm-like structures.
     /// </summary>
-    public float SpaghettiFrequency { get; set; } = 1f / 80f;
+    public float SpaghettiFrequency { get; set; } = 1f / 110f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for spaghetti cave density.
-    /// Currently unused (fixed at 0.8). Reserved for future tunnel size control.
+    /// Higher values widen tunnels, lower values keep them tight and winding.
     /// </summary>
-    public float SpaghettiAmplitude { get; set; } = 0.8f;
+    public float SpaghettiAmplitude { get; set; } = 1.2f;
 
     /// <summary>
     /// Gets or sets the density threshold for cave carving [0,1].
@@ -928,7 +928,7 @@ public sealed class CaveParams
     /// - 0.92: Lower cave frequency (rare caves, more solid underground)
     /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
     /// </summary>
-    public float CarveThreshold { get; set; } = 0.86f;
+    public float CarveThreshold { get; set; } = 0.92f;
 
     /// <summary>
     /// Gets or sets the curl noise scale for cave path distortion.
