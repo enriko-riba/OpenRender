@@ -274,6 +274,15 @@ internal sealed class CpuTerrainGenerator
 
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
 
+        // Sample additional coastal variation noise to break up the monotonous cliff pattern
+        // Using larger wavelengths for smoother, more natural terrain
+        var coastalVariation = scratch2DA.AsSpan();
+        // Sample additional noise layers for terrain variety
+        var terrainType = scratch2DA.AsSpan();      // Controls flat vs mountainous
+        var cliffiness = scratch2DB.AsSpan();       // Controls cliff steepness
+        SampleFbm2D(xSpan, zSpan, 1f / 400f, terrainParams.Seed + 3000u, 2, 0.5f, 2f, terrainType);
+        SampleFbm2D(xSpan, zSpan, 1f / 150f, terrainParams.Seed + 3100u, 3, 0.6f, 2.2f, cliffiness);
+
         for (var i = 0; i < ColumnCount; i++)
         {
             var tC = columnContinentalness01[i];
@@ -281,14 +290,104 @@ internal sealed class CpuTerrainGenerator
 
             if (tC >= terrainParams.OceanThreshold)
             {
-                var ruggedness = 1f - columnErosion[i] * 0.5f - 0.5f;
-                baseHeight += columnPeaks[i] * 20f * ruggedness;
-
+                var erosion = columnErosion[i];
+                var erosion01 = erosion * 0.5f + 0.5f;
+                
+                // terrainType controls the character: <0.3 = flat plains, 0.3-0.7 = rolling hills, >0.7 = dramatic mountains
+                var terrainTypeVal = terrainType[i] * 0.5f + 0.5f; // [0,1]
+                var cliffVal = cliffiness[i];
+                
+                // Distance from coast (0 = at coast, 1 = deep inland)
+                var coastDist = (tC - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
+                
+                // === COASTAL ZONE (0-20% inland) ===
+                if (coastDist < 0.2f)
+                {
+                    var coastFactor = coastDist / 0.2f; // 0 at shore, 1 at end of coastal zone
+                    
+                    // Some coasts are beaches (low cliffiness), some are cliffs (high cliffiness)
+                    var isCliffyCoast = cliffVal > 0.3f;
+                    
+                    if (!isCliffyCoast)
+                    {
+                        // Gentle beach - flatten toward water
+                        var beachFlatten = (1f - coastFactor) * (1f - MathF.Abs(cliffVal));
+                        baseHeight = Lerp(VoxelHelper.WaterLevel + 2f, baseHeight, coastFactor + beachFlatten * 0.5f);
+                    }
+                    else
+                    {
+                        // Cliffy coast - can have steep drop into water
+                        var cliffStrength = (cliffVal - 0.3f) / 0.7f; // 0-1 for cliff intensity
+                        baseHeight += cliffStrength * 15f * (1f - coastFactor);
+                    }
+                }
+                
+                // === TERRAIN TYPE MODULATION ===
+                if (terrainTypeVal < 0.35f)
+                {
+                    // FLAT PLAINS - very little height variation
+                    var flatness = (0.35f - terrainTypeVal) / 0.35f;
+                    baseHeight += columnPeaks[i] * 5f * (1f - flatness);
+                }
+                else if (terrainTypeVal < 0.65f)
+                {
+                    // ROLLING HILLS - moderate variation
+                    var hilliness = (terrainTypeVal - 0.35f) / 0.3f;
+                    baseHeight += columnPeaks[i] * 25f * hilliness;
+                    baseHeight += columnCliff[i] * 8f * hilliness;
+                }
+                else
+                {
+                    // DRAMATIC TERRAIN - mountains, cliffs, plateaus
+                    var drama = (terrainTypeVal - 0.65f) / 0.35f;
+                    
+                    // Strong peaks and valleys
+                    baseHeight += columnPeaks[i] * 50f * drama;
+                    
+                    // Cliff features - can create sudden height changes
+                    var cliffContrib = MathF.Abs(columnCliff[i]) * 40f * drama;
+                    
+                    // Some areas get plateaus (flat tops), some get peaks
+                    if (cliffVal > 0.5f)
+                    {
+                        // Sharp cliff edges
+                        baseHeight += cliffContrib;
+                    }
+                    else if (cliffVal < -0.3f)
+                    {
+                        // Plateau - flat area then sudden drop
+                        var plateauHeight = baseHeight + 30f * drama;
+                        baseHeight = MathF.Max(baseHeight, plateauHeight - MathF.Abs(columnCliff[i]) * 60f);
+                    }
+                    else
+                    {
+                        // Gradual mountain slopes
+                        baseHeight += cliffContrib * 0.5f;
+                    }
+                }
+                
+                // === MOUNTAIN ZONES (high continentalness) ===
                 if (tC > terrainParams.MountainThreshold)
                 {
-                    var mountainness = Smoothstep(terrainParams.MountainThreshold, 0.95f, tC);
+                    var mountainness = Smoothstep(terrainParams.MountainThreshold, 0.92f, tC);
+                    
+                    // Mountains get dramatic height boost
+                    baseHeight += 80f * mountainness;
+                    
+                    // Additional cliff detail in mountains
                     baseHeight += MathF.Abs(columnCliff[i]) * terrainParams.CliffAmplitude * mountainness;
+                    
+                    // Some mountain regions get extra peaks for alpine zones
+                    if (terrainTypeVal > 0.5f)
+                    {
+                        baseHeight += columnPeaks[i] * 60f * mountainness;
+                    }
                 }
+                
+                // === EROSION SMOOTHING (applies globally) ===
+                // High erosion areas are smoother - dampens all height variations
+                var smoothingFactor = erosion01 * erosion01 * 0.3f;
+                baseHeight = Lerp(baseHeight, SampleHeightSpline(tC) + VoxelHelper.WaterLevel + 20f, smoothingFactor);
             }
 
             columnHeights[i] = baseHeight;
@@ -750,13 +849,24 @@ internal sealed class CpuTerrainGenerator
             }
         }
 
+        // Surface block
         if (y == height)
         {
-            return y < VoxelHelper.WaterLevel
-                ? y >= VoxelHelper.WaterLevel - 1 ? BlockDescriptor.ShoreLine : BlockDescriptor.UnderwaterSubsurface
-                : y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange && IsNearWater(wx, wz) ? BlockDescriptor.ShoreLine : BlockDescriptor.Surface;
+            if (y < VoxelHelper.WaterLevel)
+            {
+                return y >= VoxelHelper.WaterLevel - 1 ? BlockDescriptor.ShoreLine : BlockDescriptor.UnderwaterSubsurface;
+            }
+            
+            if (y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange && IsNearWater(wx, wz))
+            {
+                return BlockDescriptor.ShoreLine;
+            }
+            
+            // Biome system handles Alpine via elevation check - block descriptor is just Surface
+            return BlockDescriptor.Surface;
         }
 
+        // Subsurface blocks - biome system uses elevation to determine Alpine textures
         var depthBelowSurface = height - y;
         return depthBelowSurface <= terrainParams.SubsurfaceDepth ? BlockDescriptor.Subsurface : BlockDescriptor.DeepSubsurface;
     }

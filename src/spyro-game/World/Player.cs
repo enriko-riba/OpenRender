@@ -19,6 +19,12 @@ public class Player
     private const float AirControl = 0.2f;
     private const float RotationSpeed = 10;
     private const float MaxPhysicsStepSeconds = 1f / 90f;
+    
+    /// <summary>
+    /// How much horizontal velocity is preserved when jumping (0.0 = stop, 1.0 = full speed).
+    /// Lower values prevent overjumping on narrow ledges/cliffs.
+    /// </summary>
+    private const float JumpHorizontalDamping = 0.4f;
 
     private static readonly Vector3[] bottomCornerOffsets = [
         new Vector3(-HalfWidth, 0, -HalfWidth), // northwest
@@ -196,6 +202,9 @@ public class Player
         {
             isGrounded = false;
             velocity.Y = JumpForce;
+            // Dampen horizontal velocity to prevent overjumping single blocks on cliffs
+            velocity.X *= JumpHorizontalDamping;
+            velocity.Z *= JumpHorizontalDamping;
         }
     }
 
@@ -525,6 +534,9 @@ public class Player
                 var jumpVel = MathF.Sqrt(2 * MathF.Abs(Gravity) * jumpHeight);
 
                 velocity.Y = jumpVel;
+                // Dampen horizontal velocity to prevent overjumping
+                velocity.X *= JumpHorizontalDamping;
+                velocity.Z *= JumpHorizontalDamping;
                 isGrounded = false;
                 return true;
             }

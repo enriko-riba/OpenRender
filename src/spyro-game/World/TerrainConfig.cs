@@ -219,7 +219,7 @@ public sealed class TerrainConfig
     /// - Lower values (150): Alpine starts earlier, more snowy peaks
     /// - Higher values (250): Alpine only on highest peaks
     /// </summary>
-    public float AlpineElevation { get; set; } = 200f;
+    public float AlpineElevation { get; set; } = 150f;
     
     /// <summary>
     /// Continentalness range around OceanThreshold for coast transition zones.
@@ -239,11 +239,11 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Continentalness threshold where mountains begin (for cliff/overhang generation).
-    /// Example: 0.75 means mountains start appearing at C > 0.75.
-    /// - Lower values (0.65): Mountains appear in more areas, more dramatic terrain
+    /// Example: 0.60 means mountains start appearing at C > 0.60.
+    /// - Lower values (0.50): Mountains appear in more areas, more dramatic terrain
     /// - Higher values (0.85): Mountains only in highest continentalness, flatter world
     /// </summary>
-    public float MountainThreshold { get; set; } = 0.75f;
+    public float MountainThreshold { get; set; } = 0.60f;
     
     /// <summary>
     /// Frequency of cliff noise (inverse of feature size in blocks).
@@ -775,7 +775,7 @@ public sealed class BiomeDefinition
                 ["", "Resources/voxel/water.png", "Resources/voxel/Alpine/snow.png", "Resources/voxel/Alpine/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 90, 
                 terrainType: TerrainType.MountainOnly,
-                minElevation: 200f),
+                minElevation: 150f),
             
             new (6, "Taiga", 
                 new(0.25f, 0.5f), new(0.5f, 1.0f), 
@@ -1080,17 +1080,22 @@ public sealed class Spline1D
     {
         var s = new Spline1D();
         
-        s.Add(0.00f, -80f);
-        s.Add(0.15f, -50f);
-        s.Add(0.25f, -20f);
-        s.Add(0.32f, -5f);
-        s.Add(0.38f, 35f);
-        s.Add(0.50f, 50f);
-        s.Add(0.65f, 80f);
-        s.Add(0.75f, 120f);
-        s.Add(0.85f, 180f);
-        s.Add(0.95f, 250f);
-        s.Add(1.00f, 320f);
+        // Height values are relative to WaterLevel (35).
+        // Valid absolute Y range: 0-383. So relative range: -35 to +348.
+        // Ocean floor: Y=5 → relative -30
+        // Max peaks: Y=370 → relative +335
+        s.Add(0.00f, -30f);   // Deep ocean floor (Y=5)
+        s.Add(0.15f, -25f);   // Ocean basin (Y=10)
+        s.Add(0.25f, -15f);   // Shallow ocean (Y=20)
+        s.Add(0.32f, -5f);    // Near coast (Y=30)
+        s.Add(0.38f, 10f);    // Beach/coastal lowland (Y=45)
+        s.Add(0.45f, 30f);    // Coastal plains (Y=65)
+        s.Add(0.55f, 60f);    // Inland hills (Y=95)
+        s.Add(0.65f, 100f);   // Highlands (Y=135)
+        s.Add(0.75f, 150f);   // Foothills (Y=185)
+        s.Add(0.85f, 220f);   // Mountains (Y=255)
+        s.Add(0.95f, 290f);   // High peaks (Y=325)
+        s.Add(1.00f, 335f);   // Maximum peaks (Y=370, leaves room for noise)
         
         s.Sort();
         return s;

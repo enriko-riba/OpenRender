@@ -324,7 +324,110 @@ internal static class ChunkMeshBuilder
 
         public uint SamplePackedLight(int x, int y, int z) => DisabledLightValue;
 
-        public uint ComputeAmbientOcclusion(uint face, uint corner, int x, int y, int z) => 7u;
+        /// <summary>
+        /// Minecraft-style ambient occlusion.
+        /// For each vertex corner, check the 3 adjacent neighbor blocks (side1, side2, corner).
+        /// AO level = 3 - (side1 + side2 + corner) if no sides occlude, or 0 if both sides occlude.
+        /// Returns 0-3 mapped to 0-7 (0=fully occluded, 7=no occlusion).
+        /// </summary>
+        public uint ComputeAmbientOcclusion(uint face, uint corner, int x, int y, int z)
+        {
+            // Get the face normal direction
+            var (nx, ny, nz) = FaceDirections[(int)face];
+            
+            // Position of the block whose face we're rendering
+            // The vertex is at (x,y,z) relative to block origin
+            // We need to check neighbors of the BLOCK, not the vertex
+            
+            // Get the two tangent directions for this face
+            var (t1x, t1y, t1z, t2x, t2y, t2z) = GetFaceTangents(face);
+            
+            // Get corner-specific offsets (-1 or +1 in tangent directions)
+            var (c1, c2) = GetCornerSigns(face, corner);
+            
+            // Sample the 3 neighbors that affect this corner's AO
+            // side1: offset in first tangent direction
+            // side2: offset in second tangent direction  
+            // cornerBlock: offset in both tangent directions (diagonal)
+            var side1 = IsOccluder(SampleDescriptor(x + nx + t1x * c1, y + ny + t1y * c1, z + nz + t1z * c1));
+            var side2 = IsOccluder(SampleDescriptor(x + nx + t2x * c2, y + ny + t2y * c2, z + nz + t2z * c2));
+            var cornerBlock = IsOccluder(SampleDescriptor(x + nx + t1x * c1 + t2x * c2, y + ny + t1y * c1 + t2y * c2, z + nz + t1z * c1 + t2z * c2));
+            
+            // Minecraft formula: if both sides are solid, corner doesn't matter (full occlusion)
+            // Otherwise, AO = 3 - (side1 + side2 + corner)
+            int ao;
+            if (side1 && side2)
+            {
+                ao = 0; // Maximum occlusion
+            }
+            else
+            {
+                var occluders = (side1 ? 1 : 0) + (side2 ? 1 : 0) + (cornerBlock ? 1 : 0);
+                ao = 3 - occluders;
+            }
+            
+            // Shader expects: 0=darkest, 4=brightest
+            // Our ao is 0-3, shift to 1-4 for shader compatibility
+            return (uint)(ao + 1);
+        }
+        
+        /// <summary>
+        /// Check if a block descriptor is an occluder for AO purposes.
+        /// Solid opaque blocks occlude; air and water don't.
+        /// </summary>
+        private static bool IsOccluder(byte descriptor)
+        {
+            // Air and Water don't occlude
+            return descriptor > (byte)BlockDescriptor.Water;
+        }
+        
+        /// <summary>
+        /// Get the two tangent vectors for a face (perpendicular to normal).
+        /// t1 and t2 define the two axes along which the face extends.
+        /// Returns (t1x, t1y, t1z, t2x, t2y, t2z).
+        /// </summary>
+        private static (int, int, int, int, int, int) GetFaceTangents(uint face)
+        {
+            // For each face, define the two axes the face spans.
+            // These are unit vectors along positive axis directions.
+            return face switch
+            {
+                0 => (0, 1, 0, 0, 0, 1),   // +X: spans Y and Z
+                1 => (0, 1, 0, 0, 0, 1),   // -X: spans Y and Z
+                2 => (1, 0, 0, 0, 0, 1),   // +Y: spans X and Z
+                3 => (1, 0, 0, 0, 0, 1),   // -Y: spans X and Z
+                4 => (1, 0, 0, 0, 1, 0),   // +Z: spans X and Y
+                5 => (1, 0, 0, 0, 1, 0),   // -Z: spans X and Y
+                _ => (1, 0, 0, 0, 1, 0)
+            };
+        }
+        
+        /// <summary>
+        /// Get the corner-specific sign multipliers for tangent directions.
+        /// For a corner at position (ox, oy, oz), if the corner is at the low end of an axis (0),
+        /// we sample in the negative direction (-1). If at high end (1), sample in positive (+1).
+        /// This ensures we check the neighbors that could occlude light reaching this corner.
+        /// </summary>
+        private static (int, int) GetCornerSigns(uint face, uint corner)
+        {
+            // Get the corner offset from FaceCornerOffsets
+            var (ox, oy, oz) = FaceCornerOffsets[(int)face][(int)corner];
+            
+            // Determine which axes vary for this face and compute signs
+            return face switch
+            {
+                // +X and -X faces: vary in Y (t1) and Z (t2)
+                0 or 1 => (oy == 0 ? -1 : 1, oz == 0 ? -1 : 1),
+                
+                // +Y and -Y faces: vary in X (t1) and Z (t2)
+                2 or 3 => (ox == 0 ? -1 : 1, oz == 0 ? -1 : 1),
+                
+                // +Z and -Z faces: vary in X (t1) and Y (t2)
+                4 or 5 => (ox == 0 ? -1 : 1, oy == 0 ? -1 : 1),
+                
+                _ => (0, 0)
+            };
+        }
 
         private bool TryClonePlaceholder(int x, int z, out int cloneX, out int cloneZ)
         {

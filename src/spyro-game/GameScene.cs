@@ -599,8 +599,9 @@ internal class GameScene : Scene
             return elevation < 0 ? "Ocean" : "Water";
         }
 
-        // Alpine biome
-        if (elevation > 200f)
+        // Alpine biome - elevation above water level exceeds alpine threshold (default 150)
+        var elevationAboveWater = elevation - VoxelHelper.WaterLevel;
+        if (elevationAboveWater >= 150f)
         {
             return "Alpine";
         }

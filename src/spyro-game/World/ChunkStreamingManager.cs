@@ -56,6 +56,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
     private readonly Queue<int> freeHeightCacheSlots = new();
+    
+    // Deferred remesh: chunks waiting for a neighbor to complete regeneration before remeshing
+    // Key = chunk that needs to regenerate first, Value = list of neighbors waiting for remesh
+    private readonly Dictionary<int, HashSet<int>> deferredRemeshWaiters = [];
 
     private Phase3BufferManager? phase3Buffers;
     private VoxelTerrainRenderer? terrainRenderer;
@@ -686,6 +690,38 @@ public sealed class ChunkStreamingManager : IDisposable
         NotifyNeighbor(0, -1);
         NotifyNeighbor(0, 1);
     }
+    
+    /// <summary>
+    /// Process chunks that were waiting for this chunk to regenerate before remeshing.
+    /// Used when a block edit at chunk boundary requires neighbor to see updated voxels.
+    /// </summary>
+    private void ProcessDeferredRemeshWaiters(int chunkIdx)
+    {
+        if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters) || waiters.Count == 0)
+            return;
+            
+        foreach (var waiterIdx in waiters)
+        {
+            if (!activeChunks.TryGetValue(waiterIdx, out var waiterDesc))
+                continue;
+                
+            if (waiterDesc.State == TerrainChunkState.Ready)
+            {
+                // Waiter is ready - trigger remesh (not regeneration)
+                waiterDesc.State = TerrainChunkState.CountingVisibility;
+                activeChunks[waiterIdx] = waiterDesc;
+                ScheduleCpuMeshing(waiterIdx);
+                Log.Info($"Deferred remesh triggered for chunk {waiterIdx} (waited for {chunkIdx})");
+            }
+            else
+            {
+                Log.Debug($"Deferred remesh skipped for chunk {waiterIdx} (state={waiterDesc.State})");
+            }
+        }
+        
+        deferredRemeshWaiters.Remove(chunkIdx);
+    }
+
     /// <summary>
     private void ProcessPendingSeamRefreshes()
     {
@@ -1409,6 +1445,9 @@ public sealed class ChunkStreamingManager : IDisposable
             // Notify neighbors - they will re-mesh to pick up this chunk's data
             NotifyNeighborsChunkReady(chunkIdx);
             
+            // Process deferred remesh waiters (neighbors waiting for this chunk's edit to complete)
+            ProcessDeferredRemeshWaiters(chunkIdx);
+            
             processed++;
         }
 
@@ -1782,30 +1821,44 @@ public sealed class ChunkStreamingManager : IDisposable
         // Mark chunk as dirty (needs regeneration)
         MarkChunkDirty(chunkIdx);
 
-        // If edit is on chunk boundary, mark neighbors as dirty too
+        // If edit is on chunk boundary, defer neighbor remesh until edited chunk regenerates
+        // This ensures the neighbor sees the updated voxel cache when it remeshes
+        void DeferNeighborRemesh(int neighborIdx)
+        {
+            if (!activeChunks.TryGetValue(neighborIdx, out var neighborDesc))
+                return;
+            if (neighborDesc.State != TerrainChunkState.Ready)
+                return; // Neighbor is already processing
+                
+            // Add neighbor to deferred remesh list - will be triggered when chunkIdx completes
+            if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters))
+            {
+                waiters = [];
+                deferredRemeshWaiters[chunkIdx] = waiters;
+            }
+            waiters.Add(neighborIdx);
+            Log.Info($"Block edit: neighbor {neighborIdx} deferred remesh until chunk {chunkIdx} regenerates");
+        }
+        
         if (localX == 0 && chunkX > 0)
         {
             var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1);
-            Log.Info($"Block edit on -X boundary, marking neighbor {neighborIdx} dirty");
-            MarkChunkDirty(neighborIdx);
+            DeferNeighborRemesh(neighborIdx);
         }
         if (localX == VoxelHelper.ChunkSideSize - 1 && chunkX < VoxelHelper.WorldChunksXZ - 1)
         {
             var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX + 1);
-            Log.Info($"Block edit on +X boundary, marking neighbor {neighborIdx} dirty");
-            MarkChunkDirty(neighborIdx);
+            DeferNeighborRemesh(neighborIdx);
         }
         if (localZ == 0 && chunkZ > 0)
         {
             var neighborIdx = (chunkZ - 1) * VoxelHelper.WorldChunksXZ + chunkX;
-            Log.Info($"Block edit on -Z boundary, marking neighbor {neighborIdx} dirty");
-            MarkChunkDirty(neighborIdx);
+            DeferNeighborRemesh(neighborIdx);
         }
         if (localZ == VoxelHelper.ChunkSideSize - 1 && chunkZ < VoxelHelper.WorldChunksXZ - 1)
         {
             var neighborIdx = (chunkZ + 1) * VoxelHelper.WorldChunksXZ + chunkX;
-            Log.Info($"Block edit on +Z boundary, marking neighbor {neighborIdx} dirty");
-            MarkChunkDirty(neighborIdx);
+            DeferNeighborRemesh(neighborIdx);
         }
 
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
