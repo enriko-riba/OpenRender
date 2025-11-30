@@ -36,6 +36,7 @@ internal class GameScene : Scene
     // Frustum culling throttling
     private double lastCullingTime = -1.0;
     private const double CullingIntervalSeconds = 0.166; // ~6 times per second (166ms)
+    private const int GameplayPrefetchMarginChunks = 2;
 
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
@@ -57,9 +58,9 @@ internal class GameScene : Scene
     }
 
     /// <summary>
-    /// Called by TerrainLoadingScene to pass initialized GPU terrain components.
+    /// Called by TerrainLoadingScene to pass initialized CPU terrain streaming components.
     /// </summary>
-    public void SetupGpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer)
+    public void SetupCpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer)
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
@@ -97,6 +98,7 @@ internal class GameScene : Scene
 
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
+        streamingManager.SetPrefetchMargin(GameplayPrefetchMarginChunks);
 
         Log.Info("GameScene: GPU terrain components configured");
     }
@@ -142,7 +144,7 @@ internal class GameScene : Scene
 
         EnsureCameraInitialized();
 
-        // Player is initialized in SetupGpuTerrain if coming from loading screen
+        // Player is initialized in SetupCpuTerrain if coming from loading screen
         // If not (e.g. direct load), initialize here
         if (player == null)
         {
@@ -208,7 +210,7 @@ internal class GameScene : Scene
         if (terrainRenderer != null)
         {
             // Use GPU terrain renderer from loading scene
-            // Note: Already added in SetupGpuTerrain, but check just in case
+            // Note: Already added in SetupCpuTerrain, but check just in case
             if (terrainRenderer.Scene == null)
             {
                 AddNode(terrainRenderer);
@@ -268,6 +270,11 @@ internal class GameScene : Scene
             }
         }
 
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F6) && streamingManager != null)
+        {
+            streamingManager.FlushVoxelCache("F6 hotkey");
+        }
+
         // Update day/night cycle
         dayNightCycle.Tick(elapsedSeconds);
 
@@ -316,11 +323,8 @@ internal class GameScene : Scene
             var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
             var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
 
-            if (terrainRenderer != null)
-            {
-                terrainRenderer.IsCameraUnderwater = isUnderwater;
-            }
-            if (skyBox != null) skyBox.IsCameraUnderwater = isUnderwater;
+            terrainRenderer?.IsCameraUnderwater = isUnderwater;
+            skyBox?.IsCameraUnderwater = isUnderwater;
         }
 
         // Update player (handles physics, collision, and WASD movement input)
@@ -454,26 +458,29 @@ internal class GameScene : Scene
         WriteLine("", textColor);
 
         // Chunk Stats (FIXED - Show actual generated chunks, not theoretical surrounding)
-        int loadedChunks;
-        int generatedChunks;  // Actually generated terrain
+        int readyChunks;
+        int queuedChunks;
+        int targetChunks;
 
         if (streamingManager != null)
         {
-            // GPU terrain - get stats from streaming manager
-            var (_, _, _, ready) = streamingManager.GetStats();
-            loadedChunks = ready;  // Only count ready chunks as "loaded"
-            generatedChunks = ready;  // Same as loaded for GPU terrain
+            var (total, pending, generating, ready) = streamingManager.GetStats();
+            readyChunks = ready;
+            queuedChunks = pending + generating;
+
+            var (target, _, _, _, _) = streamingManager.GetStreamingProgress();
+            targetChunks = target;
         }
         else
         {
             // Fallback to VoxelWorld (old system)
-            loadedChunks = world.LoadedChunksCount;
-            generatedChunks = world.LoadedChunksCount;
+            readyChunks = world.LoadedChunksCount;
+            queuedChunks = 0;
+            targetChunks = world.LoadedChunksCount;
         }
 
         WriteLine("Chunks:", highlightColor);
-        WriteLine($"  Generated: {generatedChunks:N0}", textColor);
-        WriteLine($"  Loaded: {loadedChunks:N0}", textColor);
+        WriteLine($"  GPU Ready: {readyChunks:N0} | Queued: {queuedChunks:N0} | Target: {targetChunks:N0}", textColor);
 
         // Get visibility stats from terrain renderer (GPU-based)
         if (terrainRenderer != null && streamingManager != null)
@@ -569,54 +576,21 @@ internal class GameScene : Scene
     }
 
     /// <summary>
-    /// Gets the biome name for a given block by querying the terrain config's biome lookup.
+    /// Gets the biome name for a given block by querying the cached biome data.
     /// </summary>
     private string GetBiomeNameForBlock(BlockState block)
     {
         if (streamingManager == null)
             return "Unknown";
 
-        // For now, we don't have direct biome ID stored in BlockState.
-        // We would need to re-query the terrain generation logic to get the biome.
-        // As a workaround, we can infer biome from descriptor and elevation:
-
-        var elevation = block.GlobalPosition.Y;
-        var descriptor = block.Descriptor;
-
-        // Hardcoded biome inference based on descriptor and elevation
-        // This matches the shader logic in compute-generate.comp
-
-        // Ocean biomes
-        if (descriptor == BlockDescriptor.Water)
-        {
-            return elevation < 0 ? "Ocean" : "Water";
-        }
-
-        // Alpine biome
-        if (elevation > 200f)
-        {
-            return "Alpine";
-        }
-
-        // Beach/shoreline
-        if (descriptor == BlockDescriptor.ShoreLine ||
-            (descriptor == BlockDescriptor.UnderwaterSurface && elevation <= 37f))
-        {
-            return "Beach";
-        }
-
-        // For land biomes, we would need to query temperature/humidity which requires
-        // recalculating noise. For now, provide generic names based on descriptor.
-        return descriptor switch
-        {
-            BlockDescriptor.Air => "Sky",
-            BlockDescriptor.Surface => "Land (Surface)",
-            BlockDescriptor.Subsurface => "Land (Underground)",
-            BlockDescriptor.DeepSubsurface => "Land (Deep)",
-            BlockDescriptor.UnderwaterSurface => "Underwater",
-            BlockDescriptor.UnderwaterSubsurface => "Deep Ocean",
-            _ => "Unknown"
-        };
+        // Query the actual biome from the cached chunk biome data
+        var worldX = (int)block.GlobalPosition.X;
+        var worldZ = (int)block.GlobalPosition.Z;
+        
+        // Try to get biome from the chunk cache
+        var biomeId = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
+        
+        return biomeId.ToString();
     }
 
     public override void Close()

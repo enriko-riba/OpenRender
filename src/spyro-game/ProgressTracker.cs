@@ -9,7 +9,7 @@ namespace SpyroGame;
 public class ProgressTracker
 {
     private readonly Stopwatch timer = new();
-    private readonly List<ProgressOperation> operations = new();
+    private readonly List<ProgressOperation> operations = [];
     
     private float currentProgress = 0f;
     private float targetProgress = 0f;

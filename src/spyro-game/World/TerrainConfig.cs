@@ -219,7 +219,7 @@ public sealed class TerrainConfig
     /// - Lower values (150): Alpine starts earlier, more snowy peaks
     /// - Higher values (250): Alpine only on highest peaks
     /// </summary>
-    public float AlpineElevation { get; set; } = 200f;
+    public float AlpineElevation { get; set; } = 150f;
     
     /// <summary>
     /// Continentalness range around OceanThreshold for coast transition zones.
@@ -239,11 +239,11 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Continentalness threshold where mountains begin (for cliff/overhang generation).
-    /// Example: 0.75 means mountains start appearing at C > 0.75.
-    /// - Lower values (0.65): Mountains appear in more areas, more dramatic terrain
+    /// Example: 0.60 means mountains start appearing at C > 0.60.
+    /// - Lower values (0.50): Mountains appear in more areas, more dramatic terrain
     /// - Higher values (0.85): Mountains only in highest continentalness, flatter world
     /// </summary>
-    public float MountainThreshold { get; set; } = 0.75f;
+    public float MountainThreshold { get; set; } = 0.60f;
     
     /// <summary>
     /// Frequency of cliff noise (inverse of feature size in blocks).
@@ -420,94 +420,93 @@ public sealed class TerrainConfig
     }
 
     /// <summary>
-    /// Struct matching the std430 layout in the GPU shader.
-    /// Pack carefully to match GLSL alignment: vec4 = 16-byte aligned, vec3 uses 16 bytes, etc.
+    /// Packed terrain parameter block consumed by CPU generation (and the legacy SSBO upload path).
+    /// Field order must stay in sync with terrain-common.glsl's std430 buffer.
     /// </summary>
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    public struct GpuParams
+    public struct TerrainGenerationParams
     {
-        public uint uSeed;
-        public float uWorldScale;
-        public float uMacroScale;
-        public float uContScale; public float uErodeScale; public float uRidgeScale;
-        public float uWarpScale; public float uWarpStrength;
-        public float uBaseTemp; public float uLapseRate; public float uBaseHum; public float uCoastDry;
-        public float uClimateScale; public float uClimateWarp;
-        public float uRegionCellSize; public float uRegionJitter; public float uRegionFeather; public uint uMaxRegionMix;
-        public float uCheeseFreq; public float uCheeseAmp; public float uSpaghettiFreq; public float uSpaghettiAmp;
-        public float uCaveThreshold; public float uCurlScale; public float uCurlStrength; 
-        
-        public float uCoastThreshold;
-        public float uMountainThreshold;
-        public float uCliffFreq;
-        public float uCliffAmp;
-        public float uOverhangFreq;
-        public float uOverhangAmp;
-        public float uShorelineRange;
-        public float uSubsurfaceDepth;
-        public float uCaveDepthFade;
-        public float uCaveSlopeFadeMin;
-        public float uCaveSlopeFadeMax;
-        public float uCaveFloodExt;
-        
-        public float uOceanThreshold;
-        public float uDeepOceanThreshold;
-        public float uAlpineElevation;
-        public float uCoastRange;
-        
-        public float uOverhangDepthRange;
-        public float uOverhangHeightRange;
-        public float uOverhangFalloffRange;
+        public uint Seed;
+        public float WorldScale;
+        public float MacroScale;
+        public float ContinentalScale; public float ErosionScale; public float RidgeScale;
+        public float WarpScale; public float WarpStrength;
+        public float BaseTemperature; public float TemperatureLapseRate; public float BaseHumidity; public float CoastDrying;
+        public float ClimateScale; public float ClimateWarp;
+        public float RegionCellSize; public float RegionJitter; public float RegionFeatherWidth; public uint MaxRegionMix;
+        public float CheeseFrequency; public float CheeseAmplitude; public float SpaghettiFrequency; public float SpaghettiAmplitude;
+        public float CaveCarveThreshold; public float CurlScale; public float CurlStrength;
+
+        public float CoastThreshold;
+        public float MountainThreshold;
+        public float CliffFrequency;
+        public float CliffAmplitude;
+        public float OverhangFrequency;
+        public float OverhangAmplitude;
+        public float ShorelineRange;
+        public float SubsurfaceDepth;
+        public float CaveDepthFade;
+        public float CaveSlopeFadeMin;
+        public float CaveSlopeFadeMax;
+        public float CaveFloodExtension;
+
+        public float OceanThreshold;
+        public float DeepOceanThreshold;
+        public float AlpineElevation;
+        public float CoastRange;
+
+        public float OverhangDepthRange;
+        public float OverhangHeightRange;
+        public float OverhangFalloffRange;
     }
 
-    public GpuParams GetGpuParams()
+    public TerrainGenerationParams GetGenerationParams()
     {
-        return new GpuParams
+        return new TerrainGenerationParams
         {
-            uSeed = (uint)Seed,
-            uWorldScale = WorldScale,
-            uMacroScale = 1.0f,
-            uContScale = ContinentalnessScale,
-            uErodeScale = ErosionScale,
-            uRidgeScale = RidgeScale,
-            uWarpScale = WarpScale,
-            uWarpStrength = WarpStrength,
-            uBaseTemp = BaseTemperature,
-            uLapseRate = LapseRate,
-            uBaseHum = BaseHumidity,
-            uCoastDry = CoastDrying,
-            uClimateScale = ClimateScale,
-            uClimateWarp = ClimateWarp,
-            uRegionCellSize = BiomeRegions.CellSizeChunks,
-            uRegionJitter = BiomeRegions.JitterStrength,
-            uRegionFeather = BiomeRegions.FeatherWidth,
-            uMaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
-            uCheeseFreq = Caves.CheeseFrequency,
-            uCheeseAmp = Caves.CheeseAmplitude,
-            uSpaghettiFreq = Caves.SpaghettiFrequency,
-            uSpaghettiAmp = Caves.SpaghettiAmplitude,
-            uCaveThreshold = Caves.CarveThreshold,
-            uCurlScale = Caves.CurlScale,
-            uCurlStrength = Caves.CurlStrength,
-            uCoastThreshold = CoastThreshold,
-            uMountainThreshold = MountainThreshold,
-            uCliffFreq = CliffFrequency,
-            uCliffAmp = CliffAmplitude,
-            uOverhangFreq = OverhangFrequency,
-            uOverhangAmp = OverhangAmplitude,
-            uShorelineRange = ShorelineRange,
-            uSubsurfaceDepth = SubsurfaceDepth,
-            uCaveDepthFade = CaveDepthFade,
-            uCaveSlopeFadeMin = CaveSlopeFade.Min,
-            uCaveSlopeFadeMax = CaveSlopeFade.Max,
-            uCaveFloodExt = CaveFloodingExtension,
-            uOceanThreshold = OceanThreshold,
-            uDeepOceanThreshold = DeepOceanThreshold,
-            uAlpineElevation = AlpineElevation,
-            uCoastRange = CoastRange,
-            uOverhangDepthRange = OverhangDepthRange,
-            uOverhangHeightRange = OverhangHeightRange,
-            uOverhangFalloffRange = OverhangFalloffRange,
+            Seed = (uint)this.Seed,
+            WorldScale = this.WorldScale,
+            MacroScale = 1.0f,
+            ContinentalScale = this.ContinentalnessScale,
+            ErosionScale = this.ErosionScale,
+            RidgeScale = this.RidgeScale,
+            WarpScale = this.WarpScale,
+            WarpStrength = this.WarpStrength,
+            BaseTemperature = this.BaseTemperature,
+            TemperatureLapseRate = this.LapseRate,
+            BaseHumidity = this.BaseHumidity,
+            CoastDrying = this.CoastDrying,
+            ClimateScale = this.ClimateScale,
+            ClimateWarp = this.ClimateWarp,
+            RegionCellSize = this.BiomeRegions.CellSizeChunks,
+            RegionJitter = this.BiomeRegions.JitterStrength,
+            RegionFeatherWidth = this.BiomeRegions.FeatherWidth,
+            MaxRegionMix = (uint)this.BiomeRegions.MaxRegionMix,
+            CheeseFrequency = this.Caves.CheeseFrequency,
+            CheeseAmplitude = this.Caves.CheeseAmplitude,
+            SpaghettiFrequency = this.Caves.SpaghettiFrequency,
+            SpaghettiAmplitude = this.Caves.SpaghettiAmplitude,
+            CaveCarveThreshold = this.Caves.CarveThreshold,
+            CurlScale = this.Caves.CurlScale,
+            CurlStrength = this.Caves.CurlStrength,
+            CoastThreshold = this.CoastThreshold,
+            MountainThreshold = this.MountainThreshold,
+            CliffFrequency = this.CliffFrequency,
+            CliffAmplitude = this.CliffAmplitude,
+            OverhangFrequency = this.OverhangFrequency,
+            OverhangAmplitude = this.OverhangAmplitude,
+            ShorelineRange = this.ShorelineRange,
+            SubsurfaceDepth = this.SubsurfaceDepth,
+            CaveDepthFade = this.CaveDepthFade,
+            CaveSlopeFadeMin = this.CaveSlopeFade.Min,
+            CaveSlopeFadeMax = this.CaveSlopeFade.Max,
+            CaveFloodExtension = this.CaveFloodingExtension,
+            OceanThreshold = this.OceanThreshold,
+            DeepOceanThreshold = this.DeepOceanThreshold,
+            AlpineElevation = this.AlpineElevation,
+            CoastRange = this.CoastRange,
+            OverhangDepthRange = this.OverhangDepthRange,
+            OverhangHeightRange = this.OverhangHeightRange,
+            OverhangFalloffRange = this.OverhangFalloffRange,
         };
     }
 }
@@ -703,6 +702,60 @@ public sealed class BiomeDefinition
     /// </summary>
     public List<string> TexturePaths { get; set; } = [];
 
+    // === HEIGHT GENERATION ATTRIBUTES ===
+    
+    /// <summary>
+    /// Base elevation offset from water level for this biome.
+    /// Positive = above water, negative = below water.
+    /// Used during terrain height generation to shape the base terrain.
+    /// </summary>
+    public float BaseHeight { get; set; } = 10f;
+    
+    /// <summary>
+    /// How much the terrain height varies within this biome.
+    /// Low values = flat terrain (plains, beach), high values = dramatic hills/mountains (alpine).
+    /// </summary>
+    public float HeightVariation { get; set; } = 15f;
+    
+    /// <summary>
+    /// Multiplier for how much peaks/valleys noise affects this biome's terrain.
+    /// 0 = completely flat, 1 = full effect.
+    /// </summary>
+    public float PeaksInfluence { get; set; } = 0.5f;
+    
+    /// <summary>
+    /// How much erosion smooths this biome's terrain.
+    /// Higher values make the terrain smoother in high-erosion areas.
+    /// </summary>
+    public float ErosionSensitivity { get; set; } = 0.5f;
+
+    // === BLOCK ASSIGNMENT (Minecraft-style) ===
+    
+    /// <summary>
+    /// Block type for the topmost solid layer (e.g., Grass, Sand, Snow).
+    /// </summary>
+    public BlockId SurfaceBlock { get; set; } = BlockId.Grass;
+    
+    /// <summary>
+    /// Block type for 2-4 blocks below surface (e.g., Dirt, Sand).
+    /// </summary>
+    public BlockId SubsurfaceBlock { get; set; } = BlockId.Dirt;
+    
+    /// <summary>
+    /// Block type for deep underground (usually Stone).
+    /// </summary>
+    public BlockId DeepBlock { get; set; } = BlockId.Stone;
+    
+    /// <summary>
+    /// Block type for underwater surface (ocean/river floor).
+    /// </summary>
+    public BlockId UnderwaterSurfaceBlock { get; set; } = BlockId.Gravel;
+    
+    /// <summary>
+    /// Block type for underwater subsurface (below ocean floor).
+    /// </summary>
+    public BlockId UnderwaterSubsurfaceBlock { get; set; } = BlockId.Stone;
+
     /// <summary>
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with default values.
     /// </summary>
@@ -712,7 +765,10 @@ public sealed class BiomeDefinition
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with specified parameters.
     /// </summary>
     public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths,
-        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue)
+        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue,
+        float baseHeight = 10f, float heightVariation = 15f, float peaksInfluence = 0.5f, float erosionSensitivity = 0.5f,
+        BlockId surfaceBlock = BlockId.Grass, BlockId subsurfaceBlock = BlockId.Dirt, BlockId deepBlock = BlockId.Stone,
+        BlockId underwaterSurfaceBlock = BlockId.Gravel, BlockId underwaterSubsurfaceBlock = BlockId.Stone)
     {
         Id = id;
         Name = name;
@@ -723,6 +779,15 @@ public sealed class BiomeDefinition
         AllowedTerrain = terrainType;
         MinElevation = minElevation;
         MaxElevation = maxElevation;
+        BaseHeight = baseHeight;
+        HeightVariation = heightVariation;
+        PeaksInfluence = peaksInfluence;
+        ErosionSensitivity = erosionSensitivity;
+        SurfaceBlock = surfaceBlock;
+        SubsurfaceBlock = subsurfaceBlock;
+        DeepBlock = deepBlock;
+        UnderwaterSurfaceBlock = underwaterSurfaceBlock;
+        UnderwaterSubsurfaceBlock = underwaterSubsurfaceBlock;
     }
 
     /// <summary>
@@ -765,66 +830,106 @@ public sealed class BiomeDefinition
     {
         return
         [
+            // Ocean: below water, relatively flat but with some variation for underwater hills
             new (OCEAN_BIOME_ID, "Ocean", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 100, 
-                terrainType: TerrainType.OceanOnly),
+                terrainType: TerrainType.OceanOnly,
+                baseHeight: -25f, heightVariation: 12f, peaksInfluence: 0.2f, erosionSensitivity: 0.7f,
+                surfaceBlock: BlockId.Bedrock, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Bedrock, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Alpine: very high, dramatic peaks and valleys
             new (ALPINE_BIOME_ID, "Alpine", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Alpine/snow.png", "Resources/voxel/Alpine/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 90, 
                 terrainType: TerrainType.MountainOnly,
-                minElevation: 200f),
+                minElevation: 150f,
+                baseHeight: 140f, heightVariation: 70f, peaksInfluence: 1.0f, erosionSensitivity: 0.2f,
+                surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowBlock, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Taiga: elevated, gentle rolling hills with moderate variation
             new (6, "Taiga", 
                 new(0.25f, 0.5f), new(0.5f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Taiga/grass-dirt.png", "Resources/voxel/Taiga/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
+                surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Highlands: elevated terrain with moderate hills
             new (8, "Highlands", 
                 new(0.25f, 0.5f), new(0.0f, 0.5f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Plains: slightly above water, very flat
             new (DEFAULT_FALLBACK_BIOME_ID, "Plains", 
                 new(0.5f, 0.75f), new(0.33f, 0.66f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Plains/grass.png", "Resources/voxel/Plains/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Beach: at water level, completely flat
             new (1, "Beach", 
                 new(0.5f, 0.75f), new(0.0f, 0.33f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
+                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
             
+            // Tundra: cold, flat-ish with some gentle undulation
             new (7, "Tundra", 
                 new(0.5f, 0.75f), new(0.66f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
+                surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Rainforest: tropical, lush, varied terrain with hills
             new (5, "Rainforest", 
                 new(0.75f, 1.0f), new(0.5f, 0.66f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Savanna: warm, mostly flat with occasional hills
             new (3, "Savanna", 
                 new(0.75f, 1.0f), new(0.25f, 0.5f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
+                surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Desert: hot, flat with dunes represented by moderate variation
             new (4, "Desert", 
                 new(0.75f, 1.0f), new(0.0f, 0.25f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
+                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
         ];
     }
 }
@@ -897,13 +1002,13 @@ public sealed class CaveParams
     /// - 1/50: Smaller, more frequent chambers
     /// Technical: Applied as fbm3D(position * CheeseFrequency).
     /// </summary>
-    public float CheeseFrequency { get; set; } = 1f / 100f;
+    public float CheeseFrequency { get; set; } = 1f / 140f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for cheese cave density.
-    /// Currently unused (fixed at 1.0). Reserved for future cave intensity control.
+    /// Higher values emphasize large hollow pockets, lower values keep caverns tighter.
     /// </summary>
-    public float CheeseAmplitude { get; set; } = 1.0f;
+    public float CheeseAmplitude { get; set; } = 1.1f;
 
     /// <summary>
     /// Gets or sets the frequency of spaghetti cave noise (inverse of feature size).
@@ -913,13 +1018,13 @@ public sealed class CaveParams
     /// - 1/40: Shorter, tighter tunnels
     /// Technical: Uses two perpendicular noise fields to create worm-like structures.
     /// </summary>
-    public float SpaghettiFrequency { get; set; } = 1f / 80f;
+    public float SpaghettiFrequency { get; set; } = 1f / 110f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for spaghetti cave density.
-    /// Currently unused (fixed at 0.8). Reserved for future tunnel size control.
+    /// Higher values widen tunnels, lower values keep them tight and winding.
     /// </summary>
-    public float SpaghettiAmplitude { get; set; } = 0.8f;
+    public float SpaghettiAmplitude { get; set; } = 1.2f;
 
     /// <summary>
     /// Gets or sets the density threshold for cave carving [0,1].
@@ -929,7 +1034,7 @@ public sealed class CaveParams
     /// - 0.92: Lower cave frequency (rare caves, more solid underground)
     /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
     /// </summary>
-    public float CarveThreshold { get; set; } = 0.86f;
+    public float CarveThreshold { get; set; } = 0.92f;
 
     /// <summary>
     /// Gets or sets the curl noise scale for cave path distortion.
@@ -1081,17 +1186,22 @@ public sealed class Spline1D
     {
         var s = new Spline1D();
         
-        s.Add(0.00f, -80f);
-        s.Add(0.15f, -50f);
-        s.Add(0.25f, -20f);
-        s.Add(0.32f, -5f);
-        s.Add(0.38f, 35f);
-        s.Add(0.50f, 50f);
-        s.Add(0.65f, 80f);
-        s.Add(0.75f, 120f);
-        s.Add(0.85f, 180f);
-        s.Add(0.95f, 250f);
-        s.Add(1.00f, 320f);
+        // Height values are relative to WaterLevel (35).
+        // Valid absolute Y range: 0-383. So relative range: -35 to +348.
+        // Ocean floor: Y=5 → relative -30
+        // Max peaks: Y=370 → relative +335
+        s.Add(0.00f, -30f);   // Deep ocean floor (Y=5)
+        s.Add(0.15f, -25f);   // Ocean basin (Y=10)
+        s.Add(0.25f, -15f);   // Shallow ocean (Y=20)
+        s.Add(0.32f, -5f);    // Near coast (Y=30)
+        s.Add(0.38f, 10f);    // Beach/coastal lowland (Y=45)
+        s.Add(0.45f, 30f);    // Coastal plains (Y=65)
+        s.Add(0.55f, 60f);    // Inland hills (Y=95)
+        s.Add(0.65f, 100f);   // Highlands (Y=135)
+        s.Add(0.75f, 150f);   // Foothills (Y=185)
+        s.Add(0.85f, 220f);   // Mountains (Y=255)
+        s.Add(0.95f, 290f);   // High peaks (Y=325)
+        s.Add(1.00f, 335f);   // Maximum peaks (Y=370, leaves room for noise)
         
         s.Sort();
         return s;

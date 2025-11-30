@@ -41,24 +41,13 @@ public struct BlockState
     public BlockDescriptor Descriptor { get; set; }
 
     /// <summary>
-    /// DEPRECATED: Legacy Geology property for backward compatibility during transition.
-    /// Use Descriptor property instead for new code.
-    /// </summary>
-    [Obsolete("Use Descriptor property instead. Geology has been renamed to Descriptor.")]
-    public BlockDescriptor Geology
-    {
-        get => Descriptor;
-        set => Descriptor = value;
-    }
-
-    /// <summary>
     /// DEPRECATED: Legacy BlockType for backward compatibility.
     /// Use Descriptor property instead for new code.
     /// </summary>
     [Obsolete("Use Descriptor property instead. BlockType is being phased out in favor of BlockDescriptor.")]
     public BlockType BlockType
     {
-        get => Descriptor switch
+        readonly get => Descriptor switch
         {
             BlockDescriptor.Air => BlockType.None,
             BlockDescriptor.Water => BlockType.WaterLevel,
@@ -96,12 +85,7 @@ public struct BlockState
     /// Helper to check if this block is solid (for collision).
     /// Returns true for all descriptors except Air and Water.
     /// </summary>
-    public readonly bool IsSolid => Descriptor != BlockDescriptor.Air && Descriptor != BlockDescriptor.Water;
-
-    /// <summary>
-    /// Helper to check if this block is fluid.
-    /// </summary>
-    public readonly bool IsFluid => Descriptor == BlockDescriptor.Water;
+    public readonly bool IsSolid => Descriptor is not BlockDescriptor.Air and not BlockDescriptor.Water;
 
     public Vector3i LocalPosition { get; private set; }
     public Vector3i GlobalPosition { get; private set; } 

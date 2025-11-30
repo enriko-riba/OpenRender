@@ -431,7 +431,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // If wireframe mode is enabled, render as wireframe
         if (debugWireframe)
         {
-            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Line);
+            GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
         }
         
         // 1. Draw Opaque (Command 1 of each pair)
@@ -449,9 +449,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Enable blending and disable depth write (optional, but good for water)
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-        // Disable culling for water to see surface from below
+        // Disable culling for thin translucent surfaces (water, leaves, glass)
         GL.Disable(EnableCap.CullFace);
-        // GL.DepthMask(false); // Optional: Disable depth write for transparent objects if sorting is an issue
+        GL.DepthMask(false);
+        GL.DepthFunc(DepthFunction.Lequal);
+        GL.Enable(EnableCap.PolygonOffsetFill);
+        GL.PolygonOffset(-0.5f, -1.0f);
 
         // Stride = 40 bytes
         // Offset = 20 bytes (start of second command)
@@ -464,14 +467,16 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         );
 
         // Restore state
-        // GL.DepthMask(true);
+        GL.Disable(EnableCap.PolygonOffsetFill);
+        GL.DepthMask(true);
+        GL.DepthFunc(DepthFunction.Less);
         GL.Disable(EnableCap.Blend);
-        GL.Disable(EnableCap.CullFace);
+        GL.Enable(EnableCap.CullFace);
         
         // Restore fill mode if wireframe was enabled
         if (debugWireframe)
         {
-            GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+            GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Fill);
         }
 
         // Render picked block outline (on top of terrain)

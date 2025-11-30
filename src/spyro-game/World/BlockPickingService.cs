@@ -66,7 +66,7 @@ public class BlockPickingService
         }
         
         // Only update if enough time passed or camera moved significantly
-        bool shouldUpdate = (currentTime - lastPickTime >= PickIntervalSeconds) || 
+        var shouldUpdate = (currentTime - lastPickTime >= PickIntervalSeconds) || 
                            HasCameraMoved(camera.Position, camera.Front);
                            
         if (shouldUpdate && streamingManager != null)
@@ -75,19 +75,11 @@ public class BlockPickingService
             lastCameraPosition = camera.Position;
             lastCameraDirection = camera.Front;
             
-            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockDescriptor descriptor))
-            {
-                cachedPickedBlock = new BlockState(blockPos, descriptor);
-            }
-            else
-            {
-                cachedPickedBlock = null;
-            }
-            
-            if (terrainRenderer != null)
-            {
-                terrainRenderer.PickedBlock = cachedPickedBlock;
-            }
+            cachedPickedBlock = streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out var hitPoint, out var blockPos, out var normal, out var descriptor)
+                ? new BlockState(blockPos, descriptor)
+                : (BlockState?)null;
+
+            terrainRenderer?.PickedBlock = cachedPickedBlock;
         }
     }
    

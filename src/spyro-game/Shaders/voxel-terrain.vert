@@ -24,12 +24,14 @@ vec2 getBaseUV(uint c){
     return vec2(1,0); 
 }
 
+// Minecraft-style AO: More pronounced shadows for better depth perception
+// Values tuned for visible corner/edge darkening
 float unpackAO(uint i){ 
-    if(i==4u) return 1.0; 
-    if(i==3u) return 0.9; 
-    if(i==2u) return 0.80; 
-    if(i==1u) return 0.75; 
-    return 0.70; 
+    if(i==4u) return 1.0;   // No occlusion - full brightness
+    if(i==3u) return 0.75;  // 1 occluder - slight shadow
+    if(i==2u) return 0.55;  // 2 occluders - medium shadow
+    if(i==1u) return 0.35;  // 3 occluders or both sides - deep shadow
+    return 0.25;            // Fallback - very dark
 }
 
 void main(){
@@ -56,7 +58,6 @@ void main(){
     vNormal=mat3(uChunkTransform)*normal;
     
     // Simple UVs for 1×1 faces
-    bool isWater=(vBlockDescriptor==1u);
     vTexCoord=getBaseUV(corner);
     
     vAO=unpackAO(aoIdx);

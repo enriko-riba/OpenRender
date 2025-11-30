@@ -221,9 +221,7 @@ public class VoxelWorld(int seed)
         if (ly > maxSolid)
         {
             // Water layer
-            if (ly <= VoxelHelper.WaterLevel)
-                return BlockDescriptor.Water;
-            return BlockDescriptor.Air;
+            return ly <= VoxelHelper.WaterLevel ? BlockDescriptor.Water : BlockDescriptor.Air;
         }
 
         // Below terrain - classify by depth
@@ -232,12 +230,9 @@ public class VoxelWorld(int seed)
         // Surface layer
         if (depth == 0)
         {
-            if (maxSolid < VoxelHelper.WaterLevel - 1)
-                return BlockDescriptor.UnderwaterSurface;
-            else if (maxSolid <= VoxelHelper.WaterLevel + 2)
-                return BlockDescriptor.ShoreLine;
-            else
-                return BlockDescriptor.Surface;
+            return maxSolid < VoxelHelper.WaterLevel - 1
+                ? BlockDescriptor.UnderwaterSurface
+                : maxSolid <= VoxelHelper.WaterLevel + 2 ? BlockDescriptor.ShoreLine : BlockDescriptor.Surface;
         }
         
         // Subsurface layers

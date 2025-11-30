@@ -2,6 +2,7 @@ namespace SpyroGame.World;
 
 /// <summary>
 /// Minimal geology layers used for biome texture selection. Independent of in-world block types.
+/// The biome system determines actual textures based on temperature/humidity/elevation.
 /// </summary>
 public enum BlockDescriptor : byte
 {

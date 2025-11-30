@@ -18,6 +18,13 @@ public class Player
     private const float Friction = 6.0f;
     private const float AirControl = 0.2f;
     private const float RotationSpeed = 10;
+    private const float MaxPhysicsStepSeconds = 1f / 90f;
+    
+    /// <summary>
+    /// How much horizontal velocity is preserved when jumping (0.0 = stop, 1.0 = full speed).
+    /// Lower values prevent overjumping on narrow ledges/cliffs.
+    /// </summary>
+    private const float JumpHorizontalDamping = 0.4f;
 
     private static readonly Vector3[] bottomCornerOffsets = [
         new Vector3(-HalfWidth, 0, -HalfWidth), // northwest
@@ -195,6 +202,9 @@ public class Player
         {
             isGrounded = false;
             velocity.Y = JumpForce;
+            // Dampen horizontal velocity to prevent overjumping single blocks on cliffs
+            velocity.X *= JumpHorizontalDamping;
+            velocity.Z *= JumpHorizontalDamping;
         }
     }
 
@@ -241,26 +251,52 @@ public class Player
     private void HandleGhostMode(double elapsedSeconds)
     {
         velocity = Vector3.Zero;
-        if (requestedMovement.LengthSquared > 0)
+        var moveInput = requestedMovement;
+        var remaining = (float)elapsedSeconds;
+
+        while (remaining > 0f && moveInput.LengthSquared > 0f)
         {
-            var dir = requestedMovement.Normalized() * (float)elapsedSeconds * MoveSpeed * 4.0f;
-            position += dir;
-            requestedMovement = Vector3.Zero;
+            var dt = MathF.Min(remaining, MaxPhysicsStepSeconds);
+            var dir = moveInput.Normalized();
+            position += dir * dt * MoveSpeed * 4.0f;
+            remaining -= dt;
         }
+
+        requestedMovement = Vector3.Zero;
     }
 
     private void HandleMovement(double elapsedSeconds)
     {
-        var dt = (float)elapsedSeconds;
+        var moveInput = requestedMovement;
+        var remaining = (float)elapsedSeconds;
+        var steps = 0;
 
+        while (remaining > 0f)
+        {
+            var dt = MathF.Min(remaining, MaxPhysicsStepSeconds);
+            ApplyMovementStep(moveInput, dt);
+            remaining -= dt;
+            steps++;
+
+            if (steps > 64)
+            {
+                break; // safety valve
+            }
+        }
+
+        requestedMovement = Vector3.Zero;
+    }
+
+    private void ApplyMovementStep(Vector3 moveInput, float dt)
+    {
         // Apply gravity
         velocity.Y += Gravity * dt;
 
         // Calculate wish direction
         var wishDir = Vector3.Zero;
-        if (requestedMovement.LengthSquared > 0.001f)
+        if (moveInput.LengthSquared > 0.001f)
         {
-            wishDir = requestedMovement.Normalized();
+            wishDir = moveInput.Normalized();
         }
 
         var speed = MoveSpeed;
@@ -269,16 +305,12 @@ public class Player
 
         if (isGrounded)
         {
-            // Instant velocity change (Infinite friction)
             velocity.X = wishDir.X * speed;
             velocity.Z = wishDir.Z * speed;
         }
-        // No air control: velocity is preserved (inertial)
-        
-        // Move
+
         Move(velocity * dt);
 
-        // Clamp horizontal velocity
         var maxSpeed = _isSprinting ? MoveSpeed * 1.5f : (_isCrouching ? MoveSpeed * 0.5f : MoveSpeed);
         var hVel = new Vector2(velocity.X, velocity.Z);
         if (hVel.LengthSquared > maxSpeed * maxSpeed)
@@ -288,11 +320,7 @@ public class Player
             velocity.Z = hVel.Y;
         }
 
-        // Check ground
         CheckGround();
-
-        // Reset requested movement
-        requestedMovement = Vector3.Zero;
     }
 
     private void Accelerate(Vector3 wishDir, float wishSpeed, float accel, float dt)
@@ -473,7 +501,7 @@ public class Player
         var obstacleTop = obstacle.Aabb.Max.Y;
         var stepHeight = obstacleTop - position.Y;
 
-        if (stepHeight > 0 && stepHeight <= 1.1f)
+        if (stepHeight is > 0 and <= 1.1f)
         {
             // Check if the obstacle itself is blocked above (wall > 1 block high)
             var blockAbove = world.GetBlockByPositionGlobalSafe((int)obstacle.GlobalPosition.X, (int)obstacle.GlobalPosition.Y + 1, (int)obstacle.GlobalPosition.Z);
@@ -506,6 +534,9 @@ public class Player
                 var jumpVel = MathF.Sqrt(2 * MathF.Abs(Gravity) * jumpHeight);
 
                 velocity.Y = jumpVel;
+                // Dampen horizontal velocity to prevent overjumping
+                velocity.X *= JumpHorizontalDamping;
+                velocity.Z *= JumpHorizontalDamping;
                 isGrounded = false;
                 return true;
             }

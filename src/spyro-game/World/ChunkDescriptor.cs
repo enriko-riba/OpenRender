@@ -55,6 +55,12 @@ public struct ChunkDescriptor
     public long GenerationStartFrame;
 
     /// <summary>
+    /// Bitmask of neighbors that were assumed solid because their chunks were missing when this chunk was generated.
+    /// Bits: 1=+X, 2=-X, 4=+Z, 8=-Z.
+    /// </summary>
+    public byte PlaceholderMask;
+
+    /// <summary>
     /// Get total vertex count for this chunk (4 vertices per face)
     /// </summary>
     //public readonly int VertexCount => VisibleVoxelCount * 4;
@@ -65,12 +71,12 @@ public struct ChunkDescriptor
     //public readonly int IndexCount => VisibleVoxelCount * 6;
 
     public override readonly string ToString() 
-        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, PlaceholderMask={PlaceholderMask}";
 }
 
 /// <summary>
 /// Lifecycle states for a chunk descriptor.
-/// Tracks progression through the GPU pipeline.
+/// Tracks progression through the CPU pipeline.
 /// </summary>
 public enum TerrainChunkState : byte
 {
@@ -80,34 +86,29 @@ public enum TerrainChunkState : byte
     Pending = 0,
 
     /// <summary>
-    /// GPU generation pass in flight (fence not signaled)
+    /// CPU generation in progress
     /// </summary>
     Generating = 1,
 
     /// <summary>
-    /// GPU visibility pass in flight
+    /// CPU meshing in progress
     /// </summary>
     CountingVisibility = 2,
 
     /// <summary>
-    /// GPU compaction pass in flight
+    /// Ready for rendering
     /// </summary>
-    Compacting = 3,
+    Ready = 3,
 
     /// <summary>
-    /// Ready for rendering (fence signaled, data valid)
+    /// Needs regeneration due to edit or neighbor loaded
     /// </summary>
-    Ready = 4,
-
-    /// <summary>
-    /// Needs regeneration due to edit or update
-    /// </summary>
-    Dirty = 5,
+    Dirty = 4,
 
     /// <summary>
     /// Marked for unloading (will be removed next frame)
     /// </summary>
-    Unloading = 6
+    Unloading = 5
 }
 
 /// <summary>
@@ -116,16 +117,14 @@ public enum TerrainChunkState : byte
 public static class ChunkDescriptorExtensions
 {
     /// <summary>
-    /// Check if chunk is in a terminal state (ready or failed)
+    /// Check if chunk is in a terminal state (ready or dirty)
     /// </summary>
     public static bool IsComplete(this ChunkDescriptor descriptor) 
-        => descriptor.State is TerrainChunkState.Ready or
-               TerrainChunkState.Dirty;
+        => descriptor.State is TerrainChunkState.Ready or TerrainChunkState.Dirty;
 
     /// <summary>
-    /// Check if chunk is currently processing on GPU
+    /// Check if chunk is currently processing
     /// </summary>
-    public static bool IsInFlight(this ChunkDescriptor descriptor) => descriptor.State is TerrainChunkState.Generating or
-               TerrainChunkState.CountingVisibility or
-               TerrainChunkState.Compacting;
+    public static bool IsInFlight(this ChunkDescriptor descriptor) 
+        => descriptor.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility;
 }

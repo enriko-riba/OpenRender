@@ -63,16 +63,14 @@ src/spyro-game/
 - LOD system (planned)
 
 ### Shaders (`Shaders/`)
-Current (being replaced):
-- `compute-chunk.comp` - Terrain generation
-- `compute-compact-*.comp` - Mesh compaction
-- `instancedChunk.*` - Rendering
+- `voxel-terrain.*` – Primary terrain material (biome-aware)
+- `block-outline.*` – Picked block overlay
+- `water.*` – Water surface pass
+- `skybox-sun.*` – Gradient sky/sun billboard
+- `terrain-*.glsl` – Shared include files (noise, biomes, constants)
 
-New (in development):
-- `compute-generate.comp` - GPU generation
-- `compute-visibility.comp` - Face culling
-- `compute-compact.comp` - Unified compaction
-- `voxel-terrain.*` - Modern rendering
+> **Note:** All GPU compute shaders for generation, lighting, edits, and frustum culling were removed.
+> Terrain data is now generated and culled entirely on the CPU before uploading to the renderer.
 
 ## Documentation
 

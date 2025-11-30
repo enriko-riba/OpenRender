@@ -48,10 +48,7 @@ uniform int uShowBiomes;
 
 #define IS_FRAGMENT_SHADER
 #include "terrain-common.glsl"
-#include "terrain-noise.glsl"
-#include "terrain-caves.glsl"        // For isCave() used by terrain-generation
-#include "terrain-generation.glsl"  // For getContinentalness()
-#include "terrain-biomes.glsl"      // For getBiomeId()
+#include "terrain-climate.glsl"
 
 // Helper to get BlockDescriptor (geology layer index) from block descriptor value
 // BlockDescriptor values map directly to geology layers (0-7)
@@ -129,10 +126,13 @@ void main() {
     // Sample texture based on block descriptor
     vec4 baseColor = vec4(0.0);
     
+    bool isWater = vBlockDescriptor == BD_WATER;
+    bool isTopFace = N.y > 0.5;
+
     // Procedural Water Normal
     vec3 waterNormal = N;
     
-    if (vBlockDescriptor == BD_WATER) {
+    if (isWater && isTopFace) {
         // Improved wave animation - Higher frequency and more random
         float speed = 2.5;
         
@@ -160,14 +160,14 @@ void main() {
     // CRITICAL FIX: Water blocks have their top face at the UPPER edge (Y+1)
     // We need to sample the biome INSIDE the water block, not in the air above it
     vec3 voxelCenter;
-    if (vBlockDescriptor == BD_WATER) {
+    if (isWater) {
         // Water block biome sampling:
         // The top face vertices are at Y+1 (top of water block)
         // We need to sample at the water block's Y position, not Y+1
         vec3 samplePos = vWorldPos;
         
         // If this is a top face (normal pointing up), shift down into water
-        if (N.y > 0.5) {
+        if (isTopFace) {
             samplePos.y -= 0.5;  // Move from top edge into water block
         }
         
@@ -183,50 +183,83 @@ void main() {
     uint primaryBiomeId = getBiomeId(voxelCenter);
     baseColor = sampleBiomeTexture(primaryBiomeId, int(layer), vTexCoord, N);
     
-    // Water specific processing
-    if (vBlockDescriptor == BD_WATER) {
+        // Water specific processing
+        if (isWater) {
         // Water opacity increases with distance to hide underwater culling artifacts
         float dist = length(vWorldPos - cameraPos);
         
-        // Adjusted opacity for outside view:
-        // Fade to opaque very fast (between 2m and 15m) to strictly limit visibility
-        float alphaFade = clamp((dist - 2.0) / 13.0, 0.0, 1.0); 
-        
-        // If underwater, keep the denser fog/opacity (0.8 to 1.0)
-        if (isCameraUnderwater) {
-             alphaFade = clamp((dist - 5.0) / 30.0, 0.0, 1.0);
-             baseColor.a = mix(0.8, 1.0, alphaFade);
-        } else {
-             // Outside view: Start at 0.85 opacity
-             baseColor.a = mix(0.85, 1.0, alphaFade);
-        }
-        
-        // Day/Night Tinting
+        // Day/Night base color
         vec3 deepWaterColor = vec3(0.1, 0.15, 0.25);
-        // Modulate by ambient light (unified system)
-        // Scale up to maintain visibility
-        vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 3.0; 
+        vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 3.0;
         
-        // Mix texture with water color
-        baseColor.rgb = mix(baseColor.rgb, waterBaseColor, 0.5);
+        // Compute fog color early (used for both side walls and top faces)
+        vec3 waterFogColor = isCameraUnderwater 
+            ? dirLight.ambient * vec3(0.2, 0.5, 0.8)
+            : dirLight.ambient * vec3(0.10, 0.18, 0.30);
         
-        // Increase opacity at night (harder to see through)
-        // Use ambient brightness to determine night status
+        // Increase opacity at night
         float brightness = dot(dirLight.ambient, vec3(0.333));
         float nightOpacityBoost = 1.0 - smoothstep(0.05, 0.2, brightness);
-        baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.3, 0.0, 1.0);
-
-        // Sun Specular Reflection (Blinn-Phong)
-        // Only visible from above
-        if (!isCameraUnderwater) {
-            vec3 H = normalize(L + V);
-            float specAngle = max(dot(H, waterNormal), 0.0);
-            // High shininess for water
-            float specular = pow(specAngle, 256.0) * 1.5; 
-            vec3 sunSpecular = dirLight.specular * specular * vec3(1.0, 0.9, 0.7);
+        
+        if (isTopFace) {
+            // === TOP FACE RENDERING ===
+            // This is the visible water surface
             
-            // Add specular to base color
-            baseColor.rgb += sunSpecular;
+            // Base opacity: higher minimum to prevent see-through
+            float alphaFade = clamp((dist - 2.0) / 20.0, 0.0, 1.0);
+            if (isCameraUnderwater) {
+                alphaFade = clamp((dist - 5.0) / 30.0, 0.0, 1.0);
+                baseColor.a = mix(0.85, 1.0, alphaFade);
+            } else {
+                baseColor.a = mix(0.88, 1.0, alphaFade);
+            }
+            
+            // Mix texture with water color
+            baseColor.rgb = mix(baseColor.rgb, waterBaseColor, 0.5);
+            baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.3, 0.0, 1.0);
+            
+            // Fresnel effect for surface reflectivity (outside view only)
+            if (!isCameraUnderwater) {
+                vec3 viewDir = normalize(vViewDir);
+                float fresnel = pow(1.0 - clamp(abs(dot(waterNormal, viewDir)), 0.0, 1.0), 3.0);
+                vec3 surfaceTint = mix(vec3(0.05, 0.15, 0.25), vec3(0.35, 0.6, 0.9), fresnel);
+                baseColor.rgb = mix(baseColor.rgb, surfaceTint, 0.65);
+                // Higher minimum alpha to prevent "holes" at steep angles
+                float minAlpha = mix(0.70, 0.92, fresnel);
+                baseColor.a = max(baseColor.a, minAlpha);
+            }
+            
+            // Sun specular reflection (outside view only)
+            if (!isCameraUnderwater) {
+                vec3 H = normalize(L + V);
+                float specAngle = max(dot(H, waterNormal), 0.0);
+                float specular = pow(specAngle, 256.0) * 1.5;
+                vec3 sunSpecular = dirLight.specular * specular * vec3(1.0, 0.9, 0.7);
+                baseColor.rgb += sunSpecular;
+            }
+            
+            // Outside view absorption
+            if (!isCameraUnderwater) {
+                float absorption = exp(-dist * 0.10);
+                baseColor.rgb = mix(waterFogColor, baseColor.rgb, absorption);
+                float opacityBoost = mix(0.60, 0.98, 1.0 - absorption);
+                baseColor.a = max(baseColor.a, opacityBoost);
+            }
+        } else {
+            // === SIDE FACE RENDERING ===
+            // These are the water walls - make them blend seamlessly with fog
+            // to hide chunk boundary artifacts (the grid pattern)
+            
+            // Side walls should match the fog color almost exactly
+            // This makes redundant faces at chunk borders invisible
+            float sideFade = clamp(dist / 15.0, 0.0, 1.0);
+            
+            // Very close: slight hint of water color; far: pure fog
+            baseColor.rgb = mix(waterBaseColor, waterFogColor, 0.85 + sideFade * 0.15);
+            
+            // High opacity to block view but color matches fog so seams invisible
+            baseColor.a = mix(0.92, 0.99, sideFade);
+            baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.05, 0.0, 1.0);
         }
     } else {
         // Solid blocks are opaque

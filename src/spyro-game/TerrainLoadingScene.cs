@@ -9,8 +9,8 @@ using System.Diagnostics;
 namespace SpyroGame;
 
 /// <summary>
-/// Loading scene for GPU-based procedural terrain generation.
-/// Uses ChunkStreamingManager (NEW GPU system) for modern voxel generation.
+/// Loading scene for CPU-based procedural terrain generation.
+/// Uses ChunkStreamingManager's CPU pipeline for voxel generation while keeping GPU rendering.
 /// Transitions to GameScene when terrain is ready with detailed 0-100% progress tracking.
 /// </summary>
 internal class TerrainLoadingScene : Scene
@@ -59,22 +59,24 @@ internal class TerrainLoadingScene : Scene
             VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
         );
 
-        Log.Info("TerrainLoadingScene: Starting GPU terrain generation with enhanced progress tracking...");
+        Log.Info("TerrainLoadingScene: Starting CPU terrain generation with enhanced progress tracking...");
     }
 
     private bool isStreamingTerrain = false;
     private bool isWaitingForProgressAnimation = false;
     private const int INITIAL_LOAD_DISTANCE = 5;
     private int initialChunkCount = 0;
+    private int minimumReadyChunksForTransition;
+    private const int MaxOutstandingChunksForTransition = 4;
 
     private void BuildOperationQueue()
     {
-        // Calculate target chunk count
-        targetChunkCount = (2 * INITIAL_LOAD_DISTANCE + 1) * (2 * INITIAL_LOAD_DISTANCE + 1);
+        minimumReadyChunksForTransition = VoxelHelper.CalculateCircularChunkCount(INITIAL_LOAD_DISTANCE);
+        targetChunkCount = minimumReadyChunksForTransition;
         
         // Define progress ranges for each operation
         progressTracker.AddOperation("Initialize Streaming Manager", 0f, 10f);
-        progressTracker.AddOperation("Initialize GPU Generation", 10f, 25f);
+        progressTracker.AddOperation("Initialize Terrain Generation", 10f, 25f);
         progressTracker.AddOperation("Initialize Visibility & Compaction", 25f, 40f);
         progressTracker.AddOperation("Initialize Terrain Renderer", 40f, 50f);
         progressTracker.AddOperation("Initialize Frustum Culling", 50f, 60f);
@@ -89,18 +91,19 @@ internal class TerrainLoadingScene : Scene
             {
                 LoadDistance = INITIAL_LOAD_DISTANCE
             };
+            streamingManager.SetPrefetchMargin(0);
             progressTracker.CompleteOperation("Initialize Streaming Manager");
             Log.Info("ChunkStreamingManager created");
         }));
 
         // Phase 2: GPU Pipeline initialization
-        operationQueue.Enqueue(("Initialize GPU Generation", () =>
+        operationQueue.Enqueue(("Initialize Terrain Generation", () =>
         {
-            progressTracker.UpdateOperation("Initialize GPU Generation", 0.3f, "Allocating buffers...");
+            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.3f, "Allocating buffers...");
             streamingManager!.InitializeGpuGeneration(world.Seed);
-            progressTracker.UpdateOperation("Initialize GPU Generation", 0.9f, "Compiling shaders...");
-            progressTracker.CompleteOperation("Initialize GPU Generation");
-            Log.Info($"GPU generation initialized (PROCEDURAL MODE) with pre-allocated buffers");
+            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.9f, "Preparing CPU pipeline...");
+            progressTracker.CompleteOperation("Initialize Terrain Generation");
+            Log.Info($"CPU terrain generation initialized with pre-allocated buffers");
         }));
 
         operationQueue.Enqueue(("Initialize Visibility & Compaction", () =>
@@ -139,6 +142,7 @@ internal class TerrainLoadingScene : Scene
 
         Log.Info($"TerrainLoadingScene: Queued {operationQueue.Count} operations");
     }
+    
 
     public override void UpdateFrame(double elapsedSeconds)
     {
@@ -164,6 +168,7 @@ internal class TerrainLoadingScene : Scene
             {
                 streamingManager.Update(startPosition);
                 var (total, pending, generating, ready) = streamingManager.GetStats();
+                var queued = pending + generating;
 
                 // Calculate streaming progress (60% to 95%)
                 var streamingProgress = ready / (float)targetChunkCount;
@@ -172,17 +177,21 @@ internal class TerrainLoadingScene : Scene
                 progressTracker.UpdateOperation(
                     "Stream Initial Terrain", 
                     streamingProgress, 
-                    $"{ready}/{targetChunkCount} chunks ready (Pending: {pending}, Generating: {generating})");
+                    $"{ready}/{targetChunkCount} chunks ready (Queued: {queued})");
 
-                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} chunks";
+                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} ready (+{queued} queued)";
 
                 // Check if streaming is complete
-                if (ready >= targetChunkCount || (ready > 0 && pending == 0 && generating == 0))
+                var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
+                var outstanding = pending + generating;
+                var areaReady = ready >= requiredReadyChunks && outstanding <= MaxOutstandingChunksForTransition;
+
+                if (areaReady)
                 {
                     isStreamingTerrain = false;
                     isWaitingForProgressAnimation = true; // NEW: Wait for animation to catch up
                     progressTracker.CompleteOperation("Stream Initial Terrain");
-                    Log.Info($"Initial terrain streaming complete. Ready: {ready}/{targetChunkCount}. Waiting for progress animation...");
+                    Log.Info($"Initial terrain streaming complete. Ready: {ready}/{requiredReadyChunks}. Waiting for progress animation...");
                 }
                 else
                 {
@@ -232,7 +241,7 @@ internal class TerrainLoadingScene : Scene
                     if (gameScene is GameScene gs)
                     {
                         Log.Info($"TerrainLoadingScene: Passing terrain to GameScene");
-                        gs.SetupGpuTerrain(streamingManager, terrainRenderer);
+                        gs.SetupCpuTerrain(streamingManager, terrainRenderer);
                     }
                     else
                     {
@@ -259,11 +268,6 @@ internal class TerrainLoadingScene : Scene
 
     private void RenderUI()
     {
-        void WriteLine(string text, Vector3 color, int fontSize, int x, int y)
-        {
-            textRenderer.Render(text, fontSize, x, y, color);
-        }
-
         void WriteLineCentered(string text, Vector3 color, int fontSize, int y)
         {
             var size = textRenderer.Measure(text, fontSize);
@@ -273,7 +277,7 @@ internal class TerrainLoadingScene : Scene
         // Fixed positions for each section
         var titleY = 50;
         var stageY = 120;
-        var detailedStatusY = 160;
+        var detailedStatusY = 180;
         var progressBarY = 220;
         var statsY = 300;
         var errorMessagesY = Height - 200; // Bottom half, leaving room for spinner
@@ -288,7 +292,7 @@ internal class TerrainLoadingScene : Scene
         // Detailed Status - Centered (if available)
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
-            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 18, detailedStatusY);
+            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 20, detailedStatusY);
         }
 
         // Progress Bar - Centered
@@ -318,7 +322,7 @@ internal class TerrainLoadingScene : Scene
         
         // Line 2: Est. Remaining (always reserve space)
         var line2Y = line1Y + 45;
-        if (progressTracker.Progress > 1f && progressTracker.Progress < 99f)
+        if (progressTracker.Progress is > 1f and < 99f)
         {
             var eta = progressTracker.EstimatedTimeRemaining;
             WriteLineCentered($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, line2Y);
@@ -329,15 +333,18 @@ internal class TerrainLoadingScene : Scene
         WriteLineCentered($"Target Chunks: {targetChunkCount}", dimColor, 22, line3Y);
         
         // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
-        var line4Y = line3Y + 45; // Changed from 45 to match consistent spacing
+        var line4Y = line3Y + 45;
         if (streamingManager != null)
         {
-            var (_, _, _, ready) = streamingManager.GetStats();
+            var (_, pending, generating, ready) = streamingManager.GetStats();
+            var queued = pending + generating;
             WriteLineCentered($"Chunks Ready: {ready}", dimColor, 22, line4Y);
+            WriteLineCentered($"Chunks Queued: {queued}", dimColor, 22, line4Y + 40);
+            line4Y += 40;
         }
 
-        // Line 5: GPU Memory - SAME SPACING as other lines (45px)
-        var line5Y = line4Y + 60; // Changed from 60 to match consistent spacing
+        // Line 5: GPU Memory - maintain spacing below queued stats
+        var line5Y = line4Y + 60;
         if (streamingManager != null)
         {
             var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();
