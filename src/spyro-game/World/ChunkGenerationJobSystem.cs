@@ -88,6 +88,14 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                     {
                         writable = voxelCache.RentWritable(work.ChunkIndex);
                         var result = generator.GenerateChunk(work.ChunkIndex, writable.Span, work.DescriptorEdits);
+                        
+                        // Store biome data alongside voxels
+                        var biomeData = generator.GetLastChunkBiomeData();
+                        if (biomeData != null)
+                        {
+                            voxelCache.StoreBiomeData(work.ChunkIndex, biomeData);
+                        }
+                        
                         voxelCache.Store(writable);
                         writable = null;
 

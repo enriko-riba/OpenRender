@@ -10,15 +10,58 @@ namespace SpyroGame.World;
 /// <summary>
 /// Maintains CPU-side copies of voxel data for chunks that finished GPU generation.
 /// GL thread code populates the cache while worker threads consume the immutable views.
+/// Also stores biome data alongside voxels for terrain variety and debugging.
 /// </summary>
 public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposable
 {
     private readonly ConcurrentDictionary<int, ChunkVoxelBuffer> chunkBuffers = new();
+    private readonly ConcurrentDictionary<int, ChunkBiomeData> chunkBiomes = new();
     private readonly ArrayPool<uint> voxelPool = pool ?? ArrayPool<uint>.Shared;
     private long globalStoreVersion;
     private static readonly bool EnableVerboseLogging = false;
 
     public int ActiveEntryCount => chunkBuffers.Count;
+
+    /// <summary>
+    /// Store biome data for a chunk. Should be called during generation before Store().
+    /// </summary>
+    public void StoreBiomeData(int chunkIndex, ChunkBiomeData biomeData)
+    {
+        ArgumentNullException.ThrowIfNull(biomeData);
+        chunkBiomes[chunkIndex] = biomeData;
+        if (EnableVerboseLogging)
+        {
+            Log.Debug($"VoxelCache: StoreBiomeData chunk={chunkIndex}");
+        }
+    }
+
+    /// <summary>
+    /// Retrieve biome data for a chunk.
+    /// </summary>
+    public bool TryGetBiomeData(int chunkIndex, out ChunkBiomeData? biomeData)
+    {
+        return chunkBiomes.TryGetValue(chunkIndex, out biomeData);
+    }
+
+    /// <summary>
+    /// Get biome at a specific world position by looking up the chunk and local coordinates.
+    /// </summary>
+    public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ)
+    {
+        // Get chunk indices from world coordinates
+        var chunkX = worldX / VoxelHelper.ChunkSideSize;
+        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
+        
+        if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData))
+        {
+            // Calculate local coordinates within the chunk
+            var localX = worldX - chunkX * VoxelHelper.ChunkSideSize;
+            var localZ = worldZ - chunkZ * VoxelHelper.ChunkSideSize;
+            return biomeData.GetBiomeAt(localX, localZ);
+        }
+        return BiomeId.Plains; // Default fallback
+    }
 
     /// <summary>
     /// Allocate a writable buffer for the specified chunk index.
@@ -101,6 +144,9 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     /// </summary>
     public bool TryRelease(int chunkIndex)
     {
+        // Also remove biome data
+        chunkBiomes.TryRemove(chunkIndex, out _);
+
         if (chunkBuffers.TryRemove(chunkIndex, out var buffer))
         {
             if (EnableVerboseLogging)
@@ -131,6 +177,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
         {
             TryRelease(key);
         }
+        chunkBiomes.Clear();
     }
 
     public void Dispose() => Clear();

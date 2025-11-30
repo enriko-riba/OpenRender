@@ -113,6 +113,19 @@ public sealed class ChunkStreamingManager : IDisposable
 
     public VoxelWorld World => world;
     public CollisionManager CollisionManager { get; }
+    
+    /// <summary>
+    /// Query the biome at a world position using cached chunk biome data.
+    /// </summary>
+    public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ) 
+        => chunkVoxelCache.GetBiomeAtWorldPos(worldX, worldZ);
+    
+    /// <summary>
+    /// Try to get full biome data for a chunk.
+    /// </summary>
+    public bool TryGetChunkBiomeData(int chunkIndex, out ChunkBiomeData? biomeData) 
+        => chunkVoxelCache.TryGetBiomeData(chunkIndex, out biomeData);
+
     private int loadDistance = VoxelHelper.MaxDistanceInChunks;
     private int prefetchMarginChunks = PREFETCH_MARGIN_DEFAULT;
     public int LoadDistance

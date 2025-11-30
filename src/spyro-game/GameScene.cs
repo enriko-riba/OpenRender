@@ -576,55 +576,21 @@ internal class GameScene : Scene
     }
 
     /// <summary>
-    /// Gets the biome name for a given block by querying the terrain config's biome lookup.
+    /// Gets the biome name for a given block by querying the cached biome data.
     /// </summary>
     private string GetBiomeNameForBlock(BlockState block)
     {
         if (streamingManager == null)
             return "Unknown";
 
-        // For now, we don't have direct biome ID stored in BlockState.
-        // We would need to re-query the terrain generation logic to get the biome.
-        // As a workaround, we can infer biome from descriptor and elevation:
-
-        var elevation = block.GlobalPosition.Y;
-        var descriptor = block.Descriptor;
-
-        // Hardcoded biome inference based on descriptor and elevation
-        // Mirrors the CPU terrain generator logic (legacy compute shader behavior)
-
-        // Ocean biomes
-        if (descriptor == BlockDescriptor.Water)
-        {
-            return elevation < 0 ? "Ocean" : "Water";
-        }
-
-        // Alpine biome - elevation above water level exceeds alpine threshold (default 150)
-        var elevationAboveWater = elevation - VoxelHelper.WaterLevel;
-        if (elevationAboveWater >= 150f)
-        {
-            return "Alpine";
-        }
-
-        // Beach/shoreline
-        if (descriptor == BlockDescriptor.ShoreLine ||
-            (descriptor == BlockDescriptor.UnderwaterSurface && elevation <= 37f))
-        {
-            return "Beach";
-        }
-
-        // For land biomes, we would need to query temperature/humidity which requires
-        // recalculating noise. For now, provide generic names based on descriptor.
-        return descriptor switch
-        {
-            BlockDescriptor.Air => "Sky",
-            BlockDescriptor.Surface => "Land (Surface)",
-            BlockDescriptor.Subsurface => "Land (Underground)",
-            BlockDescriptor.DeepSubsurface => "Land (Deep)",
-            BlockDescriptor.UnderwaterSurface => "Underwater",
-            BlockDescriptor.UnderwaterSubsurface => "Deep Ocean",
-            _ => "Unknown"
-        };
+        // Query the actual biome from the cached chunk biome data
+        var worldX = (int)block.GlobalPosition.X;
+        var worldZ = (int)block.GlobalPosition.Z;
+        
+        // Try to get biome from the chunk cache
+        var biomeId = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
+        
+        return biomeId.ToString();
     }
 
     public override void Close()

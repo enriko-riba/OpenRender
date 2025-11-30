@@ -61,6 +61,10 @@ internal sealed class CpuTerrainGenerator
     private int currentChunkX;
     private int currentChunkZ;
 
+    // Biome generation
+    private BiomeGenerator? biomeGenerator;
+    private ChunkBiomeData? currentChunkBiome;
+
     public CpuTerrainGenerator(TerrainConfig config)
     {
         UpdateConfig(config);
@@ -72,7 +76,14 @@ internal sealed class CpuTerrainGenerator
         terrainParams = config.GetGenerationParams();
         var baked = config.BakeHeightSplineLut(HeightSplineResolution);
         Array.Copy(baked, heightSpline, HeightSplineResolution);
+        biomeGenerator = new BiomeGenerator(config);
     }
+
+    /// <summary>
+    /// Gets the biome data for the last generated chunk. 
+    /// Call after GenerateChunk to retrieve the biome grid.
+    /// </summary>
+    public ChunkBiomeData? GetLastChunkBiomeData() => currentChunkBiome;
 
     /// <summary>
     /// Generate voxel descriptors and collision spans for the specified chunk.
@@ -83,6 +94,13 @@ internal sealed class CpuTerrainGenerator
         {
             throw new ArgumentException($"Destination span must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(destination));
         }
+
+        // Generate biome data for this chunk
+        var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+        var worldX = chunkX * VoxelHelper.ChunkSideSize;
+        var worldZ = chunkZ * VoxelHelper.ChunkSideSize;
+        currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(worldX, worldZ) ?? new ChunkBiomeData();
 
         var collision = new ChunkCollisionData();
         var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
@@ -388,12 +406,248 @@ internal sealed class CpuTerrainGenerator
                 // High erosion areas are smoother - dampens all height variations
                 var smoothingFactor = erosion01 * erosion01 * 0.3f;
                 baseHeight = Lerp(baseHeight, SampleHeightSpline(tC) + VoxelHelper.WaterLevel + 20f, smoothingFactor);
+                
+                // === BIOME-BASED HEIGHT MODULATION ===
+                // Use the stored biome data to further shape terrain
+                baseHeight = ApplyBiomeHeightModulation(baseHeight, i);
             }
 
             columnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
+    }
+
+    /// <summary>
+    /// Apply height modulation using biome definitions with smooth blending.
+    /// 
+    /// This follows Minecraft's approach:
+    /// - Biome determines base_height and height_variation attributes
+    /// - Climate parameters (C/E/PV) provide smooth blending weights
+    /// - Adjacent biomes blend their height attributes at transitions
+    /// - The continuous noise ensures no chunk boundary artifacts
+    /// 
+    /// KEY INSIGHT: We DON'T use discrete biome lookup for height calculation.
+    /// Instead, we blend height attributes from ALL biomes weighted by how well
+    /// the current climate values match each biome's preferred climate range.
+    /// This ensures perfectly smooth transitions even at chunk boundaries.
+    /// 
+    /// IMPORTANT: For ocean areas, this method takes FULL CONTROL of height to avoid
+    /// the atoll pattern caused by double-applying ocean logic.
+    /// </summary>
+    private float ApplyBiomeHeightModulation(float baseHeight, int columnIndex)
+    {
+        // Use the terrain generator's per-column climate values - these are CONTINUOUS
+        // because they're sampled from world coordinates, not chunk-local data
+        var c01 = columnContinentalness01[columnIndex];  // 0 = ocean, 1 = inland
+        var erosion = columnErosion[columnIndex];        // Raw [-1,1] erosion value
+        var pv = columnPeaks[columnIndex];               // 0-1 peaks value
+        var e01 = erosion * 0.5f + 0.5f;                 // Normalize erosion to [0,1]
+        
+        // Get temperature and humidity for this column
+        // We estimate them from continentalness and peaks (simplified)
+        var temp01 = 0.5f + c01 * 0.15f - pv * 0.2f;  // Warmer inland, cooler at peaks
+        var humid01 = 0.5f - (c01 - 0.5f) * 0.3f;     // Drier inland
+        temp01 = Math.Clamp(temp01, 0f, 1f);
+        humid01 = Math.Clamp(humid01, 0f, 1f);
+        
+        // === SIMPLIFIED OCEAN/LAND HEIGHT ===
+        // Instead of blending biome height attributes (which caused atolls),
+        // use continentalness DIRECTLY to control ocean vs land height.
+        // This is the Minecraft approach: continentalness IS the primary height driver.
+        
+        // Ocean depth: deep ocean at low c01, shallow near coast
+        // Land height: gradually increases with continentalness
+        float targetHeight;
+        
+        if (c01 < 0.35f)
+        {
+            // === OCEAN ZONE ===
+            // Continentalness 0.0 = deepest ocean, 0.35 = shallow ocean floor
+            var oceanDepth = (0.35f - c01) / 0.35f;  // 1.0 at deep, 0.0 at coast
+            var oceanFloor = VoxelHelper.WaterLevel - 5f - oceanDepth * 25f;  // 5-30 blocks below water
+            
+            // Add some underwater terrain variation
+            var underwaterVariation = (pv - 0.5f) * 10f * (1f - oceanDepth);
+            targetHeight = oceanFloor + underwaterVariation;
+        }
+        else if (c01 < 0.45f)
+        {
+            // === COASTAL TRANSITION ===
+            // Smooth ramp from ocean floor to beach/low land
+            var coastProgress = (c01 - 0.35f) / 0.1f;  // 0.0 at ocean edge, 1.0 at land
+            var oceanFloor = VoxelHelper.WaterLevel - 5f;
+            var beachLevel = VoxelHelper.WaterLevel + 3f;
+            
+            // Smooth transition from ocean to beach
+            targetHeight = Lerp(oceanFloor, beachLevel, Smoothstep(0f, 1f, coastProgress));
+            
+            // Very minimal variation in coastal zone for smooth beaches
+            var coastalVariation = (pv - 0.5f) * 4f * coastProgress;
+            targetHeight += coastalVariation;
+        }
+        else
+        {
+            // === LAND ZONE ===
+            // Use biome blending for land areas only
+            var blendedBaseHeight = 0f;
+            var blendedHeightVariation = 0f;
+            var blendedPeaksInfluence = 0f;
+            var blendedErosionSensitivity = 0f;
+            var totalWeight = 0f;
+            
+            foreach (var biomeDef in config.Biomes)
+            {
+                // Skip ocean biomes for land calculation
+                if (biomeDef.AllowedTerrain == TerrainType.OceanOnly) continue;
+                
+                // Calculate how well this biome matches the current climate
+                var weight = CalculateBiomeWeight(biomeDef, c01, temp01, humid01, e01, pv, baseHeight);
+                
+                if (weight > 0.001f)
+                {
+                    blendedBaseHeight += biomeDef.BaseHeight * weight;
+                    blendedHeightVariation += biomeDef.HeightVariation * weight;
+                    blendedPeaksInfluence += biomeDef.PeaksInfluence * weight;
+                    blendedErosionSensitivity += biomeDef.ErosionSensitivity * weight;
+                    totalWeight += weight;
+                }
+            }
+            
+            // Normalize blended values
+            if (totalWeight > 0.001f)
+            {
+                blendedBaseHeight /= totalWeight;
+                blendedHeightVariation /= totalWeight;
+                blendedPeaksInfluence /= totalWeight;
+                blendedErosionSensitivity /= totalWeight;
+            }
+            else
+            {
+                // Fallback to plains-like defaults
+                blendedBaseHeight = 12f;
+                blendedHeightVariation = 8f;
+                blendedPeaksInfluence = 0.2f;
+                blendedErosionSensitivity = 0.8f;
+            }
+            
+            // Calculate land height from blended biome attributes
+            targetHeight = VoxelHelper.WaterLevel + blendedBaseHeight;
+            
+            // Apply peaks/valleys variation
+            var pvOffset = (pv - 0.5f) * 2f;  // Convert 0-1 to -1..+1
+            var pvContribution = pvOffset * blendedHeightVariation * blendedPeaksInfluence;
+            targetHeight += pvContribution;
+            
+            // Erosion smoothing
+            var erosionTarget = VoxelHelper.WaterLevel + blendedBaseHeight;
+            var erosionStrength = e01 * blendedErosionSensitivity;
+            targetHeight = Lerp(targetHeight, erosionTarget, erosionStrength * 0.4f);
+            
+            // Gradual height increase further inland (prevents flat land)
+            var inlandBoost = (c01 - 0.45f) / 0.55f;  // 0 at coast, 1 at max inland
+            targetHeight += inlandBoost * 10f * (1f - blendedErosionSensitivity);
+        }
+        
+        // Blend with original noise-based height for high-frequency detail
+        // Use less blending in ocean (we want clean ocean floors)
+        var blendFactor = c01 < 0.4f ? 0.3f : 0.5f;
+        var finalHeight = Lerp(baseHeight, targetHeight, 1f - blendFactor);
+        
+        return finalHeight;
+    }
+    
+    /// <summary>
+    /// Calculate how strongly a biome should influence the terrain at given climate values.
+    /// Returns a weight [0,1] based on how well climate matches biome's preferred range.
+    /// </summary>
+    private float CalculateBiomeWeight(BiomeDefinition biome, float cont01, float temp01, 
+        float humid01, float erosion01, float pv01, float currentHeight)
+    {
+        var weight = 1f;
+        
+        // === TERRAIN TYPE FILTERING ===
+        // Ocean biomes only apply in low continentalness
+        if (biome.AllowedTerrain == TerrainType.OceanOnly)
+        {
+            if (cont01 > 0.4f) return 0f;
+            weight *= 1f - Smoothstep(0.25f, 0.4f, cont01);
+        }
+        // Mountain biomes only apply in high continentalness + high peaks
+        else if (biome.AllowedTerrain == TerrainType.MountainOnly)
+        {
+            if (cont01 < 0.6f || pv01 < 0.5f) return 0f;
+            weight *= Smoothstep(0.6f, 0.8f, cont01) * Smoothstep(0.5f, 0.75f, pv01);
+        }
+        // Land biomes avoid deep ocean
+        else if (biome.AllowedTerrain == TerrainType.LandOnly)
+        {
+            if (cont01 < 0.35f) return 0f;
+            weight *= Smoothstep(0.35f, 0.5f, cont01);
+        }
+        
+        // === CLIMATE MATCHING ===
+        // How well does temperature match this biome's range?
+        var tempMatch = CalculateRangeMatch(temp01, biome.Temperature.Min, biome.Temperature.Max);
+        weight *= tempMatch;
+        
+        // How well does humidity match this biome's range?
+        var humidMatch = CalculateRangeMatch(humid01, biome.Humidity.Min, biome.Humidity.Max);
+        weight *= humidMatch;
+        
+        // === PRIORITY BOOST ===
+        // Higher priority biomes get a boost (Ocean=100, Alpine=90, others=50)
+        weight *= 1f + biome.Priority * 0.005f;
+        
+        return weight;
+    }
+    
+    /// <summary>
+    /// Calculate how well a value matches a range, with smooth falloff.
+    /// Returns 1.0 inside range, smoothly falls to 0 at distance 0.3 outside.
+    /// </summary>
+    private static float CalculateRangeMatch(float value, float min, float max)
+    {
+        const float falloffDistance = 0.25f;
+        
+        if (value >= min && value <= max)
+        {
+            return 1f;
+        }
+        
+        if (value < min)
+        {
+            var dist = min - value;
+            return 1f - Smoothstep(0f, falloffDistance, dist);
+        }
+        else
+        {
+            var dist = value - max;
+            return 1f - Smoothstep(0f, falloffDistance, dist);
+        }
+    }
+
+    /// <summary>
+    /// Gets a biome definition by its ID from the config.
+    /// </summary>
+    private BiomeDefinition? GetBiomeDefinition(int biomeId)
+    {
+        foreach (var biome in config.Biomes)
+        {
+            if (biome.Id == biomeId)
+            {
+                return biome;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Flatten a height value towards a target based on strength factor.
+    /// </summary>
+    private static float FlattenTowards(float height, float target, float strength)
+    {
+        return Lerp(height, target, strength);
     }
 
     private void BuildColumnVolumes()

@@ -702,6 +702,60 @@ public sealed class BiomeDefinition
     /// </summary>
     public List<string> TexturePaths { get; set; } = [];
 
+    // === HEIGHT GENERATION ATTRIBUTES ===
+    
+    /// <summary>
+    /// Base elevation offset from water level for this biome.
+    /// Positive = above water, negative = below water.
+    /// Used during terrain height generation to shape the base terrain.
+    /// </summary>
+    public float BaseHeight { get; set; } = 10f;
+    
+    /// <summary>
+    /// How much the terrain height varies within this biome.
+    /// Low values = flat terrain (plains, beach), high values = dramatic hills/mountains (alpine).
+    /// </summary>
+    public float HeightVariation { get; set; } = 15f;
+    
+    /// <summary>
+    /// Multiplier for how much peaks/valleys noise affects this biome's terrain.
+    /// 0 = completely flat, 1 = full effect.
+    /// </summary>
+    public float PeaksInfluence { get; set; } = 0.5f;
+    
+    /// <summary>
+    /// How much erosion smooths this biome's terrain.
+    /// Higher values make the terrain smoother in high-erosion areas.
+    /// </summary>
+    public float ErosionSensitivity { get; set; } = 0.5f;
+
+    // === BLOCK ASSIGNMENT (Minecraft-style) ===
+    
+    /// <summary>
+    /// Block type for the topmost solid layer (e.g., Grass, Sand, Snow).
+    /// </summary>
+    public BlockId SurfaceBlock { get; set; } = BlockId.Grass;
+    
+    /// <summary>
+    /// Block type for 2-4 blocks below surface (e.g., Dirt, Sand).
+    /// </summary>
+    public BlockId SubsurfaceBlock { get; set; } = BlockId.Dirt;
+    
+    /// <summary>
+    /// Block type for deep underground (usually Stone).
+    /// </summary>
+    public BlockId DeepBlock { get; set; } = BlockId.Stone;
+    
+    /// <summary>
+    /// Block type for underwater surface (ocean/river floor).
+    /// </summary>
+    public BlockId UnderwaterSurfaceBlock { get; set; } = BlockId.Gravel;
+    
+    /// <summary>
+    /// Block type for underwater subsurface (below ocean floor).
+    /// </summary>
+    public BlockId UnderwaterSubsurfaceBlock { get; set; } = BlockId.Stone;
+
     /// <summary>
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with default values.
     /// </summary>
@@ -711,7 +765,10 @@ public sealed class BiomeDefinition
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with specified parameters.
     /// </summary>
     public BiomeDefinition(int id, string name, Range temperature, Range humidity, List<string> texturePaths,
-        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue)
+        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue,
+        float baseHeight = 10f, float heightVariation = 15f, float peaksInfluence = 0.5f, float erosionSensitivity = 0.5f,
+        BlockId surfaceBlock = BlockId.Grass, BlockId subsurfaceBlock = BlockId.Dirt, BlockId deepBlock = BlockId.Stone,
+        BlockId underwaterSurfaceBlock = BlockId.Gravel, BlockId underwaterSubsurfaceBlock = BlockId.Stone)
     {
         Id = id;
         Name = name;
@@ -722,6 +779,15 @@ public sealed class BiomeDefinition
         AllowedTerrain = terrainType;
         MinElevation = minElevation;
         MaxElevation = maxElevation;
+        BaseHeight = baseHeight;
+        HeightVariation = heightVariation;
+        PeaksInfluence = peaksInfluence;
+        ErosionSensitivity = erosionSensitivity;
+        SurfaceBlock = surfaceBlock;
+        SubsurfaceBlock = subsurfaceBlock;
+        DeepBlock = deepBlock;
+        UnderwaterSurfaceBlock = underwaterSurfaceBlock;
+        UnderwaterSubsurfaceBlock = underwaterSubsurfaceBlock;
     }
 
     /// <summary>
@@ -764,66 +830,106 @@ public sealed class BiomeDefinition
     {
         return
         [
+            // Ocean: below water, relatively flat but with some variation for underwater hills
             new (OCEAN_BIOME_ID, "Ocean", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 100, 
-                terrainType: TerrainType.OceanOnly),
+                terrainType: TerrainType.OceanOnly,
+                baseHeight: -25f, heightVariation: 12f, peaksInfluence: 0.2f, erosionSensitivity: 0.7f,
+                surfaceBlock: BlockId.Bedrock, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Bedrock, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Alpine: very high, dramatic peaks and valleys
             new (ALPINE_BIOME_ID, "Alpine", 
                 new(0.0f, 1.0f), new(0.0f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Alpine/snow.png", "Resources/voxel/Alpine/snow-dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 90, 
                 terrainType: TerrainType.MountainOnly,
-                minElevation: 150f),
+                minElevation: 150f,
+                baseHeight: 140f, heightVariation: 70f, peaksInfluence: 1.0f, erosionSensitivity: 0.2f,
+                surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowBlock, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Taiga: elevated, gentle rolling hills with moderate variation
             new (6, "Taiga", 
                 new(0.25f, 0.5f), new(0.5f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Taiga/grass-dirt.png", "Resources/voxel/Taiga/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
+                surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Highlands: elevated terrain with moderate hills
             new (8, "Highlands", 
                 new(0.25f, 0.5f), new(0.0f, 0.5f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Plains: slightly above water, very flat
             new (DEFAULT_FALLBACK_BIOME_ID, "Plains", 
                 new(0.5f, 0.75f), new(0.33f, 0.66f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/Plains/grass.png", "Resources/voxel/Plains/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Beach: at water level, completely flat
             new (1, "Beach", 
                 new(0.5f, 0.75f), new(0.0f, 0.33f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
+                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
             
+            // Tundra: cold, flat-ish with some gentle undulation
             new (7, "Tundra", 
                 new(0.5f, 0.75f), new(0.66f, 1.0f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
+                surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Rainforest: tropical, lush, varied terrain with hills
             new (5, "Rainforest", 
                 new(0.75f, 1.0f), new(0.5f, 0.66f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Savanna: warm, mostly flat with occasional hills
             new (3, "Savanna", 
                 new(0.75f, 1.0f), new(0.25f, 0.5f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/grass-dirt.png", "Resources/voxel/dirt.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
+                surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
+            // Desert: hot, flat with dunes represented by moderate variation
             new (4, "Desert", 
                 new(0.75f, 1.0f), new(0.0f, 0.25f), 
                 ["", "Resources/voxel/water.png", "Resources/voxel/sand.png", "Resources/voxel/sand.png", "Resources/voxel/rock.png", "Resources/voxel/bedrock.png", "Resources/voxel/bedrock.png", "Resources/voxel/sand.png"],
                 priority: 50, 
-                terrainType: TerrainType.LandOnly),
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
+                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
         ];
     }
 }
