@@ -72,8 +72,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// </summary>
     public bool IsCameraUnderwater { get; set; }
 
-    public uint TerrainParamsSSBO { get; set; }
-    public int BiomeLutTexture { get; set; }
     public bool ShowBiomes { get; set; }
 
     private readonly Dictionary<string, Texture[]> atlasSplitCache = [];
@@ -300,21 +298,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         {
             blockTextureManager.Bind(0);
             shader.SetInt("uBlockTextures", 0);
-        }
-
-        // M5: Bind Biome LUT (Unit 7)
-        if (BiomeLutTexture != 0)
-        {
-            GL.ActiveTexture(TextureUnit.Texture7);
-            GL.BindTexture(TextureTarget.Texture2D, BiomeLutTexture);
-            // Reset active texture to 0 to avoid side effects
-            GL.ActiveTexture(TextureUnit.Texture0);
-        }
-
-        // M5: Bind Terrain Params (Binding 10)
-        if (TerrainParamsSSBO != 0)
-        {
-            GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
         }
 
         // Bind ChunkInfo Buffer (Binding 13)

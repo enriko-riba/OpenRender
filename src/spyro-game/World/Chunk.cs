@@ -4,14 +4,13 @@ using OpenTK.Mathematics;
 namespace SpyroGame.World;
 
 /// <summary>
-/// GPU-only chunk container. Stores only metadata and GPU collision data.
-/// All terrain generation happens on GPU via compute shaders.
+/// Chunk container. Stores metadata and collision data.
 /// </summary>
 public class Chunk(int index)
 {
     private readonly int[,] maxHeights = new int[VoxelHelper.ChunkSideSize, VoxelHelper.ChunkSideSize];
 
-  
+
     /// <summary>
     /// Returns the height of the top face of the highest block.
     /// </summary>
@@ -24,41 +23,28 @@ public class Chunk(int index)
 
     public int Index => index;
 
-    #region GPU Rendering & Collision Data
-    
+    #region Collision Data
+
     public Vector3i Position => Aabb.Min;
-    
-    // GPU vertex buffers for rendering
-    public volatile uint BlocksSSBO;
-    public int SolidCount;
-    public int SolidCapacity;
-    public volatile uint TransparentBlocksSSBO;
-    public int TransparentCount;
-    public int TransparentCapacity;
-    
-    // Visibility & streaming state
-    public bool Visible;
-    internal byte VisibleLinger;
-   
 
-    // GPU column heights for heightmap-based collision
-    public bool HasGpuColumns { get; internal set; }
+    // Column heights for heightmap-based collision
+    public bool HasCollisionData { get; internal set; }
 
-    // GPU-provided collision spans per XZ column: up to MaxSpans pairs (yStart,yEnd) per column
+    // Collision spans per XZ column: up to MaxSpans pairs (yStart,yEnd) per column
     private int[]? columnSpanPairs;
     private BlockId[]? columnSpanTypes;
     private byte[]? columnSpanCounts;
-    public bool HasGpuSpans { get; private set; }
+    public bool HasSpanData { get; private set; }
 
     /// <summary>
-    /// Apply GPU-generated collision spans for accurate collision detection (caves, overhangs).
+    /// Apply generated collision spans for accurate collision detection (caves, overhangs).
     /// </summary>
     internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts, BlockId[] types)
     {
         columnSpanPairs = spansPairs;
         columnSpanCounts = counts;
         columnSpanTypes = types;
-        HasGpuSpans = true;
+        HasSpanData = true;
 
         // Update maxHeights for compatibility with simple heightmap queries
         var size = VoxelHelper.ChunkSideSize;
@@ -78,7 +64,7 @@ public class Chunk(int index)
                 maxHeights[x, z] = maxH - 1;
             }
         }
-        HasGpuColumns = true;
+        HasCollisionData = true;
     }
 
     /// <summary>
@@ -101,19 +87,19 @@ public class Chunk(int index)
     }
 
     /// <summary>
-    /// Query block type from GPU collision spans (supports caves/overhangs).
+    /// Query block type from collision spans (supports caves/overhangs).
     /// Returns the BlockId at the specified local position.
     /// </summary>
     internal BlockId GetBlockFromSpans(int lx, int ly, int lz, int maxSpans)
     {
-        if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null) 
+        if (!HasSpanData || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null)
             return BlockId.Air;
-        
+
         var size = VoxelHelper.ChunkSideSize;
         var col = lx + lz * size;
         var c = columnSpanCounts[col];
         if (c == 0) return BlockId.Air;
-        
+
         var baseIdx = col * maxSpans * 2;
         var typeBaseIdx = col * maxSpans;
         for (var i = 0; i < c && i < maxSpans; i++)

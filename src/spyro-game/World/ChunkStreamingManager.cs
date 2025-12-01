@@ -61,9 +61,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private int inFlightCpuGenerations;
 
     private TerrainConfig terrainConfig;
-    private uint terrainParamsSSBO;
-    private int heightSplineTexture;
-    private int biomeLutTexture;
     private int generationSeed = 1337;
 
     private int visibilityFlagsCapacity;
@@ -141,8 +138,6 @@ public sealed class ChunkStreamingManager : IDisposable
         prefetchMarginChunks = clamped;
         Log.Info($"ChunkStreamingManager: Prefetch margin set to {prefetchMarginChunks} (LoadDistance={loadDistance})");
     }
-    public uint TerrainParamsSSBO => terrainParamsSSBO;
-    public int BiomeLutTexture => biomeLutTexture;
     public int VisibleChunkCount { get; private set; }
     public int CulledChunkCount { get; private set; }
     public int StatVisibleChunks { get; private set; }
@@ -208,17 +203,8 @@ public sealed class ChunkStreamingManager : IDisposable
         generationSeed = seed != 0 ? seed : generationSeed;
         terrainConfig.Seed = generationSeed;
 
-        if (terrainParamsSSBO == 0)
-        {
-            GL.CreateBuffers(1, out terrainParamsSSBO);
-            var size = System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.TerrainGenerationParams>();
-            GL.NamedBufferStorage(terrainParamsSSBO, size, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-            GL.ObjectLabel(ObjectLabelIdentifier.Buffer, terrainParamsSSBO, -1, "terrain_params_ssbo");
-        }
-
         var maxChunks = CalculateMaxViewChunks();
 
-        UploadTerrainConfig();
         cpuGenerationJobs.UpdateConfig(terrainConfig);
         LoadEdits();
 
@@ -1469,52 +1455,6 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-
-    private void UploadTerrainConfig()
-    {
-        // Ensure seed is not 0 (which might cause issues or be uninitialized)
-        if (generationSeed == 0) generationSeed = 1337;
-
-        // Upload Terrain Params
-        var terrainParams = terrainConfig.GetGenerationParams();
-        terrainParams.Seed = (uint)generationSeed; // Keep the seed consistent with init
-
-        Log.Info($"Uploading TerrainParams: Seed={terrainParams.Seed}, ContScale={terrainParams.ContinentalScale}, WarpScale={terrainParams.WarpScale}");
-
-        GL.NamedBufferSubData(terrainParamsSSBO, IntPtr.Zero,
-            System.Runtime.InteropServices.Marshal.SizeOf<TerrainConfig.TerrainGenerationParams>(), ref terrainParams);
-
-        // Create and upload Height Spline Texture (1D)
-        if (heightSplineTexture == 0)
-        {
-            GL.CreateTextures(TextureTarget.Texture1D, 1, out heightSplineTexture);
-            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
-            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
-            GL.TextureParameter(heightSplineTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
-            // Initial storage allocation
-            GL.TextureStorage1D(heightSplineTexture, 1, SizedInternalFormat.R32f, 256);
-        }
-        var heightData = terrainConfig.BakeHeightSplineLut(256);
-        GL.TextureSubImage1D(heightSplineTexture, 0, 0, 256, PixelFormat.Red, PixelType.Float, heightData);
-
-        // Create and upload Biome LUT Texture (2D)
-        if (biomeLutTexture == 0)
-        {
-            GL.CreateTextures(TextureTarget.Texture2D, 1, out biomeLutTexture);
-            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
-            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
-            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
-            GL.TextureParameter(biomeLutTexture, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-            // Initial storage allocation
-            GL.TextureStorage2D(biomeLutTexture, 1, SizedInternalFormat.R8ui, 256, 256);
-        }
-        var biomeData = terrainConfig.BuildBiomeIdLut(256);
-        GL.TextureSubImage2D(biomeLutTexture, 0, 0, 0, 256, 256, PixelFormat.RedInteger, PixelType.UnsignedByte, biomeData);
-
-        // M5: Initialize block textures (hot reload)
-        terrainRenderer?.InitializeBlockTextures();
-    }
-
     /// <summary>
     /// Initialize mesh buffer resources used by the CPU meshing pipeline.
     /// </summary>
@@ -1829,10 +1769,6 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         // Cleanup frustum culling resources
-        // Cleanup Terrain Params (M1)
-        if (terrainParamsSSBO != 0) GL.DeleteBuffer(terrainParamsSSBO);
-        if (heightSplineTexture != 0) GL.DeleteTexture(heightSplineTexture);
-        if (biomeLutTexture != 0) GL.DeleteTexture(biomeLutTexture);
         // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
         meshBuffers?.Dispose();
         chunkVoxelCache.Dispose();

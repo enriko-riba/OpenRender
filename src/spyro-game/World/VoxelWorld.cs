@@ -7,23 +7,18 @@ using System.Collections.Concurrent;
 namespace SpyroGame.World;
 
 /// <summary>
-/// GPU-only voxel world. All terrain generation happens on GPU via ChunkStreamingManager.
+/// Voxel world.
 /// VoxelWorld only provides collision queries and chunk container management.
 /// </summary>
 public class VoxelWorld(int seed)
 {
     public static readonly Vector3i ChunkSize = new(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
 
-    // Chunk containers (collision data only - GPU generates/renders terrain)
+    // Chunk containers (collision data only)
     private readonly ConcurrentDictionary<int, Chunk> loadedChunks = [];
     
     private readonly int seed = seed;
     private ICamera camera = default!;
-
-    /// <summary>
-    /// Total number of chunks passing the frustum culling test.
-    /// </summary>
-    public int ChunksInFrustum { get; private set; }
 
     public ICamera Camera
     {
@@ -71,7 +66,7 @@ public class VoxelWorld(int seed)
 
     /// <summary>
     /// DDA voxel ray traversal for block picking.
-    /// Uses GPU-generated collision data (spans/heightmaps).
+    /// Uses generated collision data (spans/heightmaps).
     /// </summary>
     public BlockState? PickBlock(Vector3 origin, Vector3 direction, float pickingDistance = VoxelHelper.MaxPickingDistance)
     {
@@ -137,7 +132,7 @@ public class VoxelWorld(int seed)
     }
 
     /// <summary>
-    /// Query block at global position using GPU collision data (spans or heightmap).
+    /// Query block at global position using collision data (spans or heightmap).
     /// Returns null if chunk not loaded or position invalid.
     /// </summary>
     public BlockState? GetBlockByPositionGlobalSafe(int x, int y, int z)
@@ -149,8 +144,8 @@ public class VoxelWorld(int seed)
         var chunk = this[chunkIndex];
         if (chunk is null) return null;
 
-        // Prefer GPU spans for accurate collision (caves, overhangs)
-        if (chunk.HasGpuSpans)
+        // Prefer spans for accurate collision (caves, overhangs)
+        if (chunk.HasSpanData)
         {
             var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
             var lx = x - origin.X; var ly = y - origin.Y; var lz = z - origin.Z;
@@ -166,8 +161,8 @@ public class VoxelWorld(int seed)
             };
         }
 
-        // Fallback to GPU column heights (heightmap only - no cave/overhang support)
-        if (chunk.HasGpuColumns)
+        // Fallback to column heights (heightmap only - no cave/overhang support)
+        if (chunk.HasCollisionData)
         {
             var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
             var lx = x - origin.X;
@@ -280,56 +275,13 @@ public class VoxelWorld(int seed)
     }
     #endregion
 
-    private void UpdateChunkVisibility(in Vector4[] planes)
-    {
-        const float EdgeCullingMarginBlocks = 2f;
-        var inFrustumCount = 0;
-        foreach (var kv in loadedChunks)
-        {
-            var chunk = kv.Value;
-            var (min, max) = chunk.Aabb;
-            var pad = new Vector3(EdgeCullingMarginBlocks, 0f, EdgeCullingMarginBlocks);
-            var padded = (min - pad, max + pad);
-            var visible = CullingHelper.IsAabbInFrustum(padded, planes);
-            if (visible)
-            {
-                chunk.Visible = true;
-                chunk.VisibleLinger = 2;
-                inFrustumCount++;
-            }
-            else
-            {
-                if (chunk.VisibleLinger > 0)
-                {
-                    chunk.VisibleLinger--;
-                    chunk.Visible = true;
-                    inFrustumCount++;
-                }
-                else
-                {
-                    chunk.Visible = false;
-                }
-            }
-        }
-        ChunksInFrustum = inFrustumCount;
-    }
-
-    /// <summary>
-    /// Update visibility from camera frustum (called once per frame).
-    /// </summary>
-    public void UpdateVisibilityFromCamera(ICamera cam)
-    {
-        var planes = (Vector4[])cam.Frustum.Planes.Clone();
-        UpdateChunkVisibility(planes);
-    }
-
     private readonly ConcurrentDictionary<int, byte[]> breakMasks3D = new();
 
     internal byte[]? GetBreakMask3D(int chunkIndex) => breakMasks3D.TryGetValue(chunkIndex, out var mask) ? mask : null;
 
     public void Close()
     {
-        // No background workers in GPU-only mode
+        // No background workers
         Log.Info("VoxelWorld.Close()");
     }
 }

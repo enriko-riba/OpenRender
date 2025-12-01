@@ -64,10 +64,6 @@ internal class GameScene : Scene
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
 
-        // Pass M4 resources to renderer
-        terrainRenderer.TerrainParamsSSBO = streamingManager.TerrainParamsSSBO;
-        terrainRenderer.BiomeLutTexture = streamingManager.BiomeLutTexture;
-
         // Add renderer to scene
         AddNode(terrainRenderer);
 
@@ -323,7 +319,7 @@ internal class GameScene : Scene
 
 
         // Update visibility
-        world.UpdateVisibilityFromCamera(camera!);
+        // world.UpdateVisibilityFromCamera(camera!);
 
         // Check if camera is underwater (for visual effects)
         if (camera != null)
