@@ -14,13 +14,13 @@ public sealed class TextRenderer : ITextRenderer
     private readonly IFontAtlas fontAtlas;
     private readonly int BaseFontSize;
     private Matrix4 projectionMatrix;
-    
+
     // Dynamic buffer management with improved growth strategy
     private const int InitialBufferSize = 4096; // 4KB - enough for ~256 characters
     private const float GrowthFactor = 1.5f;
     private const int MinBufferSize = 1024; // 1KB minimum
     private const int MaxBufferSize = 1048576; // 1MB maximum (safety limit)
-    
+
     private int currentVboSize = InitialBufferSize * sizeof(float);
     private int peakVboUsage = 0; // Track peak usage for shrinking decisions
     private int framesSinceLastResize = 0;
@@ -62,7 +62,7 @@ public sealed class TextRenderer : ITextRenderer
         GL.EnableVertexArrayAttrib(vao, 3);
         GL.VertexArrayAttribFormat(vao, 3, 2, VertexAttribType.Float, false, 2 * sizeof(float));
         GL.VertexArrayAttribBinding(vao, 3, 0);
-        
+
         // Allocate initial buffer with dynamic storage
         GL.NamedBufferData(vbo, currentVboSize, IntPtr.Zero, BufferUsageHint.DynamicDraw);
         Log.CheckGlError();
@@ -80,7 +80,7 @@ public sealed class TextRenderer : ITextRenderer
 
     public Matrix4 Projection { get => projectionMatrix; set => projectionMatrix = value; }
 
-    public static Matrix4 CreateTextRenderingProjection(float screenWidth, float screenHeight) => 
+    public static Matrix4 CreateTextRenderingProjection(float screenWidth, float screenHeight) =>
         Matrix4.CreateOrthographicOffCenter(0, screenWidth, screenHeight, 0, -1, 1);
 
     public Core.Rectangle Measure(string text)
@@ -115,6 +115,10 @@ public sealed class TextRenderer : ITextRenderer
             var scale = fontSize / (float)BaseFontSize;
             var scaleMatrix = Matrix4.CreateScale(scale, scale, 1);
             Matrix4.Mult(scaleMatrix, projectionMatrix, out matrix);
+            
+            // Adjust position to compensate for scaling so text stays at (x,y)
+            x /= scale;
+            y /= scale;
         }
 
         // Try to use cached geometry
@@ -133,7 +137,7 @@ public sealed class TextRenderer : ITextRenderer
         {
             // Build new geometry
             vertexCount = BuildVertexBuffer(text, x, y);
-            
+
             if (vertexCount == 0) return; // No valid characters to render
 
             vertices = new float[vertexCount];
@@ -157,11 +161,11 @@ public sealed class TextRenderer : ITextRenderer
 
         // Ensure VBO is large enough
         var requiredSize = vertexCount * sizeof(float);
-        
+
         // Track peak usage
         if (requiredSize > peakVboUsage)
             peakVboUsage = requiredSize;
-        
+
         // Grow buffer if needed
         if (requiredSize > currentVboSize)
         {
@@ -207,7 +211,7 @@ public sealed class TextRenderer : ITextRenderer
 
         // Upload ALL vertices at once
         GL.NamedBufferSubData(vbo, IntPtr.Zero, vertexCount * sizeof(float), vertices);
-        
+
         // Single draw call for ALL characters!
         GL.DrawArrays(PrimitiveType.Triangles, 0, vertexCount / 4); // 4 floats per vertex (pos.xy + uv.xy)
         Log.CheckGlError();
@@ -219,7 +223,7 @@ public sealed class TextRenderer : ITextRenderer
             GL.Disable(EnableCap.Blend);
         GL.BlendFunc((BlendingFactor)previousBlendSrc, (BlendingFactor)previousBlendDest);
 
-        if (previousDepthTestEnabled) 
+        if (previousDepthTestEnabled)
             GL.Enable(EnableCap.DepthTest);
 
         GL.BindTexture(TextureTarget.Texture2D, 0);
@@ -281,30 +285,30 @@ public sealed class TextRenderer : ITextRenderer
             // Grow by factor or to required size, whichever is larger
             // Add extra headroom to avoid frequent resizes
             var targetSize = (int)Math.Max(requiredSize * 1.2f, currentVboSize * GrowthFactor);
-            
+
             // Cap at maximum size for safety
             targetSize = Math.Min(targetSize, MaxBufferSize * sizeof(float));
-            
+
             if (targetSize <= currentVboSize) return; // Already large enough
-            
+
             currentVboSize = targetSize;
             GL.NamedBufferData(vbo, currentVboSize, IntPtr.Zero, BufferUsageHint.DynamicDraw);
-            
+
             Log.Debug($"TextRenderer VBO grown to {currentVboSize / 1024}KB ({currentVboSize / (24 * sizeof(float))} chars capacity)");
         }
         else
         {
             // Shrink to target size but maintain minimum
             var targetSize = Math.Max(requiredSize, MinBufferSize * sizeof(float));
-            
+
             if (targetSize >= currentVboSize) return; // Not worth shrinking
-            
+
             currentVboSize = targetSize;
             GL.NamedBufferData(vbo, currentVboSize, IntPtr.Zero, BufferUsageHint.DynamicDraw);
-            
+
             Log.Debug($"TextRenderer VBO shrunk to {currentVboSize / 1024}KB ({currentVboSize / (24 * sizeof(float))} chars capacity)");
         }
-        
+
         Log.CheckGlError();
         framesSinceLastResize = 0;
     }
@@ -326,23 +330,23 @@ public sealed class TextRenderer : ITextRenderer
             // Grow CPU buffer with same strategy
             var newSize = Math.Max(estimatedSize, (int)(vertexBuffer.Length * GrowthFactor));
             newSize = Math.Min(newSize, MaxBufferSize); // Cap at max size
-            
+
             Array.Resize(ref vertexBuffer, newSize);
-            
+
             Log.Debug($"TextRenderer CPU buffer resized to {newSize / 24} chars capacity");
         }
 
         for (int charIndex = 0; charIndex < text.Length; charIndex++)
         {
             var c = text[charIndex];
-            
+
             if (c == '\n')
             {
                 dy += fontAtlas.LineHeight;
                 dx = startX;
                 continue;
             }
-            
+
             if (!fontAtlas.Glyphs.TryGetValue(c, out var glyph))
             {
                 continue; // Skip characters not in atlas
@@ -351,37 +355,37 @@ public sealed class TextRenderer : ITextRenderer
             // Add 6 vertices (2 triangles) for this character
             // Triangle 1: TL, BL, TR
             // Triangle 2: TR, BL, BR
-            
+
             // Vertex 0: Top-left
             vertexBuffer[vertexIndex++] = dx;
             vertexBuffer[vertexIndex++] = dy;
             vertexBuffer[vertexIndex++] = glyph.UvMinX;
             vertexBuffer[vertexIndex++] = glyph.UvMinY;
-            
+
             // Vertex 1: Bottom-left
             vertexBuffer[vertexIndex++] = dx;
             vertexBuffer[vertexIndex++] = dy + glyph.Height;
             vertexBuffer[vertexIndex++] = glyph.UvMinX;
             vertexBuffer[vertexIndex++] = glyph.UvMaxY;
-            
+
             // Vertex 2: Top-right
             vertexBuffer[vertexIndex++] = dx + glyph.Width;
             vertexBuffer[vertexIndex++] = dy;
             vertexBuffer[vertexIndex++] = glyph.UvMaxX;
             vertexBuffer[vertexIndex++] = glyph.UvMinY;
-            
+
             // Vertex 3: Top-right (duplicate for second triangle)
             vertexBuffer[vertexIndex++] = dx + glyph.Width;
             vertexBuffer[vertexIndex++] = dy;
             vertexBuffer[vertexIndex++] = glyph.UvMaxX;
             vertexBuffer[vertexIndex++] = glyph.UvMinY;
-            
+
             // Vertex 4: Bottom-left (duplicate for second triangle)
             vertexBuffer[vertexIndex++] = dx;
             vertexBuffer[vertexIndex++] = dy + glyph.Height;
             vertexBuffer[vertexIndex++] = glyph.UvMinX;
             vertexBuffer[vertexIndex++] = glyph.UvMaxY;
-            
+
             // Vertex 5: Bottom-right
             vertexBuffer[vertexIndex++] = dx + glyph.Width;
             vertexBuffer[vertexIndex++] = dy + glyph.Height;
