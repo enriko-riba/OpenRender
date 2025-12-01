@@ -60,7 +60,7 @@ internal class GameScene : Scene
     /// <summary>
     /// Called by TerrainLoadingScene to pass initialized CPU terrain streaming components.
     /// </summary>
-    public void SetupCpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer)
+    public void SetupCpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3? spawnPosition = null)
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
@@ -75,11 +75,8 @@ internal class GameScene : Scene
         // Ensure camera is initialized before creating player
         EnsureCameraInitialized();
 
-        // Calculate center of world for spawn
-        var centerPos = new Vector3(
-            //VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
-            //100,
-            //VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+        // Calculate center of world for spawn if not provided
+        var centerPos = spawnPosition ?? new Vector3(
             5133,
             230,
             4015
@@ -95,6 +92,9 @@ internal class GameScene : Scene
         // Initialize block picking service
         // Use the constructor that accepts ChunkStreamingManager
         blockPickingService = new BlockPickingService(streamingManager);
+
+        // Assign service to player
+        player.BlockPickingService = blockPickingService;
 
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
@@ -165,6 +165,11 @@ internal class GameScene : Scene
         {
             // Ensure existing player has the streaming manager
             player.StreamingManager = streamingManager;
+        }
+
+        if (player != null && blockPickingService != null)
+        {
+            player.BlockPickingService = blockPickingService;
         }
 
         //player.IsGhostMode = true; // Start in ghost mode for easy exploration
@@ -339,6 +344,7 @@ internal class GameScene : Scene
         UpdateBlockBelow();
 
         // Update block picking service (decoupled from rendering)
+        // CRITICAL: Update picking AFTER player movement/camera update but BEFORE interaction
         blockPickingService?.Update(
             currentTime: SceneManager.Time,
             camera: camera!,
@@ -347,10 +353,14 @@ internal class GameScene : Scene
             maxDistance: 5.0f
         );
 
-        // Sync picked block to player (for block breaking)
-        if (blockPickingService != null)
+        // Handle interactions (Break/Place) with fresh picking data
+        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
         {
-            player.PickedBlock = blockPickingService.PickedBlock;
+            player.BreakBlock();
+        }
+        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
+        {
+            player.PlaceBlock();
         }
 
         // Update underwater state
@@ -598,6 +608,26 @@ internal class GameScene : Scene
         WriteLine("  F5 - Toggle Wireframe Debug", textColor);
         WriteLine("  Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
+
+        // Inventory Display
+        // Render stacked on right side
+        var invSlotHeight = 30;
+        var invTotalHeight = Inventory.HotbarSize * invSlotHeight;
+        var startX = Width - 200;
+        var startY = (Height - invTotalHeight) / 2;
+
+        for (var i = 0; i < Inventory.HotbarSize; i++)
+        {
+            var item = player.Inventory.GetItem(i);
+            var isSelected = i == player.Inventory.SelectedSlot;
+            var color = isSelected ? new Vector3(1, 1, 0) : new Vector3(0.7f, 0.7f, 0.7f);
+            
+            string content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
+            if (isSelected) content = $"> {content}";
+            
+            // Simple text rendering for now
+            textRenderer.Render(content, 22, startX, startY + i * invSlotHeight, color);
+        }
     }
 
     /// <summary>

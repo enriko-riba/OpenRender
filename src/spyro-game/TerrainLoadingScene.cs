@@ -54,9 +54,9 @@ internal class TerrainLoadingScene : Scene
 
         // Calculate starting position (center of world)
         startPosition = new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
-            100,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
+            5133,
+            230,
+            4015
         );
 
         Log.Info("TerrainLoadingScene: Starting CPU terrain generation with enhanced progress tracking...");
@@ -64,13 +64,12 @@ internal class TerrainLoadingScene : Scene
 
     private bool isStreamingTerrain = false;
     private bool isWaitingForProgressAnimation = false;
-    private const int INITIAL_LOAD_DISTANCE = 5;
     private int minimumReadyChunksForTransition;
     private const int MaxOutstandingChunksForTransition = 4;
 
     private void BuildOperationQueue()
     {
-        minimumReadyChunksForTransition = VoxelHelper.CalculateCircularChunkCount(INITIAL_LOAD_DISTANCE);
+        minimumReadyChunksForTransition = VoxelHelper.CalculateCircularChunkCount(VoxelHelper.MaxDistanceInChunks);
         targetChunkCount = minimumReadyChunksForTransition;
         
         // Define progress ranges for each operation
@@ -88,7 +87,7 @@ internal class TerrainLoadingScene : Scene
             progressTracker.UpdateOperation("Initialize Streaming Manager", 0.5f, "Creating chunk streaming manager...");
             streamingManager = new ChunkStreamingManager(world)
             {
-                LoadDistance = INITIAL_LOAD_DISTANCE
+                LoadDistance = VoxelHelper.MaxDistanceInChunks
             };
             streamingManager.SetPrefetchMargin(0);
             progressTracker.CompleteOperation("Initialize Streaming Manager");
@@ -240,7 +239,7 @@ internal class TerrainLoadingScene : Scene
                     if (gameScene is GameScene gs)
                     {
                         Log.Info($"TerrainLoadingScene: Passing terrain to GameScene");
-                        gs.SetupCpuTerrain(streamingManager, terrainRenderer);
+                        gs.SetupCpuTerrain(streamingManager, terrainRenderer, startPosition);
                     }
                     else
                     {
@@ -299,36 +298,28 @@ internal class TerrainLoadingScene : Scene
         var progressPercent = (int)progressTracker.Progress;
         
         const int barWidth = 500;
-        const int barHeight = 35;
         var barX = (Width - barWidth) / 2;
 
-        // Draw progress bar background (dark)
-        DrawProgressBar(barX, progressBarY, barWidth, barHeight, 0f, new Vector3(0.2f, 0.2f, 0.2f));
+        // Draw ASCII Progress Bar
+        var bracketSize = textRenderer.Measure("[", 24);
+        var charSize = textRenderer.Measure("#", 24);
+        var maxChars = (barWidth - (int)bracketSize.Width * 2) / (int)charSize.Width;
+        var filledChars = (int)(maxChars * progress);
+        var emptyChars = Math.Max(0, maxChars - filledChars);
         
-        // Draw progress bar fill (gradient)
-        DrawProgressBar(barX, progressBarY, barWidth, barHeight, progress, progressColor);
-        
-        // Draw progress bar border
-        DrawProgressBar(barX - 2, progressBarY - 2, barWidth + 4, barHeight + 4, 0f, textColor, true);
+        var barText = "[" + new string('#', filledChars) + new string('.', emptyChars) + "]";
+        WriteLineCentered(barText, progressColor, 24, progressBarY);
 
         // Progress percentage text - Centered on bar
         var percentText = $"{progressPercent}%";
-        WriteLineCentered(percentText, textColor, 24, progressBarY + 5);
+        WriteLineCentered(percentText, textColor, 24, progressBarY + 35);
 
         // Stats section - Centered (changed from left-aligned)
         var line1Y = statsY;
         WriteLineCentered($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor, 22, line1Y);
         
-        // Line 2: Est. Remaining (always reserve space)
-        var line2Y = line1Y + 45;
-        if (progressTracker.Progress is > 1f and < 99f)
-        {
-            var eta = progressTracker.EstimatedTimeRemaining;
-            WriteLineCentered($"Est. Remaining: {eta:mm\\:ss}", textColor, 22, line2Y);
-        }
-        
         // Line 3: Target Chunks (with extra spacing)
-        var line3Y = line2Y + 60;
+        var line3Y = line1Y + 60;
         WriteLineCentered($"Target Chunks: {targetChunkCount}", dimColor, 22, line3Y);
         
         // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
@@ -372,16 +363,6 @@ internal class TerrainLoadingScene : Scene
 
     private void DrawProgressBar(int x, int y, int width, int height, float progress, Vector3 color, bool borderOnly = false)
     {
-        // Simple filled rectangle using text renderer (hack, but works for loading screen)
-        // In a real implementation, you'd use a proper sprite or shader
-        var fillWidth = borderOnly ? width : (int)(width * progress);
-        var blockChar = borderOnly ? "□" : "█";
-        var blockSize = textRenderer.Measure(blockChar, 20);
-        var blocksNeeded = fillWidth / (int)blockSize.Width;
-        
-        for (var i = 0; i < blocksNeeded; i++)
-        {
-            textRenderer.Render(blockChar, 20, x + i * blockSize.Width, y, color);
-        }
+        // Deprecated - replaced by ASCII bar
     }
 }

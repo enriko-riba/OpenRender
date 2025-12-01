@@ -19,16 +19,6 @@ public class ProgressTracker
     public string CurrentOperation { get; private set; } = "Initializing...";
     public string DetailedStatus { get; private set; } = "";
     public TimeSpan ElapsedTime => timer.Elapsed;
-    public TimeSpan EstimatedTimeRemaining
-    {
-        get
-        {
-            if (currentProgress <= 0.01f) return TimeSpan.Zero;
-            var totalEstimated = timer.Elapsed.TotalSeconds / currentProgress;
-            var remaining = totalEstimated * (1.0f - currentProgress);
-            return TimeSpan.FromSeconds(Math.Max(0, remaining));
-        }
-    }
     
     public ProgressTracker()
     {

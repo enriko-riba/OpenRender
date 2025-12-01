@@ -15,7 +15,7 @@ public class BlockPickingService
     
     // Timing
     private double lastPickTime = 0.0;
-    private const double PickIntervalSeconds = 0.25; // 4 Hz
+    private const double PickIntervalSeconds = 0.5; // 2 Hz
     
     // Camera tracking
     private Vector3 lastCameraPosition;
@@ -25,6 +25,7 @@ public class BlockPickingService
     
     // Cached result
     private BlockState? cachedPickedBlock = null;
+    private Vector3 cachedHitNormal = Vector3.Zero;
     
     public BlockPickingService(VoxelTerrainRenderer terrainRenderer)
     {
@@ -46,6 +47,11 @@ public class BlockPickingService
     /// Currently picked block (cached result).
     /// </summary>
     public BlockState? PickedBlock => cachedPickedBlock;
+
+    /// <summary>
+    /// Normal of the face that was hit.
+    /// </summary>
+    public Vector3 HitNormal => cachedHitNormal;
     
     /// <summary>
     /// Update the picking service. Call this once per frame.
@@ -75,9 +81,16 @@ public class BlockPickingService
             lastCameraPosition = camera.Position;
             lastCameraDirection = camera.Front;
             
-            cachedPickedBlock = streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out var hitPoint, out var blockPos, out var normal, out var descriptor)
-                ? new BlockState(blockPos, descriptor)
-                : (BlockState?)null;
+            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out var hitPoint, out var blockPos, out var normal, out var descriptor))
+            {
+                cachedPickedBlock = new BlockState(blockPos, descriptor);
+                cachedHitNormal = normal;
+            }
+            else
+            {
+                cachedPickedBlock = null;
+                cachedHitNormal = Vector3.Zero;
+            }
 
             terrainRenderer?.PickedBlock = cachedPickedBlock;
         }

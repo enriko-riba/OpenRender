@@ -48,11 +48,12 @@ public class Player
     private Vector3 velocity;
     private Vector3 requestedMovement;
     private Vector3 requestedRotation;
-    private BlockState? pickedBlock = null;
     private readonly KeyboardActionMapper kbdActions = new();
 
     // speed modifiers captured each Update() from KeyboardState
     private bool _isSprinting, _isCrouching;
+
+    public BlockPickingService? BlockPickingService { get; set; }
 
     public Player(ICamera camera, Vector3 position, VoxelWorld world, ChunkStreamingManager? streamingManager = null)
     {
@@ -92,11 +93,8 @@ public class Player
     internal float VelocityY => velocity.Y;
     internal Vector3 Velocity => velocity;
     internal Vector3 RequestedMovement => requestedMovement;
-    internal BlockState? PickedBlock
-    {
-        get => pickedBlock;
-        set => pickedBlock = value;
-    }
+    
+    public Inventory Inventory { get; } = new();
 
     public void Update(double elapsedSeconds, KeyboardState keyboardState, MouseState mouseState)
     {
@@ -135,13 +133,24 @@ public class Player
             ChunkLocalPosition = Position - chunk!.Position;
         }
 
-        // CPU raycast for picked block - will be replaced by GPU picking in GameScene
-        pickedBlock = world.PickBlock(camera.Position, camera.Front);
-
-        // Handle block breaking
-        if (mouseState.IsButtonPressed(MouseButton.Left))
+        // Handle inventory selection
+        if (keyboardState.IsKeyPressed(Keys.D1)) Inventory.SelectedSlot = 0;
+        if (keyboardState.IsKeyPressed(Keys.D2)) Inventory.SelectedSlot = 1;
+        if (keyboardState.IsKeyPressed(Keys.D3)) Inventory.SelectedSlot = 2;
+        if (keyboardState.IsKeyPressed(Keys.D4)) Inventory.SelectedSlot = 3;
+        if (keyboardState.IsKeyPressed(Keys.D5)) Inventory.SelectedSlot = 4;
+        if (keyboardState.IsKeyPressed(Keys.D6)) Inventory.SelectedSlot = 5;
+        if (keyboardState.IsKeyPressed(Keys.D7)) Inventory.SelectedSlot = 6;
+        if (keyboardState.IsKeyPressed(Keys.D8)) Inventory.SelectedSlot = 7;
+        if (keyboardState.IsKeyPressed(Keys.D9)) Inventory.SelectedSlot = 8;
+        
+        // Scroll wheel
+        if (mouseState.ScrollDelta.Y != 0)
         {
-            BreakBlock();
+            Inventory.SelectedSlot -= (int)Math.Sign(mouseState.ScrollDelta.Y);
+            // Wrap around
+            if (Inventory.SelectedSlot < 0) Inventory.SelectedSlot = Inventory.HotbarSize - 1;
+            if (Inventory.SelectedSlot >= Inventory.HotbarSize) Inventory.SelectedSlot = 0;
         }
     }
 
@@ -219,11 +228,16 @@ public class Player
 
     public void BreakBlock()
     {
+        var pickedBlock = BlockPickingService?.PickedBlock;
         if (pickedBlock is not null)
         {
             if (streamingManager != null)
             {
                 Log.Info($"Player breaking block at {pickedBlock.Value.GlobalPosition}");
+                
+                // Add to inventory
+                Inventory.AddItem(pickedBlock.Value.Block);
+                
                 streamingManager.ApplyBlockEdit(pickedBlock.Value.GlobalPosition, BlockId.Air, true);
             }
             else
@@ -231,13 +245,66 @@ public class Player
                 Log.Error("Player.BreakBlock: streamingManager is null!");
             }
 
-            pickedBlock = null;
             // NOTE: PickedBlock sync handled by GameScene
         }
         else
         {
             Log.Info("Player.BreakBlock: pickedBlock is null");
         }
+    }
+    
+    public void PlaceBlock()
+    {
+        var pickedBlock = BlockPickingService?.PickedBlock;
+        if (pickedBlock is null) return;
+        if (streamingManager == null) return;
+
+        var item = Inventory.GetSelectedItem();
+        if (item.IsEmpty) return;
+
+        var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
+
+        // Calculate new position
+        var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+        
+        // Check if target block is replaceable (Air, Water, etc.)
+        // We can use the world accessor from streamingManager or player's world reference
+        // Since we are in Player, we have 'world'
+        var targetBlock = world.GetBlockByPositionGlobalSafe(placePos.X, placePos.Y, placePos.Z);
+        if (targetBlock.HasValue && !targetBlock.Value.Block.IsReplaceable())
+        {
+            // Cannot place block inside another solid block
+            return;
+        }
+
+        // Check if player is occupying the space (simple AABB check)
+        var minX = position.X - HalfWidth;
+        var maxX = position.X + HalfWidth;
+        var minY = position.Y;
+        var maxY = position.Y + Height;
+
+        // Block AABB
+        var bMinX = placePos.X;
+        var bMaxX = placePos.X + 1;
+        var bMinY = placePos.Y;
+        var bMaxY = placePos.Y + 1;
+        var bMinZ = placePos.Z;
+        var bMaxZ = placePos.Z + 1;
+
+        // Intersection test
+        bool intersects = (minX < bMaxX && maxX > bMinX) &&
+                          (minY < bMaxY && maxY > bMinY) &&
+                          (position.Z - HalfWidth < bMaxZ && position.Z + HalfWidth > bMinZ);
+
+        if (intersects && item.Block.IsSolid())
+        {
+            // Don't place solid blocks inside player
+            return;
+        }
+
+        Log.Info($"Player placing block {item.Block} at {placePos}");
+        streamingManager.ApplyBlockEdit(placePos, item.Block, true);
+        Inventory.TryConsumeSelectedItem();
     }
     #endregion
 

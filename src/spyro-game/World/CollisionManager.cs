@@ -122,6 +122,7 @@ public class CollisionManager
             }
 
             // Advance to next voxel
+            lastPos = new Vector3i(x, y, z);
             if (tMaxX < tMaxY)
             {
                 if (tMaxX < tMaxZ)
