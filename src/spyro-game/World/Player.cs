@@ -292,7 +292,7 @@ public class Player
         var bMaxZ = placePos.Z + 1;
 
         // Intersection test
-        bool intersects = (minX < bMaxX && maxX > bMinX) &&
+        var intersects = (minX < bMaxX && maxX > bMinX) &&
                           (minY < bMaxY && maxY > bMinY) &&
                           (position.Z - HalfWidth < bMaxZ && position.Z + HalfWidth > bMinZ);
 

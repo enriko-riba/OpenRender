@@ -921,6 +921,15 @@ public sealed class BiomeDefinition
                 baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                 underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
+
+            // Swamp: warm, wet, low-lying
+            new ((int)BiomeId.Swamp, nameof(BiomeId.Swamp), 
+                new(0.5f, 0.8f), new(0.8f, 1.0f),
+                priority: 50, 
+                terrainType: TerrainType.LandOnly,
+                baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
+                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt),
         ];
     }
 }

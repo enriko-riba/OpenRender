@@ -7,7 +7,7 @@ using OpenRender;
 namespace SpyroGame.World;
 
 /// <summary>
-/// CPU implementation of the Phase 3 visibility + meshing logic.
+/// CPU implementation of the visibility + meshing logic.
 /// Produces packed vertex/index buffers compatible with the existing renderer.
 /// Performance optimized with List pooling to reduce GC pressure.
 /// </summary>
@@ -20,7 +20,6 @@ internal static class ChunkMeshBuilder
     private const bool MirrorMissingNeighbors = false;
     private const uint DisabledLightValue = 0x0Fu;
     private static bool VerboseBuilderLogging = false;
-    private static bool DebugWaterFaces = true;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
     [ThreadStatic] private static List<uint>? t_opaqueVertices;
@@ -162,12 +161,6 @@ internal static class ChunkMeshBuilder
         if (VerboseBuilderLogging)
         {
             Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
-        }
-
-        // Debug: Log neighbor misses and water face count
-        if (DebugWaterFaces && (sampler.NeighborMisses > 0 || sampler.TranslucentFaceCount > 0) && VerboseBuilderLogging)
-        {
-            Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} waterFaces={sampler.TranslucentFaceCount} neighborMisses={sampler.NeighborMisses}");
         }
 
         mesh = new CpuChunkMesh(

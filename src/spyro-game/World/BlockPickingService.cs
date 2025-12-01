@@ -58,10 +58,8 @@ public class BlockPickingService
     /// </summary>
     /// <param name="currentTime">Current game time in seconds</param>
     /// <param name="camera">Current camera</param>
-    /// <param name="screenCenterX">Screen center X coordinate</param>
-    /// <param name="screenCenterY">Screen center Y coordinate</param>
     /// <param name="maxDistance">Maximum picking distance</param>
-    public void Update(double currentTime, ICamera camera, int screenCenterX, int screenCenterY, float maxDistance = 5.0f)
+    public void Update(double currentTime, ICamera camera, float maxDistance = 5.0f)
     {
         // Initialize camera tracking on first update
         if (isFirstUpdate)

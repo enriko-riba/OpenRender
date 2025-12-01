@@ -13,7 +13,7 @@ using OpenTK.Mathematics;
 namespace SpyroGame.World;
 
 /// <summary>
-/// Coordinates terrain streaming, chunk lifecycle, and CPU/GPU resource transitions.
+/// Coordinates terrain streaming, chunk lifecycle, and CPU resource transitions.
 /// </summary>
 public sealed class ChunkStreamingManager : IDisposable
 {
@@ -27,12 +27,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private const int RETENTION_FRAME_DELAY = 180;
     private const int SeamRefreshCooldownFrames = 240;
     private static readonly bool SeamRefreshEnabled = false;
-    private const int HeightCacheWordsPerChunk = VoxelHelper.ChunkSideSizeSquare / 2;
-    private const ushort HeightCacheHeightMask = 0x03FF;
-    private const ushort HeightCacheWaterFlag = 1 << 10;
-    private const ushort HeightCacheEditedFlag = 1 << 11;
-    private const int HeightCacheLogIntervalFrames = 600;
-    private static readonly bool HeightCacheEnabled = true;
     private const string ConfigFileName = "terrain_config.json";
 
     // MINECRAFT-STYLE MESHING:
@@ -49,17 +43,15 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Queue<int> lowPriorityPending = new();
     private readonly HashSet<int> pendingSeamRefresh = [];
     private readonly Dictionary<int, long> lastSeamRefreshFrame = [];
-    private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = [];
     private readonly Dictionary<int, Dictionary<int, BlockId>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
-    private readonly Queue<int> freeHeightCacheSlots = new();
     
     // Deferred remesh: chunks waiting for a neighbor to complete regeneration before remeshing
     // Key = chunk that needs to regenerate first, Value = list of neighbors waiting for remesh
     private readonly Dictionary<int, HashSet<int>> deferredRemeshWaiters = [];
 
-    private Phase3BufferManager? phase3Buffers;
+    private TerrainMeshBufferManager? meshBuffers;
     private VoxelTerrainRenderer? terrainRenderer;
 
     private long currentFrame;
@@ -74,14 +66,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private int biomeLutTexture;
     private int generationSeed = 1337;
 
-    private uint heightCacheBuffer;
-    private uint heightCacheSlotBuffer;
-    private int heightCacheCapacity;
-    private int[]? heightCacheSlotCpu;
-    private long heightCacheUploads;
-    private long heightCacheBytesUploaded;
-    private int heightCacheSlotsInUse;
-    private long heightCacheLastWarningFrame;
     private int visibilityFlagsCapacity;
 
     public ChunkStreamingManager(VoxelWorld world)
@@ -143,7 +127,6 @@ public sealed class ChunkStreamingManager : IDisposable
             }
 
             loadDistance = clamped;
-            UpdateVisibilityBudgetCapacity();
         }
     }
 
@@ -157,7 +140,6 @@ public sealed class ChunkStreamingManager : IDisposable
 
         prefetchMarginChunks = clamped;
         Log.Info($"ChunkStreamingManager: Prefetch margin set to {prefetchMarginChunks} (LoadDistance={loadDistance})");
-        UpdateVisibilityBudgetCapacity();
     }
     public uint TerrainParamsSSBO => terrainParamsSSBO;
     public int BiomeLutTexture => biomeLutTexture;
@@ -221,7 +203,7 @@ public sealed class ChunkStreamingManager : IDisposable
         return new TerrainConfig();
     }
 
-    public void InitializeGpuGeneration(int seed)
+    public void InitializeCpuGeneration(int seed)
     {
         generationSeed = seed != 0 ? seed : generationSeed;
         terrainConfig.Seed = generationSeed;
@@ -235,67 +217,12 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         var maxChunks = CalculateMaxViewChunks();
-        InitializeHeightCache(maxChunks);
 
         UploadTerrainConfig();
         cpuGenerationJobs.UpdateConfig(terrainConfig);
         LoadEdits();
 
-        Log.Info($"ChunkStreamingManager: GPU generation assets initialized (seed={generationSeed}, maxChunks={maxChunks})");
-    }
-
-    private void LogHeightCacheStatsIfNeeded()
-    {
-        if (!HeightCacheEnabled || heightCacheCapacity == 0)
-        {
-            return;
-        }
-
-        if (HeightCacheLogIntervalFrames <= 0 || currentFrame % HeightCacheLogIntervalFrames != 0)
-        {
-            return;
-        }
-
-        var stats = GetHeightCacheStats();
-        if (stats.Capacity == 0)
-        {
-            return;
-        }
-
-        var utilization = stats.Capacity > 0 ? (float)stats.SlotsInUse / stats.Capacity : 0f;
-        var uploadedMb = stats.BytesUploaded / (1024f * 1024f);
-
-        var message = $"HeightCache stats: {stats.SlotsInUse}/{stats.Capacity} slots ({utilization:P1}) used, uploads={stats.Uploads}, uploaded={uploadedMb:F1} MiB";
-
-        Log.Info(message);
-    }
-
-    public readonly struct HeightCacheStats
-    {
-        public int Capacity { get; init; }
-        public int SlotsInUse { get; init; }
-        public int FreeSlots { get; init; }
-        public long Uploads { get; init; }
-        public long BytesUploaded { get; init; }
-    }
-
-    public HeightCacheStats GetHeightCacheStats()
-    {
-        if (!HeightCacheEnabled)
-        {
-            return default;
-        }
-
-        var capacity = heightCacheCapacity;
-        var used = heightCacheSlotsInUse;
-        return new HeightCacheStats
-        {
-            Capacity = capacity,
-            SlotsInUse = used,
-            FreeSlots = Math.Max(capacity - used, 0),
-            Uploads = heightCacheUploads,
-            BytesUploaded = heightCacheBytesUploaded
-        };
+        Log.Info($"ChunkStreamingManager: CPU generation assets initialized (seed={generationSeed}, maxChunks={maxChunks})");
     }
 
     private int GetActiveLoadDistance()
@@ -352,31 +279,6 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         return result;
-    }
-
-    private void UpdateVisibilityBudgetCapacity()
-    {
-        if (!HeightCacheEnabled)
-        {
-            return;
-        }
-
-        var desiredCapacity = CalculateMaxViewChunks();
-
-        if (heightCacheBuffer == 0)
-        {
-            // Not initialized yet; InitializeGpuGeneration will size buffers using the new value.
-            return;
-        }
-
-        if (desiredCapacity <= heightCacheCapacity)
-        {
-            return;
-        }
-
-        Log.Info($"ChunkStreamingManager: expanding height cache to {desiredCapacity} slots (was {heightCacheCapacity}) due to visibility budget change");
-        InitializeHeightCache(desiredCapacity);
-        RestoreHeightCacheForActiveChunks();
     }
 
     private int CalculateMaxViewChunks()
@@ -589,7 +491,6 @@ public sealed class ChunkStreamingManager : IDisposable
         ProcessDirtyChunks(); // Re-mesh dirty chunks (e.g., neighbors that loaded)
         DrainCompletedCpuMeshes();
         UnloadDistantChunks(cameraPosition, visibleChunks);
-        LogHeightCacheStatsIfNeeded();
     }
 
     // Re-meshing is deferred for chunks at the edge of visible distance.
@@ -812,17 +713,13 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void ScheduleCpuMeshing(int chunkIdx)
     {
-        var mask = GetPlaceholderMaskForChunk(chunkIdx);
         if (!chunkVoxelCache.TryGetVersion(chunkIdx, out var cacheVersion) || cacheVersion <= 0)
         {
             Log.Debug($"ScheduleCpuMeshing: chunk {chunkIdx} missing cache version; enqueueing with version=0");
         }
 
-        cpuMeshingJobs.Enqueue(chunkIdx, mask, cacheVersion);
+        cpuMeshingJobs.Enqueue(chunkIdx, 0, cacheVersion);
     }
-
-    // Placeholder mask system removed - meshing now waits for all neighbors
-    private byte GetPlaceholderMaskForChunk(int chunkIdx) => 0;
 
     private void DrainCompletedCpuMeshes()
     {
@@ -833,7 +730,7 @@ public sealed class ChunkStreamingManager : IDisposable
             received = true;
         }
 
-        if ((received || cpuMeshResults.Count > 0) && phase3Buffers != null && terrainRenderer != null)
+        if ((received || cpuMeshResults.Count > 0) && meshBuffers != null && terrainRenderer != null)
         {
             ProcessCpuMeshResults();
         }
@@ -841,7 +738,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void ProcessCpuMeshResults()
     {
-        if (phase3Buffers == null || terrainRenderer == null || cpuMeshResults.Count == 0)
+        if (meshBuffers == null || terrainRenderer == null || cpuMeshResults.Count == 0)
         {
             return;
         }
@@ -864,7 +761,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private bool TryUploadCpuMesh(CpuChunkMesh mesh)
     {
-        if (phase3Buffers == null || terrainRenderer == null)
+        if (meshBuffers == null || terrainRenderer == null)
         {
             return false;
         }
@@ -897,19 +794,19 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (descriptor.VisibleVoxelCount > 0)
         {
-            phase3Buffers.FreeVertexRegion((uint)descriptor.AtlasOffset, (uint)(descriptor.VisibleVoxelCount * 4));
+            meshBuffers.FreeVertexRegion((uint)descriptor.AtlasOffset, (uint)(descriptor.VisibleVoxelCount * 4));
             if (descriptor.IndexOffset >= 0)
             {
-                phase3Buffers.FreeIndexRegion((uint)descriptor.IndexOffset, (uint)(descriptor.VisibleVoxelCount * 6));
+                meshBuffers.FreeIndexRegion((uint)descriptor.IndexOffset, (uint)(descriptor.VisibleVoxelCount * 6));
             }
         }
 
-        var vertexOffset = vertexCount > 0 ? (int)phase3Buffers.AllocateVertexRegion((uint)vertexCount) : -1;
-        var indexOffset = indexCount > 0 ? (int)phase3Buffers.AllocateIndexRegion((uint)indexCount) : -1;
+        var vertexOffset = vertexCount > 0 ? (int)meshBuffers.AllocateVertexRegion((uint)vertexCount) : -1;
+        var indexOffset = indexCount > 0 ? (int)meshBuffers.AllocateIndexRegion((uint)indexCount) : -1;
 
         UploadCpuMeshData(mesh, vertexOffset, vertexCount, indexOffset, indexCount);
 
-        var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : phase3Buffers.AllocateCommandSlot();
+        var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : meshBuffers.AllocateCommandSlot();
         WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)translucentFaceCount);
 
         // Placeholder mask is always 0 now - we wait for all neighbors before meshing
@@ -930,7 +827,6 @@ public sealed class ChunkStreamingManager : IDisposable
             PlaceholderMask = placeholderMask,
         };
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
-        lastUploadedPlaceholderMasks[mesh.ChunkIndex] = placeholderMask;
 
         if (pendingSeamRefresh.Contains(mesh.ChunkIndex))
         {
@@ -942,7 +838,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void UploadCpuMeshData(CpuChunkMesh mesh, int vertexOffset, int vertexCount, int indexOffset, int indexCount)
     {
-        if (phase3Buffers == null)
+        if (meshBuffers == null)
         {
             return;
         }
@@ -962,12 +858,12 @@ public sealed class ChunkStreamingManager : IDisposable
             indexSpan = mesh.IndexData.AsSpan(0, safeLength);
         }
 
-        phase3Buffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset);
+        meshBuffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset);
     }
 
     private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces)
     {
-        if (phase3Buffers == null || slot < 0)
+        if (meshBuffers == null || slot < 0)
         {
             return;
         }
@@ -992,197 +888,27 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             fixed (uint* cmdPtr = command)
             {
-                GL.NamedBufferSubData((int)phase3Buffers.IndirectDrawBuffer, (IntPtr)(slot * 40), 40, (IntPtr)cmdPtr);
+                GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 40), 40, (IntPtr)cmdPtr);
             }
         }
 
-        GL.NamedBufferSubData((int)phase3Buffers.ChunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref chunkIndex);
+        GL.NamedBufferSubData((int)meshBuffers.ChunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref chunkIndex);
     }
 
     private void RefreshRendererBuffers(string reason)
     {
-        if (phase3Buffers == null || terrainRenderer == null)
+        if (meshBuffers == null || terrainRenderer == null)
         {
             return;
         }
 
         var readyChunks = activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready).ToList();
         var totalFaces = (uint)readyChunks.Sum(c => Math.Max(0, c.VisibleVoxelCount));
-        var totalVerticesInBuffer = phase3Buffers.CurrentVertexBufferEnd;
-        var totalIndicesInBuffer = phase3Buffers.CurrentIndexBufferEnd;
+        var totalVerticesInBuffer = meshBuffers.CurrentVertexBufferEnd;
+        var totalIndicesInBuffer = meshBuffers.CurrentIndexBufferEnd;
 
-        terrainRenderer.SetupBuffers(phase3Buffers, totalVerticesInBuffer, totalFaces, readyChunks);
+        terrainRenderer.SetupBuffers(meshBuffers, totalVerticesInBuffer, totalFaces);
         Log.Debug($"ChunkStreamingManager: Renderer refreshed after {reason} (ready={readyChunks.Count}, faces={totalFaces}, vertices={totalVerticesInBuffer}, indices={totalIndicesInBuffer})");
-    }
-
-    private void InitializeHeightCache(int maxChunks)
-    {
-        if (!HeightCacheEnabled || maxChunks <= 0)
-        {
-            heightCacheCapacity = 0;
-            heightCacheSlotCpu = null;
-            freeHeightCacheSlots.Clear();
-            return;
-        }
-
-        var wordsPerChunk = HeightCacheWordsPerChunk;
-        var cacheBytes = maxChunks * wordsPerChunk * sizeof(uint);
-
-        if (heightCacheBuffer != 0)
-        {
-            GL.DeleteBuffer(heightCacheBuffer);
-        }
-        GL.CreateBuffers(1, out heightCacheBuffer);
-        GL.NamedBufferStorage(heightCacheBuffer, cacheBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightCacheBuffer, -1, "height_cache_ssbo");
-
-        if (heightCacheSlotBuffer != 0)
-        {
-            GL.DeleteBuffer(heightCacheSlotBuffer);
-        }
-        GL.CreateBuffers(1, out heightCacheSlotBuffer);
-        var slotBytes = VoxelHelper.TotalChunks * sizeof(int);
-        GL.NamedBufferStorage(heightCacheSlotBuffer, slotBytes, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightCacheSlotBuffer, -1, "height_cache_slots_ssbo");
-
-        heightCacheCapacity = maxChunks;
-        heightCacheSlotCpu = new int[VoxelHelper.TotalChunks];
-        for (var i = 0; i < heightCacheSlotCpu.Length; i++) heightCacheSlotCpu[i] = -1;
-
-        freeHeightCacheSlots.Clear();
-        for (var i = 0; i < maxChunks; i++)
-        {
-            freeHeightCacheSlots.Enqueue(i);
-        }
-
-        var initSlots = new int[VoxelHelper.TotalChunks];
-        for (var i = 0; i < initSlots.Length; i++) initSlots[i] = -1;
-        GL.NamedBufferSubData(heightCacheSlotBuffer, IntPtr.Zero, slotBytes, initSlots);
-
-        heightCacheBytesUploaded = 0;
-        heightCacheUploads = 0;
-        heightCacheSlotsInUse = 0;
-        heightCacheLastWarningFrame = -HeightCacheLogIntervalFrames;
-    }
-
-    private void RestoreHeightCacheForActiveChunks()
-    {
-        if (!HeightCacheEnabled)
-        {
-            return;
-        }
-
-        var restored = 0;
-        foreach (var chunkIdx in activeChunks.Keys)
-        {
-            var chunk = world[chunkIdx];
-            if (chunk != null && chunk.TryGetSpanData(out var spanPairs, out var spanCounts, out var spanTypes))
-            {
-                UploadHeightCacheFromSpans(chunkIdx, spanPairs, spanCounts, spanTypes);
-                restored++;
-            }
-        }
-
-        if (restored > 0)
-        {
-            Log.Info($"ChunkStreamingManager: restored height cache data for {restored} active chunks after resizing");
-        }
-    }
-
-    private void DisposeVoxelReadbackBuffers()
-    {
-        // Placeholder for parity with historical GPU pipeline; nothing to release at the moment.
-    }
-
-    private int EnsureHeightCacheSlot(int chunkIdx)
-    {
-        if (heightCacheSlotCpu == null || heightCacheBuffer == 0)
-            return -1;
-
-        var current = heightCacheSlotCpu[chunkIdx];
-        if (current >= 0)
-        {
-            return current;
-        }
-
-        if (freeHeightCacheSlots.Count == 0)
-        {
-            if (currentFrame - heightCacheLastWarningFrame >= 300)
-            {
-                heightCacheLastWarningFrame = currentFrame;
-                Log.Warn("HeightCache: exhausted slot pool; neighboring chunks will fall back to procedural sampling until slots free up.");
-            }
-            return -1;
-        }
-
-        var slot = freeHeightCacheSlots.Dequeue();
-        heightCacheSlotCpu[chunkIdx] = slot;
-        heightCacheSlotsInUse++;
-        UpdateHeightCacheSlotValue(chunkIdx, slot);
-        return slot;
-    }
-
-    private void ReleaseHeightCacheSlot(int chunkIdx)
-    {
-        if (heightCacheSlotCpu == null)
-            return;
-
-        var slot = heightCacheSlotCpu[chunkIdx];
-        if (slot < 0)
-            return;
-
-        heightCacheSlotCpu[chunkIdx] = -1;
-        if (heightCacheSlotsInUse > 0)
-        {
-            heightCacheSlotsInUse--;
-        }
-        freeHeightCacheSlots.Enqueue(slot);
-        UpdateHeightCacheSlotValue(chunkIdx, -1);
-    }
-
-    private void UpdateHeightCacheSlotValue(int chunkIdx, int slot)
-    {
-        if (heightCacheSlotBuffer == 0)
-            return;
-
-        var value = new[] { slot };
-        var offset = (IntPtr)(chunkIdx * sizeof(int));
-        GL.NamedBufferSubData(heightCacheSlotBuffer, offset, sizeof(int), value);
-    }
-
-    private static ushort PackHeightEntry(int topHeightExclusive, bool hasWater, bool edited)
-    {
-        var height = (ushort)Math.Clamp(topHeightExclusive, 0, VoxelHelper.ChunkYSize);
-        var packed = (ushort)(height & HeightCacheHeightMask);
-        if (hasWater)
-        {
-            packed |= HeightCacheWaterFlag;
-        }
-        if (edited)
-        {
-            packed |= HeightCacheEditedFlag;
-        }
-        return packed;
-    }
-
-    private void UploadHeightCache(int chunkIdx, uint[] packedHeights)
-    {
-        if (heightCacheBuffer == 0 || packedHeights.Length != HeightCacheWordsPerChunk)
-            return;
-
-        var slot = EnsureHeightCacheSlot(chunkIdx);
-        if (slot < 0)
-            return;
-
-        var byteOffset = slot * HeightCacheWordsPerChunk * sizeof(uint);
-        GL.NamedBufferSubData(heightCacheBuffer, (IntPtr)byteOffset, HeightCacheWordsPerChunk * sizeof(uint), packedHeights);
-        heightCacheUploads++;
-        heightCacheBytesUploaded += HeightCacheWordsPerChunk * sizeof(uint);
-    }
-
-    private void InvalidateHeightCache(int chunkIdx)
-    {
-        ReleaseHeightCacheSlot(chunkIdx);
     }
 
     private void SubmitPendingBatches()
@@ -1270,7 +996,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         descriptor.State = TerrainChunkState.Generating;
         descriptor.GenerationStartFrame = currentFrame;
-        descriptor.PlaceholderMask = GetPlaceholderMaskForChunk(chunkIdx);
+        descriptor.PlaceholderMask = 0;
         activeChunks[chunkIdx] = descriptor;
         inFlightCpuGenerations++;
         return true;
@@ -1385,63 +1111,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         chunk.ApplyColumnSpansForCollision(result.SpanPairs, result.SpanCounts, result.SpanTypes);
-
-        if (HeightCacheEnabled)
-        {
-            UploadHeightCacheFromSpans(chunkIdx, result.SpanPairs, result.SpanCounts, result.SpanTypes);
-        }
     }
-
-    private void UploadHeightCacheFromSpans(int chunkIdx, int[] spanPairs, byte[] spanCounts, BlockId[] spanTypes)
-    {
-        if (!HeightCacheEnabled)
-        {
-            return;
-        }
-
-        var packedHeights = new uint[HeightCacheWordsPerChunk];
-        for (var col = 0; col < VoxelHelper.ChunkSideSizeSquare; col++)
-        {
-            var spanCount = spanCounts[col];
-            var wordIndex = col >> 1;
-            var shift = (col & 1) == 0 ? 0 : 16;
-            ushort entry;
-            if (spanCount == 0)
-            {
-                entry = 0;
-            }
-            else
-            {
-                var baseIdx = col * ChunkCollisionData.MaxSpansPerColumn * 2;
-                var typeBaseIdx = col * ChunkCollisionData.MaxSpansPerColumn;
-                var maxYExclusive = 0;
-                var waterSpan = false;
-
-                for (var s = 0; s < spanCount && s < ChunkCollisionData.MaxSpansPerColumn; s++)
-                {
-                    var y1 = spanPairs[baseIdx + s * 2 + 1];
-                    if (y1 > maxYExclusive)
-                    {
-                        maxYExclusive = y1;
-                    }
-
-                    if (spanTypes[typeBaseIdx + s].IsWater())
-                    {
-                        waterSpan = true;
-                    }
-                }
-
-                entry = PackHeightEntry(maxYExclusive, waterSpan, false);
-            }
-
-            var mask = 0xFFFFu << shift;
-            var existing = packedHeights[wordIndex] & ~mask;
-            packedHeights[wordIndex] = existing | ((uint)entry << shift);
-        }
-
-        UploadHeightCache(chunkIdx, packedHeights);
-    }
-
 
     private int CalculatePriority(int chunkIndex)
     {
@@ -1566,26 +1236,26 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         // Phase 5.3: Free BOTH vertex and index buffer regions for reuse
-        if (desc.AtlasOffset >= 0 && desc.VisibleVoxelCount > 0 && phase3Buffers != null)
+        if (desc.AtlasOffset >= 0 && desc.VisibleVoxelCount > 0 && meshBuffers != null)
         {
             var verticesPerFace = 4;
             var indicesPerFace = 6;
 
             // Free vertex region
-            phase3Buffers.FreeVertexRegion((uint)desc.AtlasOffset, (uint)(desc.VisibleVoxelCount * verticesPerFace));
+            meshBuffers.FreeVertexRegion((uint)desc.AtlasOffset, (uint)(desc.VisibleVoxelCount * verticesPerFace));
             //Log.Debug($"Freed vertex region for chunk {chunkIndex}: offset={desc.AtlasOffset}, size={desc.VisibleVoxelCount * verticesPerFace}");
 
             // Free index region
             if (desc.IndexOffset >= 0)
             {
-                phase3Buffers.FreeIndexRegion((uint)desc.IndexOffset, (uint)(desc.VisibleVoxelCount * indicesPerFace));
+                meshBuffers.FreeIndexRegion((uint)desc.IndexOffset, (uint)(desc.VisibleVoxelCount * indicesPerFace));
                 //Log.Debug($"Freed index region for chunk {chunkIndex}: offset={desc.IndexOffset}, size={desc.VisibleVoxelCount * indicesPerFace}");
             }
 
             // Free command slot
             if (desc.CommandSlot >= 0)
             {
-                phase3Buffers.FreeCommandSlot(desc.CommandSlot);
+                meshBuffers.FreeCommandSlot(desc.CommandSlot);
                 //Log.Debug($"Freed command slot for chunk {chunkIndex}: slot={desc.CommandSlot}");
             }
         }
@@ -1594,11 +1264,7 @@ public sealed class ChunkStreamingManager : IDisposable
         activeChunks.Remove(chunkIndex);
         pendingSeamRefresh.Remove(chunkIndex);
         lastSeamRefreshFrame.Remove(chunkIndex);
-        lastUploadedPlaceholderMasks.Remove(chunkIndex);
         chunkLastVisibleFrame.Remove(chunkIndex);
-
-        // Release cached height data slot
-        InvalidateHeightCache(chunkIndex);
 
         // Remove collision data
         CollisionManager.RemoveChunkData(chunkIndex);
@@ -1627,18 +1293,20 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
-    /// Get memory usage statistics (Phase 5)
+    /// Get memory usage statistics
     /// </summary>
     public (long totalBytes, long voxelBytes, long visibilityBytes, long compactBytes) GetMemoryStats()
     {
-        var voxelsPerChunk = VoxelHelper.ChunkSideSizeSquare * VoxelHelper.ChunkYSize;
-        var columnsPerChunk = VoxelHelper.ChunkSideSizeSquare;
-
-        var chunkCapacity = phase3Buffers?.MaxChunks ?? CalculateMaxViewChunks();
-        long voxelBytes = chunkCapacity * voxelsPerChunk * sizeof(uint);
-        long columnBytes = chunkCapacity * columnsPerChunk * (sizeof(int) + sizeof(uint) * 4);
-        var visibilityBytes = phase3Buffers?.GetAllocatedBytes() ?? 0;
-        var compactBytes = terrainRenderer?.GetAllocatedBytes() ?? 0;
+        // Voxel data is now CPU-only, so GPU voxel bytes is 0
+        long voxelBytes = 0;
+        long columnBytes = 0;
+        
+        // Mesh buffers contain the actual mesh data (VBO, IBO, Indirect)
+        var visibilityBytes = meshBuffers?.GetAllocatedBytes() ?? 0;
+        
+        // Compact bytes was used for renderer-specific data, but now buffers are shared.
+        // We can use this slot for texture memory estimate if needed, or just 0.
+        var compactBytes = 0L;
 
         var totalBytes = voxelBytes + columnBytes + visibilityBytes + compactBytes;
 
@@ -1646,11 +1314,11 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     // ========================================================================
-    // Phase 5: Block Edit Operations (Player Interactions)
+    // Block Edit Operations (Player Interactions)
     // ========================================================================
 
     /// <summary>
-    /// Apply a block edit (break or place) at world position (Phase 5)
+    /// Apply a block edit (break or place) at world position
     /// Marks affected chunk(s) as dirty and queues for regeneration
     /// </summary>
     public void ApplyBlockEdit(Vector3 worldPosition, BlockId blockId, bool isBreaking)
@@ -1670,7 +1338,6 @@ public sealed class ChunkStreamingManager : IDisposable
         var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
 
         // Cached column heights are stale after edits until regeneration completes
-        InvalidateHeightCache(chunkIdx);
 
         // Convert to local voxel coordinates within chunk
         var localX = (int)(worldPosition.X % VoxelHelper.ChunkSideSize);
@@ -1753,8 +1420,8 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
-    /// Mark a specific voxel as edited in the GPU edit mask buffer (Phase 5)
-    /// This will be read by the generation shader to override generated terrain
+    /// Mark a specific voxel as edited in the edit dictionary
+    /// This will be read by the CPU generator to override generated terrain
     /// </summary>
     private void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockId blockId, bool isBreaking)
     {
@@ -1771,9 +1438,9 @@ public sealed class ChunkStreamingManager : IDisposable
 
 
     /// <summary>
-    /// Mark a chunk as dirty (needs regeneration) (Phase 5)
+    /// Mark a chunk as dirty (needs regeneration)
     /// Dirty chunks will be regenerated on the next update cycle
-    /// Phase 5.2: Uses incremental updates to preserve buffer regions
+    /// Uses incremental updates to preserve buffer regions
     /// </summary>
     private void MarkChunkDirty(int chunkIdx)
     {
@@ -1786,7 +1453,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Mark as pending regeneration
         if (desc.State == TerrainChunkState.Ready)
         {
-            // Phase 5.2: Keep existing buffer offset - we'll update in-place
+            // Keep existing buffer offset - we'll update in-place
             // Free the old buffer region only if we can't reuse it
             // (size might change after edit, but usually it's similar)
             desc.State = TerrainChunkState.Dirty;
@@ -1849,15 +1516,15 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     /// <summary>
-    /// Initialize Phase 3 buffer resources used by the CPU meshing pipeline.
+    /// Initialize mesh buffer resources used by the CPU meshing pipeline.
     /// </summary>
-    public void InitializePhase3(int maxChunksPerBatch = 64)
+    public void InitializeMeshBuffers(int maxChunksPerBatch = 64)
     {
-        phase3Buffers?.Dispose();
+        meshBuffers?.Dispose();
 
         if (activeChunks.Count > 0)
         {
-            Log.Warn($"InitializePhase3: Clearing {activeChunks.Count} active chunks due to buffer reinitialization");
+            Log.Warn($"InitializeMeshBuffers: Clearing {activeChunks.Count} active chunks due to buffer reinitialization");
             activeChunks.Clear();
         }
 
@@ -1865,30 +1532,30 @@ public sealed class ChunkStreamingManager : IDisposable
         chunkVoxelCache.Clear();
         ClearPendingCpuMeshingQueue();
 
-        phase3Buffers = new Phase3BufferManager();
-        phase3Buffers.AllocateBuffers(maxChunksPerBatch);
-
         var absoluteMaxRadius = Math.Clamp(VoxelHelper.MaxDistanceInChunks + PREFETCH_MARGIN_MAX, 1, VoxelHelper.WorldChunksXZ);
         var maxActiveChunks = CalculateMaxViewChunksForRadius(absoluteMaxRadius);
-        phase3Buffers.ResizeIndirectDrawBuffer((uint)maxActiveChunks);
 
-        Log.Info($"Phase 3 buffers initialized for CPU meshing (batch cap {maxChunksPerBatch}, indirect capacity {maxActiveChunks})");
+        meshBuffers = new TerrainMeshBufferManager();
+        // Allocate enough buffers for ALL potential active chunks, not just a batch
+        meshBuffers.AllocateBuffers(maxActiveChunks);
+
+        Log.Info($"Mesh buffers initialized for CPU meshing (capacity {maxActiveChunks} chunks)");
     }
 
 
     /// <summary>
-    /// Initialize Phase 4 GPU rendering
+    /// Initialize GPU rendering
     /// </summary>
-    public void InitializePhase4()
+    public void InitializeRendering()
     {
         terrainRenderer = new VoxelTerrainRenderer();
         // M5: Initialize block-based textures
         terrainRenderer.InitializeBlockTextures();
-        Log.Info("Phase 4 rendering initialized");
+        Log.Info("Rendering initialized");
     }
 
     /// <summary>
-    /// Initialize CPU frustum culling (Phase 4.5 replacement).
+    /// Initialize CPU frustum culling.
     /// No GPU resources are required anymore because chunk visibility is computed on the CPU.
     /// </summary>
     public void InitializeFrustumCulling(int maxChunks = 0)
@@ -1968,7 +1635,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var min = new Vector3(chunkX * VoxelHelper.ChunkSideSize, 0f, chunkZ * VoxelHelper.ChunkSideSize);
         var max = min + new Vector3(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
 
-        const float margin = 32f; // Matches legacy GPU shader tolerance
+        const float margin = 32f; // Matches shader tolerance
 
         for (var i = 0; i < 6; i++)
         {
@@ -1992,12 +1659,12 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private void UpdateCommandVisibility(int commandSlot, bool isVisible)
     {
-        if (phase3Buffers == null || phase3Buffers.IndirectDrawBuffer == 0 || commandSlot < 0)
+        if (meshBuffers == null || meshBuffers.IndirectDrawBuffer == 0 || commandSlot < 0)
         {
             return;
         }
 
-        var buffer = (int)phase3Buffers.IndirectDrawBuffer;
+        var buffer = (int)meshBuffers.IndirectDrawBuffer;
         var slotBase = commandSlot * 10 * sizeof(uint); // 2 commands * 5 uints each
         var opaqueInstanceOffset = slotBase + sizeof(uint);
         var transparentInstanceOffset = slotBase + 5 * sizeof(uint) + sizeof(uint);
@@ -2166,10 +1833,8 @@ public sealed class ChunkStreamingManager : IDisposable
         if (terrainParamsSSBO != 0) GL.DeleteBuffer(terrainParamsSSBO);
         if (heightSplineTexture != 0) GL.DeleteTexture(heightSplineTexture);
         if (biomeLutTexture != 0) GL.DeleteTexture(biomeLutTexture);
-        if (heightCacheBuffer != 0) GL.DeleteBuffer(heightCacheBuffer);
-        if (heightCacheSlotBuffer != 0) GL.DeleteBuffer(heightCacheSlotBuffer);
         // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
-        phase3Buffers?.Dispose();
+        meshBuffers?.Dispose();
         chunkVoxelCache.Dispose();
         ClearPendingCpuMeshingQueue();
         cpuGenerationJobs.Dispose();

@@ -316,7 +316,7 @@ public sealed class BlockTextureManager : IDisposable
     /// <summary>
     /// Unbinds the texture array.
     /// </summary>
-    public void Unbind(int textureUnit = 0)
+    public static void Unbind(int textureUnit = 0)
     {
         GL.ActiveTexture(TextureUnit.Texture0 + textureUnit);
         GL.BindTexture(TextureTarget.Texture2DArray, 0);

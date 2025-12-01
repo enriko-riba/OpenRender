@@ -4,7 +4,7 @@ namespace SpyroGame.World;
 
 /// <summary>
 /// Represents the CPU-built mesh data for a single chunk prior to GPU upload.
-/// Stores packed vertex/index arrays that match the Phase 3 compacted format.
+/// Stores packed vertex/index arrays that match the compacted format.
 /// </summary>
 public sealed record CpuChunkMesh(
     int ChunkIndex,

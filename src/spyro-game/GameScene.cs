@@ -347,8 +347,6 @@ internal class GameScene : Scene
         blockPickingService?.Update(
             currentTime: SceneManager.Time,
             camera: camera!,
-            screenCenterX: Width / 2,
-            screenCenterY: Height / 2,
             maxDistance: 5.0f
         );
 
@@ -478,7 +476,7 @@ internal class GameScene : Scene
 
         if (streamingManager != null)
         {
-            var (total, pending, generating, ready) = streamingManager.GetStats();
+            var (_, pending, generating, ready) = streamingManager.GetStats();
             readyChunks = ready;
             queuedChunks = pending + generating;
 
@@ -505,7 +503,7 @@ internal class GameScene : Scene
         }
         WriteLine("", textColor);
 
-        // Rendering Stats (FIXED - Use terrain renderer stats)
+        // Rendering Stats
         WriteLine("Rendering:", highlightColor);
         if (terrainRenderer != null)
         {

@@ -98,7 +98,7 @@ internal class TerrainLoadingScene : Scene
         operationQueue.Enqueue(("Initialize Terrain Generation", () =>
         {
             progressTracker.UpdateOperation("Initialize Terrain Generation", 0.3f, "Allocating buffers...");
-            streamingManager!.InitializeGpuGeneration(world.Seed);
+            streamingManager!.InitializeCpuGeneration(world.Seed);
             progressTracker.UpdateOperation("Initialize Terrain Generation", 0.9f, "Preparing CPU pipeline...");
             progressTracker.CompleteOperation("Initialize Terrain Generation");
             Log.Info($"CPU terrain generation initialized with pre-allocated buffers");
@@ -107,16 +107,16 @@ internal class TerrainLoadingScene : Scene
         operationQueue.Enqueue(("Initialize Visibility & Compaction", () =>
         {
             progressTracker.UpdateOperation("Initialize Visibility & Compaction", 0.4f, "Setting up visibility buffers...");
-            streamingManager!.InitializePhase3();
+            streamingManager!.InitializeMeshBuffers();
             progressTracker.UpdateOperation("Initialize Visibility & Compaction", 0.8f, "Setting up compaction pipeline...");
             progressTracker.CompleteOperation("Initialize Visibility & Compaction");
-            Log.Info($"Phase 3 initialized");
+            Log.Info($"Mesh buffers initialized");
         }));
 
         operationQueue.Enqueue(("Initialize Terrain Renderer", () =>
         {
             progressTracker.UpdateOperation("Initialize Terrain Renderer", 0.5f, "Creating renderer...");
-            streamingManager!.InitializePhase4();
+            streamingManager!.InitializeRendering();
             terrainRenderer = streamingManager.GetTerrainRenderer();
             progressTracker.CompleteOperation("Initialize Terrain Renderer");
             Log.Info("Terrain renderer initialized");
@@ -359,10 +359,5 @@ internal class TerrainLoadingScene : Scene
         var spinnerChars = new[] { '|', '/', '-', '\\' };
         var spinner = spinnerChars[(int)(timer.Elapsed.TotalSeconds * 4) % 4];
         WriteLineCentered($"{spinner}", dimColor, 20, spinnerY);
-    }
-
-    private void DrawProgressBar(int x, int y, int width, int height, float progress, Vector3 color, bool borderOnly = false)
-    {
-        // Deprecated - replaced by ASCII bar
     }
 }

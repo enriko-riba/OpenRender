@@ -9,16 +9,16 @@ using OpenTK.Mathematics;
 namespace SpyroGame.World;
 
 /// <summary>
-/// Manages rendering of GPU-generated voxel terrain (Phase 4).
-/// Consumes output from Phase 3 (compacted vertices and indices).
+/// Manages rendering of CPU-generated voxel terrain.
+/// Consumes output from mesh buffers (compacted vertices and indices).
 /// Integrates with the scene graph as a SceneNode.
 /// </summary>
 public class VoxelTerrainRenderer : SceneNode, IDisposable
 {
     private uint vao;
-    private Phase3BufferManager? bufferManager;
+    private TerrainMeshBufferManager? bufferManager;
     private uint actualVertexCount;
-    private uint actualFaceCount;           // Phase 5.1: Track face count instead
+    private uint commandCapacity;           // Track command capacity instead
     private bool disposed;
 
     // Visibility tracking (for frustum culling)
@@ -51,14 +51,14 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public int VisibleDraws { get; private set; }
 
     /// <summary>
-    /// Total number of draw commands (Phase 5.3: one per chunk)
+    /// Total number of draw commands (one per chunk)
     /// </summary>
-    public uint RenderedBlocks => actualFaceCount;  // Now stores command count, not face count
+    public uint RenderedBlocks => commandCapacity;  // Now stores command count, not face count
 
     /// <summary>
-    /// Total draw call count (1 multi-draw indirect call)
+    /// Total draw call count (2 multi-draw indirect calls: Opaque + Transparent)
     /// </summary>
-    public int DrawCallCount => actualFaceCount > 0 ? 1 : 0;
+    public int DrawCallCount => commandCapacity > 0 ? 2 : 0;
 
     /// <summary>
     /// The currently picked/highlighted block (used for outlining/breaking).
@@ -109,16 +109,16 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     }
 
     /// <summary>
-    /// Set up VAO to use Phase 3 compacted buffers.
-    /// Phase 5.3: Builds multi-draw indirect commands (ONE per chunk).
-    /// Phase 5.2: Uses optimized vertex layout without normals (28 bytes vs 36 bytes).
-    /// Must be called after Phase 3 completes.
+    /// Set up VAO to use compacted mesh buffers.
+    /// Builds multi-draw indirect commands (ONE per chunk).
+    /// Uses optimized vertex layout without normals (28 bytes vs 36 bytes).
+    /// Must be called after mesh generation completes.
     /// Can be called multiple times to update buffers (e.g., when regenerating terrain).
     /// 
-    /// PHASE 5.2 STREAMING FIX: Now requires chunk descriptors to handle non-sequential buffer layout.
+    /// STREAMING FIX: Now requires chunk descriptors to handle non-sequential buffer layout.
     /// When chunks are unloaded/reloaded, both vertices AND indices may NOT be sequential in the buffer!
     /// </summary>
-    public void SetupBuffers(Phase3BufferManager buffers, uint vertexCount, uint faceCount, IEnumerable<ChunkDescriptor>? chunkDescriptors = null)
+    public void SetupBuffers(TerrainMeshBufferManager buffers, uint vertexCount, uint faceCount)
     {
         if (disposed)
         {
@@ -132,7 +132,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
         GL.EnableVertexArrayAttrib(vao, 0);
-        // Phase 5.2: Compressed format (2 uints)
+        // Compressed format (2 uints)
         // Use VertexAttribIFormat for integer attributes
         GL.VertexArrayAttribIFormat(vao, 0, 2, VertexAttribIType.UnsignedInt, 0);
         GL.VertexArrayAttribBinding(vao, 0, 0);
@@ -153,13 +153,13 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // With GPU-built indirect, the command count equals the last dispatched batch size.
         // We rely on ChunkStreamingManager to bind and dispatch draw using the updated indirect buffer.
-        // PHASE 5.3 FIX: Set actualFaceCount to the CommandSlotCapacity so OnDraw draws all potential slots.
+        // FIX: Set commandCapacity to the CommandSlotCapacity so OnDraw draws all potential slots.
         // Empty slots have count=0 and will be skipped by GPU.
-        actualFaceCount = buffers.CommandSlotCapacity;
+        commandCapacity = buffers.CommandSlotCapacity;
 
         Log.CheckGlError();
 
-        Log.Debug($"VoxelTerrainRenderer: Buffers configured : {vertexCount} vertices, {faceCount} faces, {actualFaceCount} commands");
+        Log.Debug($"VoxelTerrainRenderer: Buffers configured : {vertexCount} vertices, {faceCount} faces, {commandCapacity} commands");
     }
 
     /// <summary>
@@ -270,13 +270,13 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
     /// <summary>
     /// Override OnDraw to render the voxel terrain using the scene's rendering pipeline.
-    /// Phase 5.3: Uses per-chunk index buffers with ONE multi-draw command PER CHUNK!
+    /// Uses per-chunk index buffers with ONE multi-draw command PER CHUNK!
     /// Camera UBO is already bound by Renderer.RenderNode().
     /// Enables backface culling for proper voxel rendering.
     /// </summary>
     public override void OnDraw(double elapsed)
     {
-        if (disposed || bufferManager == null || actualFaceCount == 0)
+        if (disposed || bufferManager == null || commandCapacity == 0)
         {
             return; // Nothing to render yet or already disposed
         }
@@ -317,7 +317,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 10, TerrainParamsSSBO);
         }
 
-        // Phase 5.2: Bind ChunkInfo Buffer (Binding 13)
+        // Bind ChunkInfo Buffer (Binding 13)
         if (bufferManager != null && bufferManager.ChunkInfoBuffer != 0)
         {
             GL.BindBufferBase(BufferRangeTarget.ShaderStorageBuffer, 13, bufferManager.ChunkInfoBuffer);
@@ -342,7 +342,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // PHASE 5.3: Single multi-draw indirect call with ONE command per chunk!
+        // Single multi-draw indirect call with ONE command per chunk!
         // CRITICAL FIX: Use HighWaterMark as draw count, not active chunk count!
         // Slots are allocated sparsely/using free list, so we must draw up to the highest allocated slot.
         // Empty slots (freed) are zeroed out and will be skipped by GPU.
@@ -453,7 +453,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     }
 
     /// <summary>
-    /// Get approximate GPU memory allocated for rendering buffers (Phase 5)
+    /// Get approximate GPU memory allocated for rendering buffers
     /// </summary>
     public long GetAllocatedBytes()
     {
@@ -465,8 +465,8 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Shared index buffer: always 6 indices * 4 bytes
         var indexBytes = 6 * sizeof(uint);
 
-        // Indirect draw commands: actualFaceCount * 5 * sizeof(uint);
-        var indirectBytes = actualFaceCount * 5 * sizeof(uint);
+        // Indirect draw commands: commandCapacity * 5 * sizeof(uint);
+        var indirectBytes = commandCapacity * 5 * sizeof(uint);
 
         return vertexBytes + indexBytes + indirectBytes;
     }

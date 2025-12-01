@@ -38,7 +38,7 @@ public class Inventory
 
     public InventoryItem GetSelectedItem()
     {
-        if (SelectedSlot < 0 || SelectedSlot >= SlotCount) return default;
+        if (SelectedSlot is < 0 or >= SlotCount) return default;
         return slots[SelectedSlot];
     }
 
@@ -47,13 +47,13 @@ public class Inventory
         if (block.IsAir()) return;
 
         // 1. Try to stack with existing items (Hotbar first, then Storage)
-        for (int i = 0; i < SlotCount; i++)
+        for (var i = 0; i < SlotCount; i++)
         {
             // Check if same block type (ignoring flags if they differ, but usually they shouldn't)
             if (slots[i].Block.GetId() == block.GetId() && slots[i].Count < 64)
             {
-                int space = 64 - slots[i].Count;
-                int toAdd = Math.Min(space, count);
+                var space = 64 - slots[i].Count;
+                var toAdd = Math.Min(space, count);
                 slots[i].Count += toAdd;
                 count -= toAdd;
                 if (count <= 0) return;
@@ -61,7 +61,7 @@ public class Inventory
         }
 
         // 2. Place in empty slots (Hotbar first, then Storage)
-        for (int i = 0; i < SlotCount; i++)
+        for (var i = 0; i < SlotCount; i++)
         {
             if (slots[i].IsEmpty)
             {
@@ -74,7 +74,7 @@ public class Inventory
 
     public bool TryConsumeSelectedItem()
     {
-        if (SelectedSlot < 0 || SelectedSlot >= HotbarSize) return false;
+        if (SelectedSlot is < 0 or >= HotbarSize) return false;
         if (slots[SelectedSlot].IsEmpty) return false;
 
         slots[SelectedSlot].Count--;
@@ -84,10 +84,6 @@ public class Inventory
         }
         return true;
     }
-    
-    public InventoryItem GetItem(int slot)
-    {
-        if (slot < 0 || slot >= SlotCount) return default;
-        return slots[slot];
-    }
+
+    public InventoryItem GetItem(int slot) => slot is < 0 or >= SlotCount ? default : slots[slot];
 }
