@@ -11,7 +11,6 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
-using SpyroGame.Components;
 using SpyroGame.World;
 
 namespace SpyroGame;
@@ -621,10 +620,10 @@ internal class GameScene : Scene
             var item = player.Inventory.GetItem(i);
             var isSelected = i == player.Inventory.SelectedSlot;
             var color = isSelected ? new Vector3(1, 1, 0) : new Vector3(0.7f, 0.7f, 0.7f);
-            
+
             string content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
             if (isSelected) content = $"> {content}";
-            
+
             // Simple text rendering for now
             textRenderer.Render(content, 22, startX, startY + i * invSlotHeight, color);
         }
@@ -641,10 +640,10 @@ internal class GameScene : Scene
         // Query the actual biome from the cached chunk biome data
         var worldX = (int)block.GlobalPosition.X;
         var worldZ = (int)block.GlobalPosition.Z;
-        
+
         // Try to get biome from the chunk cache
         var biomeId = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
-        
+
         return biomeId.ToString();
     }
 

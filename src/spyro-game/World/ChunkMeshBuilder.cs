@@ -165,9 +165,9 @@ internal static class ChunkMeshBuilder
         }
 
         // Debug: Log neighbor misses and water face count
-        if (DebugWaterFaces && (sampler.NeighborMisses > 0 || sampler.TranslucentFaceCount > 0))
+        if (DebugWaterFaces && (sampler.NeighborMisses > 0 || sampler.TranslucentFaceCount > 0) && VerboseBuilderLogging)
         {
-            Log.Info($"ChunkMeshBuilder DEBUG: chunk={workItem.ChunkIndex} waterFaces={sampler.TranslucentFaceCount} neighborMisses={sampler.NeighborMisses}");
+            Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} waterFaces={sampler.TranslucentFaceCount} neighborMisses={sampler.NeighborMisses}");
         }
 
         mesh = new CpuChunkMesh(

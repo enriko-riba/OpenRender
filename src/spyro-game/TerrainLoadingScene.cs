@@ -280,25 +280,25 @@ internal class TerrainLoadingScene : Scene
         var statsY = 300;
         var errorMessagesY = Height - 200; // Bottom half, leaving room for spinner
         var spinnerY = Height - 60;
+        var leftMargin = 50;
 
         // Title - Centered
         WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
 
-        // Current Stage - Centered
-        WriteLineCentered(currentStage, progressColor, 20, stageY);
+        // Current Stage - Left
+        textRenderer.Render(currentStage, 20, leftMargin, stageY, progressColor);
 
-        // Detailed Status - Centered (if available)
+        // Detailed Status - Left (if available)
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
-            WriteLineCentered(progressTracker.DetailedStatus, dimColor, 20, detailedStatusY);
+            textRenderer.Render(progressTracker.DetailedStatus, 20, leftMargin, detailedStatusY, dimColor);
         }
 
-        // Progress Bar - Centered
+        // Progress Bar - Left
         var progress = progressTracker.Progress / 100f;
         var progressPercent = (int)progressTracker.Progress;
         
         const int barWidth = 500;
-        var barX = (Width - barWidth) / 2;
 
         // Draw ASCII Progress Bar
         var bracketSize = textRenderer.Measure("[", 24);
@@ -308,19 +308,19 @@ internal class TerrainLoadingScene : Scene
         var emptyChars = Math.Max(0, maxChars - filledChars);
         
         var barText = "[" + new string('#', filledChars) + new string('.', emptyChars) + "]";
-        WriteLineCentered(barText, progressColor, 24, progressBarY);
+        textRenderer.Render(barText, 24, leftMargin, progressBarY, progressColor);
 
-        // Progress percentage text - Centered on bar
+        // Progress percentage text - Left
         var percentText = $"{progressPercent}%";
-        WriteLineCentered(percentText, textColor, 24, progressBarY + 35);
+        textRenderer.Render(percentText, 24, leftMargin, progressBarY + 35, textColor);
 
-        // Stats section - Centered (changed from left-aligned)
+        // Stats section - Left
         var line1Y = statsY;
-        WriteLineCentered($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", textColor, 22, line1Y);
+        textRenderer.Render($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", 22, leftMargin, line1Y, textColor);
         
         // Line 3: Target Chunks (with extra spacing)
         var line3Y = line1Y + 60;
-        WriteLineCentered($"Target Chunks: {targetChunkCount}", dimColor, 22, line3Y);
+        textRenderer.Render($"Target Chunks: {targetChunkCount}", 22, leftMargin, line3Y, dimColor);
         
         // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
         var line4Y = line3Y + 45;
@@ -328,8 +328,8 @@ internal class TerrainLoadingScene : Scene
         {
             var (_, pending, generating, ready) = streamingManager.GetStats();
             var queued = pending + generating;
-            WriteLineCentered($"Chunks Ready: {ready}", dimColor, 22, line4Y);
-            WriteLineCentered($"Chunks Queued: {queued}", dimColor, 22, line4Y + 40);
+            textRenderer.Render($"Chunks Ready: {ready}", 22, leftMargin, line4Y, dimColor);
+            textRenderer.Render($"Chunks Queued: {queued}", 22, leftMargin, line4Y + 40, dimColor);
             line4Y += 40;
         }
 
@@ -339,7 +339,7 @@ internal class TerrainLoadingScene : Scene
         {
             var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();
             var totalMB = totalBytes / (1024f * 1024f);
-            WriteLineCentered($"GPU Memory: {totalMB:F1} MB", dimColor, 22, line5Y);
+            textRenderer.Render($"GPU Memory: {totalMB:F1} MB", 22, leftMargin, line5Y, dimColor);
         }
 
         // Error messages - Bottom half, centered

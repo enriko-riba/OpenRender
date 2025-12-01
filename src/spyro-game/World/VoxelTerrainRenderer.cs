@@ -159,7 +159,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         Log.CheckGlError();
 
-        Log.Info($"VoxelTerrainRenderer: Buffers configured (Phase 5.3: {vertexCount} vertices, {faceCount} faces, {actualFaceCount} commands - GPU built)");
+        Log.Debug($"VoxelTerrainRenderer: Buffers configured : {vertexCount} vertices, {faceCount} faces, {actualFaceCount} commands");
     }
 
     /// <summary>

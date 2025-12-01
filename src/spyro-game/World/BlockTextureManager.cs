@@ -126,6 +126,43 @@ public sealed class BlockTextureManager : IDisposable
 
             // Water (special - uses separate rendering but needs texture)
             { BlockId.Water, "Resources/voxel/blocks/water.png" },
+
+            // Missing textures added
+            { BlockId.MossyCobblestone, "Resources/voxel/blocks/mossy_cobblestone.png" },
+            { BlockId.Mycelium, "Resources/voxel/blocks/mycelium.png" },
+            { BlockId.RedSand, "Resources/voxel/blocks/red_sand.png" },
+            { BlockId.RedSandstone, "Resources/voxel/blocks/red_sandstone.png" },
+            
+            // Terracotta
+            { BlockId.Terracotta, "Resources/voxel/blocks/terracotta.png" },
+            { BlockId.WhiteTerracotta, "Resources/voxel/blocks/white_terracotta.png" },
+            { BlockId.OrangeTerracotta, "Resources/voxel/blocks/orange_terracotta.png" },
+            { BlockId.RedTerracotta, "Resources/voxel/blocks/red_terracotta.png" },
+            { BlockId.BrownTerracotta, "Resources/voxel/blocks/brown_terracotta.png" },
+            { BlockId.YellowTerracotta, "Resources/voxel/blocks/yellow_terracotta.png" },
+
+            // Ores
+            { BlockId.CoalOre, "Resources/voxel/blocks/coal_ore.png" },
+            { BlockId.IronOre, "Resources/voxel/blocks/iron_ore.png" },
+            { BlockId.GoldOre, "Resources/voxel/blocks/gold_ore.png" },
+            { BlockId.DiamondOre, "Resources/voxel/blocks/diamond_ore.png" },
+            { BlockId.CopperOre, "Resources/voxel/blocks/copper_ore.png" },
+
+            // Logs
+            { BlockId.OakLog, "Resources/voxel/blocks/oak_log.png" },
+            { BlockId.BirchLog, "Resources/voxel/blocks/birch_log.png" },
+            { BlockId.SpruceLog, "Resources/voxel/blocks/spruce_log.png" },
+            { BlockId.JungleLog, "Resources/voxel/blocks/jungle_log.png" },
+
+            // Leaves
+            { BlockId.OakLeaves, "Resources/voxel/blocks/oak_leaves.png" },
+            { BlockId.BirchLeaves, "Resources/voxel/blocks/birch_leaves.png" },
+            { BlockId.SpruceLeaves, "Resources/voxel/blocks/spruce_leaves.png" },
+            { BlockId.JungleLeaves, "Resources/voxel/blocks/jungle_leaves.png" },
+
+            // More Ice
+            { BlockId.PackedIce, "Resources/voxel/blocks/packed_ice.png" },
+            { BlockId.BlueIce, "Resources/voxel/blocks/blue_ice.png" },
         };
 
         foreach (var (blockId, path) in blockTexturePaths)

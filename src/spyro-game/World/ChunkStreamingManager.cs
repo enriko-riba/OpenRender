@@ -31,8 +31,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private const ushort HeightCacheHeightMask = 0x03FF;
     private const ushort HeightCacheWaterFlag = 1 << 10;
     private const ushort HeightCacheEditedFlag = 1 << 11;
-    private const int HeightCacheStatsWordCount = 4;
-    private const int HeightCacheStatsByteSize = HeightCacheStatsWordCount * sizeof(uint);
     private const int HeightCacheLogIntervalFrames = 600;
     private static readonly bool HeightCacheEnabled = true;
     private const string ConfigFileName = "terrain_config.json";
@@ -84,13 +82,6 @@ public sealed class ChunkStreamingManager : IDisposable
     private long heightCacheBytesUploaded;
     private int heightCacheSlotsInUse;
     private long heightCacheLastWarningFrame;
-    private uint heightCacheStatsBuffer;
-    private uint heightCacheStatsReadbackBuffer;
-    private IntPtr heightCacheStatsReadbackPtr;
-    private long heightCacheShaderHitsTotal;
-    private long heightCacheShaderMissesTotal;
-    private long heightCacheShaderHitsAtLastLog;
-    private long heightCacheShaderMissesAtLastLog;
     private int visibilityFlagsCapacity;
 
     public ChunkStreamingManager(VoxelWorld world)
@@ -245,7 +236,6 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var maxChunks = CalculateMaxViewChunks();
         InitializeHeightCache(maxChunks);
-        InitializeVoxelReadbackBuffers(maxChunks);
 
         UploadTerrainConfig();
         cpuGenerationJobs.UpdateConfig(terrainConfig);
@@ -274,25 +264,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
         var utilization = stats.Capacity > 0 ? (float)stats.SlotsInUse / stats.Capacity : 0f;
         var uploadedMb = stats.BytesUploaded / (1024f * 1024f);
-        var totalSamples = stats.ShaderHits + stats.ShaderMisses;
-        var totalHitRate = totalSamples > 0 ? (float)stats.ShaderHits / totalSamples : 0f;
-
-        var deltaHits = heightCacheShaderHitsTotal - heightCacheShaderHitsAtLastLog;
-        var deltaMisses = heightCacheShaderMissesTotal - heightCacheShaderMissesAtLastLog;
-        heightCacheShaderHitsAtLastLog = heightCacheShaderHitsTotal;
-        heightCacheShaderMissesAtLastLog = heightCacheShaderMissesTotal;
-        var deltaSamples = deltaHits + deltaMisses;
-        var deltaHitRate = deltaSamples > 0 ? (float)deltaHits / deltaSamples : 0f;
 
         var message = $"HeightCache stats: {stats.SlotsInUse}/{stats.Capacity} slots ({utilization:P1}) used, uploads={stats.Uploads}, uploaded={uploadedMb:F1} MiB";
-        if (totalSamples > 0)
-        {
-            message += $" | cache samples={totalSamples:N0} hits={stats.ShaderHits:N0} misses={stats.ShaderMisses:N0} (hit {totalHitRate:P1})";
-        }
-        if (deltaSamples > 0)
-        {
-            message += $" | Δ hits={deltaHits:N0} misses={deltaMisses:N0} (hit {deltaHitRate:P1})";
-        }
 
         Log.Info(message);
     }
@@ -304,8 +277,6 @@ public sealed class ChunkStreamingManager : IDisposable
         public int FreeSlots { get; init; }
         public long Uploads { get; init; }
         public long BytesUploaded { get; init; }
-        public long ShaderHits { get; init; }
-        public long ShaderMisses { get; init; }
     }
 
     public HeightCacheStats GetHeightCacheStats()
@@ -323,9 +294,7 @@ public sealed class ChunkStreamingManager : IDisposable
             SlotsInUse = used,
             FreeSlots = Math.Max(capacity - used, 0),
             Uploads = heightCacheUploads,
-            BytesUploaded = heightCacheBytesUploaded,
-            ShaderHits = heightCacheShaderHitsTotal,
-            ShaderMisses = heightCacheShaderMissesTotal
+            BytesUploaded = heightCacheBytesUploaded
         };
     }
 
@@ -412,7 +381,9 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private int CalculateMaxViewChunks()
     {
-        return CalculateMaxViewChunksForRadius(GetActiveLoadDistance());
+        // Use retention distance + padding to ensure we have enough slots for all active chunks
+        // Active chunks include: Visible + Retained + Pending Unload
+        return CalculateMaxViewChunksForRadius(GetUnloadDistanceChunks());
     }
 
     private int CalculateMaxViewChunksForRadius(int radius)
@@ -619,7 +590,6 @@ public sealed class ChunkStreamingManager : IDisposable
         DrainCompletedCpuMeshes();
         UnloadDistantChunks(cameraPosition, visibleChunks);
         LogHeightCacheStatsIfNeeded();
-        AccumulateHeightCacheShaderCounters();
     }
 
     // Re-meshing is deferred for chunks at the edge of visible distance.
@@ -945,7 +915,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Placeholder mask is always 0 now - we wait for all neighbors before meshing
         byte placeholderMask = 0;
 
-        Log.Info($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
+        Log.Debug($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
 
         var refreshedDescriptor = new ChunkDescriptor
         {
@@ -1042,7 +1012,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var totalIndicesInBuffer = phase3Buffers.CurrentIndexBufferEnd;
 
         terrainRenderer.SetupBuffers(phase3Buffers, totalVerticesInBuffer, totalFaces, readyChunks);
-        Log.Info($"ChunkStreamingManager: Renderer refreshed after {reason} (ready={readyChunks.Count}, faces={totalFaces}, vertices={totalVerticesInBuffer}, indices={totalIndicesInBuffer})");
+        Log.Debug($"ChunkStreamingManager: Renderer refreshed after {reason} (ready={readyChunks.Count}, faces={totalFaces}, vertices={totalVerticesInBuffer}, indices={totalIndicesInBuffer})");
     }
 
     private void InitializeHeightCache(int maxChunks)
@@ -1093,39 +1063,6 @@ public sealed class ChunkStreamingManager : IDisposable
         heightCacheUploads = 0;
         heightCacheSlotsInUse = 0;
         heightCacheLastWarningFrame = -HeightCacheLogIntervalFrames;
-
-        DisposeHeightCacheStatsReadbackBuffer();
-
-        if (heightCacheStatsBuffer != 0)
-        {
-            GL.DeleteBuffer(heightCacheStatsBuffer);
-        }
-        GL.CreateBuffers(1, out heightCacheStatsBuffer);
-        GL.NamedBufferStorage(heightCacheStatsBuffer, HeightCacheStatsByteSize, IntPtr.Zero, BufferStorageFlags.DynamicStorageBit);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightCacheStatsBuffer, -1, "height_cache_stats_ssbo");
-
-        GL.CreateBuffers(1, out heightCacheStatsReadbackBuffer);
-        GL.NamedBufferStorage(heightCacheStatsReadbackBuffer, HeightCacheStatsByteSize, IntPtr.Zero,
-            BufferStorageFlags.MapReadBit | BufferStorageFlags.MapPersistentBit | BufferStorageFlags.MapCoherentBit);
-        GL.ObjectLabel(ObjectLabelIdentifier.Buffer, heightCacheStatsReadbackBuffer, -1, "height_cache_stats_readback_ssbo");
-
-        heightCacheStatsReadbackPtr = GL.MapNamedBufferRange(heightCacheStatsReadbackBuffer, IntPtr.Zero, HeightCacheStatsByteSize,
-            BufferAccessMask.MapReadBit | BufferAccessMask.MapPersistentBit | BufferAccessMask.MapCoherentBit);
-        if (heightCacheStatsReadbackPtr == IntPtr.Zero)
-        {
-            Log.Warn("ChunkStreamingManager: Failed to map height cache stats readback buffer; warnings may persist.");
-        }
-
-        ResetHeightCacheShaderCountersCpu();
-        ResetHeightCacheStatsBuffer();
-    }
-
-    private void ResetHeightCacheShaderCountersCpu()
-    {
-        heightCacheShaderHitsTotal = 0;
-        heightCacheShaderMissesTotal = 0;
-        heightCacheShaderHitsAtLastLog = 0;
-        heightCacheShaderMissesAtLastLog = 0;
     }
 
     private void RestoreHeightCacheForActiveChunks()
@@ -1152,66 +1089,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    private void DisposeHeightCacheStatsReadbackBuffer()
-    {
-        if (heightCacheStatsReadbackPtr != IntPtr.Zero && heightCacheStatsReadbackBuffer != 0)
-        {
-            GL.UnmapNamedBuffer(heightCacheStatsReadbackBuffer);
-            heightCacheStatsReadbackPtr = IntPtr.Zero;
-        }
-
-        if (heightCacheStatsReadbackBuffer != 0)
-        {
-            GL.DeleteBuffer(heightCacheStatsReadbackBuffer);
-            heightCacheStatsReadbackBuffer = 0;
-        }
-    }
-
-    private void ResetHeightCacheStatsBuffer()
-    {
-        if (heightCacheStatsBuffer == 0)
-            return;
-
-        var zeros = new uint[HeightCacheStatsWordCount];
-        GL.NamedBufferSubData(heightCacheStatsBuffer, IntPtr.Zero, HeightCacheStatsByteSize, zeros);
-
-        if (heightCacheStatsReadbackPtr != IntPtr.Zero)
-        {
-            unsafe
-            {
-                var ptr = (uint*)heightCacheStatsReadbackPtr;
-                for (var i = 0; i < HeightCacheStatsWordCount; i++)
-                {
-                    ptr[i] = 0u;
-                }
-            }
-        }
-    }
-
-    private void InitializeVoxelReadbackBuffers(int maxChunks)
-    {
-        // CPU generation path writes directly into chunkVoxelCache; no GL readback buffers required.
-    }
-
     private void DisposeVoxelReadbackBuffers()
     {
         // Placeholder for parity with historical GPU pipeline; nothing to release at the moment.
-    }
-
-    private void AccumulateHeightCacheShaderCounters()
-    {
-        if (heightCacheStatsBuffer == 0 || heightCacheStatsReadbackBuffer == 0 || heightCacheStatsReadbackPtr == IntPtr.Zero)
-            return;
-
-        GL.CopyNamedBufferSubData((int)heightCacheStatsBuffer, (int)heightCacheStatsReadbackBuffer, IntPtr.Zero, IntPtr.Zero, HeightCacheStatsByteSize);
-        GL.MemoryBarrier(MemoryBarrierFlags.ClientMappedBufferBarrierBit);
-
-        unsafe
-        {
-            var counters = (uint*)heightCacheStatsReadbackPtr;
-            heightCacheShaderHitsTotal += counters[0];
-            heightCacheShaderMissesTotal += counters[1];
-        }
     }
 
     private int EnsureHeightCacheSlot(int chunkIdx)
@@ -1367,7 +1247,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (submitted > 0)
         {
-            Log.Info($"ChunkStreamingManager: Queued {submitted} chunks for CPU generation (frame {currentFrame}, batchSize={batchIndices.Count})");
+            Log.Debug($"ChunkStreamingManager: Queued {submitted} chunks for CPU generation (frame {currentFrame}, batchSize={batchIndices.Count})");
         }
     }
 
@@ -1478,7 +1358,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (processed > 0)
         {
-            Log.Info($"ChunkStreamingManager: Applied CPU generation results for {processed} chunks (frame {currentFrame})");
+            Log.Debug($"ChunkStreamingManager: Applied CPU generation results for {processed} chunks (frame {currentFrame})");
         }
     }
 
@@ -2027,7 +1907,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Execute CPU-based frustum culling for the provided chunk indices.
     /// Returns an array of visibility flags (1 = visible, 0 = culled) and updates indirect draw commands in-place.
     /// </summary>
-    public int[] ExecuteFrustumCulling(OpenRender.Core.Rendering.ICamera camera, int[] chunkIndices)
+    public int[] ExecuteFrustumCulling(ICamera camera, int[] chunkIndices)
     {
         if (chunkIndices.Length == 0)
         {
@@ -2076,7 +1956,6 @@ public sealed class ChunkStreamingManager : IDisposable
         StatVisibleIndices = visibleIndices;
         StatVisibleChunks = visibleChunks;
         StatFrustumCulledChunks = culledChunks;
-        // StatOccludedChunks is no longer tracked; leave at default.
 
         return flags;
     }
@@ -2289,15 +2168,12 @@ public sealed class ChunkStreamingManager : IDisposable
         if (biomeLutTexture != 0) GL.DeleteTexture(biomeLutTexture);
         if (heightCacheBuffer != 0) GL.DeleteBuffer(heightCacheBuffer);
         if (heightCacheSlotBuffer != 0) GL.DeleteBuffer(heightCacheSlotBuffer);
-        DisposeHeightCacheStatsReadbackBuffer();
-        if (heightCacheStatsBuffer != 0) GL.DeleteBuffer(heightCacheStatsBuffer);
         // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
         phase3Buffers?.Dispose();
         chunkVoxelCache.Dispose();
         ClearPendingCpuMeshingQueue();
         cpuGenerationJobs.Dispose();
         cpuMeshingJobs.Dispose();
-        DisposeVoxelReadbackBuffers();
 
         Log.Info("ChunkStreamingManager: Disposed");
     }
