@@ -39,9 +39,6 @@ public class Chunk(int index)
     // Visibility & streaming state
     public bool Visible;
     internal byte VisibleLinger;
-    internal volatile bool PendingUpload;
-    internal volatile bool PendingCompute;
-    internal volatile bool ComputeInProgress;
    
 
     // GPU column heights for heightmap-based collision
@@ -49,18 +46,18 @@ public class Chunk(int index)
 
     // GPU-provided collision spans per XZ column: up to MaxSpans pairs (yStart,yEnd) per column
     private int[]? columnSpanPairs;
-    private byte[]? columnSpanTypes;
+    private BlockId[]? columnSpanTypes;
     private byte[]? columnSpanCounts;
     public bool HasGpuSpans { get; private set; }
 
     /// <summary>
     /// Apply GPU-generated collision spans for accurate collision detection (caves, overhangs).
     /// </summary>
-    internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts, byte[] types)
+    internal void ApplyColumnSpansForCollision(int[] spansPairs, byte[] counts, BlockId[] types)
     {
         columnSpanPairs = spansPairs;
         columnSpanCounts = counts;
-        columnSpanTypes = types; // BlockDescriptor bytes from GPU
+        columnSpanTypes = types;
         HasGpuSpans = true;
 
         // Update maxHeights for compatibility with simple heightmap queries
@@ -84,7 +81,10 @@ public class Chunk(int index)
         HasGpuColumns = true;
     }
 
-    internal bool TryGetSpanData(out int[] spansPairs, out byte[] counts, out byte[] types)
+    /// <summary>
+    /// Try to get the raw span data arrays.
+    /// </summary>
+    internal bool TryGetSpanData(out int[] spansPairs, out byte[] counts, out BlockId[] types)
     {
         if (columnSpanPairs != null && columnSpanCounts != null && columnSpanTypes != null)
         {
@@ -101,18 +101,18 @@ public class Chunk(int index)
     }
 
     /// <summary>
-    /// Query block descriptor from GPU collision spans (supports caves/overhangs).
-    /// Returns the BlockDescriptor at the specified local position.
+    /// Query block type from GPU collision spans (supports caves/overhangs).
+    /// Returns the BlockId at the specified local position.
     /// </summary>
-    internal BlockDescriptor GetDescriptorFromSpans(int lx, int ly, int lz, int maxSpans)
+    internal BlockId GetBlockFromSpans(int lx, int ly, int lz, int maxSpans)
     {
         if (!HasGpuSpans || columnSpanPairs is null || columnSpanCounts is null || columnSpanTypes is null) 
-            return BlockDescriptor.Air;
+            return BlockId.Air;
         
         var size = VoxelHelper.ChunkSideSize;
         var col = lx + lz * size;
         var c = columnSpanCounts[col];
-        if (c == 0) return BlockDescriptor.Air;
+        if (c == 0) return BlockId.Air;
         
         var baseIdx = col * maxSpans * 2;
         var typeBaseIdx = col * maxSpans;
@@ -122,42 +122,10 @@ public class Chunk(int index)
             var y1 = columnSpanPairs[baseIdx + i * 2 + 1];
             if (ly >= y0 && ly < y1)
             {
-                return (BlockDescriptor)columnSpanTypes[typeBaseIdx + i];
+                return columnSpanTypes[typeBaseIdx + i];
             }
         }
-        return BlockDescriptor.Air;
-    }
-
-    /// <summary>
-    /// DEPRECATED: Legacy method for backward compatibility.
-    /// Use GetDescriptorFromSpans() instead.
-    /// </summary>
-    [Obsolete("Use GetDescriptorFromSpans() instead. GeologyLayer has been renamed to BlockDescriptor.")]
-    internal BlockDescriptor GetGeologyFromSpans(int lx, int ly, int lz, int maxSpans)
-    {
-        return GetDescriptorFromSpans(lx, ly, lz, maxSpans);
-    }
-
-    /// <summary>
-    /// DEPRECATED: Legacy method for backward compatibility.
-    /// Use GetDescriptorFromSpans() instead.
-    /// </summary>
-    [Obsolete("Use GetDescriptorFromSpans() instead. BlockType is being phased out in favor of BlockDescriptor.")]
-    internal BlockType GetBlockTypeFromSpans(int lx, int ly, int lz, int maxSpans)
-    {
-        var descriptor = GetDescriptorFromSpans(lx, ly, lz, maxSpans);
-        return descriptor switch
-        {
-            BlockDescriptor.Air => BlockType.None,
-            BlockDescriptor.Water => BlockType.WaterLevel,
-            BlockDescriptor.Surface => BlockType.GrassDirt,
-            BlockDescriptor.Subsurface => BlockType.Dirt,
-            BlockDescriptor.DeepSubsurface => BlockType.Rock,
-            BlockDescriptor.UnderwaterSurface => BlockType.Sand,
-            BlockDescriptor.UnderwaterSubsurface => BlockType.Sand,
-            BlockDescriptor.ShoreLine => BlockType.Sand,
-            _ => BlockType.Rock
-        };
+        return BlockId.Air;
     }
 
     #endregion

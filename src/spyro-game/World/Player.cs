@@ -224,7 +224,7 @@ public class Player
             if (streamingManager != null)
             {
                 Log.Info($"Player breaking block at {pickedBlock.Value.GlobalPosition}");
-                streamingManager.ApplyBlockEdit(pickedBlock.Value.GlobalPosition, BlockType.None, true);
+                streamingManager.ApplyBlockEdit(pickedBlock.Value.GlobalPosition, BlockId.Air, true);
             }
             else
             {
@@ -360,7 +360,7 @@ public class Player
         var neighbors = world.GetCollideCandidateBlocks(currentBlock.Value, 3);
         foreach (var neighbor in neighbors)
         {
-            if (neighbor == null || neighbor.Value.BlockType == BlockType.None || neighbor.Value.BlockType == BlockType.WaterLevel) continue;
+            if (neighbor == null || !neighbor.Value.IsSolid) continue;
 
             var (Min, Max) = neighbor.Value.Aabb;
 
@@ -487,7 +487,7 @@ public class Player
         {
             var p = position + off;
             var block = world.GetBlockByPositionGlobalSafe((int)p.X, (int)topY, (int)p.Z);
-            if (block != null && block.Value.BlockType != BlockType.None && block.Value.BlockType != BlockType.WaterLevel)
+            if (block != null && block.Value.IsSolid)
                 return true;
         }
         return false;
@@ -505,7 +505,7 @@ public class Player
         {
             // Check if the obstacle itself is blocked above (wall > 1 block high)
             var blockAbove = world.GetBlockByPositionGlobalSafe((int)obstacle.GlobalPosition.X, (int)obstacle.GlobalPosition.Y + 1, (int)obstacle.GlobalPosition.Z);
-            if (blockAbove != null && blockAbove.Value.BlockType != BlockType.None && blockAbove.Value.BlockType != BlockType.WaterLevel)
+            if (blockAbove != null && blockAbove.Value.IsSolid)
             {
                 return false;
             }
@@ -560,7 +560,7 @@ public class Player
                 for (var z = minZ; z <= maxZ; z++)
                 {
                     var b = world.GetBlockByPositionGlobalSafe(x, y, z);
-                    if (b != null && b.Value.BlockType != BlockType.None && b.Value.BlockType != BlockType.WaterLevel)
+                    if (b != null && b.Value.IsSolid)
                     {
                         return true;
                     }
@@ -589,7 +589,7 @@ public class Player
             for (var z = minZ; z <= maxZ; z++)
             {
                 var block = world.GetBlockByPositionGlobalSafe(x, y, z);
-                if (block != null && block.Value.BlockType != BlockType.None && block.Value.BlockType != BlockType.WaterLevel)
+                if (block != null && block.Value.IsSolid)
                 {
                     if (block.Value.Aabb.Max.Y > maxY)
                     {
@@ -667,7 +667,7 @@ public class Player
             for (var tx = minX; tx <= maxX; tx++)
             {
                 var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
-                if (b is not null && b.Value.BlockType is not BlockType.None and not BlockType.WaterLevel)
+                if (b is not null && b.Value.IsSolid)
                     return true; // ceiling within one block above head
             }
         return false;
@@ -680,6 +680,6 @@ public class Player
         var z = (int)globalPosition.Z;
         
         var block = world.GetBlockByPositionGlobalSafe(x, y, z);
-        return block is not null && block.Value.BlockType is not BlockType.None and not BlockType.WaterLevel;
+        return block is not null && block.Value.IsSolid;
     }
 }

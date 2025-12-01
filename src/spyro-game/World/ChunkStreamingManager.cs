@@ -52,7 +52,7 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly HashSet<int> pendingSeamRefresh = [];
     private readonly Dictionary<int, long> lastSeamRefreshFrame = [];
     private readonly Dictionary<int, byte> lastUploadedPlaceholderMasks = [];
-    private readonly Dictionary<int, Dictionary<int, BlockType>> chunkEdits = [];
+    private readonly Dictionary<int, Dictionary<int, BlockId>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
     private readonly Queue<int> freeHeightCacheSlots = new();
@@ -119,6 +119,18 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ) 
         => chunkVoxelCache.GetBiomeAtWorldPos(worldX, worldZ);
+
+    /// <summary>
+    /// Get climate data (C/T/H/E/PV) at a specific world position (interpolated).
+    /// </summary>
+    public (float C, float T, float H, float E, float PV)? GetClimateAtWorldPos(int worldX, int worldZ)
+        => chunkVoxelCache.GetClimateAtWorldPos(worldX, worldZ);
+
+    /// <summary>
+    /// Get raw cell climate data (NOT interpolated) - this is what biome selection uses.
+    /// </summary>
+    public (float C, float T, float H, float E, float PV)? GetCellClimateAtWorldPos(int worldX, int worldZ)
+        => chunkVoxelCache.GetCellClimateAtWorldPos(worldX, worldZ);
     
     /// <summary>
     /// Try to get full biome data for a chunk.
@@ -1348,8 +1360,8 @@ public sealed class ChunkStreamingManager : IDisposable
                 continue;
             }
 
-            var descriptorEdits = BuildDescriptorEdits(idx);
-            cpuGenerationJobs.Enqueue(idx, descriptorEdits);
+            var blockIdEdits = BuildBlockIdEdits(idx);
+            cpuGenerationJobs.Enqueue(idx, blockIdEdits);
             submitted++;
         }
 
@@ -1470,36 +1482,16 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    private IReadOnlyDictionary<int, BlockDescriptor>? BuildDescriptorEdits(int chunkIdx)
+    private IReadOnlyDictionary<int, BlockId>? BuildBlockIdEdits(int chunkIdx)
     {
         if (!chunkEdits.TryGetValue(chunkIdx, out var edits) || edits.Count == 0)
         {
             return null;
         }
 
-        var descriptorMap = new Dictionary<int, BlockDescriptor>(edits.Count);
-        foreach (var entry in edits)
-        {
-            descriptorMap[entry.Key] = ConvertBlockType(entry.Value);
-        }
-
-        return descriptorMap;
+        // edits are already BlockId, no conversion needed
+        return edits;
     }
-
-    private static BlockDescriptor ConvertBlockType(BlockType blockType) => blockType switch
-    {
-        BlockType.None => BlockDescriptor.Air,
-        BlockType.WaterLevel => BlockDescriptor.Water,
-        BlockType.Sand => BlockDescriptor.ShoreLine,
-        BlockType.Grass => BlockDescriptor.Surface,
-        BlockType.GrassDirt => BlockDescriptor.Surface,
-        BlockType.Dirt => BlockDescriptor.Subsurface,
-        BlockType.Gravel => BlockDescriptor.Subsurface,
-        BlockType.Rock => BlockDescriptor.DeepSubsurface,
-        BlockType.BedRock => BlockDescriptor.DeepSubsurface,
-        BlockType.Snow => BlockDescriptor.Surface,
-        _ => BlockDescriptor.DeepSubsurface
-    };
 
     private void ApplyCollisionResults(int chunkIdx, CpuTerrainGenerator.ChunkGenerationResult result)
     {
@@ -1520,7 +1512,7 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    private void UploadHeightCacheFromSpans(int chunkIdx, int[] spanPairs, byte[] spanCounts, byte[] spanTypes)
+    private void UploadHeightCacheFromSpans(int chunkIdx, int[] spanPairs, byte[] spanCounts, BlockId[] spanTypes)
     {
         if (!HeightCacheEnabled)
         {
@@ -1553,7 +1545,7 @@ public sealed class ChunkStreamingManager : IDisposable
                         maxYExclusive = y1;
                     }
 
-                    if (spanTypes[typeBaseIdx + s] == (byte)BlockDescriptor.Water)
+                    if (spanTypes[typeBaseIdx + s].IsWater())
                     {
                         waterSpan = true;
                     }
@@ -1781,7 +1773,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Apply a block edit (break or place) at world position (Phase 5)
     /// Marks affected chunk(s) as dirty and queues for regeneration
     /// </summary>
-    public void ApplyBlockEdit(Vector3 worldPosition, BlockType blockType, bool isBreaking)
+    public void ApplyBlockEdit(Vector3 worldPosition, BlockId blockId, bool isBreaking)
     {
         // Convert world position to chunk coordinates
         var chunkX = (int)(worldPosition.X / VoxelHelper.ChunkSideSize);
@@ -1826,10 +1818,10 @@ public sealed class ChunkStreamingManager : IDisposable
         // FIX: If breaking a block underwater, replace with Water instead of Air
         if (isBreaking && (int)worldPosition.Y <= VoxelHelper.WaterLevel)
         {
-            blockType = BlockType.WaterLevel;
+            blockId = BlockId.Water;
         }
 
-        MarkVoxelEdited(chunkIdx, voxelIdx, blockType, isBreaking);
+        MarkVoxelEdited(chunkIdx, voxelIdx, blockId, isBreaking);
 
         // Mark chunk as dirty (needs regeneration)
         MarkChunkDirty(chunkIdx);
@@ -1874,7 +1866,7 @@ public sealed class ChunkStreamingManager : IDisposable
             DeferNeighborRemesh(neighborIdx);
         }
 
-        Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} type={blockType} breaking={isBreaking}");
+        Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} block={blockId} breaking={isBreaking}");
 
         // Save edits immediately to prevent data loss
         SaveChunkEdits(chunkIdx);
@@ -1884,7 +1876,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Mark a specific voxel as edited in the GPU edit mask buffer (Phase 5)
     /// This will be read by the generation shader to override generated terrain
     /// </summary>
-    private void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockType blockType, bool isBreaking)
+    private void MarkVoxelEdited(int chunkIdx, int voxelIdx, BlockId blockId, bool isBreaking)
     {
         if (!chunkEdits.TryGetValue(chunkIdx, out var value))
         {
@@ -1892,9 +1884,9 @@ public sealed class ChunkStreamingManager : IDisposable
             chunkEdits[chunkIdx] = value;
         }
 
-        value[voxelIdx] = blockType;
+        value[voxelIdx] = blockId;
 
-        Log.Debug($"Voxel edit: chunk={chunkIdx} voxel={voxelIdx} type={blockType} breaking={isBreaking}");
+        Log.Debug($"Voxel edit: chunk={chunkIdx} voxel={voxelIdx} block={blockId} breaking={isBreaking}");
     }
 
 
@@ -1972,8 +1964,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var biomeData = terrainConfig.BuildBiomeIdLut(256);
         GL.TextureSubImage2D(biomeLutTexture, 0, 0, 0, 256, 256, PixelFormat.RedInteger, PixelType.UnsignedByte, biomeData);
 
-        // M5: Reload biome textures if renderer is active (hot reload)
-        terrainRenderer?.LoadBiomeTextures(terrainConfig);
+        // M5: Initialize block textures (hot reload)
+        terrainRenderer?.InitializeBlockTextures();
     }
 
     /// <summary>
@@ -2010,8 +2002,8 @@ public sealed class ChunkStreamingManager : IDisposable
     public void InitializePhase4()
     {
         terrainRenderer = new VoxelTerrainRenderer();
-        // M5: Load biome textures
-        terrainRenderer.LoadBiomeTextures(terrainConfig);
+        // M5: Initialize block-based textures
+        terrainRenderer.InitializeBlockTextures();
         Log.Info("Phase 4 rendering initialized");
     }
 
@@ -2167,7 +2159,7 @@ public sealed class ChunkStreamingManager : IDisposable
         foreach (var kvp in edits)
         {
             writer.Write(kvp.Key);
-            writer.Write((byte)kvp.Value);
+            writer.Write((ushort)kvp.Value);
         }
     }
 
@@ -2190,6 +2182,9 @@ public sealed class ChunkStreamingManager : IDisposable
         if (!Directory.Exists(dirPath)) return;
 
         var files = Directory.GetFiles(dirPath, "chunk_*.bin");
+        var loadedCount = 0;
+        var deletedCount = 0;
+        
         foreach (var file in files)
         {
             try
@@ -2212,14 +2207,37 @@ public sealed class ChunkStreamingManager : IDisposable
                         using var reader = new BinaryReader(stream);
 
                         var count = reader.ReadInt32();
-                        var edits = new Dictionary<int, BlockType>(count);
+                        
+                        // Check if file has enough data for ushort format (4 + count * 6 bytes)
+                        // Old format was byte (4 + count * 5 bytes)
+                        var expectedNewSize = 4 + count * (sizeof(int) + sizeof(ushort));
+                        var expectedOldSize = 4 + count * (sizeof(int) + sizeof(byte));
+                        var fileSize = stream.Length;
+                        
+                        if (fileSize == expectedOldSize)
+                        {
+                            // Old format - delete the file as it's incompatible
+                            stream.Close();
+                            File.Delete(file);
+                            deletedCount++;
+                            continue;
+                        }
+                        
+                        if (fileSize != expectedNewSize)
+                        {
+                            Log.Warn($"Skipping edit file {name}: unexpected file size {fileSize} (expected {expectedNewSize})");
+                            continue;
+                        }
+                        
+                        var edits = new Dictionary<int, BlockId>(count);
                         for (var k = 0; k < count; k++)
                         {
                             var voxelIdx = reader.ReadInt32();
-                            var type = (BlockType)reader.ReadByte();
+                            var type = (BlockId)reader.ReadUInt16();
                             edits[voxelIdx] = type;
                         }
                         chunkEdits[chunkIdx] = edits;
+                        loadedCount++;
                         Log.Debug($"Loaded {count} edits for chunk {chunkIdx} (world coords {worldX},{worldZ} → chunk indices {chunkX},{chunkZ})");
                     }
                     else
@@ -2230,10 +2248,25 @@ public sealed class ChunkStreamingManager : IDisposable
             }
             catch (Exception ex)
             {
-                Log.Error($"Failed to load edits from {file}: {ex.Message}");
+                // Delete corrupted/incompatible files
+                try
+                {
+                    File.Delete(file);
+                    deletedCount++;
+                    Log.Debug($"Deleted incompatible edit file: {file}");
+                }
+                catch
+                {
+                    Log.Error($"Failed to load or delete edits from {file}: {ex.Message}");
+                }
             }
         }
-        Log.Info($"Loaded edits for {chunkEdits.Count} chunks from {dirPath}");
+        
+        if (deletedCount > 0)
+        {
+            Log.Info($"Deleted {deletedCount} incompatible old-format edit files");
+        }
+        Log.Info($"Loaded edits for {loadedCount} chunks from {dirPath}");
     }
 
     public void Dispose()

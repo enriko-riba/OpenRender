@@ -11,17 +11,17 @@ public sealed class BiomeGenerator
     private readonly TerrainConfig config;
     private readonly uint seed;
     
-    // Climate noise parameters
-    private const float ContinentalnessScale = 1f / 800f;
+    // Climate noise parameters - use config values for consistency with CpuTerrainGenerator
+    private float ContinentalnessScale => config.ContinentalnessScale;
     private const float TemperatureScale = 1f / 400f;
     private const float HumidityScale = 1f / 350f;
-    private const float ErosionScale = 1f / 300f;
-    private const float PeaksValleysScale = 1f / 150f;
+    private float ErosionScale => config.ErosionScale;
+    private float PeaksValleysScale => config.RidgeScale;
     private const float WeirdnessScale = 1f / 200f;
     
-    // Warp parameters for more organic shapes
-    private const float WarpScale = 1f / 150f;
-    private const float WarpStrength = 40f;
+    // Warp parameters - use config values for consistency with CpuTerrainGenerator
+    private float WarpScale => config.WarpScale;
+    private float WarpStrength => config.WarpStrength;
     
     public BiomeGenerator(TerrainConfig config)
     {
@@ -44,9 +44,17 @@ public sealed class BiomeGenerator
             {
                 var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
                 
-                // Sample at cell center
-                var worldX = baseX + cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
-                var worldZ = baseZ + cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                // Sample at cell center with slight randomization to break grid alignment
+                // This prevents biome borders from appearing as straight lines along axes
+                var baseCellX = baseX + cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                var baseCellZ = baseZ + cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                
+                // Add small per-cell jitter (±0.25 blocks equivalent) to break grid patterns
+                // Using cell coordinates as seed ensures consistency across chunk boundaries
+                var jitterX = GradientNoise2D(baseCellX * 0.25f, baseCellZ * 0.25f, seed + 2000u) * 0.5f;
+                var jitterZ = GradientNoise2D(baseCellX * 0.25f + 100f, baseCellZ * 0.25f + 100f, seed + 2001u) * 0.5f;
+                var worldX = baseCellX + jitterX;
+                var worldZ = baseCellZ + jitterZ;
                 
                 // Apply domain warp for more organic shapes
                 var warpX = SampleNoise2D(worldX, worldZ, WarpScale, seed + 1000u);
@@ -102,6 +110,9 @@ public sealed class BiomeGenerator
     
     /// <summary>
     /// Select biome based on Minecraft-style multi-parameter system.
+    /// Uses ONLY noise parameters (primarily continentalness) for biome selection.
+    /// This matches Minecraft 1.18+ where biomes are determined by noise, not actual terrain height.
+    /// The terrain height is DERIVED from the same noise, creating natural consistency.
     /// </summary>
     private BiomeId SelectBiome(float continentalness, float temperature, float humidity,
         float erosion, float pv, float weirdness, float estimatedAltitude)
@@ -110,30 +121,36 @@ public sealed class BiomeGenerator
         var erosion01 = erosion * 0.5f + 0.5f;
         var pv01 = pv * 0.5f + 0.5f;
         
-        // ============ OCEAN BIOMES ============
-        // Deep ocean: very low continentalness
-        if (cont01 < 0.20f)
+        // ============ OCEAN BIOMES (Minecraft-style: ONLY use continentalness) ============
+        // In Minecraft 1.18+, ocean biomes are determined PURELY by continentalness noise.
+        // The terrain height is ALSO derived from continentalness (via height spline),
+        // so low continentalness → Ocean biome AND low terrain (underwater).
+        // This creates natural consistency without checking actual height.
+        if (cont01 < config.DeepOceanThreshold)
         {
             return BiomeId.DeepOcean;
         }
         
-        // Regular ocean
-        if (cont01 < 0.35f)
+        if (cont01 < config.OceanThreshold)
         {
             return BiomeId.Ocean;
         }
         
         // ============ COASTAL BIOMES ============
-        // Beach: near ocean with high erosion (flat coasts)
-        if (cont01 < 0.42f && erosion01 > 0.5f)
+        // Beach: in the coastal zone (just above ocean threshold) with high erosion (flat coasts)
+        // Minecraft-style: Use ONLY noise parameters, not estimated altitude
+        // The height spline ensures coastal continentalness produces near-water-level terrain
+        var beachUpperThreshold = config.OceanThreshold + config.CoastRange + 0.07f;
+        if (cont01 < beachUpperThreshold && erosion01 > 0.5f)
         {
             return BiomeId.Beach;
         }
         
         // ============ ALPINE BIOME ============
-        // High altitude OR very cold temperature
+        // Minecraft-style: Use estimated altitude from noise parameters
+        // (This is acceptable since we're using the same spline that shapes terrain)
         var altitudeAboveWater = estimatedAltitude - VoxelHelper.WaterLevel;
-        if (altitudeAboveWater > config.AlpineElevation || temperature < 0.15f)
+        if (altitudeAboveWater > config.AlpineElevation || temperature < 0.12f)
         {
             return BiomeId.Alpine;
         }
@@ -184,45 +201,36 @@ public sealed class BiomeGenerator
     
     /// <summary>
     /// Estimate terrain altitude from climate parameters.
-    /// Used to affect temperature before actual terrain generation.
+    /// Uses the actual height spline from config to match CpuTerrainGenerator's output.
     /// </summary>
     private float GetEstimatedAltitude(float continentalness, float erosion, float pv, float weirdness)
     {
         var cont01 = continentalness * 0.5f + 0.5f;
         var erosion01 = erosion * 0.5f + 0.5f;
         var pv01 = pv * 0.5f + 0.5f;
-        var weird01 = weirdness * 0.5f + 0.5f;
         
-        // Base height from continentalness
-        float baseHeight;
-        if (cont01 < 0.35f)
+        // Use the SAME height spline as CpuTerrainGenerator for consistency
+        // HeightSpline maps cont01 [0,1] -> height offset from water level
+        var baseHeight = config.HeightSpline.Evaluate(cont01) + VoxelHelper.WaterLevel;
+        
+        // Only add terrain variation if above ocean threshold (land areas)
+        if (cont01 >= config.OceanThreshold)
         {
-            // Ocean
-            baseHeight = VoxelHelper.WaterLevel - 30f;
-        }
-        else if (cont01 < 0.50f)
-        {
-            // Coastal
-            baseHeight = VoxelHelper.WaterLevel + 10f;
-        }
-        else if (cont01 < 0.70f)
-        {
-            // Inland
-            baseHeight = VoxelHelper.WaterLevel + 40f;
-        }
-        else
-        {
-            // Mountain base
-            baseHeight = VoxelHelper.WaterLevel + 80f;
+            // Add peaks/valleys contribution (scaled by inverse erosion)
+            // This matches the terrain shaping in CpuTerrainGenerator
+            var ruggedness = 1f - erosion01 * 0.5f;
+            var peakContribution = pv01 * 20f * ruggedness;
+            baseHeight += peakContribution;
+            
+            // Mountain areas get additional cliff contribution
+            if (cont01 > config.MountainThreshold)
+            {
+                var mountainness = (cont01 - config.MountainThreshold) / (1f - config.MountainThreshold);
+                baseHeight += mountainness * 40f * pv01;
+            }
         }
         
-        // Add peaks/valleys contribution (scaled by inverse erosion)
-        var peakContribution = pv01 * 100f * (1f - erosion01 * 0.7f);
-        
-        // Weirdness can add dramatic height changes
-        var weirdContribution = weird01 > 0.7f ? (weird01 - 0.7f) * 150f : 0f;
-        
-        return baseHeight + peakContribution + weirdContribution;
+        return baseHeight;
     }
     
     /// <summary>

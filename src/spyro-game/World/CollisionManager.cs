@@ -2,11 +2,18 @@ using OpenTK.Mathematics;
 
 namespace SpyroGame.World;
 
+/// <summary>
+/// Represents a vertical span of blocks in a column.
+/// Used for efficient collision detection with caves and overhangs.
+/// </summary>
 public struct ColumnSpan
 {
     public short StartY;
     public short EndY;
-    public byte BlockDescriptor; // Stores BlockDescriptor enum value from GPU
+    /// <summary>
+    /// The block type for this span (stores full BlockId as ushort).
+    /// </summary>
+    public ushort Block;
 }
 
 public class ChunkCollisionData
@@ -56,12 +63,12 @@ public class CollisionManager
     }
 
     // Raycasting and collision logic
-    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockDescriptor descriptor)
+    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockId block)
     {
         hitPoint = Vector3.Zero;
         blockPos = Vector3i.Zero;
         normal = Vector3.Zero;
-        descriptor = BlockDescriptor.Air;
+        block = BlockId.Air;
 
         direction = Vector3.Normalize(direction);
         var t = 0.0f;
@@ -96,10 +103,10 @@ public class CollisionManager
         while (t < maxDistance)
         {
             // Check if current voxel is solid
-            if (IsSolid(x, y, z, out descriptor))
+            if (IsSolid(x, y, z, out block))
             {
                 // Ignore water blocks for picking (only solid blocks matter)
-                if (descriptor != BlockDescriptor.Water)
+                if (!block.IsWater())
                 {
                     hitPoint = origin + direction * t;
                     blockPos = new Vector3i(x, y, z);
@@ -150,9 +157,9 @@ public class CollisionManager
         return false;
     }
 
-    private bool IsSolid(int x, int y, int z, out BlockDescriptor descriptor)
+    private bool IsSolid(int x, int y, int z, out BlockId block)
     {
-        descriptor = BlockDescriptor.Air;
+        block = BlockId.Air;
         if (y < 0 || y >= VoxelHelper.ChunkYSize) return false;
 
         var chunkX = (int)Math.Floor((float)x / 16.0f);
@@ -175,9 +182,10 @@ public class CollisionManager
                 var span = data.Spans[offset + i];
                 if (y >= span.StartY && y <= span.EndY)
                 {
-                    descriptor = (BlockDescriptor)span.BlockDescriptor;
-                    // Solid if not Air or Water
-                    return descriptor is not BlockDescriptor.Air and not BlockDescriptor.Water;
+                    // Span stores full BlockId as ushort
+                    block = (BlockId)span.Block;
+                    // Solid if the block has the Solid flag
+                    return block.IsSolid();
                 }
             }
         }

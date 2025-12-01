@@ -127,6 +127,11 @@ internal class GameScene : Scene
         base.Load();
         BackgroundColor = Color4.CornflowerBlue;
 
+        // CRITICAL: Disable polygon/line smoothing to prevent visible triangle edges
+        // The base Scene.Load() enables these, but they cause visible lines on voxel terrain
+        GL.Disable(EnableCap.PolygonSmooth);
+        GL.Disable(EnableCap.LineSmooth);
+
         // Initialize block picking service NOW (after world and terrainRenderer are set)
         if (terrainRenderer != null && world != null && blockPickingService == null)
         {
@@ -321,7 +326,7 @@ internal class GameScene : Scene
         {
             var camPos = camera.Position;
             var blockAtCam = world.GetBlockByPositionGlobalSafe((int)camPos.X, (int)camPos.Y, (int)camPos.Z);
-            var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.BlockType == BlockType.WaterLevel;
+            var isUnderwater = blockAtCam.HasValue && blockAtCam.Value.Block.IsWater();
 
             terrainRenderer?.IsCameraUnderwater = isUnderwater;
             skyBox?.IsCameraUnderwater = isUnderwater;
@@ -522,17 +527,37 @@ internal class GameScene : Scene
             // Get biome name for this block
             var biomeName = GetBiomeNameForBlock(bb);
 
-            WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.Descriptor} | {biomeName}", textColor);
+            WriteLine($"  Block Below: ({(int)bbLocal.X}, {(int)bbLocal.Y}, {(int)bbLocal.Z})@{bbChunk} {bb.Block} | {biomeName}", textColor);
         }
         else
         {
             WriteLine($"  Block Below: n/a", textColor);
         }
 
-        WriteLine($"  Mode: {(player.IsGhostMode ? "Ghost (Fly)" : "Physics")} ", textColor);
-        WriteLine($"  Grounded: {player.IsGrounded}", textColor);
-        WriteLine($"  Jumping: {player.IsJumping}", textColor);
-        WriteLine($"  Velocity Y: {player.VelocityY:F2}", textColor);
+        var modeStr = player.IsGhostMode ? "Ghost" : "Phys";
+        var groundedStr = player.IsGrounded ? "Grnd" : "Air";
+        var jumpStr = player.IsJumping ? "Jump" : "";
+        WriteLine($"  {modeStr} | {groundedStr} {jumpStr} | VelY: {player.VelocityY:F2}", textColor);
+
+        // Climate data for block below player - show RAW CELL values (not interpolated)
+        // This matches what biome selection actually uses
+        if (player.CurrentBlockBellow.HasValue && streamingManager != null)
+        {
+            var bb = player.CurrentBlockBellow.Value;
+            var worldX = (int)bb.GlobalPosition.X;
+            var worldZ = (int)bb.GlobalPosition.Z;
+            var climate = streamingManager.GetCellClimateAtWorldPos(worldX, worldZ);
+            if (climate.HasValue)
+            {
+                var c = climate.Value;
+                // Show cell coordinates (4x4 grid per chunk)
+                var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+                var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+                var cellX = localX / ChunkBiomeData.BlocksPerCell;
+                var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
+                WriteLine($"  C:{c.C:F3} T:{c.T:F3} H:{c.H:F2} E:{c.E:F2} PV:{c.PV:F2} Cell:({cellX},{cellZ})", textColor);
+            }
+        }
         WriteLine("", textColor);
 
         // Picked Block (highlighted section)
@@ -554,7 +579,7 @@ internal class GameScene : Scene
                 // Get biome name for picked block
                 var biomeName = GetBiomeNameForBlock(b);
 
-                WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.Descriptor} | {biomeName}", textColor);
+                WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.Block} | {biomeName}", textColor);
             }
             else
             {

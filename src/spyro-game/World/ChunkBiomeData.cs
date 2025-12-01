@@ -110,6 +110,15 @@ public sealed class ChunkBiomeData
     }
     
     /// <summary>
+    /// Get raw (non-interpolated) climate data for a specific cell.
+    /// </summary>
+    public (float C, float T, float H, float E, float PV) GetCellClimate(int cellX, int cellZ)
+    {
+        var idx = cellZ * GridSize + cellX;
+        return (Continentalness[idx], Temperature[idx], Humidity[idx], Erosion[idx], PeaksValleys[idx]);
+    }
+    
+    /// <summary>
     /// Bilinear interpolation of a value at a block position.
     /// </summary>
     private float GetInterpolatedValue(float[] values, int localX, int localZ)

@@ -21,7 +21,6 @@ internal static class ChunkMeshBuilder
     private const uint DisabledLightValue = 0x0Fu;
     private static bool VerboseBuilderLogging = false;
     private static bool DebugWaterFaces = true;
-    [ThreadStatic] private static int t_debugNeighborMisses;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
     [ThreadStatic] private static List<uint>? t_opaqueVertices;
@@ -100,26 +99,35 @@ internal static class ChunkMeshBuilder
             {
                 for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    var descriptor = sampler.SampleDescriptor(x, y, z);
-                    if (!HasRenderableGeometry(descriptor))
+                    var block = sampler.SampleBlock(x, y, z);
+                    if (!HasRenderableGeometry(block))
                     {
                         continue;
                     }
 
-                    var isTranslucent = IsTranslucent(descriptor);
+                    var isTranslucent = IsTranslucent(block);
+                    var isLiquid = block.IsLiquid();
                     var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
                     var targetIndexList = isTranslucent ? translucentIndices : opaqueIndices;
 
                     for (uint face = 0; face < FaceDirections.Length; face++)
                     {
-                        var (dx, dy, dz) = FaceDirections[(int)face];
-                        var neighborDescriptor = sampler.SampleDescriptor(x + dx, y + dy, z + dz);
-                        if (!ShouldEmitFace(descriptor, neighborDescriptor))
+                        // WATER OPTIMIZATION: Only render top face (+Y, face index 2) for liquids
+                        // This creates a flat water surface without "water curtain" artifacts
+                        // Skip side faces (0,1,4,5) and bottom face (3) for water
+                        if (isLiquid && face != 2) // 2 = +Y (top face)
                         {
                             continue;
                         }
 
-                        AppendFace(targetVertexList, targetIndexList, sampler, descriptor, x, y, z, face);
+                        var (dx, dy, dz) = FaceDirections[(int)face];
+                        var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz);
+                        if (!ShouldEmitFace(block, neighborBlock))
+                        {
+                            continue;
+                        }
+
+                        AppendFace(targetVertexList, targetIndexList, sampler, block, x, y, z, face);
                         sampler.IncrementFaceCount(isTranslucent);
                     }
                 }
@@ -176,34 +184,34 @@ internal static class ChunkMeshBuilder
         return true;
     }
 
-    private static bool HasRenderableGeometry(byte descriptor) => descriptor > (byte)BlockDescriptor.Air;
+    private static bool HasRenderableGeometry(BlockId block) => !block.IsAir();
 
-    private static bool IsOpaque(byte descriptor) => descriptor > (byte)BlockDescriptor.Water;
+    private static bool IsOpaque(BlockId block) => block.IsOpaque();
 
-    private static bool IsTranslucent(byte descriptor) => descriptor == (byte)BlockDescriptor.Water;
+    private static bool IsTranslucent(BlockId block) => block.IsTranslucent();
 
-    private static bool ShouldEmitFace(byte descriptor, byte neighborDescriptor)
+    private static bool ShouldEmitFace(BlockId block, BlockId neighborBlock)
     {
-        if (!HasRenderableGeometry(descriptor))
+        if (!HasRenderableGeometry(block))
         {
             return false;
         }
 
-        if (!HasRenderableGeometry(neighborDescriptor))
+        if (!HasRenderableGeometry(neighborBlock))
         {
             return true;
         }
 
-        if (descriptor == neighborDescriptor)
+        if (block == neighborBlock)
         {
             return false;
         }
 
-        var descriptorOpaque = IsOpaque(descriptor);
-        var neighborOpaque = IsOpaque(neighborDescriptor);
+        var blockOpaque = IsOpaque(block);
+        var neighborOpaque = IsOpaque(neighborBlock);
 
         // Opaque blocks mutually occlude each other.
-        if (descriptorOpaque && neighborOpaque)
+        if (blockOpaque && neighborOpaque)
         {
             return false;
         }
@@ -211,10 +219,14 @@ internal static class ChunkMeshBuilder
         return true;
     }
 
-    private static void AppendFace(List<uint> vertexScratch, List<uint> indexScratch, ChunkVoxelSampler sampler, byte descriptor, int x, int y, int z, uint face)
+    private static void AppendFace(List<uint> vertexScratch, List<uint> indexScratch, ChunkVoxelSampler sampler, BlockId block, int x, int y, int z, uint face)
     {
         var baseVertex = (uint)(vertexScratch.Count / 2);
         var offsets = FaceCornerOffsets[(int)face];
+        Span<uint> ao = stackalloc uint[4];
+
+        // Get biome at this block position (same for all vertices of the face)
+        var biome = sampler.SampleBiome(x, z);
 
         for (uint corner = 0; corner < 4; corner++)
         {
@@ -222,18 +234,36 @@ internal static class ChunkMeshBuilder
             var vx = x + ox;
             var vy = y + oy;
             var vz = z + oz;
-            var ao = sampler.ComputeAmbientOcclusion(face, corner, x, y, z);
+            ao[(int)corner] = sampler.ComputeAmbientOcclusion(face, corner, x, y, z);
             var light = sampler.SamplePackedLight(vx, vy, vz);
-            vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao, corner));
-            vertexScratch.Add(PackVertexAttributes(descriptor, light));
+            vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner));
+            vertexScratch.Add(PackVertexAttributes(block, light, biome));
         }
 
-        indexScratch.Add(baseVertex);
-        indexScratch.Add(baseVertex + 1);
-        indexScratch.Add(baseVertex + 2);
-        indexScratch.Add(baseVertex);
-        indexScratch.Add(baseVertex + 2);
-        indexScratch.Add(baseVertex + 3);
+        // Minecraft-style quad flip to avoid "bowtie" AO interpolation artifacts.
+        // Compare sums of opposite corner AO values to decide triangulation.
+        // Default diagonal: 0-2. Flipped diagonal: 1-3.
+        var flipQuad = ao[0] + ao[2] < ao[1] + ao[3];
+        if (flipQuad)
+        {
+            // Triangles: 1-2-3, 1-3-0 (diagonal from 1 to 3)
+            indexScratch.Add(baseVertex + 1);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex + 3);
+            indexScratch.Add(baseVertex + 1);
+            indexScratch.Add(baseVertex + 3);
+            indexScratch.Add(baseVertex);
+        }
+        else
+        {
+            // Triangles: 0-1-2, 0-2-3 (diagonal from 0 to 2)
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 1);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex + 3);
+        }
     }
 
     private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner)
@@ -244,8 +274,12 @@ internal static class ChunkMeshBuilder
         return ux | (uy << 5) | (uz << 14) | ((face & 0x7u) << 19) | ((ao & 0x7u) << 22) | ((corner & 0x3u) << 25);
     }
 
-    private static uint PackVertexAttributes(byte descriptor, uint light)
-        => (uint)descriptor | ((light & 0xFFu) << 8);
+    /// <summary>
+    /// Pack vertex attributes into a single uint.
+    /// Layout: bits 0-7: blockId, bits 8-15: light, bits 16-23: biomeId
+    /// </summary>
+    private static uint PackVertexAttributes(BlockId block, uint light, BiomeId biome)
+        => (uint)block.GetId() | ((light & 0xFFu) << 8) | (((uint)biome & 0xFFu) << 16);
 
     private sealed class ChunkVoxelSampler
     {
@@ -255,6 +289,7 @@ internal static class ChunkMeshBuilder
         private readonly Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView> neighborCache = [];
         private readonly int chunkX;
         private readonly int chunkZ;
+        private readonly ChunkBiomeData? biomeData;
 
         internal ChunkVoxelSampler(ChunkVoxelDataCache cache, ChunkVoxelDataCache.ChunkVoxelDataView centerView, ChunkMeshingJobSystem.ChunkMeshWorkItem workItem)
         {
@@ -263,6 +298,7 @@ internal static class ChunkMeshBuilder
             this.workItem = workItem;
             chunkX = workItem.ChunkIndex % VoxelHelper.WorldChunksXZ;
             chunkZ = workItem.ChunkIndex / VoxelHelper.WorldChunksXZ;
+            cache.TryGetBiomeData(workItem.ChunkIndex, out biomeData);
         }
 
         public int FaceCount { get; private set; }
@@ -278,27 +314,27 @@ internal static class ChunkMeshBuilder
             }
         }
 
-        public byte SampleDescriptor(int x, int y, int z)
+        public BlockId SampleBlock(int x, int y, int z)
         {
             if (y < 0)
             {
-                return (byte)BlockDescriptor.Subsurface;
+                return BlockId.Stone;
             }
 
             if (y >= VoxelHelper.ChunkYSize)
             {
-                return (byte)BlockDescriptor.Air;
+                return BlockId.Air;
             }
 
             if (centerView.IsWithinBounds(x, y, z))
             {
-                return (byte)(centerView.ReadVoxel(x, y, z) & 0xFF);
+                return (BlockId)(ushort)centerView.ReadVoxel(x, y, z);
             }
 
             if (MirrorMissingNeighbors && TryClonePlaceholder(x, z, out var cloneX, out var cloneZ))
             {
                 var clampedY = Math.Clamp(y, 0, VoxelHelper.ChunkYSize - 1);
-                return (byte)(centerView.ReadVoxel(cloneX, clampedY, cloneZ) & 0xFF);
+                return (BlockId)(ushort)centerView.ReadVoxel(cloneX, clampedY, cloneZ);
             }
 
             if (ShouldTreatAsPlaceholderEdge(x, z))
@@ -306,23 +342,39 @@ internal static class ChunkMeshBuilder
                 // When neighbor is missing (placeholder edge), treat as AIR so faces ARE emitted.
                 // When the neighbor loads, edge seam refresh will check if faces need to be
                 // removed (if neighbor turned out to be solid) and trigger a remesh if needed.
-                return (byte)BlockDescriptor.Air;
+                return BlockId.Air;
             }
 
             if (TryGetNeighborView(x, z, out var neighborView, out var localX, out var localZ))
             {
                 if (neighborView.TryReadVoxel(localX, y, localZ, out var voxel))
                 {
-                    return (byte)(voxel & 0xFF);
+                    return (BlockId)(ushort)voxel;
                 }
             }
 
             // Neighbor lookup failed - track this for debugging
             NeighborMisses++;
-            return (byte)BlockDescriptor.Air;
+            return BlockId.Air;
         }
 
         public uint SamplePackedLight(int x, int y, int z) => DisabledLightValue;
+
+        /// <summary>
+        /// Get the biome ID at the given local chunk coordinates.
+        /// Uses the 4x4 biome grid (each cell covers 4x4 blocks).
+        /// </summary>
+        public BiomeId SampleBiome(int localX, int localZ)
+        {
+            if (biomeData is null)
+            {
+                return BiomeId.Plains; // Fallback if no biome data
+            }
+            // Clamp to valid range
+            localX = Math.Clamp(localX, 0, VoxelHelper.ChunkSideSize - 1);
+            localZ = Math.Clamp(localZ, 0, VoxelHelper.ChunkSideSize - 1);
+            return biomeData.GetBiomeAt(localX, localZ);
+        }
 
         /// <summary>
         /// Minecraft-style ambient occlusion.
@@ -349,9 +401,9 @@ internal static class ChunkMeshBuilder
             // side1: offset in first tangent direction
             // side2: offset in second tangent direction  
             // cornerBlock: offset in both tangent directions (diagonal)
-            var side1 = IsOccluder(SampleDescriptor(x + nx + t1x * c1, y + ny + t1y * c1, z + nz + t1z * c1));
-            var side2 = IsOccluder(SampleDescriptor(x + nx + t2x * c2, y + ny + t2y * c2, z + nz + t2z * c2));
-            var cornerBlock = IsOccluder(SampleDescriptor(x + nx + t1x * c1 + t2x * c2, y + ny + t1y * c1 + t2y * c2, z + nz + t1z * c1 + t2z * c2));
+            var side1 = IsOccluder(SampleBlock(x + nx + t1x * c1, y + ny + t1y * c1, z + nz + t1z * c1));
+            var side2 = IsOccluder(SampleBlock(x + nx + t2x * c2, y + ny + t2y * c2, z + nz + t2z * c2));
+            var cornerOccluder = IsOccluder(SampleBlock(x + nx + t1x * c1 + t2x * c2, y + ny + t1y * c1 + t2y * c2, z + nz + t1z * c1 + t2z * c2));
             
             // Minecraft formula: if both sides are solid, corner doesn't matter (full occlusion)
             // Otherwise, AO = 3 - (side1 + side2 + corner)
@@ -362,7 +414,7 @@ internal static class ChunkMeshBuilder
             }
             else
             {
-                var occluders = (side1 ? 1 : 0) + (side2 ? 1 : 0) + (cornerBlock ? 1 : 0);
+                var occluders = (side1 ? 1 : 0) + (side2 ? 1 : 0) + (cornerOccluder ? 1 : 0);
                 ao = 3 - occluders;
             }
             
@@ -372,13 +424,13 @@ internal static class ChunkMeshBuilder
         }
         
         /// <summary>
-        /// Check if a block descriptor is an occluder for AO purposes.
+        /// Check if a block is an occluder for AO purposes.
         /// Solid opaque blocks occlude; air and water don't.
         /// </summary>
-        private static bool IsOccluder(byte descriptor)
+        private static bool IsOccluder(BlockId block)
         {
-            // Air and Water don't occlude
-            return descriptor > (byte)BlockDescriptor.Water;
+            // Air and Water don't occlude - use BlockId opaque flag
+            return block.IsOpaque();
         }
         
         /// <summary>

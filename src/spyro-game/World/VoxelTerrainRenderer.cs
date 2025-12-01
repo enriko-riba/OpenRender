@@ -76,75 +76,20 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public int BiomeLutTexture { get; set; }
     public bool ShowBiomes { get; set; }
 
-    // M5: Biome texture handles (bindless)
-    // Now stores 3 textures per biome/layer: [BiomeID * 24 + GeologyLayer * 3 + FaceType]
-    // FaceType: 0=Top, 1=Bottom, 2=Sides
-    private ulong[]? biomeTextureHandles;
     private readonly Dictionary<string, Texture[]> atlasSplitCache = [];
 
-    public void LoadBiomeTextures(TerrainConfig config)
+    // Block texture system (per MINECRAFT_TERRAIN_ARCHITECTURE.md)
+    private BlockTextureManager? blockTextureManager;
+
+    /// <summary>
+    /// Initialize the block-based texture system.
+    /// This replaces the old biome-based texture loading.
+    /// </summary>
+    public void InitializeBlockTextures()
     {
-        if (config.Biomes == null || config.Biomes.Count == 0) return;
-
-        // 10 biomes * 8 layers * 3 face types = 240 handles
-        var handleCount = 10 * 8 * 3;
-        if (biomeTextureHandles == null || biomeTextureHandles.Length != handleCount)
-        {
-            biomeTextureHandles = new ulong[handleCount];
-        }
-
-        // Create a sampler for all terrain textures with REPEAT wrap mode for tiling
-        var sampler = Sampler.Create(TextureMinFilter.NearestMipmapNearest, TextureMagFilter.Nearest, TextureWrapMode.Repeat, TextureWrapMode.Repeat);
-
-        for (var i = 0; i < config.Biomes.Count; i++)
-        {
-            var biome = config.Biomes[i];
-            if (biome.Id >= 10) continue; // Max 10 biomes supported in shader for now
-
-            for (var layer = 0; layer < 8; layer++)
-            {
-                if (layer < biome.TexturePaths.Count)
-                {
-                    var path = biome.TexturePaths[layer];
-                    if (string.IsNullOrEmpty(path))
-                    {
-                        // Set all 3 face types to 0 for this layer
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = 0;
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = 0;
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = 0;
-                        continue;
-                    }
-
-                    // Check if we've already split this atlas
-                    if (!atlasSplitCache.TryGetValue(path, out var splitTextures))
-                    {
-                        try 
-                        {
-                            // Split the 3×1 atlas into 3 separate textures
-                            splitTextures = Texture.SplitHorizontalAtlas(path, columns: 3, generateMipMap: true);
-                            if (splitTextures != null && splitTextures.Length == 3)
-                            {
-                                atlasSplitCache[path] = splitTextures;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Log.Error($"Failed to load and split texture atlas '{path}': {ex.Message}");
-                        }
-                    }
-
-                    if (splitTextures != null && splitTextures.Length == 3)
-                    {
-                        // Store handles for all 3 face types: Top (0), Bottom (1), Sides (2)
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 0] = splitTextures[0].GetBindlessHandle(sampler); // Top
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 1] = splitTextures[1].GetBindlessHandle(sampler); // Bottom
-                        biomeTextureHandles[biome.Id * 24 + layer * 3 + 2] = splitTextures[2].GetBindlessHandle(sampler); // Sides
-                    }
-                }
-            }
-        }
-        
-        Log.Info($"VoxelTerrainRenderer: Loaded {biomeTextureHandles.Count(h => h != 0)} biome texture handles (split from atlases)");
+        blockTextureManager?.Dispose();
+        blockTextureManager = new BlockTextureManager();
+        blockTextureManager.Initialize();
     }
 
     public VoxelTerrainRenderer() : base(CreateDummyMesh(), CreateDummyMaterial())
@@ -336,12 +281,6 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return; // Nothing to render yet or already disposed
         }
 
-        // DEBUG: Log that we're rendering
-        //if (++frameCounter % 60 == 0) // Log every 60 frames
-        //{
-        //    Log.Info($"VoxelTerrainRenderer.OnDraw: Rendering {actualFaceCount} chunks via multi-draw indirect");
-        //}
-
         // Enable backface culling for voxel terrain
         GL.Enable(EnableCap.CullFace);
         GL.CullFace(TriangleFace.Back);
@@ -356,28 +295,11 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             return;
         }
 
-        // M5: Bind Biome Texture Handles
-        if (biomeTextureHandles != null)
+        // Bind block texture array (Unit 0)
+        if (blockTextureManager != null)
         {
-            // Try array syntax first, then flat
-            var loc = shader.GetUniformLocation("uBiomeTextures[0]");
-            if (loc == -1) loc = shader.GetUniformLocation("uBiomeTextures");
-
-            if (loc != -1)
-            {
-                // Convert ulong[] to uint[] for uvec2 array
-                var uints = new uint[biomeTextureHandles.Length * 2];
-                for (var i = 0; i < biomeTextureHandles.Length; i++)
-                {
-                    var h = biomeTextureHandles[i];
-                    uints[i * 2] = (uint)(h & 0xFFFFFFFF);
-                    uints[i * 2 + 1] = (uint)(h >> 32);
-                }
-
-                // Set the uniform array
-                // Note: Some drivers/OpenTK versions might have issues with count > 1 if they don't detect array correctly
-                GL.Uniform2(loc, biomeTextureHandles.Length, uints);
-            }
+            blockTextureManager.Bind(0);
+            shader.SetInt("uBlockTextures", 0);
         }
 
         // M5: Bind Biome LUT (Unit 7)
@@ -493,6 +415,10 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         if (disposed) return;
 
         disposed = true;
+
+        // Cleanup block textures
+        blockTextureManager?.Dispose();
+        blockTextureManager = null;
 
         if (vao != 0)
         {

@@ -2,8 +2,15 @@
 
 namespace SpyroGame.World;
 
+/// <summary>
+/// Represents the state of a single block in the world.
+/// Contains position, chunk reference, and block type information.
+/// </summary>
 public struct BlockState
 {
+    /// <summary>
+    /// Creates a BlockState from a linear voxel index within a chunk.
+    /// </summary>
     public BlockState(int index, Chunk chunk)
     {
         Index = index;
@@ -14,14 +21,16 @@ public struct BlockState
         LocalPosition = new Vector3i(lx, ly, lz);
         GlobalPosition = chunk.Position + LocalPosition;
         Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
-        Descriptor = BlockDescriptor.Air; // Default, should be set by caller
+        Block = BlockId.Air; // Default, should be set by caller
     }
 
-    public BlockState(Vector3i globalPosition, BlockDescriptor descriptor)
+    /// <summary>
+    /// Creates a BlockState from a global position and block type.
+    /// </summary>
+    public BlockState(Vector3i globalPosition, BlockId block)
     {
         GlobalPosition = globalPosition;
-        Descriptor = descriptor;
-        // Calculate local position and chunk index from global position
+        Block = block;
         ChunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(globalPosition);
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(ChunkIndex);
         LocalPosition = globalPosition - chunkPos;
@@ -29,51 +38,26 @@ public struct BlockState
         Aabb = new AABB(GlobalPosition, GlobalPosition + Vector3i.One);
     }
 
+    /// <summary>
+    /// Linear voxel index within the chunk.
+    /// </summary>
     public int Index { get; private set; }
 
+    /// <summary>
+    /// Index of the chunk containing this block.
+    /// </summary>
     public int ChunkIndex { get; private set; }
 
+    /// <summary>
+    /// Axis-aligned bounding box for collision detection.
+    /// </summary>
     public AABB Aabb { get; private set; }
     
     /// <summary>
-    /// The block descriptor from GPU terrain generation (primary collision data).
+    /// The block type with embedded property flags.
+    /// Use extension methods like IsSolid(), IsOpaque() etc. for property checks.
     /// </summary>
-    public BlockDescriptor Descriptor { get; set; }
-
-    /// <summary>
-    /// DEPRECATED: Legacy BlockType for backward compatibility.
-    /// Use Descriptor property instead for new code.
-    /// </summary>
-    [Obsolete("Use Descriptor property instead. BlockType is being phased out in favor of BlockDescriptor.")]
-    public BlockType BlockType
-    {
-        readonly get => Descriptor switch
-        {
-            BlockDescriptor.Air => BlockType.None,
-            BlockDescriptor.Water => BlockType.WaterLevel,
-            BlockDescriptor.Surface => BlockType.GrassDirt,
-            BlockDescriptor.Subsurface => BlockType.Dirt,
-            BlockDescriptor.DeepSubsurface => BlockType.Rock,
-            BlockDescriptor.UnderwaterSurface => BlockType.Sand,
-            BlockDescriptor.UnderwaterSubsurface => BlockType.Sand,
-            BlockDescriptor.ShoreLine => BlockType.Sand,
-            _ => BlockType.Rock
-        };
-        set
-        {
-            // Convert BlockType to BlockDescriptor for backward compatibility
-            Descriptor = value switch
-            {
-                BlockType.None => BlockDescriptor.Air,
-                BlockType.WaterLevel => BlockDescriptor.Water,
-                BlockType.GrassDirt or BlockType.Grass => BlockDescriptor.Surface,
-                BlockType.Dirt => BlockDescriptor.Subsurface,
-                BlockType.Rock or BlockType.BedRock => BlockDescriptor.DeepSubsurface,
-                BlockType.Sand => BlockDescriptor.UnderwaterSurface,
-                _ => BlockDescriptor.Surface
-            };
-        }
-    }
+    public BlockId Block { get; set; }
 
     /// <summary>
     /// Gets or sets the blocks visibility.
@@ -83,12 +67,20 @@ public struct BlockState
 
     /// <summary>
     /// Helper to check if this block is solid (for collision).
-    /// Returns true for all descriptors except Air and Water.
+    /// Returns true for all solid blocks (uses BlockId.Solid flag).
     /// </summary>
-    public readonly bool IsSolid => Descriptor is not BlockDescriptor.Air and not BlockDescriptor.Water;
+    public readonly bool IsSolid => Block.IsSolid();
 
+    /// <summary>
+    /// Position within the chunk (0-15 for X/Z, 0-383 for Y).
+    /// </summary>
     public Vector3i LocalPosition { get; private set; }
+
+    /// <summary>
+    /// World position of this block.
+    /// </summary>
     public Vector3i GlobalPosition { get; private set; } 
 
-    public override readonly string ToString() => $"{Descriptor}@{LocalPosition}/{ChunkIndex}";
+    /// <inheritdoc/>
+    public override readonly string ToString() => $"{Block}@{LocalPosition}/{ChunkIndex}";
 }

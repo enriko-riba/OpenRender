@@ -1,11 +1,11 @@
-// voxel-terrain.frag - Phase 4: Voxel Terrain Fragment Shader
+// voxel-terrain.frag - Voxel Terrain Fragment Shader
 // Purpose: Simple lighting and texturing for voxel terrain
-// Version: 3.0 (Simplified - GPU picking removed)
+// Version: 5.0 (BlockId-based textures - each block type has its own 150x50 atlas)
 //
-// Implements basic Blinn-Phong lighting with ambient occlusion
+// Architecture Change: Textures are now indexed by BlockId, not BiomeId+Layer
+// Each BlockId maps to a texture array layer containing a 150×50 atlas (Top|Bottom|Side)
 
 #version 460
-#extension GL_ARB_bindless_texture : require
 
 // ============================================================================
 // Uniforms
@@ -31,58 +31,31 @@ layout(std140, binding = 1) uniform light {
     Light dirLight;
 };
 
-// Material properties (simple for now - Phase 5 will add per-block textures)
-uniform vec3 uMaterialDiffuse = vec3(0.6, 0.8, 0.4);   // Grass-like color
+// Material properties
+uniform vec3 uMaterialDiffuse = vec3(0.6, 0.8, 0.4);
 uniform vec3 uMaterialSpecular = vec3(0.2, 0.2, 0.2);
 uniform float uMaterialShininess = 16.0;
 
-// Texture samplers
-// M5: Bindless texture handles for biome blending
-// [BiomeID * 24 + GeologyLayer * 3 + FaceType]
-// FaceType: 0=Top, 1=Bottom, 2=Sides
-uniform uvec2 uBiomeTextures[240];
+// Block texture array: layer = BlockId, each layer is 150×50 atlas (Top|Bottom|Side)
+uniform sampler2DArray uBlockTextures;
 
-uniform int uIsUnderwater; // 1 if camera is inside a water block, 0 otherwise
+uniform int uIsUnderwater;
 uniform float uTime;
 uniform int uShowBiomes;
 
-#define IS_FRAGMENT_SHADER
-#include "terrain-common.glsl"
-#include "terrain-climate.glsl"
+// ============================================================================
+// Constants
+// ============================================================================
 
-// Helper to get BlockDescriptor (geology layer index) from block descriptor value
-// BlockDescriptor values map directly to geology layers (0-7)
-// This is now a simple passthrough since we refactored to use BlockDescriptor enum
-uint getBlockDescriptor(uint blockDescriptor) {
-    return blockDescriptor;  // Direct mapping: BD_* values ARE the geology layer indices
-}
+const int WATER_LEVEL = 35;
 
-// Helper to determine face type from normal for texture selection
-uint getFaceType(vec3 normal) {
-    if (normal.y > 0.5) return 0u;        // Top face
-    if (normal.y < -0.5) return 1u;       // Bottom face
-    return 2u;                             // Side faces
-}
-
-// Helper to sample biome texture - now uses separate textures per face type!
-vec4 sampleBiomeTexture(uint biomeId, int layer, vec2 uv, vec3 normal) {
-    if (biomeId >= 10) biomeId = 0; // Safety clamp
-    
-    // Determine which texture to use based on face orientation
-    uint faceType = getFaceType(normal);
-    
-    // Calculate index: BiomeID * 24 + Layer * 3 + FaceType
-    int index = int(biomeId) * 24 + layer * 3 + int(faceType);
-    uvec2 handle = uBiomeTextures[index];
-    
-    if (handle.x == 0u && handle.y == 0u) {
-        return vec4(1.0, 0.0, 1.0, 1.0); // Magenta error
-    }
-    
-    // Simple texture sampling - no atlas math needed! GL_REPEAT handles tiling
-    return texture(sampler2D(handle), uv);
-}
-
+// Atlas UV regions (150×50 split into 3 regions of 50×50)
+const float ATLAS_TOP_U_MIN = 0.0;
+const float ATLAS_TOP_U_MAX = 0.333333;
+const float ATLAS_BOTTOM_U_MIN = 0.333333;
+const float ATLAS_BOTTOM_U_MAX = 0.666666;
+const float ATLAS_SIDE_U_MIN = 0.666666;
+const float ATLAS_SIDE_U_MAX = 1.0;
 
 // ============================================================================
 // Fragment Input (from vertex shader)
@@ -93,7 +66,8 @@ in vec3 vNormal;
 in vec2 vTexCoord;
 in float vAO;
 in vec3 vViewDir;
-flat in uint vBlockDescriptor;  // Renamed from vBlockType to match BlockDescriptor enum
+flat in uint vBlockDescriptor;  // BlockId (lower 10 bits = unique ID)
+flat in uint vBiomeId;          // CPU-computed biome ID (for debug display only)
 in float vSkyLight;
 in float vBlockLight;
 
@@ -104,9 +78,58 @@ in float vBlockLight;
 layout(location = 0) out vec4 FragColor;
 
 // ============================================================================
-// Constants
+// Helper Functions
 // ============================================================================
-// Constants defined in terrain-common.glsl
+
+// Sample block texture using the 150×50 atlas format
+// Face determines which 50-pixel column to sample from
+vec4 sampleBlockTexture(uint blockId, vec2 localUV, vec3 normal) {
+    // Determine face type from normal
+    // Top (+Y): use first 50 pixels
+    // Bottom (-Y): use middle 50 pixels  
+    // Sides (±X, ±Z): use last 50 pixels
+    
+    float uOffset;
+    if (normal.y > 0.5) {
+        // Top face
+        uOffset = ATLAS_TOP_U_MIN;
+    } else if (normal.y < -0.5) {
+        // Bottom face
+        uOffset = ATLAS_BOTTOM_U_MIN;
+    } else {
+        // Side face
+        uOffset = ATLAS_SIDE_U_MIN;
+    }
+    
+    // Compute atlas UV: offset + local UV scaled to 1/3 width
+    // Flip Y because OpenGL textures have origin at bottom-left but images load from top
+    vec2 atlasUV = vec2(uOffset + localUV.x * 0.333333, 1.0 - localUV.y);
+    
+    // Sample from texture array (layer = blockId)
+    return texture(uBlockTextures, vec3(atlasUV, float(blockId)));
+}
+
+// Biome debug colors (for visualization when ShowBiomes is enabled)
+vec3 getBiomeDebugColor(uint biomeId) {
+    // 10 distinct colors for 10 biomes
+    vec3 colors[10] = vec3[10](
+        vec3(0.0, 0.3, 0.8),   // 0: Ocean (deep blue)
+        vec3(0.9, 0.8, 0.5),   // 1: Beach (sand)
+        vec3(0.4, 0.7, 0.3),   // 2: Plains (green)
+        vec3(0.7, 0.6, 0.3),   // 3: Savanna (tan)
+        vec3(0.9, 0.7, 0.4),   // 4: Desert (yellow)
+        vec3(0.2, 0.5, 0.2),   // 5: Rainforest (dark green)
+        vec3(0.3, 0.5, 0.4),   // 6: Taiga (blue-green)
+        vec3(0.6, 0.7, 0.8),   // 7: Tundra (light blue-gray)
+        vec3(0.5, 0.4, 0.3),   // 8: Highlands (brown)
+        vec3(0.95, 0.95, 0.98) // 9: Alpine (white)
+    );
+    
+    if (biomeId < 10u) {
+        return colors[biomeId];
+    }
+    return vec3(1.0, 0.0, 1.0); // Magenta for unknown
+}
 
 // ============================================================================
 // Main Shader
@@ -120,92 +143,49 @@ void main() {
 
     // Normalize interpolated vectors
     vec3 N = normalize(vNormal);
-    vec3 L = normalize(-dirLight.position);  // Direction TO light (negate direction)
+    vec3 L = normalize(-dirLight.position);
     vec3 V = normalize(vViewDir);
 
-    // Sample texture based on block descriptor
-    vec4 baseColor = vec4(0.0);
+    // Extract BlockId (lower 10 bits)
+    uint blockId = vBlockDescriptor & 0x3FFu;
     
-    bool isWater = vBlockDescriptor == BD_WATER;
+    // Check if this is water
+    bool isWater = blockId == 1u;
     bool isTopFace = N.y > 0.5;
+
+    // Sample block texture
+    vec4 baseColor = sampleBlockTexture(blockId, vTexCoord, N);
 
     // Procedural Water Normal
     vec3 waterNormal = N;
     
     if (isWater && isTopFace) {
-        // Improved wave animation - Higher frequency and more random
+        // Wave animation
         float speed = 2.5;
-        
-        // Wave 1: High frequency diagonal
         float w1 = sin(vWorldPos.x * 3.5 + vWorldPos.z * 3.0 + uTime * speed);
-        
-        // Wave 2: Crossing
         float w2 = cos(vWorldPos.x * 3.2 - vWorldPos.z * 3.8 + uTime * speed * 1.1);
-        
-        // Wave 3: Detail
         float w3 = sin(vWorldPos.z * 5.5 + uTime * speed * 1.5);
-
-        // Wave 4: Interference
         float w4 = cos((vWorldPos.x + vWorldPos.z) * 6.0 + uTime * speed * 2.0);
         
-        // Perturb normal - Very low amplitude to avoid artifacts
         vec3 waveOffset = vec3((w1 + w3) * 0.015, 0.0, (w2 + w4) * 0.015); 
         waterNormal = normalize(N + waveOffset);
     }
-    
-    // M5: Biome Texture Selection
-    uint layer = getBlockDescriptor(vBlockDescriptor);
 
-    // Fix for greedy meshing artifacts and water biome detection
-    // CRITICAL FIX: Water blocks have their top face at the UPPER edge (Y+1)
-    // We need to sample the biome INSIDE the water block, not in the air above it
-    vec3 voxelCenter;
+    // Water specific processing
     if (isWater) {
-        // Water block biome sampling:
-        // The top face vertices are at Y+1 (top of water block)
-        // We need to sample at the water block's Y position, not Y+1
-        vec3 samplePos = vWorldPos;
-        
-        // If this is a top face (normal pointing up), shift down into water
-        if (isTopFace) {
-            samplePos.y -= 0.5;  // Move from top edge into water block
-        }
-        
-        voxelCenter = floor(samplePos) + 0.5;
-    } else {
-        // Solid blocks: Offset slightly inward from face to ensure we're inside the block
-        voxelCenter = floor(vWorldPos - N * 0.01) + 0.5;
-    }
-    
-    // Use direct biome ID lookup (Voronoi is too expensive in fragment shader)
-    // The getBiomeId() function now uses actual terrain height for ocean detection
-    // and provides natural boundaries via noise
-    uint primaryBiomeId = getBiomeId(voxelCenter);
-    baseColor = sampleBiomeTexture(primaryBiomeId, int(layer), vTexCoord, N);
-    
-        // Water specific processing
-        if (isWater) {
-        // Water opacity increases with distance to hide underwater culling artifacts
         float dist = length(vWorldPos - cameraPos);
         
-        // Day/Night base color
         vec3 deepWaterColor = vec3(0.1, 0.15, 0.25);
         vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 3.0;
         
-        // Compute fog color early (used for both side walls and top faces)
         vec3 waterFogColor = isCameraUnderwater 
             ? dirLight.ambient * vec3(0.2, 0.5, 0.8)
             : dirLight.ambient * vec3(0.10, 0.18, 0.30);
         
-        // Increase opacity at night
         float brightness = dot(dirLight.ambient, vec3(0.333));
         float nightOpacityBoost = 1.0 - smoothstep(0.05, 0.2, brightness);
         
         if (isTopFace) {
-            // === TOP FACE RENDERING ===
-            // This is the visible water surface
-            
-            // Base opacity: higher minimum to prevent see-through
             float alphaFade = clamp((dist - 2.0) / 20.0, 0.0, 1.0);
             if (isCameraUnderwater) {
                 alphaFade = clamp((dist - 5.0) / 30.0, 0.0, 1.0);
@@ -214,22 +194,18 @@ void main() {
                 baseColor.a = mix(0.88, 1.0, alphaFade);
             }
             
-            // Mix texture with water color
             baseColor.rgb = mix(baseColor.rgb, waterBaseColor, 0.5);
             baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.3, 0.0, 1.0);
             
-            // Fresnel effect for surface reflectivity (outside view only)
             if (!isCameraUnderwater) {
                 vec3 viewDir = normalize(vViewDir);
                 float fresnel = pow(1.0 - clamp(abs(dot(waterNormal, viewDir)), 0.0, 1.0), 3.0);
                 vec3 surfaceTint = mix(vec3(0.05, 0.15, 0.25), vec3(0.35, 0.6, 0.9), fresnel);
                 baseColor.rgb = mix(baseColor.rgb, surfaceTint, 0.65);
-                // Higher minimum alpha to prevent "holes" at steep angles
                 float minAlpha = mix(0.70, 0.92, fresnel);
                 baseColor.a = max(baseColor.a, minAlpha);
             }
             
-            // Sun specular reflection (outside view only)
             if (!isCameraUnderwater) {
                 vec3 H = normalize(L + V);
                 float specAngle = max(dot(H, waterNormal), 0.0);
@@ -238,7 +214,6 @@ void main() {
                 baseColor.rgb += sunSpecular;
             }
             
-            // Outside view absorption
             if (!isCameraUnderwater) {
                 float absorption = exp(-dist * 0.10);
                 baseColor.rgb = mix(waterFogColor, baseColor.rgb, absorption);
@@ -246,178 +221,59 @@ void main() {
                 baseColor.a = max(baseColor.a, opacityBoost);
             }
         } else {
-            // === SIDE FACE RENDERING ===
-            // These are the water walls - make them blend seamlessly with fog
-            // to hide chunk boundary artifacts (the grid pattern)
+            // Side faces (underwater walls)
+            baseColor.rgb = mix(waterBaseColor, baseColor.rgb, 0.3);
+            float sideAlpha = clamp((dist - 2.0) / 15.0, 0.5, 0.95);
+            baseColor.a = sideAlpha;
             
-            // Side walls should match the fog color almost exactly
-            // This makes redundant faces at chunk borders invisible
-            float sideFade = clamp(dist / 15.0, 0.0, 1.0);
-            
-            // Very close: slight hint of water color; far: pure fog
-            baseColor.rgb = mix(waterBaseColor, waterFogColor, 0.85 + sideFade * 0.15);
-            
-            // High opacity to block view but color matches fog so seams invisible
-            baseColor.a = mix(0.92, 0.99, sideFade);
-            baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.05, 0.0, 1.0);
+            if (isCameraUnderwater) {
+                float causticsBase = sin(vWorldPos.x * 4.0 + vWorldPos.z * 4.0 + uTime * 2.0) * 0.5 + 0.5;
+                float caustics2 = sin(vWorldPos.x * 3.2 - vWorldPos.z * 2.8 + uTime * 1.5) * 0.5 + 0.5;
+                float caustics = causticsBase * caustics2;
+                float depthFade = clamp((waterLevel - vWorldPos.y) / 30.0, 0.0, 1.0);
+                baseColor.rgb += caustics * 0.15 * (1.0 - depthFade);
+            }
         }
-    } else {
-        // Solid blocks are opaque
-        baseColor.a = 1.0;
-    }
-    
-    vec3 texColor = baseColor.rgb;
-
-    // Strengthen AO curve
-    float aoStrength = pow(vAO, 2.0); // Make dark areas darker
-
-    // --- DUAL CHANNEL LIGHTING ---
-    
-    // 1. Sky Light (Sun)
-    // Masks the directional light. If SkyLight is 0 (Cave), Sun is blocked.
-    float skyFactor = vSkyLight;
-    
-    // 2. Block Light (Torches/Lava)
-    // Additive light source. Warm color.
-    vec3 torchColor = vec3(1.0, 0.8, 0.6);
-    vec3 localLight = torchColor * vBlockLight;
-
-    // Ambient component (modulated by AO and Sky Light)
-    // Keep a tiny minimum ambient (0.05) so caves aren't 100% pitch black if unlit
-    // Bumped to 0.2 based on user feedback "nothing visible in dark places"
-    vec3 ambient = dirLight.ambient * texColor * aoStrength * max(skyFactor, 0.2);
-    
-    // Diffuse component
-    float NdotL = max(dot(N, L), 0.0);
-    
-    // Underwater Lighting: Wrapped diffuse (scattering)
-    if (isCameraUnderwater) {
-        NdotL = NdotL * 0.5 + 0.5; 
     }
 
-    // Use waterNormal for water blocks, original N for others
-    vec3 lightingNormal = (vBlockDescriptor == BD_WATER) ? waterNormal : N;
-    float NdotL_Water = max(dot(lightingNormal, L), 0.0);
-    if (isCameraUnderwater) NdotL_Water = NdotL_Water * 0.5 + 0.5;
-
-    // Apply Sky Factor to Diffuse (Sun)
-    vec3 diffuse = dirLight.diffuse * texColor * NdotL_Water * aoStrength * skyFactor;
-    
-    // Specular component (Blinn-Phong)
-    vec3 specular = vec3(0.0);
-    if (NdotL_Water > 0.0) {
-        vec3 H = normalize(L + V);
-        float NdotH = max(dot(lightingNormal, H), 0.0);
-        float specPower = pow(NdotH, uMaterialShininess);
-        // Apply Sky Factor to Specular (Sun)
-        specular = dirLight.specular * uMaterialSpecular * specPower * aoStrength * skyFactor;
+    // Biome debug mode
+    if (uShowBiomes == 1 && !isWater) {
+        vec3 biomeColor = getBiomeDebugColor(vBiomeId);
+        baseColor.rgb = mix(baseColor.rgb, biomeColor, 0.7);
     }
 
-    // Attenuate light underwater
-    if (isCameraUnderwater) {
-        diffuse *= vec3(0.4, 0.7, 0.9); // Blue-green filter
-        specular *= 0.0; // No specular underwater
+    // Lighting
+    vec3 finalNormal = isWater ? waterNormal : N;
+    float NdotL = max(dot(finalNormal, L), 0.0);
+    float diffuse = NdotL;
+    
+    // Ambient occlusion
+    float ao = vAO;
+    
+    // Blinn-Phong specular (reduced for terrain)
+    vec3 H = normalize(L + V);
+    float NdotH = max(dot(finalNormal, H), 0.0);
+    float specular = pow(NdotH, uMaterialShininess) * 0.3;
+    
+    if (isWater) {
+        specular = 0.0; // Water has its own specular
     }
-    
-    // Combine components (Ambient + Sun + Local + Specular)
-    // Local light is added on top
-    vec3 finalColor = ambient + diffuse + specular + (localLight * texColor * aoStrength);
-    
 
-    // --- ATMOSPHERIC FOG (Above water) ---
-    if (!isCameraUnderwater) {
+    // Combine lighting
+    vec3 ambient = dirLight.ambient * ao;
+    vec3 diffuseColor = dirLight.diffuse * diffuse * ao;
+    vec3 specularColor = dirLight.specular * specular * uMaterialSpecular;
+    
+    vec3 finalColor = baseColor.rgb * (ambient + diffuseColor) + specularColor;
+
+    // Underwater fog
+    if (isCameraUnderwater && !isWater) {
         float dist = length(vWorldPos - cameraPos);
-        // Fog parameters - tuned for 16 chunk view distance (~256 blocks)
-        // End fog slightly before the chunk load distance to fully hide popping
-        float fogStart = 150.0; 
-        float fogEnd = 250.0;   
-        float fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
-        // Smooth the transition
-        fogFactor = smoothstep(0.0, 1.0, fogFactor);
-        
-        // Disable fog in biome debug mode
-        if (uShowBiomes == 1) {
-            fogFactor = 0.0;
-        }
-        
-        // Fog color based on ambient light (unified system)
-        vec3 fogColor = dirLight.ambient;
-        
-        // Adjust fog brightness based on time of day
-        // dirLight.position is -sunDir, so sunElevation is -dirLight.position.y
-        float sunElevation = -dirLight.position.y;
-        float dayFactor = smoothstep(-0.1, 0.1, sunElevation);
-        
-        // Day: Boost fog brightness to match sky (1.5x)
-        // Night: Darken fog to match dark skybox and avoid "ghostly" look (0.2x)
-        float brightnessBoost = mix(0.2, 1.5, dayFactor);
-        fogColor *= brightnessBoost;
-        
-        finalColor = mix(finalColor, fogColor, fogFactor);
-    }
-    
-    // Underwater Effects
-
-    // 1. View from above: Tint underwater fragments
-    // REMOVED: Rely on the actual water block transparency to tint objects behind it.
-    // This fixes the issue where dry tunnels below sea level were tinted blue.
-
-    // 2. View from underwater: Strong fog and tint
-    if (isCameraUnderwater) {
-        float dist = length(vWorldPos - cameraPos);
-        
-        // Exponential fog for denser, more natural underwater feel
-        float fogDensity = 0.15; // High density for short visibility (~20m)
+        float fogDensity = 0.03;
         float fogFactor = 1.0 - exp(-dist * fogDensity);
-        
-        // Disable fog in biome debug mode
-        if (uShowBiomes == 1) {
-            fogFactor = 0.0;
-        }
-        
-        // Darker fog at night
-        // Use ambient light for fog color (unified system)
-        // Match skybox gradient to hide distant terrain contours
-        vec3 deepColor = dirLight.ambient * vec3(0.2, 0.5, 0.8);
-        vec3 surfaceColor = dirLight.ambient * vec3(0.4, 0.7, 1.0);
-        // vViewDir is vector TO camera. We need vector FROM camera (view ray).
-        // So use -vViewDir.y
-        float t = smoothstep(0.0, 1.0, -vViewDir.y);
-        vec3 waterFogColor = mix(deepColor, surfaceColor, t);
-        
-        finalColor = mix(finalColor, waterFogColor, fogFactor);
-        
-        // Obscure outside terrain (fragments above water)
-        // Exclude water blocks to prevent flickering on the water surface itself (at y=36.0)
-        if (vWorldPos.y > waterLevel + 0.05 && vBlockDescriptor != BD_WATER) {
-             // Mix in more fog color to hide the "crisp" outside world
-             finalColor = mix(finalColor, waterFogColor, 0.9);
-        }
+        vec3 underwaterFogColor = dirLight.ambient * vec3(0.15, 0.35, 0.5);
+        finalColor = mix(finalColor, underwaterFogColor, fogFactor);
     }
 
-    // M4: Biome Visualization (Debug)
-    if (uShowBiomes == 1) {
-        // Visualize primary biome (reuse calculation from above)
-        // Use the same Voronoi-based selection as texture rendering
-        uint biomeId = primaryBiomeId;
-        vec3 biomeColor = vec3(0.5);
-        
-        switch(biomeId) {
-            case 0u: biomeColor = vec3(0.0, 0.0, 1.0); break; // Ocean
-            case 1u: biomeColor = vec3(1.0, 1.0, 0.0); break; // Beach
-            case 2u: biomeColor = vec3(0.0, 1.0, 0.0); break; // Plains
-            case 3u: biomeColor = vec3(1.0, 0.5, 0.0); break; // Savanna
-            case 4u: biomeColor = vec3(1.0, 0.0, 0.0); break; // Desert
-            case 5u: biomeColor = vec3(0.0, 0.5, 0.0); break; // Rainforest
-            case 6u: biomeColor = vec3(0.0, 1.0, 1.0); break; // Taiga
-            case 7u: biomeColor = vec3(1.0, 1.0, 1.0); break; // Tundra
-            case 8u: biomeColor = vec3(0.5, 0.5, 0.5); break; // Highlands
-            case 9u: biomeColor = vec3(0.5, 0.0, 0.5); break; // Alpine
-        }
-        
-        finalColor = mix(finalColor, biomeColor, 0.5);
-    }
-
-    // Output with opacity
     FragColor = vec4(finalColor, baseColor.a);
 }

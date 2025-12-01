@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using NoiseDotNet;
+using OpenRender;
 
 namespace SpyroGame.World;
 
@@ -88,7 +89,7 @@ internal sealed class CpuTerrainGenerator
     /// <summary>
     /// Generate voxel descriptors and collision spans for the specified chunk.
     /// </summary>
-    public ChunkGenerationResult GenerateChunk(int chunkIndex, Span<uint> destination, IReadOnlyDictionary<int, BlockDescriptor>? edits = null)
+    public ChunkGenerationResult GenerateChunk(int chunkIndex, Span<uint> destination, IReadOnlyDictionary<int, BlockId>? edits = null)
     {
         if (destination.Length < VoxelHelper.ChunkVoxelCount)
         {
@@ -98,13 +99,11 @@ internal sealed class CpuTerrainGenerator
         // Generate biome data for this chunk
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        var worldX = chunkX * VoxelHelper.ChunkSideSize;
-        var worldZ = chunkZ * VoxelHelper.ChunkSideSize;
-        currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(worldX, worldZ) ?? new ChunkBiomeData();
+        currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(chunkX, chunkZ) ?? new ChunkBiomeData();
 
         var collision = new ChunkCollisionData();
         var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
-        var spanTypes = new byte[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
+        var spanTypes = new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
         var spanCounts = new byte[VoxelHelper.ChunkSideSizeSquare];
 
         FillChunk(chunkIndex, destination, collision, spanPairs, spanTypes, spanCounts, edits);
@@ -117,9 +116,9 @@ internal sealed class CpuTerrainGenerator
         Span<uint> voxels,
         ChunkCollisionData collision,
         int[] spanPairs,
-        byte[] spanTypes,
+        BlockId[] spanTypes,
         byte[] spanCounts,
-        IReadOnlyDictionary<int, BlockDescriptor>? edits)
+        IReadOnlyDictionary<int, BlockId>? edits)
     {
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
@@ -146,15 +145,17 @@ internal sealed class CpuTerrainGenerator
                 var spanCount = 0;
                 var inSpan = false;
                 var spanStart = 0;
-                var spanDescriptor = BlockDescriptor.Air;
+                var spanBlock = BlockId.Air;
 
                 for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
                 {
-                    var descriptor = GenerateBlockDescriptor(
+                    var block = GenerateBlock(
                         height,
                         y,
                         worldX,
                         worldZ,
+                        lx,
+                        lz,
                         baseHeight,
                         continentalness01,
                         cheeseSlice,
@@ -162,34 +163,34 @@ internal sealed class CpuTerrainGenerator
                         overhangSlice);
                     var localIndex = y * VoxelHelper.ChunkSideSizeSquare + columnIndex;
 
-                    if (edits != null && edits.TryGetValue(localIndex, out var editedDescriptor))
+                    if (edits != null && edits.TryGetValue(localIndex, out var editedBlock))
                     {
-                        descriptor = editedDescriptor;
+                        block = editedBlock;
                     }
 
-                    voxels[localIndex] = (uint)descriptor;
+                    voxels[localIndex] = (uint)block;
 
-                    if (descriptor != BlockDescriptor.Air)
+                    if (!block.IsAir())
                     {
                         if (!inSpan)
                         {
                             inSpan = true;
                             spanStart = y;
-                            spanDescriptor = descriptor;
+                            spanBlock = block;
                         }
-                        else if (descriptor != spanDescriptor)
+                        else if (block != spanBlock)
                         {
-                            if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanDescriptor, collision))
+                            if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanBlock, collision))
                             {
                                 spanCount++;
                             }
                             spanStart = y;
-                            spanDescriptor = descriptor;
+                            spanBlock = block;
                         }
                     }
                     else if (inSpan)
                     {
-                        if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanDescriptor, collision))
+                        if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanBlock, collision))
                         {
                             spanCount++;
                         }
@@ -199,7 +200,7 @@ internal sealed class CpuTerrainGenerator
 
                 if (inSpan)
                 {
-                    if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, VoxelHelper.ChunkYSize - 1, spanDescriptor, collision))
+                    if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, VoxelHelper.ChunkYSize - 1, spanBlock, collision))
                     {
                         spanCount++;
                     }
@@ -218,6 +219,7 @@ internal sealed class CpuTerrainGenerator
     {
         BuildColumnCoordinates(chunkX, chunkZ);
         BuildColumnFieldCaches();
+        UpdateBiomeDataFromTerrainValues(); // Fix: Use terrain's continentalness for biomes
         BuildColumnVolumes();
     }
 
@@ -416,6 +418,133 @@ internal sealed class CpuTerrainGenerator
             var rounded = (int)MathF.Round(baseHeight);
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
+    }
+
+    /// <summary>
+    /// Updates the biome data using the terrain-computed continentalness values.
+    /// This ensures biome selection uses the SAME noise values as terrain height.
+    /// The biome data was pre-generated with separate noise sampling, but ocean/land
+    /// classification must match the actual terrain height.
+    /// </summary>
+    private void UpdateBiomeDataFromTerrainValues()
+    {
+        if (currentChunkBiome == null) return;
+        
+        // For each 4x4 biome cell, update biome based on terrain values
+        for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
+        {
+            for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
+            {
+                var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
+                
+                // Sample noise at cell center for climate values
+                var centerLocalX = cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                var centerLocalZ = cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                var centerColumnIndex = centerLocalZ * VoxelHelper.ChunkSideSize + centerLocalX;
+                
+                // Use terrain's actual continentalness (this is what determines terrain height!)
+                var terrainCont = columnContinentalness[centerColumnIndex];
+                var terrainCont01 = columnContinentalness01[centerColumnIndex];
+                var terrainErosion = columnErosion[centerColumnIndex];
+                var terrainPeaks = columnPeaks[centerColumnIndex];
+                
+                // Update the biome's stored values to match terrain
+                currentChunkBiome.Continentalness[cellIndex] = terrainCont;
+                currentChunkBiome.Erosion[cellIndex] = terrainErosion;
+                currentChunkBiome.PeaksValleys[cellIndex] = terrainPeaks;
+                
+                // For ocean detection, find the MAXIMUM terrain height in the entire 4x4 cell
+                // This prevents cells with some above-water blocks from being classified as ocean
+                var maxTerrainHeight = float.MinValue;
+                var cellStartX = cellX * ChunkBiomeData.BlocksPerCell;
+                var cellStartZ = cellZ * ChunkBiomeData.BlocksPerCell;
+                
+                for (var dz = 0; dz < ChunkBiomeData.BlocksPerCell; dz++)
+                {
+                    for (var dx = 0; dx < ChunkBiomeData.BlocksPerCell; dx++)
+                    {
+                        var colIdx = (cellStartZ + dz) * VoxelHelper.ChunkSideSize + (cellStartX + dx);
+                        maxTerrainHeight = MathF.Max(maxTerrainHeight, columnHeights[colIdx]);
+                    }
+                }
+                
+                // Re-select biome based on terrain's actual values
+                // Use maxTerrainHeight so any above-water block prevents ocean classification
+                var temp01 = currentChunkBiome.Temperature[cellIndex];
+                var humid01 = currentChunkBiome.Humidity[cellIndex];
+                var erosion01 = terrainErosion * 0.5f + 0.5f;
+                var pv01 = terrainPeaks; // Already 0-1 range after ridge transform
+                
+                currentChunkBiome.BiomeIds[cellIndex] = SelectBiomeFromTerrainValues(
+                    terrainCont01, temp01, humid01, erosion01, pv01, maxTerrainHeight);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Select biome using terrain-computed values including actual terrain height.
+    /// </summary>
+    private BiomeId SelectBiomeFromTerrainValues(
+        float cont01, float temperature, float humidity, float erosion01, float pv01, float actualTerrainHeight)
+    {
+        // Use ACTUAL terrain height (after all modifiers) to determine ocean vs land
+        // This is the definitive check - if terrain surface is below water, it's ocean
+        var isUnderwater = actualTerrainHeight < VoxelHelper.WaterLevel;
+        var altitudeAboveWater = actualTerrainHeight - VoxelHelper.WaterLevel;
+        
+        // ============ OCEAN BIOMES (based on actual terrain height) ============
+        if (isUnderwater)
+        {
+            // Use continentalness to distinguish deep ocean from regular ocean
+            if (cont01 < terrainParams.DeepOceanThreshold)
+                return BiomeId.DeepOcean;
+            return BiomeId.Ocean;
+        }
+        
+        // ============ BEACH BIOME ============
+        // Beach is determined primarily by HEIGHT, not just noise values.
+        // Any terrain at or very close to water level (within ShorelineRange) is beach.
+        // This ensures consistent sand/beach appearance at shorelines regardless of other biome factors.
+        if (altitudeAboveWater <= terrainParams.ShorelineRange)
+        {
+            return BiomeId.Beach;
+        }
+        
+        // ============ ALPINE BIOME ============
+        // Use actual terrain height for altitude-based decisions
+        if (altitudeAboveWater > terrainParams.AlpineElevation || temperature < 0.12f)
+            return BiomeId.Alpine;
+        
+        // ============ MOUNTAIN/HIGHLANDS ============
+        if (pv01 > 0.7f && erosion01 < 0.4f)
+            return temperature < 0.35f ? BiomeId.Alpine : BiomeId.Highlands;
+        
+        // ============ CLIMATE-BASED LAND BIOMES ============
+        if (temperature > 0.65f)
+        {
+            if (humidity < 0.30f) return BiomeId.Desert;
+            if (humidity < 0.55f) return BiomeId.Savanna;
+            return BiomeId.Rainforest;
+        }
+        
+        if (temperature < 0.35f)
+        {
+            if (humidity > 0.50f) return BiomeId.Taiga;
+            return BiomeId.Tundra;
+        }
+        
+        // Temperate biomes
+        if (humidity > 0.55f)
+        {
+            if (cont01 < 0.50f && erosion01 > 0.6f)
+                return BiomeId.Swamp;
+            return BiomeId.Taiga;
+        }
+        
+        if (pv01 > 0.55f || erosion01 < 0.45f)
+            return BiomeId.Highlands;
+        
+        return BiomeId.Plains;
     }
 
     /// <summary>
@@ -1026,12 +1155,12 @@ internal sealed class CpuTerrainGenerator
         int columnIndex,
         int spanBase,
         int pairBase,
-        byte[] spanTypes,
+        BlockId[] spanTypes,
         int[] spanPairs,
         int spanIndex,
         int startY,
         int endY,
-        BlockDescriptor descriptor,
+        BlockId block,
         ChunkCollisionData collision)
     {
         if (spanIndex >= ChunkCollisionData.MaxSpansPerColumn)
@@ -1041,7 +1170,7 @@ internal sealed class CpuTerrainGenerator
 
         var spanId = spanBase + spanIndex;
         var pairId = pairBase + spanIndex * 2;
-        spanTypes[spanId] = (byte)descriptor;
+        spanTypes[spanId] = block;
         spanPairs[pairId] = startY;
         spanPairs[pairId + 1] = endY + 1; // store exclusive end for chunk consumption
         var dstIndex = columnIndex * ChunkCollisionData.MaxSpansPerColumn + spanIndex;
@@ -1049,7 +1178,7 @@ internal sealed class CpuTerrainGenerator
         {
             StartY = (short)startY,
             EndY = (short)endY,
-            BlockDescriptor = (byte)descriptor
+            Block = (ushort)block  // Store full BlockId with flags
         };
         return true;
     }
@@ -1065,11 +1194,18 @@ internal sealed class CpuTerrainGenerator
         return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
     }
 
-    private BlockDescriptor GenerateBlockDescriptor(
+    /// <summary>
+    /// Generate the block type for a voxel at the given world position.
+    /// Returns appropriate BlockId based on height, depth, biome, and cave systems.
+    /// Uses biome-specific blocks (SurfaceBlock, SubsurfaceBlock, DeepBlock) from BiomeDefinition.
+    /// </summary>
+    private BlockId GenerateBlock(
         int height,
         int y,
         int wx,
         int wz,
+        int localX,
+        int localZ,
         float baseHeight,
         float continentalness01,
         Span<float> cheeseSlice,
@@ -1078,7 +1214,7 @@ internal sealed class CpuTerrainGenerator
     {
         if (y > height)
         {
-            return y <= VoxelHelper.WaterLevel ? BlockDescriptor.Water : BlockDescriptor.Air;
+            return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
         }
 
         var tC = continentalness01;
@@ -1089,7 +1225,7 @@ internal sealed class CpuTerrainGenerator
             var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y);
             if (density < 0f)
             {
-                return BlockDescriptor.Air;
+                return BlockId.Air;
             }
         }
 
@@ -1099,30 +1235,49 @@ internal sealed class CpuTerrainGenerator
             var slope = depth < 15 ? GetSlope(wx, wz) : 0f;
             if (IsCave(depth, slope, cheeseSlice[y], spaghettiSlice[y]))
             {
-                return y <= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.CaveFloodExtension ? BlockDescriptor.Water : BlockDescriptor.Air;
+                return y <= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.CaveFloodExtension ? BlockId.Water : BlockId.Air;
             }
         }
 
-        // Surface block
+        // Get the biome for this position to determine block types
+        // IMPORTANT: Block types are fully determined by biome - no overrides!
+        // This ensures deterministic block types for inventory/block-breaking.
+        var biomeId = currentChunkBiome?.GetBiomeAt(localX, localZ) ?? BiomeId.Plains;
+        var biomeDef = GetBiomeDefinition((int)biomeId);
+        
+        // If biome definition is missing, log warning and use fallback
+        // This should not happen in production - all BiomeIds should have definitions
+        if (biomeDef == null)
+        {
+            Log.Warn($"Missing BiomeDefinition for biomeId={biomeId}, using fallback blocks");
+        }
+        
+        var isOceanBiome = biomeId == BiomeId.Ocean || biomeId == BiomeId.DeepOcean;
+        var isUnderwater = y <= VoxelHelper.WaterLevel && (isOceanBiome || height < VoxelHelper.WaterLevel);
+        
+        // Surface block - determined entirely by biome
         if (y == height)
         {
-            if (y < VoxelHelper.WaterLevel)
+            if (isUnderwater)
             {
-                return y >= VoxelHelper.WaterLevel - 1 ? BlockDescriptor.ShoreLine : BlockDescriptor.UnderwaterSubsurface;
+                return biomeDef?.UnderwaterSurfaceBlock ?? BlockId.Gravel;
             }
-            
-            if (y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange && IsNearWater(wx, wz))
-            {
-                return BlockDescriptor.ShoreLine;
-            }
-            
-            // Biome system handles Alpine via elevation check - block descriptor is just Surface
-            return BlockDescriptor.Surface;
+            return biomeDef?.SurfaceBlock ?? BlockId.Grass;
         }
 
-        // Subsurface blocks - biome system uses elevation to determine Alpine textures
+        // Subsurface blocks - use biome's subsurface block
         var depthBelowSurface = height - y;
-        return depthBelowSurface <= terrainParams.SubsurfaceDepth ? BlockDescriptor.Subsurface : BlockDescriptor.DeepSubsurface;
+        if (depthBelowSurface <= terrainParams.SubsurfaceDepth)
+        {
+            if (isUnderwater)
+            {
+                return biomeDef?.UnderwaterSubsurfaceBlock ?? BlockId.Stone;
+            }
+            return biomeDef?.SubsurfaceBlock ?? BlockId.Dirt;
+        }
+        
+        // Deep blocks - use biome's deep block
+        return biomeDef?.DeepBlock ?? BlockId.Stone;
     }
 
     #region Terrain Functions
@@ -1270,7 +1425,7 @@ internal sealed class CpuTerrainGenerator
         ChunkCollisionData Collision,
         int[] SpanPairs,
         byte[] SpanCounts,
-        byte[] SpanTypes);
+        BlockId[] SpanTypes);
 }
 
 

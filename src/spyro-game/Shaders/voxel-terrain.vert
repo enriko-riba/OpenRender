@@ -14,7 +14,8 @@ uniform uint uWorldChunksXZ; uniform int uIsUnderwater; uniform mat4 uChunkTrans
 
 layout(location=0) in uvec2 aPackedData;
 
-out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; flat out uint vBlockDescriptor;
+out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; 
+flat out uint vBlockDescriptor; flat out uint vBiomeId;
 out float vSkyLight; out float vBlockLight;
 
 vec2 getBaseUV(uint c){
@@ -38,9 +39,12 @@ void main(){
     uint p1=aPackedData.x; uint p2=aPackedData.y;
     uint lx=p1&0x1Fu; uint ly=(p1>>5)&0x1FFu; uint lz=(p1>>14)&0x1Fu; 
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
-    vBlockDescriptor=p2&0xFFu;
     
+    // Unpack p2: bits 0-7 = blockId, bits 8-15 = light, bits 16-23 = biomeId
+    vBlockDescriptor=p2&0xFFu;
     uint lightByte = (p2 >> 8) & 0xFFu;
+    vBiomeId = (p2 >> 16) & 0xFFu;
+    
     vSkyLight = float(lightByte & 0xF) / 15.0;
     vBlockLight = float((lightByte >> 4) & 0xF) / 15.0;
 

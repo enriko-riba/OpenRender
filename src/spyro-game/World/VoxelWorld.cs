@@ -157,12 +157,12 @@ public class VoxelWorld(int seed)
             if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize || (uint)ly >= (uint)VoxelHelper.ChunkYSize)
                 return null;
 
-            var descriptor = chunk.GetDescriptorFromSpans(lx, ly, lz, ChunkCollisionData.MaxSpansPerColumn);
+            var block = chunk.GetBlockFromSpans(lx, ly, lz, ChunkCollisionData.MaxSpansPerColumn);
             var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
             return new BlockState(idx, chunk) 
             { 
-                Descriptor = descriptor,
-                IsVisible = descriptor != BlockDescriptor.Air 
+                Block = block,
+                IsVisible = !block.IsAir()
             };
         }
 
@@ -179,8 +179,8 @@ public class VoxelWorld(int seed)
             var h = chunk.GetTerrainHeightAt(lx, lz);
             var maxSolid = h - 1;
 
-            // Infer descriptor from height (simplified heuristic for heightmap-only mode)
-            var descriptor = InferDescriptorFromHeight(ly, maxSolid);
+            // Infer block from height (simplified heuristic for heightmap-only mode)
+            var block = InferBlockFromHeight(ly, maxSolid);
 
             // Apply 3D break mask to carve tunnels/holes
             try
@@ -195,7 +195,7 @@ public class VoxelWorld(int seed)
                     if ((uint)byteIndex < (uint)mask.Length)
                     {
                         if ((mask[byteIndex] & (byte)(1 << bit)) != 0)
-                            descriptor = BlockDescriptor.Air;
+                            block = BlockId.Air;
                     }
                 }
             }
@@ -204,8 +204,8 @@ public class VoxelWorld(int seed)
             var idx = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
             return new BlockState(idx, chunk) 
             { 
-                Descriptor = descriptor,
-                IsVisible = descriptor != BlockDescriptor.Air 
+                Block = block,
+                IsVisible = !block.IsAir()
             };
         }
 
@@ -213,15 +213,16 @@ public class VoxelWorld(int seed)
     }
 
     /// <summary>
-    /// Infer block descriptor from height when only heightmap is available (fallback mode).
+    /// Infer block type from height when only heightmap is available (fallback mode).
+    /// Maps geological layers to appropriate BlockId values.
     /// </summary>
-    private static BlockDescriptor InferDescriptorFromHeight(int ly, int maxSolid)
+    private static BlockId InferBlockFromHeight(int ly, int maxSolid)
     {
         // Above terrain
         if (ly > maxSolid)
         {
             // Water layer
-            return ly <= VoxelHelper.WaterLevel ? BlockDescriptor.Water : BlockDescriptor.Air;
+            return ly <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
         }
 
         // Below terrain - classify by depth
@@ -231,16 +232,16 @@ public class VoxelWorld(int seed)
         if (depth == 0)
         {
             return maxSolid < VoxelHelper.WaterLevel - 1
-                ? BlockDescriptor.UnderwaterSurface
-                : maxSolid <= VoxelHelper.WaterLevel + 2 ? BlockDescriptor.ShoreLine : BlockDescriptor.Surface;
+                ? BlockId.Gravel  // Underwater surface
+                : maxSolid <= VoxelHelper.WaterLevel + 2 ? BlockId.Sand : BlockId.Grass;
         }
         
         // Subsurface layers
         if (depth <= 2)
-            return BlockDescriptor.Subsurface;
+            return BlockId.Dirt;
         
         // Deep subsurface
-        return BlockDescriptor.DeepSubsurface;
+        return BlockId.Stone;
     }
 
     #region Block neighbors

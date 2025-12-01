@@ -87,37 +87,55 @@ Biome selection uses thresholds that are **configurable via `TerrainConfig`**:
 
 | Parameter | Config Property | Default | Description |
 |-----------|-----------------|---------|-------------|
-| Ocean threshold | `OceanContinentalness` | 0.3 | C < threshold → Ocean |
-| Beach threshold | `BeachContinentalness` | 0.4 | C < threshold && E > BeachErosion → Beach |
-| Beach erosion | `BeachErosion` | 0.5 | Erosion needed for beach |
-| Alpine temp | `AlpineTemperature` | 0.2 | T < threshold → Alpine |
-| Alpine elevation | `AlpineElevation` | 150 | Y > threshold → Alpine |
-| Mountain PV | `MountainPeaksValleys` | 0.7 | PV > threshold → Mountains |
-| Mountain erosion | `MountainErosion` | 0.4 | E < threshold (low erosion = jagged) |
+| Deep ocean threshold | `DeepOceanThreshold` | 0.20 | cont01 < threshold → DeepOcean |
+| Ocean threshold | `OceanThreshold` | 0.35 | cont01 < threshold → Ocean |
+| Beach threshold | `OceanThreshold + CoastRange + 0.07` | ~0.47 | cont01 < threshold && E > 0.5 → Beach |
+| Alpine temp | (hardcoded) | 0.12 | T < threshold → Alpine |
+| Alpine elevation | `AlpineElevation` | 150 | estimatedAltitude > threshold → Alpine |
+| Mountain PV | (hardcoded) | 0.7 | PV > threshold → Mountains |
+| Mountain erosion | (hardcoded) | 0.4 | E < threshold (low erosion = jagged) |
+
+**Critical Architectural Insight (Minecraft 1.18+):**
+
+> **Ocean biomes are determined PURELY by continentalness noise, NOT by actual terrain height.**
+> 
+> In Minecraft, both biome selection AND terrain height are derived from the same noise parameters:
+> - Low continentalness → Ocean biome selected
+> - Low continentalness → Height spline returns low value → Terrain ends up underwater
+> 
+> This creates natural consistency without needing to check actual Y-level.
+> The height spline must be calibrated so that `OceanThreshold` aligns with the
+> continentalness value where terrain transitions from underwater to above water.
 
 **Hardcoded (architectural):**
-- Biome grid resolution: 4×4×16 cells (Minecraft standard)
+- Biome grid resolution: 4×4 cells (Minecraft standard, each cell = 4×4 blocks)
 - Climate parameter count: 5 (C, T, H, E, PV)
-- Selection priority order: Ocean → Beach → Alpine → Mountains → Climate matrix
+- Selection priority order: DeepOcean → Ocean → Beach → Alpine → Mountains → Climate matrix
 
-**Selection Logic (configurable thresholds):**
+**Selection Logic (Minecraft-style, noise-only):**
 ```csharp
-public BiomeId SelectBiome(float C, float T, float H, float E, float PV, float altitude)
+public BiomeId SelectBiome(float C, float T, float H, float E, float PV, float estimatedAltitude)
 {
-    // Priority 1: Ocean (configurable threshold)
-    if (C < config.OceanContinentalness)  
-        return C < config.DeepOceanContinentalness ? BiomeId.DeepOcean : BiomeId.Ocean;
+    var cont01 = C * 0.5f + 0.5f;  // Convert [-1,1] to [0,1]
     
-    // Priority 2: Beach (configurable thresholds)
-    if (C < config.BeachContinentalness && E > config.BeachErosion)  
+    // Priority 1: Ocean biomes (ONLY use continentalness, never actual height!)
+    if (cont01 < config.DeepOceanThreshold)  
+        return BiomeId.DeepOcean;
+    if (cont01 < config.OceanThreshold)
+        return BiomeId.Ocean;
+    
+    // Priority 2: Beach (coastal zone with high erosion = flat coasts)
+    var beachThreshold = config.OceanThreshold + config.CoastRange + 0.07f;
+    if (cont01 < beachThreshold && erosion01 > 0.5f)  
         return BiomeId.Beach;
     
-    // Priority 3: Alpine (configurable temp OR elevation)
-    if (T < config.AlpineTemperature || altitude > config.AlpineElevation)  
+    // Priority 3: Alpine (extreme cold OR high estimated altitude)
+    if (T < 0.12f || estimatedAltitude > config.AlpineElevation + WaterLevel)  
         return BiomeId.Alpine;
     
-    // Priority 4: Mountains (configurable PV and erosion)
-    if (PV > config.MountainPeaksValleys && E < config.MountainErosion)  
+    // Priority 4: Mountains (high PV with low erosion)
+    if (pv01 > 0.7f && erosion01 < 0.4f)  
+        return T < 0.35f ? BiomeId.Alpine : BiomeId.Highlands;
         return BiomeId.Highlands;
     
     // Priority 5: Climate matrix (uses BiomeDefinition.Temperature/Humidity ranges)

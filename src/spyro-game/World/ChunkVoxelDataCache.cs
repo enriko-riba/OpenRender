@@ -64,6 +64,45 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     }
 
     /// <summary>
+    /// Get climate data (C/T/H/E/PV) at a specific world position (interpolated).
+    /// </summary>
+    public (float C, float T, float H, float E, float PV)? GetClimateAtWorldPos(int worldX, int worldZ)
+    {
+        var chunkX = worldX / VoxelHelper.ChunkSideSize;
+        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
+        
+        if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData) && biomeData != null)
+        {
+            var localX = worldX - chunkX * VoxelHelper.ChunkSideSize;
+            var localZ = worldZ - chunkZ * VoxelHelper.ChunkSideSize;
+            var climate = biomeData.GetInterpolatedClimate(localX, localZ);
+            return (climate.continentalness, climate.temperature, climate.humidity, climate.erosion, climate.peaksValleys);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Get raw cell climate data (NOT interpolated) - this is what biome selection uses.
+    /// </summary>
+    public (float C, float T, float H, float E, float PV)? GetCellClimateAtWorldPos(int worldX, int worldZ)
+    {
+        var chunkX = worldX / VoxelHelper.ChunkSideSize;
+        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
+        
+        if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData) && biomeData != null)
+        {
+            var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+            var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+            var cellX = localX / ChunkBiomeData.BlocksPerCell;
+            var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
+            return biomeData.GetCellClimate(cellX, cellZ);
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Allocate a writable buffer for the specified chunk index.
     /// Call <see cref="Store"/> when the buffer has been filled with voxel data.
     /// </summary>

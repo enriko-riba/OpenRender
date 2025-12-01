@@ -44,7 +44,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         Interlocked.Increment(ref configVersion);
     }
 
-    public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockDescriptor>? descriptorEdits)
+    public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockId>? blockIdEdits)
     {
         if (disposed)
         {
@@ -52,7 +52,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         }
 
         var enqueueId = Interlocked.Increment(ref enqueueCounter);
-        var work = new GenerationWorkItem(chunkIndex, descriptorEdits, enqueueId);
+        var work = new GenerationWorkItem(chunkIndex, blockIdEdits, enqueueId);
         try
         {
             workQueue.Add(work, cancellationSource.Token);
@@ -87,7 +87,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                     try
                     {
                         writable = voxelCache.RentWritable(work.ChunkIndex);
-                        var result = generator.GenerateChunk(work.ChunkIndex, writable.Span, work.DescriptorEdits);
+                        var result = generator.GenerateChunk(work.ChunkIndex, writable.Span, work.BlockIdEdits);
                         
                         // Store biome data alongside voxels
                         var biomeData = generator.GetLastChunkBiomeData();
@@ -147,7 +147,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         cancellationSource.Dispose();
     }
 
-    internal readonly record struct GenerationWorkItem(int ChunkIndex, IReadOnlyDictionary<int, BlockDescriptor>? DescriptorEdits, long EnqueueId);
+    internal readonly record struct GenerationWorkItem(int ChunkIndex, IReadOnlyDictionary<int, BlockId>? BlockIdEdits, long EnqueueId);
 
     internal readonly record struct ChunkGenerationJobResult(int ChunkIndex, CpuTerrainGenerator.ChunkGenerationResult Generation, long EnqueueId, long BuildId);
 }

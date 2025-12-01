@@ -65,7 +65,6 @@ internal class TerrainLoadingScene : Scene
     private bool isStreamingTerrain = false;
     private bool isWaitingForProgressAnimation = false;
     private const int INITIAL_LOAD_DISTANCE = 5;
-    private int initialChunkCount = 0;
     private int minimumReadyChunksForTransition;
     private const int MaxOutstandingChunksForTransition = 4;
 
