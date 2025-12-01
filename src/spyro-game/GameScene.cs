@@ -57,12 +57,13 @@ internal class GameScene : Scene
     }
 
     /// <summary>
-    /// Called by TerrainLoadingScene to pass initialized CPU terrain streaming components.
+    /// Called by TerrainLoadingScene to pass initialized terrain streaming components.
     /// </summary>
-    public void SetupCpuTerrain(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3? spawnPosition = null)
+    public void SetupTerrainSystem(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3? spawnPosition = null)
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
+        world = streamingManager.World; // Sync world reference
 
         // Add renderer to scene
         AddNode(terrainRenderer);
@@ -72,20 +73,15 @@ internal class GameScene : Scene
 
         // Calculate center of world for spawn if not provided
         var centerPos = spawnPosition ?? new Vector3(
-            5133,
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
             230,
-            4015
+            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
         );
 
         // Initialize player with world at center position
-        // Note: Player expects VoxelWorld, but we are using ChunkStreamingManager.
-        // Ideally Player should be refactored to use an interface or ChunkStreamingManager.
-        // For now, we pass the world instance from streamingManager if available, or the scene's world.
-        var playerWorld = streamingManager.World ?? world;
-        player = new Player(camera!, centerPos, playerWorld, streamingManager);
+        player = new Player(camera!, centerPos, world, streamingManager);
 
         // Initialize block picking service
-        // Use the constructor that accepts ChunkStreamingManager
         blockPickingService = new BlockPickingService(streamingManager);
 
         // Assign service to player
@@ -95,7 +91,7 @@ internal class GameScene : Scene
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
         streamingManager.SetPrefetchMargin(GameplayPrefetchMarginChunks);
 
-        Log.Info("GameScene: GPU terrain components configured");
+        Log.Info("GameScene: terrain components configured");
     }
 
     private void EnsureCameraInitialized()
@@ -231,10 +227,6 @@ internal class GameScene : Scene
 
         world.Camera = camera!;
         camera!.Invalidate();
-
-        // Add water
-        // waterNode = WaterNode.Create(dayNightCycle);
-        // AddNode(waterNode);
 
         Log.Info($"GameScene: Loaded with procedural terrain");
     }
