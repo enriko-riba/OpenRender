@@ -185,6 +185,13 @@ public sealed class TerrainConfig
     /// See <see cref="CaveParams"/> for detailed parameters.
     /// </summary>
     public CaveParams Caves { get; set; } = CaveParams.Default();
+    
+    /// <summary>
+    /// Gets or sets the ore generation parameters controlling ore distribution by depth.
+    /// Ores are scattered in stone regions based on Minecraft-style depth distribution.
+    /// See <see cref="OreParams"/> for detailed parameters.
+    /// </summary>
+    public OreParams Ores { get; set; } = OreParams.Default();
 
     /// <summary>
     /// Gets or sets the Y-coordinate of the water level in blocks.
@@ -1042,6 +1049,152 @@ public sealed class CaveParams
     /// Creates a CaveParams instance with default values.
     /// </summary>
     public static CaveParams Default() => new();
+}
+
+/// <summary>
+/// Configuration for ore generation following Minecraft-style depth distribution.
+/// Ores are scattered in stone regions based on their preferred Y-level ranges.
+/// </summary>
+public sealed class OreParams
+{
+    /// <summary>
+    /// Gets or sets the list of ore definitions specifying which ores spawn and where.
+    /// Each ore has a depth range, rarity, and vein size configuration.
+    /// </summary>
+    public List<OreDefinition> OreTypes { get; set; } = DefaultOreTypes();
+
+    /// <summary>
+    /// Gets or sets the base ore generation seed offset.
+    /// Added to terrain seed to create deterministic but varied ore placement.
+    /// </summary>
+    public uint SeedOffset { get; set; } = 7777u;
+
+    /// <summary>
+    /// Creates default ore generation parameters with Minecraft-style ore distribution.
+    /// </summary>
+    public static OreParams Default() => new();
+
+    /// <summary>
+    /// Creates the default set of ore definitions matching Minecraft 1.18+ distribution.
+    /// </summary>
+    public static List<OreDefinition> DefaultOreTypes() =>
+    [
+        // Coal: Common ore, spans wide depth range, most common in upper stone
+        new OreDefinition
+        {
+            OreBlock = BlockId.CoalOre,
+            MinY = 0,
+            MaxY = 192,
+            PeakY = 96,
+            Rarity = 0.012f,         // ~1.2% chance at peak depth
+            VeinSize = 17,
+            DistributionType = OreDistribution.Triangle
+        },
+        // Copper: Mid-tier ore, concentrated in middle depths
+        new OreDefinition
+        {
+            OreBlock = BlockId.CopperOre,
+            MinY = 0,
+            MaxY = 96,
+            PeakY = 48,
+            Rarity = 0.008f,
+            VeinSize = 10,
+            DistributionType = OreDistribution.Triangle
+        },
+        // Iron: Essential ore, two distribution peaks (surface and deep)
+        new OreDefinition
+        {
+            OreBlock = BlockId.IronOre,
+            MinY = -32,
+            MaxY = 72,
+            PeakY = 16,
+            Rarity = 0.009f,
+            VeinSize = 9,
+            DistributionType = OreDistribution.Triangle
+        },
+        // Gold: Rare ore, concentrated deep underground and in badlands
+        new OreDefinition
+        {
+            OreBlock = BlockId.GoldOre,
+            MinY = -64,
+            MaxY = 32,
+            PeakY = -16,
+            Rarity = 0.003f,
+            VeinSize = 9,
+            DistributionType = OreDistribution.Triangle
+        },
+        // Diamond: Very rare, deep underground only
+        new OreDefinition
+        {
+            OreBlock = BlockId.DiamondOre,
+            MinY = -64,
+            MaxY = 16,
+            PeakY = -58,
+            Rarity = 0.0015f,
+            VeinSize = 8,
+            DistributionType = OreDistribution.Triangle
+        }
+    ];
+}
+
+/// <summary>
+/// Defines a single ore type's spawning parameters.
+/// </summary>
+public sealed class OreDefinition
+{
+    /// <summary>
+    /// The block type to place for this ore.
+    /// </summary>
+    public BlockId OreBlock { get; set; } = BlockId.CoalOre;
+
+    /// <summary>
+    /// Minimum Y-level where this ore can spawn (relative to sea level for negative values).
+    /// </summary>
+    public int MinY { get; set; } = 0;
+
+    /// <summary>
+    /// Maximum Y-level where this ore can spawn.
+    /// </summary>
+    public int MaxY { get; set; } = 128;
+
+    /// <summary>
+    /// Y-level with maximum spawn probability (for triangle distribution).
+    /// </summary>
+    public int PeakY { get; set; } = 64;
+
+    /// <summary>
+    /// Base spawn probability [0,1] at peak depth.
+    /// Actual probability decreases away from PeakY based on DistributionType.
+    /// </summary>
+    public float Rarity { get; set; } = 0.01f;
+
+    /// <summary>
+    /// Maximum number of blocks in an ore vein.
+    /// Actual vein size varies randomly from 1 to VeinSize.
+    /// </summary>
+    public int VeinSize { get; set; } = 8;
+
+    /// <summary>
+    /// How ore probability varies with depth within the Y range.
+    /// </summary>
+    public OreDistribution DistributionType { get; set; } = OreDistribution.Uniform;
+}
+
+/// <summary>
+/// Ore spawn probability distribution types.
+/// </summary>
+public enum OreDistribution
+{
+    /// <summary>
+    /// Equal probability throughout the Y range.
+    /// </summary>
+    Uniform,
+
+    /// <summary>
+    /// Probability peaks at PeakY and decreases linearly toward MinY and MaxY.
+    /// Mimics Minecraft 1.18+ ore distribution.
+    /// </summary>
+    Triangle
 }
 
 /// <summary>

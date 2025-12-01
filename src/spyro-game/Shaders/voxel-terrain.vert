@@ -41,7 +41,8 @@ void main(){
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
     
     // Unpack p2: bits 0-7 = blockId, bits 8-15 = light, bits 16-23 = biomeId
-    vBlockDescriptor=p2&0xFFu;
+    uint blockId = p2 & 0xFFu;
+    vBlockDescriptor = blockId;
     uint lightByte = (p2 >> 8) & 0xFFu;
     vBiomeId = (p2 >> 16) & 0xFFu;
     
@@ -53,6 +54,12 @@ void main(){
     int cz=chunkIdx/int(uWorldChunksXZ);
     
     vec3 localPos=vec3(float(lx),float(ly),float(lz));
+
+    // Fix z-fighting for water: displace top surface downwards
+    if (blockId == 1u && face == FACE_POS_Y) {
+        localPos.y -= 0.15;
+    }
+
     vec3 worldPos=vec3(float(cx*16),0.0,float(cz*16))+localPos;
     
     vec4 finalPos=uChunkTransform*vec4(worldPos,1.0);

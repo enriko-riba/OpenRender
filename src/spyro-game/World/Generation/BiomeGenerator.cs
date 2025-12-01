@@ -30,7 +30,7 @@ public sealed class BiomeGenerator
     }
     
     /// <summary>
-    /// Generate biome data for a chunk.
+    /// Generate biome data for a chunk including 3D cave biomes.
     /// </summary>
     public ChunkBiomeData GenerateChunkBiomes(int chunkX, int chunkZ)
     {
@@ -38,6 +38,7 @@ public sealed class BiomeGenerator
         var baseX = chunkX * VoxelHelper.ChunkSideSize;
         var baseZ = chunkZ * VoxelHelper.ChunkSideSize;
         
+        // Generate surface biomes (4×4 grid)
         for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
         {
             for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
@@ -105,7 +106,174 @@ public sealed class BiomeGenerator
             }
         }
         
+        // Generate 3D cave biomes (4×4×24 grid)
+        GenerateCaveBiomes(data, baseX, baseZ);
+        
         return data;
+    }
+    
+    /// <summary>
+    /// Generate 3D cave biomes for underground biome variation.
+    /// Uses Minecraft-style 4×4×24 grid (16-block cells in Y).
+    /// </summary>
+    private void GenerateCaveBiomes(ChunkBiomeData data, int baseX, int baseZ)
+    {
+        for (var cellY = 0; cellY < ChunkBiomeData.GridSizeY; cellY++)
+        {
+            var worldY = cellY * ChunkBiomeData.BlocksPerCellY + ChunkBiomeData.BlocksPerCellY / 2;
+            
+            for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
+            {
+                for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
+                {
+                    var worldX = baseX + cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                    var worldZ = baseZ + cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                    
+                    // Get surface climate values for this XZ position
+                    var surfaceIndex = cellZ * ChunkBiomeData.GridSize + cellX;
+                    var temp01 = data.Temperature[surfaceIndex];
+                    var humid01 = data.Humidity[surfaceIndex];
+                    var cont01 = data.Continentalness[surfaceIndex] * 0.5f + 0.5f;
+                    
+                    // Select cave biome based on 3D position and climate
+                    var caveBiome = SelectCaveBiome(worldX, worldY, worldZ, temp01, humid01, cont01);
+                    data.SetCaveBiomeAt(cellX, cellY, cellZ, caveBiome);
+                }
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Select cave biome based on 3D world position and surface climate.
+    /// </summary>
+    private CaveBiomeId SelectCaveBiome(float worldX, float worldY, float worldZ, float temp01, float humid01, float cont01)
+    {
+        // Use 3D noise for cave biome variation
+        const float caveBiomeScale = 1f / 120f; // ~120 block cave biome regions
+        var caveBiomeNoise = SampleNoise3D(worldX, worldY, worldZ, caveBiomeScale, seed + 5000u);
+        var caveBiomeValue = caveBiomeNoise * 0.5f + 0.5f; // [0, 1]
+        
+        // Secondary noise for variety
+        var varietyNoise = SampleNoise3D(worldX + 100f, worldY + 50f, worldZ + 100f, caveBiomeScale * 1.5f, seed + 5001u);
+        var varietyValue = varietyNoise * 0.5f + 0.5f;
+        
+        // Depth-based selection (deep = different biomes)
+        var isDeep = worldY < 30; // Below Y=30 is "deep" underground
+        var isVeryDeep = worldY < 10; // Below Y=10 is "very deep"
+        
+        // Ocean areas get ocean caves
+        if (cont01 < config.OceanThreshold)
+        {
+            return CaveBiomeId.OceanCave;
+        }
+        
+        // Very deep areas - chance for deep dark (disabled per user request - skip this)
+        // if (isVeryDeep && varietyValue > 0.85f)
+        // {
+        //     return CaveBiomeId.DeepDark;
+        // }
+        
+        // Cold biomes get frozen caves
+        if (temp01 < 0.25f && caveBiomeValue > 0.6f)
+        {
+            return CaveBiomeId.FrozenCave;
+        }
+        
+        // Humid biomes get lush caves
+        if (humid01 > 0.6f && caveBiomeValue > 0.4f && !isDeep)
+        {
+            return CaveBiomeId.LushCave;
+        }
+        
+        // Dry biomes get dripstone caves
+        if (humid01 < 0.4f && caveBiomeValue > 0.5f)
+        {
+            return CaveBiomeId.DripstoneCave;
+        }
+        
+        // Default to standard cave
+        return CaveBiomeId.StandardCave;
+    }
+    
+    /// <summary>
+    /// Sample 3D noise for cave biome selection.
+    /// </summary>
+    private static float SampleNoise3D(float x, float y, float z, float frequency, uint seed)
+    {
+        // Simple 3D FBM with 2 octaves for performance
+        var amplitude = 1f;
+        var freq = frequency;
+        var sum = 0f;
+        var totalAmp = 0f;
+        
+        for (var octave = 0; octave < 2; octave++)
+        {
+            sum += GradientNoise3D(x * freq, y * freq, z * freq, seed + (uint)(octave * 1000)) * amplitude;
+            totalAmp += amplitude;
+            amplitude *= 0.5f;
+            freq *= 2f;
+        }
+        
+        return sum / totalAmp;
+    }
+    
+    /// <summary>
+    /// Simple 3D gradient noise implementation.
+    /// </summary>
+    private static float GradientNoise3D(float x, float y, float z, uint seed)
+    {
+        var xi = (int)MathF.Floor(x);
+        var yi = (int)MathF.Floor(y);
+        var zi = (int)MathF.Floor(z);
+        
+        var fx = x - xi;
+        var fy = y - yi;
+        var fz = z - zi;
+        
+        // Fade curves
+        var u = fx * fx * fx * (fx * (fx * 6f - 15f) + 10f);
+        var v = fy * fy * fy * (fy * (fy * 6f - 15f) + 10f);
+        var w = fz * fz * fz * (fz * (fz * 6f - 15f) + 10f);
+        
+        // Hash corners and compute gradients
+        var g000 = Grad3D(Hash3D(xi, yi, zi, seed), fx, fy, fz);
+        var g100 = Grad3D(Hash3D(xi + 1, yi, zi, seed), fx - 1f, fy, fz);
+        var g010 = Grad3D(Hash3D(xi, yi + 1, zi, seed), fx, fy - 1f, fz);
+        var g110 = Grad3D(Hash3D(xi + 1, yi + 1, zi, seed), fx - 1f, fy - 1f, fz);
+        var g001 = Grad3D(Hash3D(xi, yi, zi + 1, seed), fx, fy, fz - 1f);
+        var g101 = Grad3D(Hash3D(xi + 1, yi, zi + 1, seed), fx - 1f, fy, fz - 1f);
+        var g011 = Grad3D(Hash3D(xi, yi + 1, zi + 1, seed), fx, fy - 1f, fz - 1f);
+        var g111 = Grad3D(Hash3D(xi + 1, yi + 1, zi + 1, seed), fx - 1f, fy - 1f, fz - 1f);
+        
+        // Trilinear interpolation
+        var x00 = g000 + u * (g100 - g000);
+        var x10 = g010 + u * (g110 - g010);
+        var x01 = g001 + u * (g101 - g001);
+        var x11 = g011 + u * (g111 - g011);
+        
+        var y0 = x00 + v * (x10 - x00);
+        var y1 = x01 + v * (x11 - x01);
+        
+        return y0 + w * (y1 - y0);
+    }
+    
+    private static float Grad3D(uint hash, float x, float y, float z)
+    {
+        var h = hash & 15;
+        var u = h < 8 ? x : y;
+        var v = h < 4 ? y : (h == 12 || h == 14 ? x : z);
+        return ((h & 1) != 0 ? -u : u) + ((h & 2) != 0 ? -v : v);
+    }
+    
+    private static uint Hash3D(int x, int y, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + y * 668265263 + z * 2147483647);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            return h ^ (h >> 16);
+        }
     }
     
     /// <summary>

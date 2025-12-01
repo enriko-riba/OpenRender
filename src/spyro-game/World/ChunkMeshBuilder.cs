@@ -197,8 +197,30 @@ internal static class ChunkMeshBuilder
             return false;
         }
 
+        var blockIsWater = block.IsWater();
+        var neighborIsWater = neighborBlock.IsWater();
+
         if (!HasRenderableGeometry(neighborBlock))
         {
+            // Neighbor is air/replaceable – always emit face
+            return true;
+        }
+
+        if (blockIsWater)
+        {
+            // Water only renders against transparent, non-water neighbors (air, foliage, etc.)
+            // Prevents extra water surfaces when capped by solids.
+            if (!neighborBlock.IsTransparent())
+            {
+                return false;
+            }
+
+            return !neighborIsWater;
+        }
+
+        if (neighborIsWater)
+        {
+            // Solid blocks render against water (needed for shoreline seams)
             return true;
         }
 
@@ -207,11 +229,7 @@ internal static class ChunkMeshBuilder
             return false;
         }
 
-        var blockOpaque = IsOpaque(block);
-        var neighborOpaque = IsOpaque(neighborBlock);
-
-        // Opaque blocks mutually occlude each other.
-        if (blockOpaque && neighborOpaque)
+        if (IsOpaque(block) && IsOpaque(neighborBlock))
         {
             return false;
         }

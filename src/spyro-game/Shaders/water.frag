@@ -137,14 +137,40 @@ void main() {
     alpha = max(alpha, distAlpha);
 
     // --- FOG (match terrain fog) ---
-    if (cameraPos.y < 35.0) {
-        // Underwater fog
-        float dist = distance(fragPos, cameraPos);
+    const float WATER_LEVEL = 35.0;
+    if (cameraPos.y < WATER_LEVEL) {
+        // Underwater depth fog - darker and more tinted with depth
+        float distFog = distance(fragPos, cameraPos);
+        
+        // Calculate depth below water surface for depth-based effects
+        float cameraDepth = WATER_LEVEL - cameraPos.y;
+        float fragmentDepth = max(WATER_LEVEL - fragPos.y, 0.0);
+        
+        // Distance fog
         float fogEnd = 30.0;
-        float fog = clamp(dist / fogEnd, 0.0, 1.0);
-        vec3 waterFogColor = vec3(0.0, 0.2, 0.4);
-        vec3 fogged = mix(finalColor, waterFogColor, fog);
-        fogged *= vec3(0.5, 0.7, 1.0); // Tint
+        float fog = clamp(distFog / fogEnd, 0.0, 1.0);
+        
+        // Depth fog - deeper water is darker
+        float maxDepthEffect = 60.0;
+        float depthFactor = clamp(fragmentDepth / maxDepthEffect, 0.0, 1.0);
+        
+        // Transition fog color from shallow (light blue) to deep (dark blue-green)
+        vec3 shallowFogColor = vec3(0.1, 0.35, 0.55);
+        vec3 deepFogColor = vec3(0.02, 0.1, 0.18);
+        vec3 waterFogColor = mix(shallowFogColor, deepFogColor, depthFactor);
+        
+        // Light absorption with depth
+        float lightAbsorption = exp(-fragmentDepth * 0.015);
+        vec3 fogged = finalColor * lightAbsorption;
+        
+        // Apply fog
+        fogged = mix(fogged, waterFogColor, fog);
+        fogged *= vec3(0.5, 0.7, 1.0); // Blue tint
+        
+        // Reduce visibility based on camera depth
+        float cameraDepthFactor = clamp(cameraDepth / maxDepthEffect, 0.0, 1.0);
+        fogged *= (1.0 - cameraDepthFactor * 0.25);
+        
         outputColor = vec4(fogged, alpha);
     } else {
         // Normal atmospheric fog

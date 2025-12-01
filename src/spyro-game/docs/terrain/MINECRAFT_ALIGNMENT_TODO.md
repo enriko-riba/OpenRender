@@ -28,7 +28,7 @@ This document tracks all items needed to align the current implementation with M
 | 4×4 horizontal grid per chunk | ✅ DONE | `ChunkBiomeData.cs` | 16 cells (4×4), 4 blocks per cell |
 | Climate values stored per cell | ✅ DONE | `ChunkBiomeData.cs` | C, E, PV, W, T, H all stored |
 | Biome ID per cell | ✅ DONE | `ChunkBiomeData.cs` | `BiomeIds[16]` array |
-| 3D cave biomes (Y-axis sampling) | ⬜ TODO | - | Minecraft has 4×4×24 grid for cave biomes |
+| 3D cave biomes (Y-axis sampling) | ✅ DONE | `ChunkBiomeData.cs`, `BiomeGenerator.cs` | 4×4×24 grid with CaveBiomeId enum |
 
 ### 1.3 Biome Definitions
 | Item | Status | File(s) | Notes |
@@ -36,7 +36,7 @@ This document tracks all items needed to align the current implementation with M
 | Temperature/Humidity ranges per biome | ✅ DONE | `TerrainConfig.cs:BiomeDefinition` | Uses `Range` type |
 | Surface/Subsurface/Deep blocks per biome | ✅ DONE | `TerrainConfig.cs:723-743` | `SurfaceBlock`, `SubsurfaceBlock`, `DeepBlock`, etc. |
 | Per-biome height variation parameters | 🔧 PARTIAL | - | Fields exist but not fully utilized |
-| Biome blend weights (Worley regionization) | ⬜ TODO | - | Doc mentions blending K=2-3 neighbors |
+| Biome blend weights (Worley regionization) | ✅ DONE | `ChunkBiomeData.cs` | GetBiomeBlendWeights() with K neighbors |
 
 ---
 
@@ -67,7 +67,7 @@ This document tracks all items needed to align the current implementation with M
 | Biome-based surface blocks | ✅ DONE | `CpuTerrainGenerator.cs:1071-1115` | Uses `BiomeDefinition.SurfaceBlock` etc. |
 | Depth-based layer assignment | ✅ DONE | `CpuTerrainGenerator.cs` | Surface → Subsurface → Deep |
 | Underwater surface blocks | ✅ DONE | `TerrainConfig.cs:738-743` | `UnderwaterSurfaceBlock`, `UnderwaterSubsurfaceBlock` |
-| Ore generation | ⬜ TODO | - | Scatter ores in stone regions |
+| Ore generation | ✅ DONE | `CpuTerrainGenerator.cs`, `TerrainConfig.cs` | OreParams with depth distribution |
 | Bedrock floor (Y=0-5) | ✅ DONE | `BlockId.cs` | `Bedrock` block exists |
 | Structure integration points | ⬜ TODO | - | Villages, dungeons, mineshafts, etc. |
 
@@ -130,9 +130,9 @@ This document tracks all items needed to align the current implementation with M
 |------|--------|---------|-------|
 | Flat water surface (top faces only) | ✅ DONE | `ChunkMeshBuilder.cs` | No side water curtains |
 | Translucent pass (after opaque) | ✅ DONE | `VoxelTerrainRenderer.cs` | Separate draw calls |
-| Animated water UVs | ⬜ TODO | - | Scrolling/wave UVs |
+| Animated water UVs | ✅ DONE | `voxel-terrain.frag` | Multi-layer scrolling UV animation |
 | Underwater fog / tint | 🔧 PARTIAL | Shader | Basic underwater detection exists |
-| Water depth fog | ⬜ TODO | - | Darker water at depth |
+| Water depth fog | ✅ DONE | `voxel-terrain.frag`, `water.frag` | Depth-based darkening and tint |
 
 ### 5.3 Lighting
 | Item | Status | File(s) | Notes |
@@ -229,13 +229,13 @@ This document tracks all items needed to align the current implementation with M
 1. ⬜ Biome border blending (Worley regionization)
 2. ⬜ Height transition smoothing
 3. ⬜ Proper light propagation
-4. ⬜ Underwater depth fog
+4. ✅ Underwater depth fog - DONE
 5. ⬜ Cave ambient occlusion improvements
 
 ### Phase 4: Features
-1. ⬜ Cave biomes (3D biome grid)
+1. ✅ Cave biomes (3D biome grid) - DONE
 2. ⬜ Aquifer caves
-3. ⬜ Ore generation
+3. ✅ Ore generation - DONE
 4. ⬜ Decorations (trees, flowers, grass)
 5. ⬜ Structures (villages, dungeons)
 
@@ -245,17 +245,17 @@ This document tracks all items needed to align the current implementation with M
 
 | Category | Done | Partial | Todo | Total |
 |----------|------|---------|------|-------|
-| Biome System | 8 | 1 | 2 | 11 |
-| Terrain Generation | 8 | 2 | 3 | 13 |
+| Biome System | 10 | 1 | 0 | 11 |
+| Terrain Generation | 9 | 2 | 2 | 13 |
 | Block System | 4 | 1 | 3 | 8 |
 | Meshing Pipeline | 8 | 0 | 0 | 8 |
-| Rendering/Textures | 6 | 3 | 3 | 12 |
+| Rendering/Textures | 8 | 2 | 2 | 12 |
 | GPU Buffers | 3 | 0 | 2 | 5 |
-| **TOTAL** | **37** | **7** | **13** | **57** |
+| **TOTAL** | **42** | **6** | **9** | **57** |
 
-**Completion: ~65% core functionality, ~77% with partials**
+**Completion: ~74% core functionality, ~84% with partials**
 
 ---
 
-*Last Updated: [Current Date]*
+*Last Updated: December 2024*
 *Cross-referenced with: MINECRAFT_TERRAIN_ARCHITECTURE.md, PROGRESS.md, PLAN_TERRAIN_AND_BIOMES.md*

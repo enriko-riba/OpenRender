@@ -1276,8 +1276,89 @@ internal sealed class CpuTerrainGenerator
             return biomeDef?.SubsurfaceBlock ?? BlockId.Dirt;
         }
         
-        // Deep blocks - use biome's deep block
-        return biomeDef?.DeepBlock ?? BlockId.Stone;
+        // Deep blocks - try to generate ore in stone regions
+        var deepBlock = biomeDef?.DeepBlock ?? BlockId.Stone;
+        if (deepBlock == BlockId.Stone)
+        {
+            // Only generate ores in stone blocks
+            var oreBlock = TryGenerateOre(wx, y, wz);
+            if (oreBlock != BlockId.Air)
+            {
+                return oreBlock;
+            }
+        }
+        
+        return deepBlock;
+    }
+
+    /// <summary>
+    /// Attempts to generate an ore at the specified world position.
+    /// Returns the ore BlockId if generated, otherwise Air (indicating no ore).
+    /// Uses Minecraft-style depth distribution with per-ore probability curves.
+    /// </summary>
+    private BlockId TryGenerateOre(int wx, int y, int wz)
+    {
+        var oreTypes = config.Ores.OreTypes;
+        if (oreTypes == null || oreTypes.Count == 0)
+            return BlockId.Air;
+        
+        var baseSeed = terrainParams.Seed + config.Ores.SeedOffset;
+        
+        // Check each ore type
+        foreach (var oreDef in oreTypes)
+        {
+            // Convert Y ranges relative to water level for negative values
+            var minY = oreDef.MinY < 0 ? VoxelHelper.WaterLevel + oreDef.MinY : oreDef.MinY;
+            var maxY = oreDef.MaxY < 0 ? VoxelHelper.WaterLevel + oreDef.MaxY : oreDef.MaxY;
+            var peakY = oreDef.PeakY < 0 ? VoxelHelper.WaterLevel + oreDef.PeakY : oreDef.PeakY;
+            
+            // Check if within Y range
+            if (y < minY || y > maxY)
+                continue;
+            
+            // Calculate spawn probability based on distribution type
+            var probability = oreDef.Rarity;
+            if (oreDef.DistributionType == OreDistribution.Triangle)
+            {
+                // Triangle distribution: peaks at PeakY, falls off linearly
+                if (y <= peakY)
+                {
+                    var range = peakY - minY;
+                    probability *= range > 0 ? (y - minY) / (float)range : 1f;
+                }
+                else
+                {
+                    var range = maxY - peakY;
+                    probability *= range > 0 ? (maxY - y) / (float)range : 1f;
+                }
+            }
+            
+            // Use 3D hash for deterministic ore placement
+            var oreSeed = baseSeed + (uint)oreDef.OreBlock.GetId();
+            var hash = OreHash3D(wx, y, wz, oreSeed);
+            
+            if (hash < probability)
+            {
+                return oreDef.OreBlock;
+            }
+        }
+        
+        return BlockId.Air;
+    }
+    
+    /// <summary>
+    /// 3D hash function for ore generation. Returns a value in [0,1).
+    /// </summary>
+    private static float OreHash3D(int x, int y, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + y * 668265263 + z * 2147483647);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f;
+        }
     }
 
     #region Terrain Functions
