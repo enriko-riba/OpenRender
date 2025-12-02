@@ -283,7 +283,7 @@ internal class GameScene : Scene
         wasLeftButtonDown = isLeftButtonDown;
 
         // Execute GPU frustum culling (every frame for smooth rotation)
-        if (streamingManager != null && terrainRenderer != null && camera != null && camera.IsDirty)
+        if (streamingManager != null && terrainRenderer != null && camera != null)
         {
             // Generate surrounding chunk indices based on camera position
             var chunkIndices = GenerateSurroundingChunkIndices();

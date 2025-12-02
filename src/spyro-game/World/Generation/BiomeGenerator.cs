@@ -52,8 +52,8 @@ public sealed class BiomeGenerator
                 
                 // Add small per-cell jitter (±0.25 blocks equivalent) to break grid patterns
                 // Using cell coordinates as seed ensures consistency across chunk boundaries
-                var jitterX = GradientNoise2D(baseCellX * 0.25f, baseCellZ * 0.25f, seed + 2000u) * 0.5f;
-                var jitterZ = GradientNoise2D(baseCellX * 0.25f + 100f, baseCellZ * 0.25f + 100f, seed + 2001u) * 0.5f;
+                var jitterX = GradientNoise2D(baseCellX * 0.25f, baseCellZ * 0.25f, seed + 2000u) * 2.0f;
+                var jitterZ = GradientNoise2D(baseCellX * 0.25f + 100f, baseCellZ * 0.25f + 100f, seed + 2001u) * 2.0f;
                 var worldX = baseCellX + jitterX;
                 var worldZ = baseCellZ + jitterZ;
                 

@@ -38,7 +38,7 @@ public sealed class TerrainConfig
     /// - 1/400: Smaller, more fragmented continents
     /// Technical: This is the primary driver for ocean/land distribution via the height spline.
     /// </summary>
-    public float ContinentalnessScale { get; set; } = 1f / 800f;
+    public float ContinentalnessScale { get; set; } = 1f / 1200f;
     
     /// <summary>
     /// Gets or sets the erosion noise frequency (inverse of wavelength in blocks).
@@ -48,7 +48,7 @@ public sealed class TerrainConfig
     /// - 1/150: More chaotic, rapidly changing terrain roughness
     /// Technical: Modulates peaks/valleys amplitude. High erosion = flatter terrain, low = more dramatic relief.
     /// </summary>
-    public float ErosionScale { get; set; } = 1f / 300f;
+    public float ErosionScale { get; set; } = 1f / 500f;
     
     /// <summary>
     /// Gets or sets the peaks/valleys ridge noise frequency (inverse of wavelength in blocks).
@@ -250,7 +250,7 @@ public sealed class TerrainConfig
     /// - Lower values (0.50): Mountains appear in more areas, more dramatic terrain
     /// - Higher values (0.85): Mountains only in highest continentalness, flatter world
     /// </summary>
-    public float MountainThreshold { get; set; } = 0.60f;
+    public float MountainThreshold { get; set; } = 0.55f;
     
     /// <summary>
     /// Frequency of cliff noise (inverse of feature size in blocks).
@@ -258,7 +258,7 @@ public sealed class TerrainConfig
     /// - Lower values (1/60 = 0.0167): Larger, smoother cliff faces
     /// - Higher values (1/25 = 0.04): More jagged, frequent cliff details
     /// </summary>
-    public float CliffFrequency { get; set; } = 1f / 40f;
+    public float CliffFrequency { get; set; } = 1f / 100f;
     
     /// <summary>
     /// Height amplitude of cliff variations in blocks.
@@ -266,7 +266,7 @@ public sealed class TerrainConfig
     /// - Lower values (25): Gentler, less dramatic cliffs
     /// - Higher values (60): Very dramatic, towering cliff faces
     /// </summary>
-    public float CliffAmplitude { get; set; } = 40f;
+    public float CliffAmplitude { get; set; } = 10f;
     
     /// <summary>
     /// Frequency of 3D overhang noise (inverse of feature size).
@@ -1345,9 +1345,9 @@ public sealed class Spline1D
         s.Add(0.55f, 60f);    // Inland hills (Y=95)
         s.Add(0.65f, 100f);   // Highlands (Y=135)
         s.Add(0.75f, 150f);   // Foothills (Y=185)
-        s.Add(0.85f, 220f);   // Mountains (Y=255)
-        s.Add(0.95f, 290f);   // High peaks (Y=325)
-        s.Add(1.00f, 335f);   // Maximum peaks (Y=370, leaves room for noise)
+        s.Add(0.80f, 220f);   // Mountains (Y=255)
+        s.Add(0.90f, 300f);   // High peaks (Y=335)
+        s.Add(1.00f, 380f);   // Maximum peaks (Y=415)
         
         s.Sort();
         return s;

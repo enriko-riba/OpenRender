@@ -331,21 +331,19 @@ internal sealed class CpuTerrainGenerator
                 {
                     var coastFactor = coastDist / 0.2f; // 0 at shore, 1 at end of coastal zone
                     
-                    // Some coasts are beaches (low cliffiness), some are cliffs (high cliffiness)
-                    var isCliffyCoast = cliffVal > 0.3f;
+                    // Blend between beach (flattening) and cliff (adding height)
+                    // cliffVal > 0.2 starts becoming cliffy
+                    var cliffMix = Smoothstep(0.1f, 0.5f, cliffVal); // 0 = beach, 1 = cliff
                     
-                    if (!isCliffyCoast)
-                    {
-                        // Gentle beach - flatten toward water
-                        var beachFlatten = (1f - coastFactor) * (1f - MathF.Abs(cliffVal));
-                        baseHeight = Lerp(VoxelHelper.WaterLevel + 2f, baseHeight, coastFactor + beachFlatten * 0.5f);
-                    }
-                    else
-                    {
-                        // Cliffy coast - can have steep drop into water
-                        var cliffStrength = (cliffVal - 0.3f) / 0.7f; // 0-1 for cliff intensity
-                        baseHeight += cliffStrength * 15f * (1f - coastFactor);
-                    }
+                    // Beach behavior: flatten to water level
+                    // We blend current baseHeight towards water level + 2
+                    var beachHeight = Lerp(VoxelHelper.WaterLevel + 2f, baseHeight, coastFactor + 0.2f);
+                    
+                    // Cliff behavior: keep height or add to it
+                    // Add some extra height for cliffs at the coast
+                    var cliffHeight = baseHeight + MathF.Max(0f, cliffVal) * 10f * (1f - coastFactor);
+                    
+                    baseHeight = Lerp(beachHeight, cliffHeight, cliffMix);
                 }
                 
                 // === TERRAIN TYPE MODULATION ===
@@ -360,7 +358,7 @@ internal sealed class CpuTerrainGenerator
                     // ROLLING HILLS - moderate variation
                     var hilliness = (terrainTypeVal - 0.35f) / 0.3f;
                     baseHeight += columnPeaks[i] * 25f * hilliness;
-                    baseHeight += columnCliff[i] * 8f * hilliness;
+                    //baseHeight += columnCliff[i] * 8f * hilliness;
                 }
                 else
                 {
@@ -371,23 +369,32 @@ internal sealed class CpuTerrainGenerator
                     baseHeight += columnPeaks[i] * 50f * drama;
                     
                     // Cliff features - can create sudden height changes
-                    var cliffContrib = MathF.Abs(columnCliff[i]) * 40f * drama;
+                    var cliffContrib = MathF.Abs(columnCliff[i]) * 5f * drama;
                     
-                    // Some areas get plateaus (flat tops), some get peaks
-                    if (cliffVal > 0.5f)
+                    // Smoothly blend between plateau (low cliffVal) and sharp cliffs (high cliffVal)
+                    if (cliffVal > 0.75f)
                     {
-                        // Sharp cliff edges
-                        baseHeight += cliffContrib;
+                        // Transition to sharp cliffs
+                        // Blend from 0.5x to 1.0x contribution
+                        var t = Smoothstep(0.2f, 0.6f, cliffVal);
+                        baseHeight += cliffContrib * Lerp(0.5f, 1.0f, t);
                     }
-                    else if (cliffVal < -0.3f)
+                    else if (cliffVal < -0.2f)
                     {
-                        // Plateau - flat area then sudden drop
-                        var plateauHeight = baseHeight + 30f * drama;
-                        baseHeight = MathF.Max(baseHeight, plateauHeight - MathF.Abs(columnCliff[i]) * 60f);
+                        // Transition to plateaus
+                        var t = Smoothstep(-0.2f, -0.6f, cliffVal); // 0 at -0.2, 1 at -0.6
+                        
+                        // Plateau target
+                        var plateauHeight = baseHeight + 15f * drama;
+                        var plateauBase = MathF.Max(baseHeight, plateauHeight - MathF.Abs(columnCliff[i]) * 60f);
+                        
+                        // Blend normal slope (0.5x cliff) into plateau
+                        var normalSlope = baseHeight + cliffContrib * 0.5f;
+                        baseHeight = Lerp(normalSlope, plateauBase, t);
                     }
                     else
                     {
-                        // Gradual mountain slopes
+                        // Middle ground - gradual slopes
                         baseHeight += cliffContrib * 0.5f;
                     }
                 }
@@ -401,7 +408,11 @@ internal sealed class CpuTerrainGenerator
                     baseHeight += 80f * mountainness;
                     
                     // Additional cliff detail in mountains
-                    baseHeight += MathF.Abs(columnCliff[i]) * terrainParams.CliffAmplitude * mountainness;
+                    // Only if terrain is not explicitly flat (plains on mountains)
+                    var flatness = 1f;
+                    if (terrainTypeVal < 0.4f) flatness = Smoothstep(0.2f, 0.4f, terrainTypeVal);
+                    
+                    baseHeight += MathF.Abs(columnCliff[i]) * terrainParams.CliffAmplitude * mountainness * flatness;
                     
                     // Some mountain regions get extra peaks for alpine zones
                     if (terrainTypeVal > 0.5f)
