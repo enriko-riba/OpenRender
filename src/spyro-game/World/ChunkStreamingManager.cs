@@ -1,14 +1,8 @@
-using System;
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using OpenRender;
-using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using System.Buffers;
 
 namespace SpyroGame.World;
 
@@ -46,7 +40,7 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Dictionary<int, Dictionary<int, BlockId>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
-    
+
     // Deferred remesh: chunks waiting for a neighbor to complete regeneration before remeshing
     // Key = chunk that needs to regenerate first, Value = list of neighbors waiting for remesh
     private readonly Dictionary<int, HashSet<int>> deferredRemeshWaiters = [];
@@ -85,11 +79,11 @@ public sealed class ChunkStreamingManager : IDisposable
 
     public VoxelWorld World => world;
     public CollisionManager CollisionManager { get; }
-    
+
     /// <summary>
     /// Query the biome at a world position using cached chunk biome data.
     /// </summary>
-    public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ) 
+    public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ)
         => chunkVoxelCache.GetBiomeAtWorldPos(worldX, worldZ);
 
     /// <summary>
@@ -103,11 +97,11 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public (float C, float T, float H, float E, float PV)? GetCellClimateAtWorldPos(int worldX, int worldZ)
         => chunkVoxelCache.GetCellClimateAtWorldPos(worldX, worldZ);
-    
+
     /// <summary>
     /// Try to get full biome data for a chunk.
     /// </summary>
-    public bool TryGetChunkBiomeData(int chunkIndex, out ChunkBiomeData? biomeData) 
+    public bool TryGetChunkBiomeData(int chunkIndex, out ChunkBiomeData? biomeData)
         => chunkVoxelCache.TryGetBiomeData(chunkIndex, out biomeData);
 
     private int loadDistance = VoxelHelper.MaxDistanceInChunks;
@@ -483,7 +477,7 @@ public sealed class ChunkStreamingManager : IDisposable
     // Only chunks within (loadDistance - RemeshProximityMargin) are re-meshed immediately.
     // This avoids wasted work on far chunks that may be unloaded when player turns.
     private const int RemeshProximityMargin = 2;
-    
+
     /// <summary>
     /// Process chunks marked Dirty - re-mesh them to pick up neighbor data.
     /// Only re-meshes chunks that are close enough to the camera.
@@ -494,14 +488,14 @@ public sealed class ChunkStreamingManager : IDisposable
         // Calculate the proximity threshold - only re-mesh chunks within this distance
         var loadDistance = GetActiveLoadDistance();
         var remeshDistanceSq = (loadDistance - RemeshProximityMargin) * (loadDistance - RemeshProximityMargin);
-        
+
         // Get camera chunk position
         var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
         var clampedX = Math.Clamp(lastCameraPosition.X, 0, worldSizeInBlocks - 1);
         var clampedZ = Math.Clamp(lastCameraPosition.Z, 0, worldSizeInBlocks - 1);
         var cameraChunkX = (int)(clampedX / VoxelHelper.ChunkSideSize);
         var cameraChunkZ = (int)(clampedZ / VoxelHelper.ChunkSideSize);
-        
+
         var dirtyChunks = activeChunks.Values
             .Where(c => c.State == TerrainChunkState.Dirty)
             .Where(c =>
@@ -520,12 +514,12 @@ public sealed class ChunkStreamingManager : IDisposable
         foreach (var desc in dirtyChunks)
         {
             var chunkIdx = desc.ChunkIndex;
-            
+
             // Update state before scheduling to prevent re-processing
             var updatedDesc = desc;
             updatedDesc.State = TerrainChunkState.CountingVisibility;
             activeChunks[chunkIdx] = updatedDesc;
-            
+
             ScheduleCpuMeshing(chunkIdx);
             Log.Debug($"Re-meshing dirty chunk {chunkIdx} (close to camera)");
         }
@@ -539,10 +533,10 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         if (!activeChunks.TryGetValue(chunkIdx, out var desc))
             return;
-            
+
         if (desc.State != TerrainChunkState.Ready)
             return;
-            
+
         desc.State = TerrainChunkState.Dirty;
         activeChunks[chunkIdx] = desc;
         Log.Debug($"Marked chunk {chunkIdx} dirty: {reason}");
@@ -564,35 +558,54 @@ public sealed class ChunkStreamingManager : IDisposable
             if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
                 return;
             var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
-            
-            // If neighbor is ready, propagate light between them
-            if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) && neighborDesc.State == TerrainChunkState.Ready)
-            {
-                // We need mutable access to ChunkData. 
-                // ChunkVoxelDataCache stores ChunkData, but TryGetReadOnly returns a view.
-                // However, we know the cache stores the actual ChunkData object.
-                // We can use a new method on cache or just rely on the fact that we are on the main thread
-                // and we can get the data if we expose it.
-                // For now, let's assume we can get it via a new method on ChunkVoxelDataCache.
-                
-                if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var centerData) && centerData != null &&
-                    chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
-                {
-                    LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
-                    // Mark center dirty too, as it might have received light from neighbor
-                    MarkChunkDirty(chunkIdx, $"received light from neighbor {neighborIdx}");
-                }
-                
-                MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
-            }
-        }
 
-        NotifyNeighbor(-1, 0);
-        NotifyNeighbor(1, 0);
-        NotifyNeighbor(0, -1);
-        NotifyNeighbor(0, 1);
+            void NotifyNeighbor(int dx, int dz, bool propagateLight)
+            {
+                var nx = chunkX + dx;
+                var nz = chunkZ + dz;
+                if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                    return;
+                var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+
+                // If neighbor is ready, propagate light between them
+                if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) && neighborDesc.State == TerrainChunkState.Ready)
+                {
+                    if (propagateLight)
+                    {
+                        // We need mutable access to ChunkData. 
+                        // ChunkVoxelDataCache stores ChunkData, but TryGetReadOnly returns a view.
+                        // However, we know the cache stores the actual ChunkData object.
+                        // We can use a new method on cache or just rely on the fact that we are on the main thread
+                        // and we can get the data if we expose it.
+                        // For now, let's assume we can get it via a new method on ChunkVoxelDataCache.
+
+                        if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var centerData) && centerData != null &&
+                            chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+                        {
+                            LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
+                            // Mark center dirty too, as it might have received light from neighbor
+                            MarkChunkDirty(chunkIdx, $"received light from neighbor {neighborIdx}");
+                        }
+                    }
+
+                    MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
+                }
+            }
+
+            // Direct neighbors (for light propagation AND meshing)
+            NotifyNeighbor(-1, 0, true);
+            NotifyNeighbor(1, 0, true);
+            NotifyNeighbor(0, -1, true);
+            NotifyNeighbor(0, 1, true);
+
+            // Diagonal neighbors (for meshing only - smooth lighting/AO)
+            NotifyNeighbor(-1, -1, false);
+            NotifyNeighbor(-1, 1, false);
+            NotifyNeighbor(1, -1, false);
+            NotifyNeighbor(1, 1, false);
+        }
     }
-    
+
     /// <summary>
     /// Process chunks that were waiting for this chunk to regenerate before remeshing.
     /// Used when a block edit at chunk boundary requires neighbor to see updated voxels.
@@ -601,12 +614,12 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters) || waiters.Count == 0)
             return;
-            
+
         foreach (var waiterIdx in waiters)
         {
             if (!activeChunks.TryGetValue(waiterIdx, out var waiterDesc))
                 continue;
-                
+
             if (waiterDesc.State == TerrainChunkState.Ready)
             {
                 // Waiter is ready - trigger remesh (not regeneration)
@@ -620,7 +633,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 Log.Debug($"Deferred remesh skipped for chunk {waiterIdx} (state={waiterDesc.State})");
             }
         }
-        
+
         deferredRemeshWaiters.Remove(chunkIdx);
     }
 
@@ -1070,21 +1083,21 @@ public sealed class ChunkStreamingManager : IDisposable
             }
 
             ApplyCollisionResults(chunkIdx, result.Generation);
-            
+
             // MINECRAFT-STYLE: Mesh immediately, treat missing neighbors as air
             // Then notify neighbors so they can re-mesh with correct boundary data
             descriptor.State = TerrainChunkState.CountingVisibility;
             descriptor.GenerationStartFrame = currentFrame;
             activeChunks[chunkIdx] = descriptor;
-            
+
             ScheduleCpuMeshing(chunkIdx);
-            
+
             // Notify neighbors - they will re-mesh to pick up this chunk's data
             NotifyNeighborsChunkReady(chunkIdx);
-            
+
             // Process deferred remesh waiters (neighbors waiting for this chunk's edit to complete)
             ProcessDeferredRemeshWaiters(chunkIdx);
-            
+
             processed++;
         }
 
@@ -1152,7 +1165,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var unloadDistanceSq = unloadRadius * unloadRadius;
         var retentionRadius = GetRetentionDistanceChunks();
         var retentionDistanceSq = retentionRadius * retentionRadius;
-        
+
         var chunksToUnload = new List<int>();
 
         // Find chunks beyond unload distance
@@ -1166,7 +1179,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 TerrainChunkState.Pending or
                 TerrainChunkState.CountingVisibility)
                 continue;
-            
+
             // Dirty chunks CAN be unloaded if they're far away - they'll re-generate when needed
 
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
@@ -1286,7 +1299,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public (int targetChunks, int loadedChunks, int pendingChunks, int generatingChunks, float progressPercent) GetStreamingProgress()
     {
-        var (total, pending, generating, ready) = GetStats();
+        var (_, pending, generating, ready) = GetStats();
 
         // Calculate target based on current (prefetch-aware) load distance
         var targetChunks = VoxelHelper.CalculateCircularChunkCount(GetActiveLoadDistance());
@@ -1306,10 +1319,10 @@ public sealed class ChunkStreamingManager : IDisposable
         // Voxel data is now CPU-only, so GPU voxel bytes is 0
         long voxelBytes = 0;
         long columnBytes = 0;
-        
+
         // Mesh buffers contain the actual mesh data (VBO, IBO, Indirect)
         var visibilityBytes = meshBuffers?.GetAllocatedBytes() ?? 0;
-        
+
         // Compact bytes was used for renderer-specific data, but now buffers are shared.
         // We can use this slot for texture memory estimate if needed, or just 0.
         var compactBytes = 0L;
@@ -1387,7 +1400,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 return;
             if (neighborDesc.State != TerrainChunkState.Ready)
                 return; // Neighbor is already processing
-                
+
             // Add neighbor to deferred remesh list - will be triggered when chunkIdx completes
             if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters))
             {
@@ -1397,7 +1410,7 @@ public sealed class ChunkStreamingManager : IDisposable
             waiters.Add(neighborIdx);
             Log.Info($"Block edit: neighbor {neighborIdx} deferred remesh until chunk {chunkIdx} regenerates");
         }
-        
+
         if (localX == 0 && chunkX > 0)
         {
             var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1);
@@ -1690,7 +1703,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var files = Directory.GetFiles(dirPath, "chunk_*.bin");
         var loadedCount = 0;
         var deletedCount = 0;
-        
+
         foreach (var file in files)
         {
             try
@@ -1713,13 +1726,13 @@ public sealed class ChunkStreamingManager : IDisposable
                         using var reader = new BinaryReader(stream);
 
                         var count = reader.ReadInt32();
-                        
+
                         // Check if file has enough data for ushort format (4 + count * 6 bytes)
                         // Old format was byte (4 + count * 5 bytes)
                         var expectedNewSize = 4 + count * (sizeof(int) + sizeof(ushort));
                         var expectedOldSize = 4 + count * (sizeof(int) + sizeof(byte));
                         var fileSize = stream.Length;
-                        
+
                         if (fileSize == expectedOldSize)
                         {
                             // Old format - delete the file as it's incompatible
@@ -1728,13 +1741,13 @@ public sealed class ChunkStreamingManager : IDisposable
                             deletedCount++;
                             continue;
                         }
-                        
+
                         if (fileSize != expectedNewSize)
                         {
                             Log.Warn($"Skipping edit file {name}: unexpected file size {fileSize} (expected {expectedNewSize})");
                             continue;
                         }
-                        
+
                         var edits = new Dictionary<int, BlockId>(count);
                         for (var k = 0; k < count; k++)
                         {
@@ -1767,7 +1780,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 }
             }
         }
-        
+
         if (deletedCount > 0)
         {
             Log.Info($"Deleted {deletedCount} incompatible old-format edit files");

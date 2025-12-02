@@ -135,6 +135,74 @@ public enum BlockId : ushort
     SpruceLeaves = 142 | Solid | Translucent,
     /// <summary>Jungle leaves - solid, translucent.</summary>
     JungleLeaves = 143 | Solid | Translucent,
+    
+    // --- Light Sources (200-219) ---
+    /// <summary>Torch - non-solid, emissive, light value 14.</summary>
+    Torch = 200 | Emissive,
+    /// <summary>Wall torch - non-solid, emissive, light value 14.</summary>
+    WallTorch = 201 | Emissive,
+    /// <summary>Soul torch - non-solid, emissive, light value 10.</summary>
+    SoulTorch = 202 | Emissive,
+    /// <summary>Glowstone - solid, opaque, emissive, light value 15.</summary>
+    Glowstone = 203 | Solid | Opaque | Emissive,
+    /// <summary>Sea lantern - solid, translucent, emissive, light value 15.</summary>
+    SeaLantern = 204 | Solid | Translucent | Emissive,
+    /// <summary>Lantern - non-solid, emissive, light value 15.</summary>
+    Lantern = 205 | Emissive,
+    /// <summary>Soul lantern - non-solid, emissive, light value 10.</summary>
+    SoulLantern = 206 | Emissive,
+    /// <summary>Redstone lamp (off) - solid, opaque.</summary>
+    RedstoneLamp = 207 | Solid | Opaque,
+    /// <summary>Redstone lamp (on) - solid, opaque, emissive, light value 15.</summary>
+    RedstoneLampOn = 208 | Solid | Opaque | Emissive,
+    /// <summary>End rod - non-solid, emissive, light value 14.</summary>
+    EndRod = 209 | Emissive,
+    /// <summary>Shroomlight - solid, opaque, emissive, light value 15.</summary>
+    Shroomlight = 210 | Solid | Opaque | Emissive,
+    /// <summary>Jack o'Lantern - solid, opaque, emissive, light value 15.</summary>
+    JackOLantern = 211 | Solid | Opaque | Emissive,
+    /// <summary>Campfire - non-solid, emissive, light value 15.</summary>
+    Campfire = 212 | Emissive,
+    /// <summary>Soul campfire - non-solid, emissive, light value 10.</summary>
+    SoulCampfire = 213 | Emissive,
+    
+    // --- Glass (220-239) ---
+    /// <summary>Glass - solid, translucent, fully transparent to light (filter 0).</summary>
+    Glass = 220 | Solid | Translucent,
+    /// <summary>White stained glass - solid, translucent.</summary>
+    WhiteStainedGlass = 221 | Solid | Translucent,
+    /// <summary>Orange stained glass - solid, translucent.</summary>
+    OrangeStainedGlass = 222 | Solid | Translucent,
+    /// <summary>Magenta stained glass - solid, translucent.</summary>
+    MagentaStainedGlass = 223 | Solid | Translucent,
+    /// <summary>Light blue stained glass - solid, translucent.</summary>
+    LightBlueStainedGlass = 224 | Solid | Translucent,
+    /// <summary>Yellow stained glass - solid, translucent.</summary>
+    YellowStainedGlass = 225 | Solid | Translucent,
+    /// <summary>Lime stained glass - solid, translucent.</summary>
+    LimeStainedGlass = 226 | Solid | Translucent,
+    /// <summary>Pink stained glass - solid, translucent.</summary>
+    PinkStainedGlass = 227 | Solid | Translucent,
+    /// <summary>Gray stained glass - solid, translucent.</summary>
+    GrayStainedGlass = 228 | Solid | Translucent,
+    /// <summary>Light gray stained glass - solid, translucent.</summary>
+    LightGrayStainedGlass = 229 | Solid | Translucent,
+    /// <summary>Cyan stained glass - solid, translucent.</summary>
+    CyanStainedGlass = 230 | Solid | Translucent,
+    /// <summary>Purple stained glass - solid, translucent.</summary>
+    PurpleStainedGlass = 231 | Solid | Translucent,
+    /// <summary>Blue stained glass - solid, translucent.</summary>
+    BlueStainedGlass = 232 | Solid | Translucent,
+    /// <summary>Brown stained glass - solid, translucent.</summary>
+    BrownStainedGlass = 233 | Solid | Translucent,
+    /// <summary>Green stained glass - solid, translucent.</summary>
+    GreenStainedGlass = 234 | Solid | Translucent,
+    /// <summary>Red stained glass - solid, translucent.</summary>
+    RedStainedGlass = 235 | Solid | Translucent,
+    /// <summary>Black stained glass - solid, translucent.</summary>
+    BlackStainedGlass = 236 | Solid | Translucent,
+    /// <summary>Tinted glass - solid, translucent, blocks all light (filter 15) but see-through.</summary>
+    TintedGlass = 237 | Solid | Translucent,
 }
 
 /// <summary>

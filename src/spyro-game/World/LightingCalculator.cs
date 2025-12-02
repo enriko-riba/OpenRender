@@ -35,9 +35,39 @@ public static class LightingCalculator
         // 3. Propagate Sky Light
         PropagateLight(chunk, isSkyLight: true);
 
-        // 4. Initialize Block Light (TODO: Check for emissive blocks)
-        // InitializeBlockLight(chunk);
-        // PropagateLight(chunk, isSkyLight: false);
+        // 4. Initialize Block Light (scan for emissive blocks like Torch, Glowstone, Lava)
+        InitializeBlockLight(chunk);
+        
+        // 5. Propagate Block Light
+        PropagateLight(chunk, isSkyLight: false);
+    }
+
+    /// <summary>
+    /// Updates lighting after a block is placed or removed at the specified position.
+    /// This is more efficient than recalculating the entire chunk.
+    /// </summary>
+    /// <param name="chunk">The chunk containing the block.</param>
+    /// <param name="x">Local X coordinate (0-15).</param>
+    /// <param name="y">Local Y coordinate (0-383).</param>
+    /// <param name="z">Local Z coordinate (0-15).</param>
+    /// <param name="oldBlock">The previous block at this position.</param>
+    /// <param name="newBlock">The new block at this position.</param>
+    public static void UpdateLightingAtBlock(ChunkData chunk, int x, int y, int z, BlockId oldBlock, BlockId newBlock)
+    {
+        // For now, use a simpler approach: recalculate the entire chunk
+        // A more optimized approach would use light removal + re-propagation only in affected area
+        // But that's more complex and can be implemented later if needed
+        
+        var oldLightValue = BlockRegistry.GetLightValue(oldBlock);
+        var newLightValue = BlockRegistry.GetLightValue(newBlock);
+        var oldWasOpaque = oldBlock.IsOpaque();
+        var newIsOpaque = newBlock.IsOpaque();
+        
+        // If light emission changed or opacity changed, recalculate lighting
+        if (oldLightValue != newLightValue || oldWasOpaque != newIsOpaque)
+        {
+            CalculateLighting(chunk);
+        }
     }
 
     /// <summary>
@@ -120,6 +150,53 @@ public static class LightingCalculator
         {
             PropagateLight(chunkB, isSkyLight: true);
         }
+
+        // Also propagate block light between chunks
+        queue.Clear();
+        bool changedABlock = false;
+        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        {
+            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            {
+                int cx = (loopX == 1) ? xA : i;
+                int cz = (loopX == 1) ? i : zA;
+                int nx = (loopX == 1) ? xB : i;
+                int nz = (loopX == 1) ? i : zB;
+
+                if (PropagateSingleBlock(chunkB, nx, y, nz, chunkA, cx, y, cz, isSkyLight: false))
+                {
+                    queue.Enqueue(PackPos(cx, y, cz));
+                    changedABlock = true;
+                }
+            }
+        }
+        if (changedABlock)
+        {
+            PropagateLight(chunkA, isSkyLight: false);
+        }
+
+        queue.Clear();
+        bool changedBBlock = false;
+        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        {
+            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            {
+                int cx = (loopX == 1) ? xA : i;
+                int cz = (loopX == 1) ? i : zA;
+                int nx = (loopX == 1) ? xB : i;
+                int nz = (loopX == 1) ? i : zB;
+
+                if (PropagateSingleBlock(chunkA, cx, y, cz, chunkB, nx, y, nz, isSkyLight: false))
+                {
+                    queue.Enqueue(PackPos(nx, y, nz));
+                    changedBBlock = true;
+                }
+            }
+        }
+        if (changedBBlock)
+        {
+            PropagateLight(chunkB, isSkyLight: false);
+        }
     }
 
     private static bool PropagateSingleBlock(ChunkData sourceChunk, int sx, int sy, int sz, ChunkData targetChunk, int tx, int ty, int tz, bool isSkyLight)
@@ -133,7 +210,7 @@ public static class LightingCalculator
         int sourceLight = isSkyLight ? GetSkyLight(sourceChunk, sourceIndex) : GetBlockLight(sourceChunk, sourceIndex);
         int targetLight = isSkyLight ? GetSkyLight(targetChunk, targetIndex) : GetBlockLight(targetChunk, targetIndex);
 
-        int decay = targetBlock.IsWater() ? 2 : 1;
+        int decay = Math.Max(1, (int)BlockRegistry.GetProperties(targetBlock).LightFilter);
         int newLight = sourceLight - decay;
 
         if (newLight > targetLight)
@@ -190,6 +267,35 @@ public static class LightingCalculator
         }
     }
 
+    /// <summary>
+    /// Scans the chunk for light-emitting blocks (torches, glowstone, lava, etc.)
+    /// and initializes their block light values using BlockRegistry.
+    /// </summary>
+    private static void InitializeBlockLight(ChunkData chunk)
+    {
+        var queue = LightQueue;
+        queue.Clear();
+
+        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        {
+            for (int z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            {
+                for (int x = 0; x < VoxelHelper.ChunkSideSize; x++)
+                {
+                    BlockId block = chunk.GetBlock(x, y, z);
+                    byte lightValue = BlockRegistry.GetLightValue(block);
+                    
+                    if (lightValue > 0)
+                    {
+                        int index = GetIndex(x, y, z);
+                        SetBlockLight(chunk, index, lightValue);
+                        queue.Enqueue(PackPos(x, y, z));
+                    }
+                }
+            }
+        }
+    }
+
     public static void PropagateLight(ChunkData chunk, bool isSkyLight)
     {
         var queue = LightQueue;
@@ -230,8 +336,7 @@ public static class LightingCalculator
         int neighborLight = isSkyLight ? GetSkyLight(chunk, index) : GetBlockLight(chunk, index);
         
         // Decay
-        int decay = 1;
-        if (block.IsWater()) decay = 2; // Water absorbs more light
+        int decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
 
         int newLight = currentLight - decay;
 

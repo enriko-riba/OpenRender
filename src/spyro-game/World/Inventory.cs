@@ -33,7 +33,11 @@ public class Inventory
         AddItem(BlockId.Grass, 10);
         AddItem(BlockId.Cobblestone, 10);
         AddItem(BlockId.OakLog, 10);
-        // Leave remaining hotbar slots empty for testing pickup
+        // Light source blocks for testing the new lighting system
+        AddItem(BlockId.Torch, 64);
+        AddItem(BlockId.Glowstone, 32);
+        AddItem(BlockId.Lantern, 16);
+        AddItem(BlockId.Glass, 32);
     }
 
     public InventoryItem GetSelectedItem()

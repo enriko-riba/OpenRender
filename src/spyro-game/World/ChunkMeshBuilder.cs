@@ -18,7 +18,7 @@ internal static class ChunkMeshBuilder
     private const byte PLACEHOLDER_POS_Z = 1 << 2;
     private const byte PLACEHOLDER_NEG_Z = 1 << 3;
     private const bool MirrorMissingNeighbors = false;
-    private const uint DisabledLightValue = 0x0Fu;
+    private const uint DisabledLightValue = 0xFFFFFFFFu; // Use a value outside valid range (0-255)
     private static bool VerboseBuilderLogging = false;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
@@ -249,14 +249,9 @@ internal static class ChunkMeshBuilder
             var vz = z + oz;
             ao[(int)corner] = sampler.ComputeAmbientOcclusion(face, corner, x, y, z);
 
-            // Use the light level of the block adjacent to the face (the "air" block).
-            // This ensures we sample valid propagated light and avoids sampling solid blocks (light=0).
-            // It produces uniform lighting across the face (flat shading), which is robust and avoids artifacts.
-            var lx = x + dx;
-            var ly = y + dy;
-            var lz = z + dz;
-
-            var light = sampler.SamplePackedLight(lx, ly, lz);
+            // Use smooth lighting (average of 4 neighbors) to prevent banding
+            var light = sampler.ComputeSmoothLight(face, corner, x, y, z);
+            
             vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner));
             vertexScratch.Add(PackVertexAttributes(block, light, biome));
         }
@@ -395,6 +390,94 @@ internal static class ChunkMeshBuilder
             }
 
             return DisabledLightValue;
+        }
+
+        public uint ComputeSmoothLight(uint face, uint corner, int x, int y, int z)
+        {
+            var (nx, ny, nz) = FaceDirections[(int)face];
+            var (t1x, t1y, t1z, t2x, t2y, t2z) = GetFaceTangents(face);
+            var (c1, c2) = GetCornerSigns(face, corner);
+
+            // Coordinates of the 4 neighbors
+            // Center (Base) - the air block directly in front of the face
+            var bx = x + nx;
+            var by = y + ny;
+            var bz = z + nz;
+
+            // Side 1
+            var s1x = bx + t1x * c1;
+            var s1y = by + t1y * c1;
+            var s1z = bz + t1z * c1;
+
+            // Side 2
+            var s2x = bx + t2x * c2;
+            var s2y = by + t2y * c2;
+            var s2z = bz + t2z * c2;
+
+            // Corner
+            var cx = bx + t1x * c1 + t2x * c2;
+            var cy = by + t1y * c1 + t2y * c2;
+            var cz = bz + t1z * c1 + t2z * c2;
+
+            var lBase = SamplePackedLight(bx, by, bz);
+            var lSide1 = SamplePackedLight(s1x, s1y, s1z);
+            var lSide2 = SamplePackedLight(s2x, s2y, s2z);
+            var lCorner = SamplePackedLight(cx, cy, cz);
+
+            // Filter out missing neighbors (DisabledLightValue)
+            // If a neighbor is missing, we exclude it from the average to avoid "glowing" artifacts (if we used 15)
+            // or "black" artifacts (if we used 0).
+            // We average only the valid samples.
+            
+            int skySum = 0;
+            int blockSum = 0;
+            int count = 0;
+
+            void AddSample(uint l)
+            {
+                if (l != DisabledLightValue)
+                {
+                    skySum += (int)(l & 0xF);
+                    blockSum += (int)((l >> 4) & 0xF);
+                    count++;
+                }
+            }
+
+            AddSample(lBase);
+            AddSample(lSide1);
+            AddSample(lSide2);
+            AddSample(lCorner);
+
+            if (count == 0)
+            {
+                // All neighbors missing?
+                // Fallback heuristic: Use the light level of the block ABOVE the current vertex.
+                // If we are underground, block above is likely solid (Light=0) -> Dark face (Correct).
+                // If we are on surface, block above is likely air (Light=15) -> Lit face (Correct).
+                // If we are at the top of the chunk, assume full sky light.
+                
+                if (y >= VoxelHelper.ChunkYSize - 1)
+                {
+                    return 15 | (0 << 4); // Full sky light
+                }
+                
+                // Sample block above (x, y+1, z)
+                // This is usually within the current chunk, so it should be valid.
+                var fallbackLight = SamplePackedLight(x, y + 1, z);
+                if (fallbackLight != DisabledLightValue)
+                {
+                    return fallbackLight;
+                }
+                
+                // If even that is missing (shouldn't happen unless y is max), default to full light
+                return 15 | (0 << 4);
+            }
+
+            // Simple average
+            int skyAvg = skySum / count;
+            int blockAvg = blockSum / count;
+
+            return (uint)(skyAvg | (blockAvg << 4));
         }
 
         /// <summary>
