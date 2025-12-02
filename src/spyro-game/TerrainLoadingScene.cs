@@ -176,7 +176,7 @@ internal class TerrainLoadingScene : Scene
                     streamingProgress, 
                     $"{ready}/{targetChunkCount} chunks ready");
 
-                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} ready";
+                currentStage = $"Creating world...";
 
                 // Check if streaming is complete
                 var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
@@ -265,92 +265,81 @@ internal class TerrainLoadingScene : Scene
 
     private void RenderUI()
     {
-        void WriteLineCentered(string text, Vector3 color, int fontSize, int y)
+        // Helper for consistent spacing
+        var leftMargin = 50;
+        var currentY = 50;
+        const int SectionGap = 20;
+
+        void DrawText(string text, int fontSize, Vector3 color, bool center = false)
         {
-            var size = textRenderer.Measure(text, fontSize);
-            textRenderer.Render(text, fontSize, (Width - size.Width) / 2, y, color);
+            if (center)
+            {
+                var size = textRenderer.Measure(text, fontSize);
+                textRenderer.Render(text, fontSize, (Width - size.Width) / 2, currentY, color);
+            }
+            else
+            {
+                textRenderer.Render(text, fontSize, leftMargin, currentY, color);
+            }
+            currentY += fontSize + 10;
         }
 
-        // Fixed positions for each section
-        var titleY = 50;
-        var stageY = 120;
-        var detailedStatusY = 180;
-        var progressBarY = 220;
-        var statsY = 300;
-        var errorMessagesY = Height - 200; // Bottom half, leaving room for spinner
-        var spinnerY = Height - 60;
-        var leftMargin = 50;
+        // Title
+        DrawText("PREPARING GAME...", 28, highlightColor, true);
+        currentY += SectionGap;
 
-        // Title - Centered
-        WriteLineCentered("SPYRO TERRAIN LOADING", highlightColor, 28, titleY);
-
-        // Current Stage - Left
-        textRenderer.Render(currentStage, 20, leftMargin, stageY, progressColor);
-
-        // Detailed Status - Left (if available)
+        // Current Stage
+        DrawText(currentStage, 20, progressColor);
+        
+        // Detailed Status
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
-            textRenderer.Render(progressTracker.DetailedStatus, 20, leftMargin, detailedStatusY, dimColor);
+            DrawText(progressTracker.DetailedStatus, 20, dimColor);
         }
+        currentY += SectionGap;
 
-        // Progress Bar - Left
-        var progress = progressTracker.Progress / 100f;
-        var progressPercent = (int)progressTracker.Progress;
+        // Progress Bar
+        var progressPercent = Math.Clamp((int)progressTracker.Progress, 0, 100);
+        const int totalChars = 50;
+        var filledChars = progressPercent / 2;
+        var emptyChars = totalChars - filledChars;
+        var barText = "[" + new string('#', filledChars) + new string('_', emptyChars) + "]";
+        var barSize = textRenderer.Measure(barText, 20);
+        textRenderer.Render(barText, 20, leftMargin, currentY, progressColor);
         
-        const int barWidth = 500;
-
-        // Draw ASCII Progress Bar
-        var bracketSize = textRenderer.Measure("[", 24);
-        var charSize = textRenderer.Measure("#", 24);
-        var maxChars = (barWidth - (int)bracketSize.Width * 2) / (int)charSize.Width;
-        var filledChars = (int)(maxChars * progress);
-        var emptyChars = Math.Max(0, maxChars - filledChars);
-        
-        var barText = "[" + new string('#', filledChars) + new string('.', emptyChars) + "]";
-        textRenderer.Render(barText, 24, leftMargin, progressBarY, progressColor);
-
-        // Progress percentage text - Left
+        // Render percentage to the right
         var percentText = $"{progressPercent}%";
-        textRenderer.Render(percentText, 24, leftMargin, progressBarY + 35, textColor);
-
-        // Stats section - Left
-        var line1Y = statsY;
-        textRenderer.Render($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss}", 22, leftMargin, line1Y, textColor);
+        textRenderer.Render(percentText, 20, leftMargin + (int)barSize.Width + 20, currentY, textColor);
         
-        // Line 3: Target Chunks (with extra spacing)
-        var line3Y = line1Y + 60;
-        if (streamingManager != null)
-        {
-            var (_, _, _, ready) = streamingManager.GetStats();
-            textRenderer.Render($"Chunks: {ready}/{targetChunkCount}", 22, leftMargin, line3Y, dimColor);
-        }
-        var line4Y = line3Y + 45;
-
-        // Line 5: GPU Memory - maintain spacing below queued stats
-        var line5Y = line4Y + 60;
+        currentY += 24 + 10 + SectionGap;
+        
         if (streamingManager != null)
         {
             var (totalBytes, _, _, _) = streamingManager.GetMemoryStats();
             var totalMB = totalBytes / (1024f * 1024f);
-            textRenderer.Render($"GPU Memory (terrain geometry): {totalMB:F1} MB", 22, leftMargin, line5Y, dimColor);
+            DrawText($"Estimated terrain GPU Memory: {totalMB:F1} MB", 22, dimColor);
         }
 
-        // Error messages - Bottom half, centered
+        currentY += SectionGap;
+        DrawText($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss\\:ff}", 22, textColor);
+
+        // Error messages
         if (!string.IsNullOrEmpty(currentStage) && currentStage.StartsWith("ERROR:"))
         {
-            // Split error message into lines and render each centered
+            var errorY = Height - 200;
             var errorLines = currentStage.Split('\n');
-            var errorY = errorMessagesY;
             foreach (var errorLine in errorLines)
             {
-                WriteLineCentered(errorLine, new Vector3(1.0f, 0.3f, 0.3f), 18, errorY);
+                var size = textRenderer.Measure(errorLine, 18);
+                textRenderer.Render(errorLine, 18, (Width - size.Width) / 2, errorY, new Vector3(1.0f, 0.3f, 0.3f));
                 errorY += 30;
             }
         }
 
-        // Animated spinner - Bottom
+        // Spinner
         var spinnerChars = new[] { '|', '/', '-', '\\' };
         var spinner = spinnerChars[(int)(timer.Elapsed.TotalSeconds * 4) % 4];
-        WriteLineCentered($"{spinner}", dimColor, 20, spinnerY);
+        var spinnerSize = textRenderer.Measure(spinner.ToString(), 20);
+        textRenderer.Render(spinner.ToString(), 20, (Width - spinnerSize.Width) / 2, Height - 60, dimColor);
     }
 }

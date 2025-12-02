@@ -32,9 +32,6 @@ internal class GameScene : Scene
     private VoxelTerrainRenderer? terrainRenderer;
     private BlockPickingService? blockPickingService;
 
-    // Frustum culling throttling
-    private double lastCullingTime = -1.0;
-    private const double CullingIntervalSeconds = 0.166; // ~6 times per second (166ms)
     private const int GameplayPrefetchMarginChunks = 2;
 
     private Vector2 mouseCenter;
@@ -225,7 +222,7 @@ internal class GameScene : Scene
             Log.Warn("GameScene: No GPU terrain renderer, using fallback");
         }
 
-        world.Camera = camera!;
+        world!.Camera = camera!;
         camera!.Invalidate();
 
         Log.Info($"GameScene: Loaded with procedural terrain");
@@ -285,21 +282,15 @@ internal class GameScene : Scene
         }
         wasLeftButtonDown = isLeftButtonDown;
 
-        // Execute GPU frustum culling (throttled to ~6 times per second)
-        if (streamingManager != null && terrainRenderer != null && camera != null)
+        // Execute GPU frustum culling (every frame for smooth rotation)
+        if (streamingManager != null && terrainRenderer != null && camera != null && camera.IsDirty)
         {
-            var currentTime = SceneManager.Time;
-            if ((currentTime - lastCullingTime) >= CullingIntervalSeconds)
-            {
-                lastCullingTime = currentTime;
+            // Generate surrounding chunk indices based on camera position
+            var chunkIndices = GenerateSurroundingChunkIndices();
 
-                // Generate surrounding chunk indices based on camera position
-                var chunkIndices = GenerateSurroundingChunkIndices();
-
-                // Execute GPU frustum culling
-                var visibilityFlags = streamingManager.ExecuteFrustumCulling(camera, chunkIndices);
-                terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
-            }
+            // Execute GPU frustum culling
+            var visibilityFlags = streamingManager.ExecuteFrustumCulling(camera, chunkIndices);
+            terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
         }
 
         // Update terrain streaming (if using NEW GPU system)

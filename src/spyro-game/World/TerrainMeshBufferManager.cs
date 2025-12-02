@@ -79,10 +79,10 @@ public class TerrainMeshBufferManager : IDisposable
         // Estimate memory requirements based on a reasonable worst-case per chunk
         // instead of theoretical worst-case (which would be >18GB for 1000 chunks)
         // A complex chunk might have ~10k-20k visible faces.
-        // We'll allocate for 5k faces per chunk on average.
+        // We'll allocate for 2k faces per chunk on average to start small and avoid VRAM pressure.
         // If we run out, the buffers will automatically resize.
-        const int ESTIMATED_FACES_PER_CHUNK = 5_000;
-        
+        const int ESTIMATED_FACES_PER_CHUNK = 2_000;
+
         long totalFaces = (long)maxChunks * ESTIMATED_FACES_PER_CHUNK;
         
         maxVertices = totalFaces * 4;
@@ -111,13 +111,13 @@ public class TerrainMeshBufferManager : IDisposable
         // Compacted vertices
         GL.CreateBuffers(1, out vertexBuffer);
         GL.NamedBufferStorage(vertexBuffer, (nint)maxVertices * VERTEX_STRIDE, IntPtr.Zero,
-            BufferStorageFlags.None);
+            BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, vertexBuffer, -1, "vertices_vbo");
 
         // Per-chunk index buffer (one contiguous buffer for all chunks)
         GL.CreateBuffers(1, out indexBuffer);
         GL.NamedBufferStorage(indexBuffer, (nint)maxIndices * sizeof(uint), IntPtr.Zero,
-            BufferStorageFlags.None);
+            BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indexBuffer, -1, "per_chunk_indices_ibo");
 
         // Multi-draw indirect command buffer
@@ -562,7 +562,7 @@ public class TerrainMeshBufferManager : IDisposable
         // Create new buffer
         GL.CreateBuffers(1, out uint newBuffer);
         GL.NamedBufferStorage(newBuffer, (nint)newCapacity * VERTEX_STRIDE, IntPtr.Zero,
-            BufferStorageFlags.None);
+            BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "compact_vertices_vbo_resized");
 
         // Copy old data
@@ -588,7 +588,7 @@ public class TerrainMeshBufferManager : IDisposable
         // Create new buffer
         GL.CreateBuffers(1, out uint newBuffer);
         GL.NamedBufferStorage(newBuffer, (nint)newCapacity * sizeof(uint), IntPtr.Zero,
-            BufferStorageFlags.None);
+            BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, newBuffer, -1, "per_chunk_indices_ibo_resized");
 
         // Copy old data

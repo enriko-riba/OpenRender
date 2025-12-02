@@ -2,9 +2,10 @@
 using OpenTK.Mathematics;
 
 namespace OpenRender.Core.Rendering;
+
 public interface ICamera
 {
-    public event EventHandler CameraChanged;
+    event EventHandler CameraChanged;
 
     Matrix4 ProjectionMatrix { get; }
     Matrix4 ViewMatrix { get; }
@@ -15,7 +16,7 @@ public interface ICamera
     Vector3 Position { get; set; }
     Quaternion Orientation { get; set; }
     bool IsDirty { get; }
-    public float MaxFov { get; set; }
+    float MaxFov { get; set; }
     float Fov { get; set; }
     float AspectRatio { get; set; }
     float NearPlaneDistance { get; }

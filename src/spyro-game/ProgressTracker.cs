@@ -78,7 +78,7 @@ public class ProgressTracker
         if (Math.Abs(currentProgress - targetProgress) > 0.1f)
         {
             var step = ProgressSmoothingSpeed * (float)deltaTime;
-            currentProgress = currentProgress + (targetProgress - currentProgress) * Math.Min(1f, step);
+            currentProgress += (targetProgress - currentProgress) * Math.Min(1f, step);
             
             // Clamp to prevent overshoot
             currentProgress = Math.Clamp(currentProgress, 0f, 100f);
