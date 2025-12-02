@@ -89,11 +89,11 @@ internal sealed class CpuTerrainGenerator
     /// <summary>
     /// Generate voxel descriptors and collision spans for the specified chunk.
     /// </summary>
-    public ChunkGenerationResult GenerateChunk(int chunkIndex, Span<uint> destination, IReadOnlyDictionary<int, BlockId>? edits = null)
+    public ChunkGenerationResult GenerateChunk(int chunkIndex, ChunkData chunkData, IReadOnlyDictionary<int, BlockId>? edits = null)
     {
-        if (destination.Length < VoxelHelper.ChunkVoxelCount)
+        if (chunkData.VoxelData.Length < VoxelHelper.ChunkVoxelCount)
         {
-            throw new ArgumentException($"Destination span must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(destination));
+            throw new ArgumentException($"Destination buffer must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(chunkData));
         }
 
         // Generate biome data for this chunk
@@ -106,14 +106,14 @@ internal sealed class CpuTerrainGenerator
         var spanTypes = new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
         var spanCounts = new byte[VoxelHelper.ChunkSideSizeSquare];
 
-        FillChunk(chunkIndex, destination, collision, spanPairs, spanTypes, spanCounts, edits);
+        FillChunk(chunkIndex, chunkData, collision, spanPairs, spanTypes, spanCounts, edits);
 
         return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
     }
 
     private void FillChunk(
         int chunkIndex,
-        Span<uint> voxels,
+        ChunkData chunkData,
         ChunkCollisionData collision,
         int[] spanPairs,
         BlockId[] spanTypes,
@@ -126,6 +126,10 @@ internal sealed class CpuTerrainGenerator
         currentChunkX = chunkX;
         currentChunkZ = chunkZ;
         PrepareChunkCaches(chunkX, chunkZ);
+
+        // Pre-cache common palette entries to avoid lookup overhead
+        // Air is always index 0
+        chunkData.GetOrAddPaletteEntry(BlockId.Air);
 
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
@@ -168,7 +172,9 @@ internal sealed class CpuTerrainGenerator
                         block = editedBlock;
                     }
 
-                    voxels[localIndex] = (uint)block;
+                    // Palette lookup
+                    byte paletteIndex = chunkData.GetOrAddPaletteEntry(block);
+                    chunkData.VoxelData[localIndex] = paletteIndex;
 
                     if (!block.IsAir())
                     {

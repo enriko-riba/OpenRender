@@ -1,6 +1,7 @@
 using OpenRender;
 using OpenRender.Core;
 using OpenTK.Graphics.OpenGL4;
+using System;
 
 namespace SpyroGame.World;
 
@@ -60,10 +61,19 @@ public sealed class BlockTextureManager : IDisposable
     {
         // Create sampler with pixelated look (nearest filtering) and repeat wrap
         sampler = GL.GenSampler();
-        GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.NearestMipmapNearest);
+        
+        // Use NearestMipmapLinear to reduce aliasing/shimmering at distance while keeping pixelated look
+        GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.NearestMipmapLinear);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+
+        // Enable Anisotropic Filtering if supported (greatly improves ground texture quality at angles)
+        float maxAniso = GL.GetFloat((GetPName)0x84FF); // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+        if (maxAniso > 1.0f)
+        {
+            GL.SamplerParameter(sampler, (SamplerParameterName)0x84FE, Math.Min(maxAniso, 16.0f)); // GL_TEXTURE_MAX_ANISOTROPY_EXT
+        }
 
         // Create 2D texture array
         textureArray = GL.GenTexture();
@@ -126,8 +136,9 @@ public sealed class BlockTextureManager : IDisposable
 
             // Water (special - uses separate rendering but needs texture)
             { BlockId.Water, "Resources/voxel/blocks/water.png" },
+            { BlockId.Lava, "Resources/voxel/blocks/lava.png" },
 
-            // Missing textures added
+            // Mossy Cobblestone and Mycelium
             { BlockId.MossyCobblestone, "Resources/voxel/blocks/mossy_cobblestone.png" },
             { BlockId.Mycelium, "Resources/voxel/blocks/mycelium.png" },
             { BlockId.RedSand, "Resources/voxel/blocks/red_sand.png" },

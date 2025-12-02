@@ -12,11 +12,11 @@ namespace SpyroGame.World;
 /// GL thread code populates the cache while worker threads consume the immutable views.
 /// Also stores biome data alongside voxels for terrain variety and debugging.
 /// </summary>
-public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposable
+public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposable
 {
-    private readonly ConcurrentDictionary<int, ChunkVoxelBuffer> chunkBuffers = new();
+    private readonly ConcurrentDictionary<int, ChunkData> chunkBuffers = new();
     private readonly ConcurrentDictionary<int, ChunkBiomeData> chunkBiomes = new();
-    private readonly ArrayPool<uint> voxelPool = pool ?? ArrayPool<uint>.Shared;
+    private readonly ArrayPool<byte> voxelPool = pool ?? ArrayPool<byte>.Shared;
     private long globalStoreVersion;
     private static readonly bool EnableVerboseLogging = false;
 
@@ -106,40 +106,45 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     /// Allocate a writable buffer for the specified chunk index.
     /// Call <see cref="Store"/> when the buffer has been filled with voxel data.
     /// </summary>
-    public ChunkVoxelBuffer RentWritable(int chunkIndex)
+    public ChunkData RentWritable(int chunkIndex)
     {
-        var array = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
+        var data = new ChunkData();
+        data.ChunkIndex = chunkIndex;
+        data.VoxelData = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
+        
         if (EnableVerboseLogging)
         {
-            Log.Debug($"VoxelCache: RentWritable chunk={chunkIndex} bufferId={RuntimeHelpers.GetHashCode(array)}");
+            Log.Debug($"VoxelCache: RentWritable chunk={chunkIndex}");
         }
 
-        return new ChunkVoxelBuffer(chunkIndex, array, voxelPool);
+        return data;
     }
 
     /// <summary>
     /// Persist the populated buffer so worker threads can read from it.
     /// If an older buffer exists for the same chunk it is returned to the pool.
     /// </summary>
-    public void Store(ChunkVoxelBuffer buffer)
+    public void Store(ChunkData data)
     {
-        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentNullException.ThrowIfNull(data);
 
         var version = Interlocked.Increment(ref globalStoreVersion);
-        buffer.SetVersion(version);
+        data.Version = version;
 
         chunkBuffers.AddOrUpdate(
-            buffer.ChunkIndex,
-            buffer,
+            data.ChunkIndex,
+            data,
             (_, existing) =>
             {
-                existing.Dispose();
-                return buffer;
+                // Return old buffer to pool
+                if (existing.VoxelData != null)
+                    voxelPool.Return(existing.VoxelData);
+                return data;
             });
 
         if (EnableVerboseLogging)
         {
-            Log.Debug($"VoxelCache: Store chunk={buffer.ChunkIndex} version={version} bufferId={RuntimeHelpers.GetHashCode(buffer.RawData)}");
+            Log.Debug($"VoxelCache: Store chunk={data.ChunkIndex} version={version}");
         }
     }
 
@@ -148,12 +153,12 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     /// </summary>
     public bool TryGetReadOnly(int chunkIndex, out ChunkVoxelDataView view)
     {
-        if (chunkBuffers.TryGetValue(chunkIndex, out var buffer))
+        if (chunkBuffers.TryGetValue(chunkIndex, out var data))
         {
-            view = new ChunkVoxelDataView(chunkIndex, buffer.RawData, buffer.Version);
+            view = new ChunkVoxelDataView(data);
             if (EnableVerboseLogging)
             {
-                Log.Debug($"VoxelCache: TryGetReadOnly chunk={chunkIndex} version={buffer.Version} bufferId={RuntimeHelpers.GetHashCode(buffer.RawData)}");
+                Log.Debug($"VoxelCache: TryGetReadOnly chunk={chunkIndex} version={data.Version}");
             }
             return true;
         }
@@ -168,9 +173,9 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
 
     public bool TryGetVersion(int chunkIndex, out long version)
     {
-        if (chunkBuffers.TryGetValue(chunkIndex, out var buffer))
+        if (chunkBuffers.TryGetValue(chunkIndex, out var data))
         {
-            version = buffer.Version;
+            version = data.Version;
             return true;
         }
 
@@ -186,13 +191,16 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
         // Also remove biome data
         chunkBiomes.TryRemove(chunkIndex, out _);
 
-        if (chunkBuffers.TryRemove(chunkIndex, out var buffer))
+        if (chunkBuffers.TryRemove(chunkIndex, out var data))
         {
             if (EnableVerboseLogging)
             {
-                Log.Debug($"VoxelCache: Release chunk={chunkIndex} version={buffer.Version} bufferId={RuntimeHelpers.GetHashCode(buffer.RawData)}");
+                Log.Debug($"VoxelCache: Release chunk={chunkIndex} version={data.Version}");
             }
-            buffer.Dispose();
+            
+            if (data.VoxelData != null)
+                voxelPool.Return(data.VoxelData);
+                
             return true;
         }
 
@@ -222,99 +230,43 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
     public void Dispose() => Clear();
 
     /// <summary>
-    /// Wrapper over a pooled uint[] tracked by chunk index.
-    /// </summary>
-    public sealed class ChunkVoxelBuffer : IDisposable
-    {
-        private readonly ArrayPool<uint> pool;
-        private uint[] data;
-        private bool disposed;
-        public long Version { get; private set; }
-
-        internal ChunkVoxelBuffer(int chunkIndex, uint[] data, ArrayPool<uint> pool)
-        {
-            ChunkIndex = chunkIndex;
-            this.data = data ?? throw new ArgumentNullException(nameof(data));
-            this.pool = pool ?? throw new ArgumentNullException(nameof(pool));
-        }
-
-        public int ChunkIndex { get; }
-
-        internal uint[] RawData => data;
-
-        internal void SetVersion(long version) => Version = version;
-
-        /// <summary>
-        /// Span-based accessor used during the GL-thread copy operation.
-        /// </summary>
-        public Span<uint> Span
-        {
-            get
-            {
-                ObjectDisposedException.ThrowIf(disposed, nameof(ChunkVoxelBuffer));
-                return data.AsSpan(0, VoxelHelper.ChunkVoxelCount);
-            }
-        }
-
-        public void Dispose()
-        {
-            if (disposed)
-            {
-                return;
-            }
-
-            disposed = true;
-
-            var array = data;
-            data = [];
-            if (array.Length > 0)
-            {
-                pool.Return(array, clearArray: false);
-            }
-        }
-    }
-
-    /// <summary>
     /// Lightweight view that exposes read helpers without copying the underlying data.
     /// </summary>
     public readonly struct ChunkVoxelDataView
     {
-        private readonly uint[] data;
+        private readonly ChunkData chunkData;
 
-        internal ChunkVoxelDataView(int chunkIndex, uint[] data, long version)
+        internal ChunkVoxelDataView(ChunkData data)
         {
-            ChunkIndex = chunkIndex;
-            Version = version;
-            this.data = data ?? [];
+            chunkData = data;
         }
 
-        public int ChunkIndex { get; }
-        public long Version { get; }
+        public int ChunkIndex => chunkData?.ChunkIndex ?? -1;
+        public long Version => chunkData?.Version ?? -1;
 
-        public bool IsValid => data.Length >= VoxelHelper.ChunkVoxelCount;
+        public bool IsValid => chunkData != null && chunkData.VoxelData != null;
 
-        public ReadOnlySpan<uint> Voxels => data.AsSpan(0, Math.Min(data.Length, VoxelHelper.ChunkVoxelCount));
-
-        public bool TryReadVoxel(int x, int y, int z, out uint voxel)
+        public bool TryReadVoxel(int x, int y, int z, out BlockId voxel)
         {
             if (!IsWithinBounds(x, y, z))
             {
-                voxel = 0u;
+                voxel = BlockId.Air;
                 return false;
             }
 
-            voxel = ReadUnchecked(x, y, z);
+            voxel = chunkData.GetBlock(x, y, z);
             return true;
         }
 
-        public uint ReadVoxel(int x, int y, int z)
+        public BlockId ReadVoxel(int x, int y, int z)
         {
             if (!IsWithinBounds(x, y, z))
             {
-                throw new ArgumentOutOfRangeException(nameof(x), "Voxel coordinates are outside the chunk bounds.");
+                // Return Air for out of bounds
+                return BlockId.Air;
             }
 
-            return ReadUnchecked(x, y, z);
+            return chunkData.GetBlock(x, y, z);
         }
 
         public bool IsWithinBounds(int x, int y, int z)
@@ -323,12 +275,6 @@ public sealed class ChunkVoxelDataCache(ArrayPool<uint>? pool = null) : IDisposa
                    z is >= 0 and < VoxelHelper.ChunkSideSize &&
                    y is >= 0 and < VoxelHelper.ChunkYSize &&
                    IsValid;
-        }
-
-        private uint ReadUnchecked(int x, int y, int z)
-        {
-            var index = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
-            return data[index];
         }
     }
 }

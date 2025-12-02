@@ -183,7 +183,10 @@ public class TerrainMeshBufferManager : IDisposable
         
         // Indirect draw buffer: max chunks * 5 uints per command
         total += (long)maxChunks * 5 * sizeof(uint);
-        
+
+        // Chunk Info buffer: max chunks * sizeof(int)
+        total += (long)maxChunks * sizeof(int);
+
         return total;
     }
 

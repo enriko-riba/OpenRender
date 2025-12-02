@@ -36,7 +36,6 @@ var tr1 = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.Client
 var fontAtlas2 = FontAtlasGenerator.Create("Resources/consola.ttf", 20, new(0.2f, 0f, 0.2f, 0.8f));
 var tr2 = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.ClientSize.X, scm.ClientSize.Y), fontAtlas2);
 
-// NEW GPU TERRAIN ARCHITECTURE:
 // Create VoxelWorld once
 var world = new VoxelWorld(1338);
 
@@ -47,7 +46,7 @@ var gameScene = new GameScene(tr2)
 };
 scm.AddScene(gameScene);
 
-// Start with TerrainLoadingScene which initializes GPU terrain and transitions to GameScene
+// Start with TerrainLoadingScene which initializes the terrain and transitions to GameScene
 var loadingScene = new TerrainLoadingScene(tr1, world);
 scm.AddScene(loadingScene);
 scm.ActivateScene(loadingScene);

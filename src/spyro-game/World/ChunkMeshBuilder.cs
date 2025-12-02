@@ -287,10 +287,10 @@ internal static class ChunkMeshBuilder
 
     /// <summary>
     /// Pack vertex attributes into a single uint.
-    /// Layout: bits 0-7: blockId, bits 8-15: light, bits 16-23: biomeId
+    /// Layout: bits 0-9: blockId (10 bits), bits 10-17: light (8 bits), bits 18-25: biomeId (8 bits), bit 26: emissive
     /// </summary>
     private static uint PackVertexAttributes(BlockId block, uint light, BiomeId biome)
-        => (uint)block.GetId() | ((light & 0xFFu) << 8) | (((uint)biome & 0xFFu) << 16);
+        => (uint)block.GetId() | ((light & 0xFFu) << 10) | (((uint)biome & 0xFFu) << 18) | (block.IsEmissive() ? (1u << 26) : 0u);
 
     private sealed class ChunkVoxelSampler
     {
@@ -339,13 +339,13 @@ internal static class ChunkMeshBuilder
 
             if (centerView.IsWithinBounds(x, y, z))
             {
-                return (BlockId)(ushort)centerView.ReadVoxel(x, y, z);
+                return centerView.ReadVoxel(x, y, z);
             }
 
             if (MirrorMissingNeighbors && TryClonePlaceholder(x, z, out var cloneX, out var cloneZ))
             {
                 var clampedY = Math.Clamp(y, 0, VoxelHelper.ChunkYSize - 1);
-                return (BlockId)(ushort)centerView.ReadVoxel(cloneX, clampedY, cloneZ);
+                return centerView.ReadVoxel(cloneX, clampedY, cloneZ);
             }
 
             if (ShouldTreatAsPlaceholderEdge(x, z))
@@ -360,7 +360,7 @@ internal static class ChunkMeshBuilder
             {
                 if (neighborView.TryReadVoxel(localX, y, localZ, out var voxel))
                 {
-                    return (BlockId)(ushort)voxel;
+                    return voxel;
                 }
             }
 

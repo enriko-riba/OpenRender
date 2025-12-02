@@ -68,6 +68,7 @@ in float vAO;
 in vec3 vViewDir;
 flat in uint vBlockDescriptor;  // BlockId (lower 10 bits = unique ID)
 flat in uint vBiomeId;          // CPU-computed biome ID (for debug display only)
+flat in uint vIsEmissive;       // Emissive flag (1 = full brightness)
 in float vSkyLight;
 in float vBlockLight;
 
@@ -321,6 +322,13 @@ void main() {
     vec3 ambient = dirLight.ambient * ao;
     vec3 diffuseColor = dirLight.diffuse * diffuse * ao;
     vec3 specularColor = dirLight.specular * specular * uMaterialSpecular;
+    
+    // Emissive blocks (Lava, Glowstone, etc) ignore shading/AO
+    if (vIsEmissive == 1u) {
+        ambient = vec3(1.0);
+        diffuseColor = vec3(0.0);
+        specularColor = vec3(0.0);
+    }
     
     vec3 finalColor = baseColor.rgb * (ambient + diffuseColor) + specularColor;
 

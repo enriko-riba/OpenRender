@@ -25,7 +25,8 @@ public enum BlockId : ushort
     Translucent = 1 << 13,
     /// <summary>Can be overwritten by other blocks (air, water, tall grass).</summary>
     Replaceable = 1 << 14,
-    // Bit 15 reserved for future use
+    /// <summary>Emits light, rendered at full brightness.</summary>
+    Emissive = 1 << 15,
 
     // === Block IDs with embedded flags (lower 10 bits = unique ID) ===
     
@@ -34,16 +35,18 @@ public enum BlockId : ushort
     Air = 0 | Replaceable,
     /// <summary>Water block - liquid, translucent, replaceable.</summary>
     Water = 1 | Liquid | Translucent | Replaceable,
+    /// <summary>Lava block - liquid, emissive, replaceable.</summary>
+    Lava = 2 | Liquid | Emissive | Replaceable,
     
     // --- Stone variants (2-9) ---
     /// <summary>Basic stone - solid, opaque.</summary>
-    Stone = 2 | Solid | Opaque,
+    Stone = 3 | Solid | Opaque,
     /// <summary>Indestructible bedrock - solid, opaque.</summary>
-    Bedrock = 3 | Solid | Opaque,
+    Bedrock = 4 | Solid | Opaque,
     /// <summary>Cobblestone - solid, opaque.</summary>
-    Cobblestone = 4 | Solid | Opaque,
+    Cobblestone = 5 | Solid | Opaque,
     /// <summary>Mossy cobblestone - solid, opaque.</summary>
-    MossyCobblestone = 5 | Solid | Opaque,
+    MossyCobblestone = 6 | Solid | Opaque,
     
     // --- Dirt/Grass (10-19) ---
     /// <summary>Dirt block - solid, opaque.</summary>
@@ -113,7 +116,7 @@ public enum BlockId : ushort
     /// <summary>Copper ore - solid, opaque.</summary>
     CopperOre = 104 | Solid | Opaque,
     
-    // --- Wood (120-129) ---
+    // --- Wood (120-139) ---
     /// <summary>Oak log - solid, opaque.</summary>
     OakLog = 120 | Solid | Opaque,
     /// <summary>Birch log - solid, opaque.</summary>
@@ -204,4 +207,10 @@ public static class BlockIdExtensions
     /// </summary>
     public static bool IsAir(this BlockId block) 
         => block.GetId() == BlockId.Air.GetId();
+
+    /// <summary>
+    /// Returns true if this block is emissive (glows).
+    /// </summary>
+    public static bool IsEmissive(this BlockId block) 
+        => (block & BlockId.Emissive) != 0;
 }

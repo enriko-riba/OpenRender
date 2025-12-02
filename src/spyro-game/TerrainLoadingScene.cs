@@ -73,12 +73,12 @@ internal class TerrainLoadingScene : Scene
         targetChunkCount = minimumReadyChunksForTransition;
         
         // Define progress ranges for each operation
-        progressTracker.AddOperation("Initialize Streaming Manager", 0f, 10f);
-        progressTracker.AddOperation("Initialize Terrain Generation", 10f, 25f);
-        progressTracker.AddOperation("Initialize Visibility & Compaction", 25f, 40f);
-        progressTracker.AddOperation("Initialize Terrain Renderer", 40f, 50f);
-        progressTracker.AddOperation("Initialize Frustum Culling", 50f, 60f);
-        progressTracker.AddOperation("Stream Initial Terrain", 60f, 95f);
+        progressTracker.AddOperation("Initialize Streaming Manager", 0f, 1f);
+        progressTracker.AddOperation("Initialize Terrain Generation", 1f, 2f);
+        progressTracker.AddOperation("Initialize Visibility & Compaction", 2f, 3f);
+        progressTracker.AddOperation("Initialize Terrain Renderer", 3f, 4f);
+        progressTracker.AddOperation("Initialize Frustum Culling", 4f, 5f);
+        progressTracker.AddOperation("Stream Initial Terrain", 5f, 95f);
         progressTracker.AddOperation("Finalize", 95f, 100f);
 
         // Phase 1: Initialize ChunkStreamingManager
@@ -166,7 +166,6 @@ internal class TerrainLoadingScene : Scene
             {
                 streamingManager.Update(startPosition);
                 var (total, pending, generating, ready) = streamingManager.GetStats();
-                var queued = pending + generating;
 
                 // Calculate streaming progress (60% to 95%)
                 var streamingProgress = ready / (float)targetChunkCount;
@@ -175,9 +174,9 @@ internal class TerrainLoadingScene : Scene
                 progressTracker.UpdateOperation(
                     "Stream Initial Terrain", 
                     streamingProgress, 
-                    $"{ready}/{targetChunkCount} chunks ready (Queued: {queued})");
+                    $"{ready}/{targetChunkCount} chunks ready");
 
-                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} ready (+{queued} queued)";
+                currentStage = $"Streaming terrain: {ready}/{targetChunkCount} ready";
 
                 // Check if streaming is complete
                 var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
@@ -320,26 +319,20 @@ internal class TerrainLoadingScene : Scene
         
         // Line 3: Target Chunks (with extra spacing)
         var line3Y = line1Y + 60;
-        textRenderer.Render($"Target Chunks: {targetChunkCount}", 22, leftMargin, line3Y, dimColor);
-        
-        // Line 4: Chunks Ready - SAME SPACING as other lines (45px)
-        var line4Y = line3Y + 45;
         if (streamingManager != null)
         {
-            var (_, pending, generating, ready) = streamingManager.GetStats();
-            var queued = pending + generating;
-            textRenderer.Render($"Chunks Ready: {ready}", 22, leftMargin, line4Y, dimColor);
-            textRenderer.Render($"Chunks Queued: {queued}", 22, leftMargin, line4Y + 40, dimColor);
-            line4Y += 40;
+            var (_, _, _, ready) = streamingManager.GetStats();
+            textRenderer.Render($"Chunks: {ready}/{targetChunkCount}", 22, leftMargin, line3Y, dimColor);
         }
+        var line4Y = line3Y + 45;
 
         // Line 5: GPU Memory - maintain spacing below queued stats
         var line5Y = line4Y + 60;
         if (streamingManager != null)
         {
-            var (totalBytes, voxelBytes, visBytes, compactBytes) = streamingManager.GetMemoryStats();
+            var (totalBytes, _, _, _) = streamingManager.GetMemoryStats();
             var totalMB = totalBytes / (1024f * 1024f);
-            textRenderer.Render($"GPU Memory: {totalMB:F1} MB", 22, leftMargin, line5Y, dimColor);
+            textRenderer.Render($"GPU Memory (terrain geometry): {totalMB:F1} MB", 22, leftMargin, line5Y, dimColor);
         }
 
         // Error messages - Bottom half, centered
