@@ -30,6 +30,11 @@ public class ChunkData
     /// </summary>
     public int[] SurfaceHeights;
 
+    /// <summary>
+    /// Light data: 4 bits sky light, 4 bits block light per voxel.
+    /// </summary>
+    public byte[] LightData;
+
     public int ChunkIndex;
     public long Version;
 
@@ -42,7 +47,8 @@ public class ChunkData
         VoxelData = new byte[VoxelHelper.ChunkVoxelCount];
         Biomes = new BiomeId[16]; // 4x4 grid
         SurfaceHeights = new int[VoxelHelper.ChunkSideSizeSquare];
-        
+        LightData = new byte[VoxelHelper.ChunkVoxelCount];
+
         // Always add Air as index 0
         Palette[0] = BlockId.Air;
         paletteCount = 1;

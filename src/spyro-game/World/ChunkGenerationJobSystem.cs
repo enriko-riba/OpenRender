@@ -95,7 +95,10 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                         {
                             voxelCache.StoreBiomeData(work.ChunkIndex, biomeData);
                         }
-                        
+
+                        // Calculate lighting (Sky + Block)
+                        LightingCalculator.CalculateLighting(writable);
+
                         voxelCache.Store(writable);
                         writable = null;
 

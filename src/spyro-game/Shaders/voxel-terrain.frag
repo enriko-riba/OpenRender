@@ -218,9 +218,10 @@ void main() {
         float dist = length(vWorldPos - cameraPos);
         
         vec3 deepWaterColor = vec3(0.08, 0.12, 0.2);
-        vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 2.5;
-        
-        vec3 waterFogColor = isCameraUnderwater 
+        // Scale water ambient by sky light to darken in caves
+        vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 2.5 * max(vSkyLight, 0.05);
+
+        vec3 waterFogColor = isCameraUnderwater
             ? dirLight.ambient * vec3(0.08, 0.2, 0.35)
             : dirLight.ambient * vec3(0.10, 0.18, 0.30);
         
@@ -268,9 +269,9 @@ void main() {
                 vec3 H = normalize(L + V);
                 float specAngle = max(dot(H, waterNormal), 0.0);
                 float specular = pow(specAngle, 256.0) * 1.5;
-                vec3 sunSpecular = dirLight.specular * specular * vec3(1.0, 0.9, 0.7);
+                vec3 sunSpecular = dirLight.specular * specular * vec3(1.0, 0.9, 0.7) * vSkyLight;
                 baseColor.rgb += sunSpecular;
-                
+
                 float absorption = exp(-dist * 0.10);
                 baseColor.rgb = mix(waterFogColor, baseColor.rgb, absorption);
                 float opacityBoost = mix(0.60, 0.98, 1.0 - absorption);
@@ -319,18 +320,30 @@ void main() {
     }
 
     // Combine lighting
-    vec3 ambient = dirLight.ambient * ao;
-    vec3 diffuseColor = dirLight.diffuse * diffuse * ao;
-    vec3 specularColor = dirLight.specular * specular * uMaterialSpecular;
+    float skyFactor = vSkyLight;
     
+    // Ambient depends on sky light (daylight)
+    vec3 ambient = dirLight.ambient * ao * max(skyFactor, 0.05);
+
+    // Diffuse (Sun) depends on sky light
+    vec3 diffuseColor = dirLight.diffuse * diffuse * ao * skyFactor;
+
+    // Specular (Sun) depends on sky light
+    vec3 specularColor = dirLight.specular * specular * uMaterialSpecular * skyFactor;
+
+    // Block Light (Torches/Lava)
+    vec3 torchColor = vec3(1.0, 0.8, 0.6);
+    vec3 localLight = torchColor * vBlockLight * ao;
+
     // Emissive blocks (Lava, Glowstone, etc) ignore shading/AO
     if (vIsEmissive == 1u) {
         ambient = vec3(1.0);
         diffuseColor = vec3(0.0);
         specularColor = vec3(0.0);
+        localLight = vec3(0.0);
     }
-    
-    vec3 finalColor = baseColor.rgb * (ambient + diffuseColor) + specularColor;
+
+    vec3 finalColor = baseColor.rgb * (ambient + diffuseColor + localLight) + specularColor;
 
     // Fog for terrain seen through water from above
     if (!isCameraUnderwater && !isWater && isFragmentUnderwater) {

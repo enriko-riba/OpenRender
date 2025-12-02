@@ -564,7 +564,27 @@ public sealed class ChunkStreamingManager : IDisposable
             if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
                 return;
             var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
-            MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
+            
+            // If neighbor is ready, propagate light between them
+            if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) && neighborDesc.State == TerrainChunkState.Ready)
+            {
+                // We need mutable access to ChunkData. 
+                // ChunkVoxelDataCache stores ChunkData, but TryGetReadOnly returns a view.
+                // However, we know the cache stores the actual ChunkData object.
+                // We can use a new method on cache or just rely on the fact that we are on the main thread
+                // and we can get the data if we expose it.
+                // For now, let's assume we can get it via a new method on ChunkVoxelDataCache.
+                
+                if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var centerData) && centerData != null &&
+                    chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+                {
+                    LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
+                    // Mark center dirty too, as it might have received light from neighbor
+                    MarkChunkDirty(chunkIdx, $"received light from neighbor {neighborIdx}");
+                }
+                
+                MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
+            }
         }
 
         NotifyNeighbor(-1, 0);

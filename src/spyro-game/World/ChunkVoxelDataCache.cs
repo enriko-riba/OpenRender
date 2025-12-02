@@ -149,6 +149,15 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     }
 
     /// <summary>
+    /// Retrieve the raw ChunkData object (mutable).
+    /// Use with caution - only safe when not being read by background threads.
+    /// </summary>
+    public bool TryGetChunkData(int chunkIndex, out ChunkData? data)
+    {
+        return chunkBuffers.TryGetValue(chunkIndex, out data);
+    }
+
+    /// <summary>
     /// Retrieve a read-only view of the cached voxel data for a chunk.
     /// </summary>
     public bool TryGetReadOnly(int chunkIndex, out ChunkVoxelDataView view)
@@ -267,6 +276,16 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
             }
 
             return chunkData.GetBlock(x, y, z);
+        }
+
+        public uint ReadLight(int x, int y, int z)
+        {
+            if (!IsWithinBounds(x, y, z))
+            {
+                return 0;
+            }
+            int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
+            return chunkData.LightData[idx];
         }
 
         public bool IsWithinBounds(int x, int y, int z)

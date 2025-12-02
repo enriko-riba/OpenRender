@@ -239,6 +239,8 @@ internal static class ChunkMeshBuilder
         // Get biome at this block position (same for all vertices of the face)
         var biome = sampler.SampleBiome(x, z);
 
+        var (dx, dy, dz) = FaceDirections[(int)face];
+
         for (uint corner = 0; corner < 4; corner++)
         {
             var (ox, oy, oz) = offsets[corner];
@@ -246,7 +248,15 @@ internal static class ChunkMeshBuilder
             var vy = y + oy;
             var vz = z + oz;
             ao[(int)corner] = sampler.ComputeAmbientOcclusion(face, corner, x, y, z);
-            var light = sampler.SamplePackedLight(vx, vy, vz);
+
+            // Use the light level of the block adjacent to the face (the "air" block).
+            // This ensures we sample valid propagated light and avoids sampling solid blocks (light=0).
+            // It produces uniform lighting across the face (flat shading), which is robust and avoids artifacts.
+            var lx = x + dx;
+            var ly = y + dy;
+            var lz = z + dz;
+
+            var light = sampler.SamplePackedLight(lx, ly, lz);
             vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner));
             vertexScratch.Add(PackVertexAttributes(block, light, biome));
         }
@@ -369,7 +379,23 @@ internal static class ChunkMeshBuilder
             return BlockId.Air;
         }
 
-        public uint SamplePackedLight(int x, int y, int z) => DisabledLightValue;
+        public uint SamplePackedLight(int x, int y, int z)
+        {
+            if (centerView.IsWithinBounds(x, y, z))
+            {
+                return centerView.ReadLight(x, y, z);
+            }
+
+            if (TryGetNeighborView(x, z, out var neighborView, out var localX, out var localZ))
+            {
+                if (neighborView.IsWithinBounds(localX, y, localZ))
+                {
+                    return neighborView.ReadLight(localX, y, localZ);
+                }
+            }
+
+            return DisabledLightValue;
+        }
 
         /// <summary>
         /// Get the biome ID at the given local chunk coordinates.
