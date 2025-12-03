@@ -63,7 +63,7 @@ public class CollisionManager
     }
 
     // Raycasting and collision logic
-    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockId block)
+    public bool Raycast(Vector3 origin, Vector3 direction, float maxDistance, out Vector3 hitPoint, out Vector3i blockPos, out Vector3 normal, out BlockId block, bool forPicking = true)
     {
         hitPoint = Vector3.Zero;
         blockPos = Vector3i.Zero;
@@ -102,10 +102,10 @@ public class CollisionManager
 
         while (t < maxDistance)
         {
-            // Check if current voxel is solid
-            if (IsSolid(x, y, z, out block))
+            // Check if current voxel is hittable (solid for collision, any non-air for picking)
+            if (IsHittable(x, y, z, out block, forPicking))
             {
-                // Ignore water blocks for picking (only solid blocks matter)
+                // Ignore water blocks for picking (only non-water blocks matter)
                 if (!block.IsWater())
                 {
                     hitPoint = origin + direction * t;
@@ -158,7 +158,12 @@ public class CollisionManager
         return false;
     }
 
-    private bool IsSolid(int x, int y, int z, out BlockId block)
+    /// <summary>
+    /// Check if a block at the given world position is hittable by a raycast.
+    /// For picking: any non-air block is hittable (torches, flowers, etc.)
+    /// For collision: only solid blocks are hittable
+    /// </summary>
+    private bool IsHittable(int x, int y, int z, out BlockId block, bool forPicking)
     {
         block = BlockId.Air;
         if (y < 0 || y >= VoxelHelper.ChunkYSize) return false;
@@ -185,12 +190,21 @@ public class CollisionManager
                 {
                     // Span stores full BlockId as ushort
                     block = (BlockId)span.Block;
-                    // Solid if the block has the Solid flag
-                    return block.IsSolid();
+                    // For picking: any non-air block is hittable
+                    // For collision: only solid blocks matter
+                    return forPicking ? !block.IsAir() : block.IsSolid();
                 }
             }
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Check if a block at the given world position is solid (for collision detection).
+    /// </summary>
+    private bool IsSolid(int x, int y, int z, out BlockId block)
+    {
+        return IsHittable(x, y, z, out block, forPicking: false);
     }
 }

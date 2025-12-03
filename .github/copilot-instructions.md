@@ -26,7 +26,7 @@
 - Chunk placeholder masks (bits for ±X/±Z) guard seams while neighbors are missing; `ChunkMeshBuilder` respects those masks, so new face logic must as well.
 - `TerrainConfig` loads/saves `terrain_config.json` and exposes spline/LUT baking; call `ChunkGenerationJobSystem.UpdateConfig` after edits so workers pick up new seeds/biomes.
 - Height caching and visibility budgets depend on `ChunkStreamingManager.LoadDistance`/`SetPrefetchMargin`; adjust those first so `UpdateVisibilityBudgetCapacity` can resize SSBOs without thrashing GL memory.
-- Gameplay debugging lives in `GameScene` (F3 biomes, F5 wireframe, F6 `FlushVoxelCache`); `BlockPickingService`, `Player`, and collision logic rely on `ChunkStreamingManager.World` plus CPU caches—keep them render-thread safe.
+- Gameplay debugging lives in `GameScene` (F3 biomes, F5 wireframe); `BlockPickingService`, `Player`, and collision logic rely on `ChunkStreamingManager.World` plus CPU caches—keep them render-thread safe.
 
 ## Conventions & Docs
 - Follow `src/spyro-game/docs/coding_conventions.md`: .NET 10, C# 14, file-scoped namespaces, modern language features, and XML doc comments on every public/internal method touched.

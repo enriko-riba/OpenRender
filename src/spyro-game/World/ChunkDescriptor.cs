@@ -5,7 +5,6 @@ namespace SpyroGame.World;
 /// <summary>
 /// Describes the state and GPU resource locations for a single chunk.
 /// CPU-side metadata that tracks GPU buffer offsets and sync state.
-/// Phase 5.3: Now tracks both vertex and index buffer regions.
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct ChunkDescriptor
@@ -17,25 +16,21 @@ public struct ChunkDescriptor
 
     /// <summary>
     /// Offset into vertex buffer for compacted visible vertices (in vertices, not bytes)
-    /// Phase 5.3: This is the baseVertex for indirect draw commands
     /// </summary>
     public int AtlasOffset;
 
     /// <summary>
     /// Offset into index buffer for this chunk's indices (in indices, not bytes)
-    /// Phase 5.3: NEW - tracks per-chunk index buffer region
     /// </summary>
     public int IndexOffset;
 
     /// <summary>
     /// Slot index in the Indirect Draw Buffer (0..MaxChunks-1)
-    /// Phase 5.3: Tracks where this chunk's draw command is stored on GPU
     /// </summary>
     public int CommandSlot;
 
     /// <summary>
     /// Number of visible faces in this chunk
-    /// Phase 5.3: Used to calculate vertex count (faces * 4) and index count (faces * 6)
     /// </summary>
     public int VisibleVoxelCount;
 
@@ -45,70 +40,51 @@ public struct ChunkDescriptor
     public TerrainChunkState State;
 
     /// <summary>
-    /// GL fence object for tracking GPU completion (IntPtr to avoid unsafe)
-    /// </summary>
-    public IntPtr Fence;
-
-    /// <summary>
     /// Frame number when generation started (for stuck detection)
     /// </summary>
     public long GenerationStartFrame;
 
     /// <summary>
-    /// Bitmask of neighbors that were assumed solid because their chunks were missing when this chunk was generated.
-    /// Bits: 1=+X, 2=-X, 4=+Z, 8=-Z.
+    /// GL sync fence for pending GPU operations (upload/copy).
+    /// Zero when no operation is pending.
     /// </summary>
-    public byte PlaceholderMask;
-
-    /// <summary>
-    /// Get total vertex count for this chunk (4 vertices per face)
-    /// </summary>
-    //public readonly int VertexCount => VisibleVoxelCount * 4;
-
-    /// <summary>
-    /// Get total index count for this chunk (6 indices per face)
-    /// </summary>
-    //public readonly int IndexCount => VisibleVoxelCount * 6;
+    public nint Fence;
 
     public override readonly string ToString() 
-        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, PlaceholderMask={PlaceholderMask}";
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
 }
 
 /// <summary>
-/// Lifecycle states for a chunk descriptor.
-/// Tracks progression through the CPU pipeline.
+/// Simplified lifecycle states for chunk processing.
+/// Linear progression: Pending → Generating → HasTerrain → Processing → Ready
 /// </summary>
 public enum TerrainChunkState : byte
 {
     /// <summary>
-    /// Queued for generation but not submitted yet
+    /// Queued for terrain generation but not submitted yet
     /// </summary>
     Pending = 0,
 
     /// <summary>
-    /// CPU generation in progress
+    /// Terrain generation in progress (background thread)
     /// </summary>
     Generating = 1,
 
     /// <summary>
-    /// CPU meshing in progress
+    /// Has voxel data, needs mesh/light calculation.
+    /// Also used when Ready chunk needs reprocessing (neighbor loaded).
     /// </summary>
-    CountingVisibility = 2,
+    HasTerrain = 2,
 
     /// <summary>
-    /// Ready for rendering
+    /// Mesh/light calculation in progress (background thread)
     /// </summary>
-    Ready = 3,
+    Processing = 3,
 
     /// <summary>
-    /// Needs regeneration due to edit or neighbor loaded
+    /// Fully processed, ready for rendering
     /// </summary>
-    Dirty = 4,
-
-    /// <summary>
-    /// Marked for unloading (will be removed next frame)
-    /// </summary>
-    Unloading = 5
+    Ready = 4
 }
 
 /// <summary>
@@ -117,14 +93,21 @@ public enum TerrainChunkState : byte
 public static class ChunkDescriptorExtensions
 {
     /// <summary>
-    /// Check if chunk is in a terminal state (ready or dirty)
+    /// Check if chunk is ready for rendering
     /// </summary>
-    public static bool IsComplete(this ChunkDescriptor descriptor) 
-        => descriptor.State is TerrainChunkState.Ready or TerrainChunkState.Dirty;
+    public static bool IsReady(this ChunkDescriptor descriptor) 
+        => descriptor.State == TerrainChunkState.Ready;
 
     /// <summary>
-    /// Check if chunk is currently processing
+    /// Check if chunk is currently processing (generating or meshing)
     /// </summary>
     public static bool IsInFlight(this ChunkDescriptor descriptor) 
-        => descriptor.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility;
+        => descriptor.State is TerrainChunkState.Generating or TerrainChunkState.Processing;
+    
+    /// <summary>
+    /// Check if chunk has voxel data available (HasTerrain or later states)
+    /// </summary>
+    public static bool HasVoxelData(this ChunkDescriptor descriptor)
+        => descriptor.State is TerrainChunkState.HasTerrain or TerrainChunkState.Processing 
+            or TerrainChunkState.Ready;
 }

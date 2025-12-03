@@ -29,6 +29,14 @@ public static class Utility
         {
             return; // Silently ignore shader recompilation notifications
         }
+        
+        // Suppress buffer memory migration warnings (id=131186) - common during startup when driver
+        // optimizes buffer placement. Also suppress pixel-path sync warning (id=131154).
+        // These are NVIDIA driver performance hints, not errors.
+        if ((id == 131186 || id == 131154) && type == DebugType.DebugTypePerformance)
+        {
+            return; // Silently ignore buffer migration/pixel sync notifications
+        }
 
         // Map OpenGL debug severity to Log levels
         switch (severity)

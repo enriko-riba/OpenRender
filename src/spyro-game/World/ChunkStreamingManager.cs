@@ -3,11 +3,15 @@ using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Buffers;
+using System.Diagnostics;
 
 namespace SpyroGame.World;
 
 /// <summary>
 /// Coordinates terrain streaming, chunk lifecycle, and CPU resource transitions.
+/// Simplified two-pass design:
+/// - Pass 1: Generate terrain for new chunks
+/// - Pass 2: Calculate lighting and mesh for all chunks needing processing
 /// </summary>
 public sealed class ChunkStreamingManager : IDisposable
 {
@@ -19,14 +23,24 @@ public sealed class ChunkStreamingManager : IDisposable
     private const int PREFETCH_MARGIN_MAX = 4;
     private const int RETENTION_PADDING_CHUNKS = 2;
     private const int RETENTION_FRAME_DELAY = 180;
-    private const int SeamRefreshCooldownFrames = 240;
-    private static readonly bool SeamRefreshEnabled = false;
     private const string ConfigFileName = "terrain_config.json";
-
-    // MINECRAFT-STYLE MESHING:
-    // 1. When voxel data completes, mesh immediately (treat missing neighbors as air)
-    // 2. Notify neighbors - they re-mesh when their neighbor data becomes available
-    // 3. No waiting, no guard bands - simple and robust
+    
+    /// <summary>
+    /// All 8 neighbors (cardinal + diagonal) for marking reprocess
+    /// </summary>
+    private static readonly (int dx, int dz)[] AllNeighborOffsets =
+    [
+        (-1, 0), (1, 0), (0, -1), (0, 1),  // Cardinal
+        (-1, -1), (-1, 1), (1, -1), (1, 1)  // Diagonal
+    ];
+    
+    /// <summary>
+    /// Cardinal neighbors only (for light propagation)
+    /// </summary>
+    private static readonly (int dx, int dz)[] CardinalNeighborOffsets =
+    [
+        (-1, 0), (1, 0), (0, -1), (0, 1)
+    ];
 
     private readonly VoxelWorld world;
     private readonly ChunkVoxelDataCache chunkVoxelCache;
@@ -35,15 +49,15 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly Dictionary<int, ChunkDescriptor> activeChunks = [];
     private readonly Queue<int> highPriorityPending = new();
     private readonly Queue<int> lowPriorityPending = new();
-    private readonly HashSet<int> pendingSeamRefresh = [];
-    private readonly Dictionary<int, long> lastSeamRefreshFrame = [];
     private readonly Dictionary<int, Dictionary<int, BlockId>> chunkEdits = [];
     private readonly Dictionary<int, CpuChunkMesh> cpuMeshResults = [];
     private readonly Dictionary<int, long> chunkLastVisibleFrame = [];
-
-    // Deferred remesh: chunks waiting for a neighbor to complete regeneration before remeshing
-    // Key = chunk that needs to regenerate first, Value = list of neighbors waiting for remesh
-    private readonly Dictionary<int, HashSet<int>> deferredRemeshWaiters = [];
+    
+    // New batch tracking for simplified processing
+    private readonly HashSet<int> currentStreamingBatch = [];
+    private readonly HashSet<int> pendingStreamingBatch = [];  // Chunks waiting for next batch
+    private readonly HashSet<int> chunksNeedingReprocess = [];
+    private bool batchProcessingInProgress;  // True when currentStreamingBatch is being processed
 
     private TerrainMeshBufferManager? meshBuffers;
     private VoxelTerrainRenderer? terrainRenderer;
@@ -56,8 +70,9 @@ public sealed class ChunkStreamingManager : IDisposable
 
     private TerrainConfig terrainConfig;
     private int generationSeed = 1337;
-
-    private int visibilityFlagsCapacity;
+    
+    /// <summary>Processing metrics for performance monitoring.</summary>
+    public ChunkProcessingMetrics Metrics { get; } = new();
 
     public ChunkStreamingManager(VoxelWorld world)
     {
@@ -68,11 +83,10 @@ public sealed class ChunkStreamingManager : IDisposable
         chunkVoxelCache = new ChunkVoxelDataCache();
 
         // Use default worker counts (ProcessorCount/2 each) to avoid thread contention.
-        // Generation and meshing share CPU resources, so total workers ≈ ProcessorCount.
-        cpuGenerationJobs = new ChunkGenerationJobSystem(chunkVoxelCache, terrainConfig);
+        cpuGenerationJobs = new ChunkGenerationJobSystem(chunkVoxelCache, terrainConfig, Metrics);
         maxConcurrentCpuGenerations = cpuGenerationJobs.WorkerCount;
 
-        cpuMeshingJobs = new ChunkMeshingJobSystem(chunkVoxelCache);
+        cpuMeshingJobs = new ChunkMeshingJobSystem(chunkVoxelCache, Metrics);
 
         lastCameraPosition = Vector3.Zero;
     }
@@ -140,24 +154,43 @@ public sealed class ChunkStreamingManager : IDisposable
     public int StatVisibleIndices { get; private set; }
 
     public IEnumerable<ChunkDescriptor> GetReadyChunks()
-        => activeChunks.Values.Where(c => c.State is TerrainChunkState.Ready or TerrainChunkState.Dirty);
+        => activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready);
 
     public (int total, int pending, int generating, int ready) GetStats()
     {
         var total = activeChunks.Count;
-        var pending = activeChunks.Values.Count(c => c.State is TerrainChunkState.Pending);
-        var generating = activeChunks.Values.Count(c => c.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility);
-        // Dirty chunks are renderable (have a mesh) - they just might need re-mesh later
-        var ready = activeChunks.Values.Count(c => c.State is TerrainChunkState.Ready or TerrainChunkState.Dirty);
+        var pending = activeChunks.Values.Count(c => c.State == TerrainChunkState.Pending);
+        var generating = activeChunks.Values.Count(c => c.State is TerrainChunkState.Generating 
+            or TerrainChunkState.HasTerrain or TerrainChunkState.Processing);
+        var ready = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
         return (total, pending, generating, ready);
     }
+
+    /// <summary>Gets detailed stats for loading screen progress tracking.</summary>
+    public (int total, int pending, int generating, int hasTerrain, int processing, int ready) GetDetailedStats()
+    {
+        var total = activeChunks.Count;
+        var pending = activeChunks.Values.Count(c => c.State == TerrainChunkState.Pending);
+        var generating = activeChunks.Values.Count(c => c.State == TerrainChunkState.Generating);
+        var hasTerrain = activeChunks.Values.Count(c => c.State == TerrainChunkState.HasTerrain);
+        var processing = activeChunks.Values.Count(c => c.State == TerrainChunkState.Processing);
+        var ready = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
+        return (total, pending, generating, hasTerrain, processing, ready);
+    }
+
+    /// <summary>Gets batch tracking stats for debugging.</summary>
+    public (int currentBatch, int pendingBatch, bool processing) GetBatchStats()
+        => (currentStreamingBatch.Count, pendingStreamingBatch.Count, batchProcessingInProgress);
 
     public void FlushVoxelCache(string reason)
     {
         var cachedEntries = chunkVoxelCache.ActiveEntryCount;
         chunkVoxelCache.Clear();
         cpuMeshResults.Clear();
-        pendingSeamRefresh.Clear();
+        currentStreamingBatch.Clear();
+        pendingStreamingBatch.Clear();
+        batchProcessingInProgress = false;
+        chunksNeedingReprocess.Clear();
         cpuMeshingJobs.DrainPendingWorkItems();
         ClearPendingCpuMeshingQueue();
 
@@ -167,11 +200,11 @@ public sealed class ChunkStreamingManager : IDisposable
             if (kvp.Value.State == TerrainChunkState.Ready)
             {
                 dirtied++;
-                MarkChunkDirty(kvp.Key);
+                MarkChunkForReprocess(kvp.Key, "cache flush");
             }
         }
 
-        Log.Warn($"ChunkStreamingManager: voxel cache flushed ({reason}), cleared={cachedEntries} entries, dirtied={dirtied} chunks");
+        Log.Warn($"ChunkStreamingManager: voxel cache flushed ({reason}), cleared={cachedEntries} entries, marked={dirtied} chunks for reprocess");
     }
 
     private static TerrainConfig LoadTerrainConfig()
@@ -228,7 +261,6 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         var result = new HashSet<int>();
         var viewDistance = GetActiveLoadDistance();
-        var viewDistanceSq = viewDistance * viewDistance;
 
         var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
         var clampedX = Math.Clamp(cameraPosition.X, 0, worldSizeInBlocks - 1);
@@ -237,15 +269,12 @@ public sealed class ChunkStreamingManager : IDisposable
         var cameraChunkX = Math.Clamp((int)(clampedX / VoxelHelper.ChunkSideSize), 0, VoxelHelper.WorldChunksXZ - 1);
         var cameraChunkZ = Math.Clamp((int)(clampedZ / VoxelHelper.ChunkSideSize), 0, VoxelHelper.WorldChunksXZ - 1);
 
+        // Use square region (Chebyshev distance) to avoid diagonal cutoff artifacts
+        // This loads slightly more chunks than a perfect circle but eliminates the checkerboard pattern
         for (var dz = -viewDistance; dz <= viewDistance; dz++)
         {
             for (var dx = -viewDistance; dx <= viewDistance; dx++)
             {
-                if (dx * dx + dz * dz > viewDistanceSq)
-                {
-                    continue;
-                }
-
                 var chunkX = cameraChunkX + dx;
                 var chunkZ = cameraChunkZ + dz;
                 if (chunkX < 0 || chunkX >= VoxelHelper.WorldChunksXZ || chunkZ < 0 || chunkZ >= VoxelHelper.WorldChunksXZ)
@@ -261,14 +290,12 @@ public sealed class ChunkStreamingManager : IDisposable
         return result;
     }
 
-    private int CalculateMaxViewChunks()
-    {
+    private int CalculateMaxViewChunks() =>
         // Use retention distance + padding to ensure we have enough slots for all active chunks
         // Active chunks include: Visible + Retained + Pending Unload
-        return CalculateMaxViewChunksForRadius(GetUnloadDistanceChunks());
-    }
+        CalculateMaxViewChunksForRadius(GetUnloadDistanceChunks());
 
-    private int CalculateMaxViewChunksForRadius(int radius)
+    private static int CalculateMaxViewChunksForRadius(int radius)
     {
         var clamped = Math.Clamp(radius, 1, VoxelHelper.WorldChunksXZ);
         return Math.Clamp(VoxelHelper.CalculateCircularChunkCount(clamped), 1, VoxelHelper.TotalChunks);
@@ -335,7 +362,7 @@ public sealed class ChunkStreamingManager : IDisposable
             }
 
             var descriptor = entry.Value;
-            if (descriptor.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility)
+            if (descriptor.State is TerrainChunkState.Generating or TerrainChunkState.Processing)
             {
                 continue;
             }
@@ -404,54 +431,113 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Queue new chunks for terrain generation and mark their Ready neighbors for reprocessing.
+    /// </summary>
     private void QueueNewChunks(HashSet<int> visibleChunks)
     {
         var newChunks = visibleChunks.Except(activeChunks.Keys).ToList();
 
-        if (newChunks.Count > 0)
+        if (newChunks.Count == 0)
+            return;
+
+        newChunks.Sort((a, b) => CalculatePriority(a).CompareTo(CalculatePriority(b)));
+
+        // Choose which batch to add to: current if not processing, pending otherwise
+        var targetBatch = batchProcessingInProgress ? pendingStreamingBatch : currentStreamingBatch;
+
+        foreach (var chunkIdx in newChunks)
         {
-            newChunks.Sort((a, b) => CalculatePriority(a).CompareTo(CalculatePriority(b)));
+            if (!EnsureRetentionCapacity(visibleChunks))
+                break;
 
-            foreach (var chunkIdx in newChunks)
+            world.GetOrCreateChunkContainer(chunkIdx);
+
+            var descriptor = new ChunkDescriptor
             {
-                if (!EnsureRetentionCapacity(visibleChunks))
-                {
-                    break;
-                }
+                ChunkIndex = chunkIdx,
+                State = TerrainChunkState.Pending,
+                CommandSlot = -1,
+            };
 
-                world.GetOrCreateChunkContainer(chunkIdx);
+            activeChunks[chunkIdx] = descriptor;
+            targetBatch.Add(chunkIdx);
 
-                var descriptor = new ChunkDescriptor
-                {
-                    ChunkIndex = chunkIdx,
-                    State = TerrainChunkState.Pending,
-                    CommandSlot = -1,
-                };
+            // Note: We do NOT mark neighbors for reprocess here.
+            // Neighbors only need reprocess after terrain is generated AND
+            // we know the boundary data affects them. This is handled in ProcessTerrainBatch.
 
-                activeChunks[chunkIdx] = descriptor;
-
-                var dist = CalculatePriority(chunkIdx);
-                if (dist <= HIGH_PRIORITY_DISTANCE * HIGH_PRIORITY_DISTANCE)
-                {
-                    highPriorityPending.Enqueue(chunkIdx);
-                }
-                else
-                {
-                    lowPriorityPending.Enqueue(chunkIdx);
-                }
+            var dist = CalculatePriority(chunkIdx);
+            if (dist <= HIGH_PRIORITY_DISTANCE * HIGH_PRIORITY_DISTANCE)
+            {
+                highPriorityPending.Enqueue(chunkIdx);
+            }
+            else
+            {
+                lowPriorityPending.Enqueue(chunkIdx);
             }
         }
 
-        foreach (var chunkIdx in visibleChunks)
+        if (newChunks.Count > 10)
         {
-            if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.Pending)
+            Log.Info($"ChunkStreamingManager: Queued {newChunks.Count} new chunks");
+        }
+    }
+
+    /// <summary>
+    /// Mark all Ready neighbors of a chunk for reprocessing (including diagonals).
+    /// Called when a new chunk is queued for terrain generation.
+    /// </summary>
+    private void MarkNeighborsForReprocess(int chunkIdx)
+    {
+        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+
+        foreach (var (dx, dz) in AllNeighborOffsets)
+        {
+            var nx = chunkX + dx;
+            var nz = chunkZ + dz;
+
+            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                continue;
+
+            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+
+            // Skip if already tracked for processing
+            if (currentStreamingBatch.Contains(neighborIdx) || chunksNeedingReprocess.Contains(neighborIdx))
+                continue;
+
+            if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) &&
+                neighborDesc.State == TerrainChunkState.Ready)
             {
-                var dist = CalculatePriority(chunkIdx);
-                if (dist <= HIGH_PRIORITY_DISTANCE * HIGH_PRIORITY_DISTANCE)
-                {
-                    highPriorityPending.Enqueue(chunkIdx);
-                }
+                // Mark for reprocess - will be processed in batch with new chunks
+                neighborDesc.State = TerrainChunkState.HasTerrain;
+                activeChunks[neighborIdx] = neighborDesc;
+                chunksNeedingReprocess.Add(neighborIdx);
+                Metrics.RecordReprocess();
             }
+        }
+    }
+
+    /// <summary>
+    /// Mark a single chunk for reprocessing.
+    /// </summary>
+    private void MarkChunkForReprocess(int chunkIdx, string reason)
+    {
+        // Skip if already tracked for processing
+        if (currentStreamingBatch.Contains(chunkIdx) || chunksNeedingReprocess.Contains(chunkIdx))
+            return;
+
+        if (!activeChunks.TryGetValue(chunkIdx, out var desc))
+            return;
+
+        if (desc.State == TerrainChunkState.Ready)
+        {
+            desc.State = TerrainChunkState.HasTerrain;
+            activeChunks[chunkIdx] = desc;
+            chunksNeedingReprocess.Add(chunkIdx);
+            Metrics.RecordReprocess();
+            Log.Debug($"Marked chunk {chunkIdx} for reprocess: {reason}");
         }
     }
 
@@ -459,8 +545,9 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         currentFrame++;
         lastCameraPosition = cameraPosition;
-
-        ProcessPendingSeamRefreshes();
+        
+        // Update metrics timing
+        Metrics.Update(currentFrame / 60.0); // Approximate seconds
 
         var visibleChunks = DetermineVisibleChunks(cameraPosition);
         QueueNewChunks(visibleChunks);
@@ -468,258 +555,342 @@ public sealed class ChunkStreamingManager : IDisposable
 
         SubmitPendingBatches();
         PollCompletedBatches();
-        ProcessDirtyChunks(); // Re-mesh dirty chunks (e.g., neighbors that loaded)
+        ProcessTerrainBatch(); // Process chunks when batch is ready
         DrainCompletedCpuMeshes();
         UnloadDistantChunks(cameraPosition, visibleChunks);
     }
 
-    // Re-meshing is deferred for chunks at the edge of visible distance.
-    // Only chunks within (loadDistance - RemeshProximityMargin) are re-meshed immediately.
-    // This avoids wasted work on far chunks that may be unloaded when player turns.
-    private const int RemeshProximityMargin = 2;
-
     /// <summary>
-    /// Process chunks marked Dirty - re-mesh them to pick up neighbor data.
-    /// Only re-meshes chunks that are close enough to the camera.
-    /// Far chunks stay Dirty until they get closer or are unloaded.
+    /// Process terrain batch - when all new chunks have terrain, propagate light and mesh.
+    /// Block edit reprocessing is done immediately without waiting for streaming.
     /// </summary>
-    private void ProcessDirtyChunks()
+    private void ProcessTerrainBatch()
     {
-        // Calculate the proximity threshold - only re-mesh chunks within this distance
-        var loadDistance = GetActiveLoadDistance();
-        var remeshDistanceSq = (loadDistance - RemeshProximityMargin) * (loadDistance - RemeshProximityMargin);
+        // First: Process any chunks needing reprocess IMMEDIATELY (block edits)
+        // These should not wait for the streaming batch
+        ProcessReprocessChunks();
 
-        // Get camera chunk position
-        var worldSizeInBlocks = VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ;
-        var clampedX = Math.Clamp(lastCameraPosition.X, 0, worldSizeInBlocks - 1);
-        var clampedZ = Math.Clamp(lastCameraPosition.Z, 0, worldSizeInBlocks - 1);
-        var cameraChunkX = (int)(clampedX / VoxelHelper.ChunkSideSize);
-        var cameraChunkZ = (int)(clampedZ / VoxelHelper.ChunkSideSize);
-
-        var dirtyChunks = activeChunks.Values
-            .Where(c => c.State == TerrainChunkState.Dirty)
-            .Where(c =>
+        // Second: Check if streaming batch is ready (all new chunks have terrain)
+        if (currentStreamingBatch.Count == 0)
+        {
+            // Current batch is empty, promote pending batch if any
+            if (pendingStreamingBatch.Count > 0)
             {
-                // Only re-mesh chunks that are close enough to camera
-                var chunkX = c.ChunkIndex % VoxelHelper.WorldChunksXZ;
-                var chunkZ = c.ChunkIndex / VoxelHelper.WorldChunksXZ;
-                var dx = chunkX - cameraChunkX;
-                var dz = chunkZ - cameraChunkZ;
-                return dx * dx + dz * dz <= remeshDistanceSq;
-            })
-            .OrderBy(c => CalculatePriority(c.ChunkIndex))
-            .Take(4) // Reduced from 8 to further limit per-frame work
-            .ToList();
-
-        foreach (var desc in dirtyChunks)
-        {
-            var chunkIdx = desc.ChunkIndex;
-
-            // Update state before scheduling to prevent re-processing
-            var updatedDesc = desc;
-            updatedDesc.State = TerrainChunkState.CountingVisibility;
-            activeChunks[chunkIdx] = updatedDesc;
-
-            ScheduleCpuMeshing(chunkIdx);
-            Log.Debug($"Re-meshing dirty chunk {chunkIdx} (close to camera)");
+                foreach (var idx in pendingStreamingBatch)
+                    currentStreamingBatch.Add(idx);
+                pendingStreamingBatch.Clear();
+                batchProcessingInProgress = false;  // New batch, not yet processing
+            }
+            return;
         }
-    }
 
-    /// <summary>
-    /// Mark a chunk as dirty to trigger re-mesh (e.g., when neighbor loads).
-    /// Only marks Ready chunks - others are already being processed.
-    /// </summary>
-    private void MarkChunkDirty(int chunkIdx, string reason)
-    {
-        if (!activeChunks.TryGetValue(chunkIdx, out var desc))
-            return;
-
-        if (desc.State != TerrainChunkState.Ready)
-            return;
-
-        desc.State = TerrainChunkState.Dirty;
-        activeChunks[chunkIdx] = desc;
-        Log.Debug($"Marked chunk {chunkIdx} dirty: {reason}");
-    }
-
-    /// <summary>
-    /// Notify neighbors that this chunk's voxel data is now available.
-    /// Neighbors that are Ready will be marked Dirty to re-mesh with correct boundary data.
-    /// </summary>
-    private void NotifyNeighborsChunkReady(int chunkIdx)
-    {
-        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
-        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
-
-        void NotifyNeighbor(int dx, int dz)
+        // Check if all chunks in batch have terrain (or were unloaded - skip those)
+        // A chunk "has terrain" if it exists in activeChunks and HasVoxelData()
+        // A chunk that was unloaded is considered "done" for batch purposes
+        var stillWaiting = false;
+        foreach (var idx in currentStreamingBatch)
         {
-            var nx = chunkX + dx;
-            var nz = chunkZ + dz;
-            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
-                return;
-            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+            if (activeChunks.TryGetValue(idx, out var d))
+            {
+                // Chunk still exists - check if it has terrain
+                if (!d.HasVoxelData())
+                {
+                    stillWaiting = true;
+                    break;
+                }
+            }
+            // If chunk doesn't exist in activeChunks, it was unloaded - that's fine
+        }
 
-            void NotifyNeighbor(int dx, int dz, bool propagateLight)
+        if (stillWaiting)
+        {
+            batchProcessingInProgress = true;  // Batch is generating, don't add new chunks
+            return;
+        }
+
+        // All remaining chunks have terrain - process them
+        var toProcess = currentStreamingBatch.Where(idx =>
+            activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain).ToList();
+
+        if (toProcess.Count == 0)
+        {
+            // All chunks were either processed already or unloaded
+            currentStreamingBatch.Clear();
+            batchProcessingInProgress = false;
+            
+            // Promote pending batch if any
+            if (pendingStreamingBatch.Count > 0)
+            {
+                foreach (var idx in pendingStreamingBatch)
+                    currentStreamingBatch.Add(idx);
+                pendingStreamingBatch.Clear();
+                Log.Debug($"ChunkStreamingManager: Promoted {currentStreamingBatch.Count} pending chunks to current batch (after empty batch)");
+            }
+            return;
+        }
+
+        // Mark cardinal neighbors for reprocess now that we have terrain
+        var neighborsToReprocess = new HashSet<int>();
+        foreach (var chunkIdx in toProcess)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+
+            // Only cardinal neighbors (not diagonals) need boundary face updates
+            foreach (var (dx, dz) in CardinalNeighborOffsets)
             {
                 var nx = chunkX + dx;
                 var nz = chunkZ + dz;
                 if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
-                    return;
+                    continue;
+
                 var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
 
-                // If neighbor is ready, propagate light between them
-                if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) && neighborDesc.State == TerrainChunkState.Ready)
+                // Skip if neighbor is in our batch (will be processed together)
+                if (currentStreamingBatch.Contains(neighborIdx))
+                    continue;
+
+                if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) &&
+                    neighborDesc.State == TerrainChunkState.Ready)
                 {
-                    if (propagateLight)
-                    {
-                        // We need mutable access to ChunkData. 
-                        // ChunkVoxelDataCache stores ChunkData, but TryGetReadOnly returns a view.
-                        // However, we know the cache stores the actual ChunkData object.
-                        // We can use a new method on cache or just rely on the fact that we are on the main thread
-                        // and we can get the data if we expose it.
-                        // For now, let's assume we can get it via a new method on ChunkVoxelDataCache.
-
-                        if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var centerData) && centerData != null &&
-                            chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
-                        {
-                            LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
-                            // Mark center dirty too, as it might have received light from neighbor
-                            MarkChunkDirty(chunkIdx, $"received light from neighbor {neighborIdx}");
-                        }
-                    }
-
-                    MarkChunkDirty(neighborIdx, $"neighbor {chunkIdx} became ready");
+                    neighborsToReprocess.Add(neighborIdx);
                 }
             }
+        }
 
-            // Direct neighbors (for light propagation AND meshing)
-            NotifyNeighbor(-1, 0, true);
-            NotifyNeighbor(1, 0, true);
-            NotifyNeighbor(0, -1, true);
-            NotifyNeighbor(0, 1, true);
+        // Add neighbors to process list
+        foreach (var neighborIdx in neighborsToReprocess)
+        {
+            if (activeChunks.TryGetValue(neighborIdx, out var desc))
+            {
+                desc.State = TerrainChunkState.HasTerrain;
+                activeChunks[neighborIdx] = desc;
+                toProcess.Add(neighborIdx);
+            }
+        }
 
-            // Diagonal neighbors (for meshing only - smooth lighting/AO)
-            NotifyNeighbor(-1, -1, false);
-            NotifyNeighbor(-1, 1, false);
-            NotifyNeighbor(1, -1, false);
-            NotifyNeighbor(1, 1, false);
+        // Queue all for meshing (light propagation happens on background thread)
+        foreach (var chunkIdx in toProcess)
+        {
+            if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
+            {
+                desc.State = TerrainChunkState.Processing;
+                activeChunks[chunkIdx] = desc;
+                ScheduleCpuMeshing(chunkIdx, propagateLight: true);
+            }
+        }
+
+        Log.Info($"ChunkStreamingManager: Processing batch of {toProcess.Count} chunks (new={currentStreamingBatch.Count}, neighbors={neighborsToReprocess.Count})");
+
+        // Clear batch tracking
+        currentStreamingBatch.Clear();
+        batchProcessingInProgress = false;
+
+        // Promote pending batch if any
+        if (pendingStreamingBatch.Count > 0)
+        {
+            foreach (var idx in pendingStreamingBatch)
+                currentStreamingBatch.Add(idx);
+            pendingStreamingBatch.Clear();
+            Log.Debug($"ChunkStreamingManager: Promoted {currentStreamingBatch.Count} pending chunks to current batch");
         }
     }
 
     /// <summary>
-    /// Process chunks that were waiting for this chunk to regenerate before remeshing.
-    /// Used when a block edit at chunk boundary requires neighbor to see updated voxels.
+    /// Process chunks needing reprocess (block edits) immediately.
+    /// These are high priority and should not wait for streaming.
     /// </summary>
-    private void ProcessDeferredRemeshWaiters(int chunkIdx)
+    private void ProcessReprocessChunks()
     {
-        if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters) || waiters.Count == 0)
+        if (chunksNeedingReprocess.Count == 0)
             return;
 
-        foreach (var waiterIdx in waiters)
-        {
-            if (!activeChunks.TryGetValue(waiterIdx, out var waiterDesc))
-                continue;
+        var toProcess = chunksNeedingReprocess.Where(idx =>
+            activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain).ToList();
 
-            if (waiterDesc.State == TerrainChunkState.Ready)
+        if (toProcess.Count == 0)
+            return;
+
+        // Queue for meshing immediately (light propagation happens on background thread)
+        foreach (var chunkIdx in toProcess)
+        {
+            if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
             {
-                // Waiter is ready - trigger remesh (not regeneration)
-                waiterDesc.State = TerrainChunkState.CountingVisibility;
-                activeChunks[waiterIdx] = waiterDesc;
-                ScheduleCpuMeshing(waiterIdx);
-                Log.Info($"Deferred remesh triggered for chunk {waiterIdx} (waited for {chunkIdx})");
-            }
-            else
-            {
-                Log.Debug($"Deferred remesh skipped for chunk {waiterIdx} (state={waiterDesc.State})");
+                desc.State = TerrainChunkState.Processing;
+                activeChunks[chunkIdx] = desc;
+                ScheduleCpuMeshing(chunkIdx, propagateLight: true);
+                chunksNeedingReprocess.Remove(chunkIdx);
             }
         }
 
-        deferredRemeshWaiters.Remove(chunkIdx);
+        if (toProcess.Count > 0)
+        {
+            Log.Info($"ChunkStreamingManager: Immediate reprocess of {toProcess.Count} chunks (block edits)");
+        }
     }
 
     /// <summary>
-    private void ProcessPendingSeamRefreshes()
+    /// Handle immediate light source change (torch placement/removal).
+    /// Recalculates lighting and queues affected chunks for immediate reprocessing.
+    /// </summary>
+    public void HandleLightSourceChange(int chunkIdx, int blockX, int blockY, int blockZ, bool isPlacement, BlockId blockType)
     {
-        if (!SeamRefreshEnabled)
+        // 1. Update voxel data in cache
+        if (!chunkVoxelCache.TryGetChunkData(chunkIdx, out var chunkData) || chunkData == null)
         {
-            pendingSeamRefresh.Clear();
+            Log.Warn($"HandleLightSourceChange: No voxel data for chunk {chunkIdx}");
             return;
         }
 
-        if (pendingSeamRefresh.Count == 0)
+        var localX = blockX % VoxelHelper.ChunkSideSize;
+        var localZ = blockZ % VoxelHelper.ChunkSideSize;
+        chunkData.SetBlock(localX, blockY, localZ, blockType);
+
+        // 2. Recalculate lighting for this chunk
+        var sw = Stopwatch.StartNew();
+        if (isPlacement)
         {
-            return;
-        }
-
-        foreach (var chunkIdx in pendingSeamRefresh.ToArray())
-        {
-            if (!activeChunks.TryGetValue(chunkIdx, out var desc))
-            {
-                pendingSeamRefresh.Remove(chunkIdx);
-                continue;
-            }
-
-            if (desc.State != TerrainChunkState.Ready)
-            {
-                continue;
-            }
-
-            var lastFrame = lastSeamRefreshFrame.TryGetValue(chunkIdx, out var frame)
-                ? frame
-                : long.MinValue;
-
-            if (currentFrame - lastFrame < SeamRefreshCooldownFrames)
-            {
-                continue;
-            }
-
-            pendingSeamRefresh.Remove(chunkIdx);
-            RequestSeamRefresh(chunkIdx, "Pending seam refresh");
-        }
-    }
-
-    private void RequestSeamRefresh(int chunkIdx, string reason, bool force = false)
-    {
-        if (!SeamRefreshEnabled)
-        {
-            return;
-        }
-
-        pendingSeamRefresh.Remove(chunkIdx);
-
-        if (!activeChunks.TryGetValue(chunkIdx, out var desc))
-        {
-            return;
-        }
-
-        if (desc.State == TerrainChunkState.Ready)
-        {
-            if (!force &&
-                lastSeamRefreshFrame.TryGetValue(chunkIdx, out var lastFrame) &&
-                currentFrame - lastFrame < SeamRefreshCooldownFrames)
-            {
-                if (pendingSeamRefresh.Add(chunkIdx))
-                {
-                    Log.Debug($"Seam refresh cooldown for chunk {chunkIdx} ({reason})");
-                }
-                return;
-            }
-
-            desc.State = TerrainChunkState.Dirty;
-            activeChunks[chunkIdx] = desc;
-            highPriorityPending.Enqueue(chunkIdx);
-            lastSeamRefreshFrame[chunkIdx] = currentFrame;
-            Log.Debug($"Queued seam refresh for chunk {chunkIdx}: {reason}");
+            // Adding light source - just propagate the new light
+            LightingCalculator.CalculateLighting(chunkData);
         }
         else
         {
-            if (pendingSeamRefresh.Add(chunkIdx))
+            // Removing light source - need full recalculation to clear stale light
+            var removedLightLevel = BlockRegistry.GetLightValue(blockType);
+            LightingCalculator.RemoveBlockLight(
+                chunkIdx,
+                localX, blockY, localZ,
+                removedLightLevel,
+                idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+            );
+        }
+        sw.Stop();
+        Metrics.RecordLightCalculation(sw.Elapsed.TotalMilliseconds);
+
+        // 3. Find all chunks within light radius
+        var affectedChunks = GetChunksInLightRadius(blockX, blockY, blockZ, 14); // Torch light = 14
+
+        // 4. Mark all for immediate reprocessing
+        foreach (var idx in affectedChunks)
+        {
+            if (activeChunks.TryGetValue(idx, out var desc))
             {
-                Log.Debug($"Seam refresh deferred for chunk {chunkIdx} (state={desc.State}) reason={reason}");
+                if (desc.State == TerrainChunkState.Ready)
+                {
+                    desc.State = TerrainChunkState.HasTerrain;
+                    activeChunks[idx] = desc;
+                    Metrics.RecordReprocess();
+                }
             }
+        }
+
+        // 5. Propagate light across boundaries
+        foreach (var idx in affectedChunks)
+        {
+            PropagateChunkBoundaryLight(idx);
+        }
+
+        // 6. Queue all for immediate meshing (high priority)
+        foreach (var idx in affectedChunks)
+        {
+            if (activeChunks.TryGetValue(idx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
+            {
+                desc.State = TerrainChunkState.Processing;
+                activeChunks[idx] = desc;
+                ScheduleCpuMeshing(idx);
+            }
+        }
+
+        Log.Info($"HandleLightSourceChange: {(isPlacement ? "Placed" : "Removed")} {blockType} at ({blockX},{blockY},{blockZ}), affected {affectedChunks.Count} chunks");
+    }
+
+    /// <summary>
+    /// Get all chunks that could be affected by a light source at the given position.
+    /// </summary>
+    private List<int> GetChunksInLightRadius(int worldX, int worldY, int worldZ, int radius)
+    {
+        var affected = new HashSet<int>();
+        var centerChunkX = worldX / VoxelHelper.ChunkSideSize;
+        var centerChunkZ = worldZ / VoxelHelper.ChunkSideSize;
+
+        // Check a box of chunks that could be affected
+        var chunkRadius = (radius / VoxelHelper.ChunkSideSize) + 1;
+        for (var dx = -chunkRadius; dx <= chunkRadius; dx++)
+        {
+            for (var dz = -chunkRadius; dz <= chunkRadius; dz++)
+            {
+                var cx = centerChunkX + dx;
+                var cz = centerChunkZ + dz;
+
+                if (cx < 0 || cx >= VoxelHelper.WorldChunksXZ || cz < 0 || cz >= VoxelHelper.WorldChunksXZ)
+                    continue;
+
+                var chunkIdx = cz * VoxelHelper.WorldChunksXZ + cx;
+                if (activeChunks.ContainsKey(chunkIdx))
+                {
+                    affected.Add(chunkIdx);
+                }
+            }
+        }
+
+        return affected.ToList();
+    }
+
+    /// <summary>
+    /// Propagate light across chunk boundaries for a single chunk.
+    /// </summary>
+    private void PropagateChunkBoundaryLight(int chunkIdx)
+    {
+        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+
+        if (!chunkVoxelCache.TryGetChunkData(chunkIdx, out var centerData) || centerData == null)
+            return;
+
+        foreach (var (dx, dz) in CardinalNeighborOffsets)
+        {
+            var nx = chunkX + dx;
+            var nz = chunkZ + dz;
+
+            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                continue;
+
+            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+
+            if (!chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) || neighborData == null)
+                continue;
+
+            // Bidirectional propagation
+            LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
+            LightingCalculator.PropagateNeighborLight(neighborData, centerData, -dx, -dz);
         }
     }
 
+    /// <summary>
+    /// Check if all cardinal neighbors have voxel data.
+    /// </summary>
+    private bool AllNeighborsHaveVoxelData(int chunkIdx)
+    {
+        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+
+        foreach (var (dx, dz) in CardinalNeighborOffsets)
+        {
+            var nx = chunkX + dx;
+            var nz = chunkZ + dz;
+
+            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                continue;
+
+            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+
+            // If neighbor is tracked but doesn't have voxel data yet, we must wait
+            if (activeChunks.TryGetValue(neighborIdx, out var neighborDesc) && !neighborDesc.HasVoxelData())
+                return false;
+        }
+
+        return true;
+    }
 
     private void ClearPendingCpuMeshingQueue()
     {
@@ -730,14 +901,14 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
-    private void ScheduleCpuMeshing(int chunkIdx)
+    private void ScheduleCpuMeshing(int chunkIdx, bool propagateLight = true)
     {
         if (!chunkVoxelCache.TryGetVersion(chunkIdx, out var cacheVersion) || cacheVersion <= 0)
         {
             Log.Debug($"ScheduleCpuMeshing: chunk {chunkIdx} missing cache version; enqueueing with version=0");
         }
 
-        cpuMeshingJobs.Enqueue(chunkIdx, 0, cacheVersion);
+        cpuMeshingJobs.Enqueue(chunkIdx, 0, cacheVersion, propagateLight);
     }
 
     private void DrainCompletedCpuMeshes()
@@ -747,6 +918,7 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             cpuMeshResults[mesh.ChunkIndex] = mesh;
             received = true;
+            // Mesh timing tracked elsewhere
         }
 
         if ((received || cpuMeshResults.Count > 0) && meshBuffers != null && terrainRenderer != null)
@@ -828,10 +1000,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : meshBuffers.AllocateCommandSlot();
         WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)translucentFaceCount);
 
-        // Placeholder mask is always 0 now - we wait for all neighbors before meshing
-        byte placeholderMask = 0;
-
-        Log.Debug($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} mask=0x{placeholderMask:X2} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
+        Log.Debug($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
 
         var refreshedDescriptor = new ChunkDescriptor
         {
@@ -841,16 +1010,9 @@ public sealed class ChunkStreamingManager : IDisposable
             CommandSlot = slot,
             VisibleVoxelCount = faceCount,
             State = TerrainChunkState.Ready,
-            Fence = IntPtr.Zero,
             GenerationStartFrame = currentFrame,
-            PlaceholderMask = placeholderMask,
         };
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
-
-        if (pendingSeamRefresh.Contains(mesh.ChunkIndex))
-        {
-            RequestSeamRefresh(mesh.ChunkIndex, "Deferred seam dependency resolved", force: true);
-        }
 
         return true;
     }
@@ -949,7 +1111,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 continue;
 
             if (activeChunks.TryGetValue(idx, out var desc) &&
-                (desc.State == TerrainChunkState.Pending || desc.State == TerrainChunkState.Dirty))
+                (desc.State == TerrainChunkState.Pending || desc.State == TerrainChunkState.HasTerrain))
             {
                 batchIndices.Add(idx);
                 processedIndices.Add(idx);
@@ -963,7 +1125,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 continue;
 
             if (activeChunks.TryGetValue(idx, out var desc) &&
-                (desc.State == TerrainChunkState.Pending || desc.State == TerrainChunkState.Dirty))
+                (desc.State == TerrainChunkState.Pending || desc.State == TerrainChunkState.HasTerrain))
             {
                 batchIndices.Add(idx);
                 processedIndices.Add(idx);
@@ -1003,7 +1165,7 @@ public sealed class ChunkStreamingManager : IDisposable
             return false;
         }
 
-        if (descriptor.State is TerrainChunkState.Generating or TerrainChunkState.CountingVisibility)
+        if (descriptor.State is TerrainChunkState.Generating or TerrainChunkState.Processing)
         {
             return false;
         }
@@ -1015,7 +1177,6 @@ public sealed class ChunkStreamingManager : IDisposable
 
         descriptor.State = TerrainChunkState.Generating;
         descriptor.GenerationStartFrame = currentFrame;
-        descriptor.PlaceholderMask = 0;
         activeChunks[chunkIdx] = descriptor;
         inFlightCpuGenerations++;
         return true;
@@ -1044,7 +1205,7 @@ public sealed class ChunkStreamingManager : IDisposable
             return;
         }
 
-        if (descriptor.State is not (TerrainChunkState.Pending or TerrainChunkState.Dirty))
+        if (descriptor.State is not (TerrainChunkState.Pending or TerrainChunkState.HasTerrain))
         {
             descriptor.State = TerrainChunkState.Pending;
             activeChunks[chunkIdx] = descriptor;
@@ -1084,26 +1245,18 @@ public sealed class ChunkStreamingManager : IDisposable
 
             ApplyCollisionResults(chunkIdx, result.Generation);
 
-            // MINECRAFT-STYLE: Mesh immediately, treat missing neighbors as air
-            // Then notify neighbors so they can re-mesh with correct boundary data
-            descriptor.State = TerrainChunkState.CountingVisibility;
+            // Mark as HasTerrain - ready for lighting/meshing
+            descriptor.State = TerrainChunkState.HasTerrain;
             descriptor.GenerationStartFrame = currentFrame;
             activeChunks[chunkIdx] = descriptor;
-
-            ScheduleCpuMeshing(chunkIdx);
-
-            // Notify neighbors - they will re-mesh to pick up this chunk's data
-            NotifyNeighborsChunkReady(chunkIdx);
-
-            // Process deferred remesh waiters (neighbors waiting for this chunk's edit to complete)
-            ProcessDeferredRemeshWaiters(chunkIdx);
+            // Generation timing tracked elsewhere
 
             processed++;
         }
 
         if (processed > 0)
         {
-            Log.Debug($"ChunkStreamingManager: Applied CPU generation results for {processed} chunks (frame {currentFrame})");
+            Log.Debug($"ChunkStreamingManager: {processed} chunks completed terrain generation (frame {currentFrame})");
         }
     }
 
@@ -1152,6 +1305,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// <summary>
     /// Unload chunks that are too far from camera (Phase 5)
     /// Uses hysteresis to avoid thrashing (load/unload cycles)
+    /// Uses Chebyshev distance (square region) to match visibility calculations
     /// </summary>
     private void UnloadDistantChunks(Vector3 cameraPosition, HashSet<int> visibleChunks)
     {
@@ -1162,9 +1316,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var cameraChunkZ = (int)(cameraPosition.Z / VoxelHelper.ChunkSideSize);
 
         var unloadRadius = GetUnloadDistanceChunks();
-        var unloadDistanceSq = unloadRadius * unloadRadius;
         var retentionRadius = GetRetentionDistanceChunks();
-        var retentionDistanceSq = retentionRadius * retentionRadius;
 
         var chunksToUnload = new List<int>();
 
@@ -1177,25 +1329,24 @@ public sealed class ChunkStreamingManager : IDisposable
             // Don't unload chunks that are still in-flight (actively being processed)
             if (desc.State is TerrainChunkState.Generating or
                 TerrainChunkState.Pending or
-                TerrainChunkState.CountingVisibility)
+                TerrainChunkState.Processing)
                 continue;
-
-            // Dirty chunks CAN be unloaded if they're far away - they'll re-generate when needed
 
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
 
             var dx = chunkX - cameraChunkX;
             var dz = chunkZ - cameraChunkZ;
-            var distanceSq = dx * dx + dz * dz;
+            // Use Chebyshev distance (square region) to match visibility
+            var chebyshevDist = Math.Max(Math.Abs(dx), Math.Abs(dz));
 
             if (visibleChunks.Contains(chunkIdx))
                 continue;
 
             var lastSeen = chunkLastVisibleFrame.TryGetValue(chunkIdx, out var frame) ? frame : long.MinValue;
             var framesSinceVisible = lastSeen == long.MinValue ? long.MaxValue : currentFrame - frame;
-            var outsideUnload = distanceSq > unloadDistanceSq;
-            var outsideRetention = distanceSq > retentionDistanceSq;
+            var outsideUnload = chebyshevDist > unloadRadius;
+            var outsideRetention = chebyshevDist > retentionRadius;
 
             if (!outsideUnload && !outsideRetention && framesSinceVisible < RETENTION_FRAME_DELAY)
                 continue;
@@ -1217,8 +1368,8 @@ public sealed class ChunkStreamingManager : IDisposable
             var bX = b % VoxelHelper.WorldChunksXZ;
             var bZ = b / VoxelHelper.WorldChunksXZ;
 
-            var aDist = (aX - cameraChunkX) * (aX - cameraChunkX) + (aZ - cameraChunkZ) * (aZ - cameraChunkZ);
-            var bDist = (bX - cameraChunkX) * (bX - cameraChunkX) + (bZ - cameraChunkZ) * (bZ - cameraChunkZ);
+            var aDist = Math.Max(Math.Abs(aX - cameraChunkX), Math.Abs(aZ - cameraChunkZ));
+            var bDist = Math.Max(Math.Abs(bX - cameraChunkX), Math.Abs(bZ - cameraChunkZ));
 
             return bDist.CompareTo(aDist); // Furthest first
         });
@@ -1247,6 +1398,11 @@ public sealed class ChunkStreamingManager : IDisposable
             return;
 
         RemoveChunkFromPendingQueues(chunkIndex);
+        
+        // CRITICAL: Remove from batch tracking to prevent stale batch checks
+        currentStreamingBatch.Remove(chunkIndex);
+        pendingStreamingBatch.Remove(chunkIndex);
+        chunksNeedingReprocess.Remove(chunkIndex);
 
         // Clean up fence if present
         if (desc.Fence != IntPtr.Zero)
@@ -1281,8 +1437,6 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Remove from active chunks
         activeChunks.Remove(chunkIndex);
-        pendingSeamRefresh.Remove(chunkIndex);
-        lastSeamRefreshFrame.Remove(chunkIndex);
         chunkLastVisibleFrame.Remove(chunkIndex);
 
         // Remove collision data
@@ -1387,55 +1541,111 @@ public sealed class ChunkStreamingManager : IDisposable
             blockId = BlockId.Water;
         }
 
+        // Check if this edit involves a light-emitting block (for proper light propagation to neighbors)
+        var oldBlock = BlockId.Air;
+        var newLightValue = BlockRegistry.GetLightValue(blockId);
+        
+        if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var chunkData) && chunkData != null)
+        {
+            oldBlock = chunkData.GetBlock(localX, localY, localZ);
+            var oldLightValue = BlockRegistry.GetLightValue(oldBlock);
+        }
+        
+        var isRemovingLightSource = 0 > 0 && newLightValue == 0;
+        var isPlacingLightSource = newLightValue > 0;
+        var affectsLight = 0 > 0 || newLightValue > 0;
+
+        // If removing a light source, use the cross-chunk light removal algorithm
+        HashSet<int>? lightAffectedChunks = null;
+        if (isRemovingLightSource && chunkData != null)
+        {
+            // First update the block in the cache so light removal sees the new state
+            chunkData.SetBlock(localX, localY, localZ, blockId);
+            
+            // Remove light using BFS that crosses chunk boundaries
+            lightAffectedChunks = LightingCalculator.RemoveBlockLight(
+                chunkIdx,
+                localX, localY, localZ,
+                0,
+                idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+            );
+            
+            Log.Info($"Light removal affected {lightAffectedChunks.Count} chunks: {string.Join(", ", lightAffectedChunks)}");
+        }
+        else if (chunkData != null)
+        {
+            // For all other block changes (including placing light sources), update the voxel cache directly
+            chunkData.SetBlock(localX, localY, localZ, blockId);
+            
+            // If placing a light source, recalculate lighting for this chunk
+            if (isPlacingLightSource)
+            {
+                LightingCalculator.CalculateLighting(chunkData);
+            }
+        }
+
         MarkVoxelEdited(chunkIdx, voxelIdx, blockId, isBreaking);
 
         // Mark chunk as dirty (needs regeneration)
         MarkChunkDirty(chunkIdx);
 
-        // If edit is on chunk boundary, defer neighbor remesh until edited chunk regenerates
-        // This ensures the neighbor sees the updated voxel cache when it remeshes
-        void DeferNeighborRemesh(int neighborIdx)
+        // Mark all light-affected chunks for reprocessing
+        if (lightAffectedChunks != null)
         {
-            if (!activeChunks.TryGetValue(neighborIdx, out var neighborDesc))
-                return;
-            if (neighborDesc.State != TerrainChunkState.Ready)
-                return; // Neighbor is already processing
-
-            // Add neighbor to deferred remesh list - will be triggered when chunkIdx completes
-            if (!deferredRemeshWaiters.TryGetValue(chunkIdx, out var waiters))
+            foreach (var affectedIdx in lightAffectedChunks)
             {
-                waiters = [];
-                deferredRemeshWaiters[chunkIdx] = waiters;
+                if (affectedIdx != chunkIdx) // Source chunk already marked dirty
+                {
+                    MarkChunkForReprocess(affectedIdx);
+                }
             }
-            waiters.Add(neighborIdx);
-            Log.Info($"Block edit: neighbor {neighborIdx} deferred remesh until chunk {chunkIdx} regenerates");
         }
 
-        if (localX == 0 && chunkX > 0)
+        // If edit affects light or is on chunk boundary, mark neighbors for reprocess
+        if (affectsLight)
         {
-            var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1);
-            DeferNeighborRemesh(neighborIdx);
+            // Light sources affect all neighbors
+            MarkNeighborsForReprocess(chunkIdx);
         }
-        if (localX == VoxelHelper.ChunkSideSize - 1 && chunkX < VoxelHelper.WorldChunksXZ - 1)
+        else
         {
-            var neighborIdx = (chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX + 1);
-            DeferNeighborRemesh(neighborIdx);
-        }
-        if (localZ == 0 && chunkZ > 0)
-        {
-            var neighborIdx = (chunkZ - 1) * VoxelHelper.WorldChunksXZ + chunkX;
-            DeferNeighborRemesh(neighborIdx);
-        }
-        if (localZ == VoxelHelper.ChunkSideSize - 1 && chunkZ < VoxelHelper.WorldChunksXZ - 1)
-        {
-            var neighborIdx = (chunkZ + 1) * VoxelHelper.WorldChunksXZ + chunkX;
-            DeferNeighborRemesh(neighborIdx);
+            // Non-light edits: only mark boundary-touching neighbors
+            if (localX == 0 && chunkX > 0)
+                MarkChunkForReprocess((chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX - 1));
+            if (localX == VoxelHelper.ChunkSideSize - 1 && chunkX < VoxelHelper.WorldChunksXZ - 1)
+                MarkChunkForReprocess((chunkZ) * VoxelHelper.WorldChunksXZ + (chunkX + 1));
+            if (localZ == 0 && chunkZ > 0)
+                MarkChunkForReprocess((chunkZ - 1) * VoxelHelper.WorldChunksXZ + chunkX);
+            if (localZ == VoxelHelper.ChunkSideSize - 1 && chunkZ < VoxelHelper.WorldChunksXZ - 1)
+                MarkChunkForReprocess((chunkZ + 1) * VoxelHelper.WorldChunksXZ + chunkX);
         }
 
-        Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} block={blockId} breaking={isBreaking}");
+        Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} block={blockId} breaking={isBreaking} affectsLight={affectsLight}");
 
         // Save edits immediately to prevent data loss
         SaveChunkEdits(chunkIdx);
+    }
+
+    /// <summary>
+    /// Mark a specific chunk for reprocessing (light recalc + remesh).
+    /// </summary>
+    private void MarkChunkForReprocess(int chunkIdx)
+    {
+        // Skip if already tracked for processing
+        if (currentStreamingBatch.Contains(chunkIdx) || chunksNeedingReprocess.Contains(chunkIdx))
+            return;
+
+        if (!activeChunks.TryGetValue(chunkIdx, out var desc))
+            return;
+
+        if (desc.State == TerrainChunkState.Ready)
+        {
+            desc.State = TerrainChunkState.HasTerrain;
+            activeChunks[chunkIdx] = desc;
+            chunksNeedingReprocess.Add(chunkIdx);
+            highPriorityPending.Enqueue(chunkIdx);
+            Metrics.RecordReprocess();
+        }
     }
 
     /// <summary>
@@ -1475,16 +1685,18 @@ public sealed class ChunkStreamingManager : IDisposable
             // Keep existing buffer offset - we'll update in-place
             // Free the old buffer region only if we can't reuse it
             // (size might change after edit, but usually it's similar)
-            desc.State = TerrainChunkState.Dirty;
+            desc.State = TerrainChunkState.HasTerrain;
             activeChunks[chunkIdx] = desc;
+            chunksNeedingReprocess.Add(chunkIdx);
             highPriorityPending.Enqueue(chunkIdx);
 
-            Log.Debug($"Marked chunk {chunkIdx} as dirty (was Ready, now Dirty for incremental update)");
+            Log.Debug($"Marked chunk {chunkIdx} for reprocessing (was Ready, now HasTerrain)");
         }
-        else if (desc.State == TerrainChunkState.Dirty)
+        else if (desc.State == TerrainChunkState.HasTerrain)
         {
-            // Already dirty, no need to re-queue
-            Log.Debug($"Chunk {chunkIdx} already marked as dirty");
+            // Already needs reprocessing, ensure it's in the set
+            chunksNeedingReprocess.Add(chunkIdx);
+            Log.Debug($"Chunk {chunkIdx} already marked for reprocessing");
         }
     }
 
@@ -1501,7 +1713,6 @@ public sealed class ChunkStreamingManager : IDisposable
             activeChunks.Clear();
         }
 
-        pendingSeamRefresh.Clear();
         chunkVoxelCache.Clear();
         ClearPendingCpuMeshingQueue();
 
@@ -1539,7 +1750,6 @@ public sealed class ChunkStreamingManager : IDisposable
             maxChunks = CalculateMaxViewChunksForRadius(absoluteMaxRadius);
         }
 
-        visibilityFlagsCapacity = maxChunks;
         Log.Info($"Frustum culling initialized for CPU pipeline (capacity: {maxChunks} chunks)");
     }
 

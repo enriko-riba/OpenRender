@@ -69,7 +69,7 @@ public sealed class BlockTextureManager : IDisposable
         GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
 
         // Enable Anisotropic Filtering if supported (greatly improves ground texture quality at angles)
-        float maxAniso = GL.GetFloat((GetPName)0x84FF); // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
+        var maxAniso = GL.GetFloat((GetPName)0x84FF); // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT
         if (maxAniso > 1.0f)
         {
             GL.SamplerParameter(sampler, (SamplerParameterName)0x84FE, Math.Min(maxAniso, 16.0f)); // GL_TEXTURE_MAX_ANISOTROPY_EXT
@@ -96,123 +96,99 @@ public sealed class BlockTextureManager : IDisposable
 
     /// <summary>
     /// Loads all block textures from the Resources/voxel/blocks directory.
-    /// Texture files should be named by their BlockId number, e.g., "11.png" for Grass.
+    /// Texture filenames are derived from BlockId enum names using snake_case convention:
+    /// e.g., GrassSnowy -> grass_snowy.png, OakLog -> oak_log.png
     /// </summary>
     private void LoadBlockTextures()
     {
         var loadedCount = 0;
+        var missingCount = 0;
 
         // Load default/fallback texture for missing blocks
         LoadFallbackTexture();
 
-        // Map of BlockId -> texture file path (customizable)
-        // These paths are relative to the working directory
-        var blockTexturePaths = new Dictionary<BlockId, string>
-        {
-            // Stone variants
-            { BlockId.Stone, "Resources/voxel/blocks/stone.png" },
-            { BlockId.Bedrock, "Resources/voxel/blocks/bedrock.png" },
-            { BlockId.Cobblestone, "Resources/voxel/blocks/cobblestone.png" },
-
-            // Dirt/Grass variants
-            { BlockId.Dirt, "Resources/voxel/blocks/dirt.png" },
-            { BlockId.Grass, "Resources/voxel/blocks/grass.png" },
-            { BlockId.GrassSnowy, "Resources/voxel/blocks/grass_snowy.png" },
-            { BlockId.Podzol, "Resources/voxel/blocks/podzol.png" },
-            { BlockId.CoarseDirt, "Resources/voxel/blocks/coarse_dirt.png" },
-
-            // Sand variants
-            { BlockId.Sand, "Resources/voxel/blocks/sand.png" },
-            { BlockId.Sandstone, "Resources/voxel/blocks/sandstone.png" },
-
-            // Gravel/Clay
-            { BlockId.Gravel, "Resources/voxel/blocks/gravel.png" },
-            { BlockId.Clay, "Resources/voxel/blocks/clay.png" },
-
-            // Snow/Ice
-            { BlockId.Snow, "Resources/voxel/blocks/snow.png" },
-            { BlockId.SnowDirt, "Resources/voxel/blocks/snow_dirt.png" },
-            { BlockId.Ice, "Resources/voxel/blocks/ice.png" },
-
-            // Water (special - uses separate rendering but needs texture)
-            { BlockId.Water, "Resources/voxel/blocks/water.png" },
-            { BlockId.Lava, "Resources/voxel/blocks/lava.png" },
-
-            // Mossy Cobblestone and Mycelium
-            { BlockId.MossyCobblestone, "Resources/voxel/blocks/mossy_cobblestone.png" },
-            { BlockId.Mycelium, "Resources/voxel/blocks/mycelium.png" },
-            { BlockId.RedSand, "Resources/voxel/blocks/red_sand.png" },
-            { BlockId.RedSandstone, "Resources/voxel/blocks/red_sandstone.png" },
-            
-            // Terracotta
-            { BlockId.Terracotta, "Resources/voxel/blocks/terracotta.png" },
-            { BlockId.WhiteTerracotta, "Resources/voxel/blocks/white_terracotta.png" },
-            { BlockId.OrangeTerracotta, "Resources/voxel/blocks/orange_terracotta.png" },
-            { BlockId.RedTerracotta, "Resources/voxel/blocks/red_terracotta.png" },
-            { BlockId.BrownTerracotta, "Resources/voxel/blocks/brown_terracotta.png" },
-            { BlockId.YellowTerracotta, "Resources/voxel/blocks/yellow_terracotta.png" },
-
-            // Ores
-            { BlockId.CoalOre, "Resources/voxel/blocks/coal_ore.png" },
-            { BlockId.IronOre, "Resources/voxel/blocks/iron_ore.png" },
-            { BlockId.GoldOre, "Resources/voxel/blocks/gold_ore.png" },
-            { BlockId.DiamondOre, "Resources/voxel/blocks/diamond_ore.png" },
-            { BlockId.CopperOre, "Resources/voxel/blocks/copper_ore.png" },
-
-            // Logs
-            { BlockId.OakLog, "Resources/voxel/blocks/oak_log.png" },
-            { BlockId.BirchLog, "Resources/voxel/blocks/birch_log.png" },
-            { BlockId.SpruceLog, "Resources/voxel/blocks/spruce_log.png" },
-            { BlockId.JungleLog, "Resources/voxel/blocks/jungle_log.png" },
-
-            // Leaves
-            { BlockId.OakLeaves, "Resources/voxel/blocks/oak_leaves.png" },
-            { BlockId.BirchLeaves, "Resources/voxel/blocks/birch_leaves.png" },
-            { BlockId.SpruceLeaves, "Resources/voxel/blocks/spruce_leaves.png" },
-            { BlockId.JungleLeaves, "Resources/voxel/blocks/jungle_leaves.png" },
-
-            // More Ice
-            { BlockId.PackedIce, "Resources/voxel/blocks/packed_ice.png" },
-            { BlockId.BlueIce, "Resources/voxel/blocks/blue_ice.png" },
-        };
-
-        foreach (var (blockId, path) in blockTexturePaths)
-        {
-            if (LoadBlockTexture(blockId, path))
-            {
-                loadedCount++;
-            }
-        }
-
-        Log.Info($"BlockTextureManager: Loaded {loadedCount} block textures");
-        
-        // Warn about any BlockId values that don't have textures defined
-        WarnMissingBlockTextures(blockTexturePaths);
-    }
-    
-    /// <summary>
-    /// Logs warnings for any BlockId values that don't have texture mappings.
-    /// This helps identify blocks that will show the fallback (magenta checkerboard) texture.
-    /// </summary>
-    private static void WarnMissingBlockTextures(Dictionary<BlockId, string> loadedTextures)
-    {
-        // Get all defined BlockId values (excluding flag combinations)
+        // Get all block types (excluding pure flags and Air)
         var allBlockIds = Enum.GetValues<BlockId>()
-            .Where(b => !IsFlagOnly(b) && b != BlockId.Air) // Skip Air and pure flags
+            .Where(b => !IsFlagOnly(b) && b != BlockId.Air)
             .ToList();
-        
-        var missingTextures = allBlockIds
-            .Where(b => !loadedTextures.ContainsKey(b))
-            .ToList();
-        
-        if (missingTextures.Count > 0)
+
+        foreach (var blockId in allBlockIds)
         {
-            Log.Warn($"BlockTextureManager: {missingTextures.Count} block type(s) have no texture defined (will show fallback):");
-            foreach (var blockId in missingTextures)
+            var texturePath = GetTexturePathForBlock(blockId);
+            
+            if (File.Exists(texturePath))
             {
-                Log.Warn($"  - {blockId} (ID={blockId.GetId()})");
+                if (LoadBlockTexture(blockId, texturePath))
+                {
+                    loadedCount++;
+                }
+            }
+            else
+            {
+                missingCount++;
+                Log.Debug($"BlockTextureManager: No texture file for {blockId} (expected: {texturePath})");
             }
         }
+
+        Log.Info($"BlockTextureManager: Loaded {loadedCount} block textures, {missingCount} missing (will show fallback)");
+    }
+
+    /// <summary>
+    /// Texture aliases for blocks that share textures with other blocks.
+    /// Key: BlockId that needs aliasing, Value: BlockId whose texture to use
+    /// </summary>
+    private static readonly Dictionary<BlockId, BlockId> TextureAliases = new()
+    {
+        { BlockId.WallTorch, BlockId.Torch },  // Wall torch uses same texture as regular torch
+    };
+
+    /// <summary>
+    /// Converts a BlockId enum name to a texture file path using snake_case convention.
+    /// e.g., GrassSnowy -> Resources/voxel/blocks/grass_snowy.png
+    /// Supports texture aliases for blocks that share textures.
+    /// </summary>
+    private static string GetTexturePathForBlock(BlockId blockId)
+    {
+        // Check for texture alias first
+        if (TextureAliases.TryGetValue(blockId, out var aliasedBlock))
+        {
+            blockId = aliasedBlock;
+        }
+
+        var enumName = blockId.ToString();
+        var snakeCaseName = PascalToSnakeCase(enumName);
+        return $"{BlockTextureDir}/{snakeCaseName}.png";
+    }
+
+    /// <summary>
+    /// Converts PascalCase to snake_case.
+    /// e.g., "GrassSnowy" -> "grass_snowy", "OakLog" -> "oak_log"
+    /// </summary>
+    private static string PascalToSnakeCase(string pascalCase)
+    {
+        if (string.IsNullOrEmpty(pascalCase))
+            return pascalCase;
+
+        var result = new System.Text.StringBuilder();
+        
+        for (var i = 0; i < pascalCase.Length; i++)
+        {
+            var c = pascalCase[i];
+            
+            if (char.IsUpper(c))
+            {
+                // Add underscore before uppercase letters (except at start)
+                if (i > 0)
+                    result.Append('_');
+                result.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                result.Append(c);
+            }
+        }
+        
+        return result.ToString();
     }
     
     /// <summary>

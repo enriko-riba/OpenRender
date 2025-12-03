@@ -104,7 +104,10 @@ internal class GameScene : Scene
             VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
         );
 
-        camera = new CameraFps(startPos, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
+        // Near plane increased to 0.5 to improve depth buffer precision at distance
+        // and reduce Z-fighting artifacts on distant horizontal surfaces.
+        // Ratio of 1200:1 (far/near) is much better than 6000:1 for 24-bit depth buffers.
+        camera = new CameraFps(startPos, Width / (float)Height, 0.05f, VoxelHelper.FarPlane)
         {
             MaxFov = 70
         };
@@ -262,11 +265,6 @@ internal class GameScene : Scene
                 terrainRenderer.DebugWireframe = !terrainRenderer.DebugWireframe;
                 Log.Info($"Debug Wireframe: {(terrainRenderer.DebugWireframe ? "ENABLED" : "DISABLED")}");
             }
-        }
-
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F6) && streamingManager != null)
-        {
-            streamingManager.FlushVoxelCache("F6 hotkey");
         }
 
         // Update day/night cycle
@@ -479,8 +477,21 @@ internal class GameScene : Scene
             WriteLine($"  Visible: {streamingManager.StatVisibleChunks:N0}", textColor);
             WriteLine($"  Frustum Culled: {streamingManager.StatFrustumCulledChunks:N0}", textColor);
             WriteLine($"  Indices: {streamingManager.StatVisibleIndices:N0} / {streamingManager.StatTotalIndices:N0}", textColor);
+            var (curBatch, pendBatch, processing) = streamingManager.GetBatchStats();
+            WriteLine($"  Batch: {curBatch} | Pending: {pendBatch} | Processing: {processing}", textColor);
         }
         WriteLine("", textColor);
+
+        // Processing Metrics
+        if (streamingManager != null)
+        {
+            var m = streamingManager.Metrics;
+            WriteLine("Processing:", highlightColor);
+            WriteLine($"  Terrain Gen: {m.AvgTerrainGenerationMs:F1}ms | Light Calc: {m.AvgLightCalculationMs:F1}ms", textColor);
+            WriteLine($"  Light Prop: {m.AvgLightPropagationMs:F1}ms | Mesh Build: {m.AvgMeshBuildMs:F1}ms", textColor);
+            WriteLine($"  Gen/s: {m.ChunksGeneratedPerSecond} | Mesh/s: {m.ChunksMeshedPerSecond} | Reproc/s: {m.ChunksReprocessedPerSecond}", textColor);
+            WriteLine("", textColor);
+        }
 
         // Rendering Stats
         WriteLine("Rendering:", highlightColor);

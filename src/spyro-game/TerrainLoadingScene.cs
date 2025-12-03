@@ -165,18 +165,38 @@ internal class TerrainLoadingScene : Scene
             if (isStreamingTerrain && streamingManager != null)
             {
                 streamingManager.Update(startPosition);
-                var (total, pending, generating, ready) = streamingManager.GetStats();
+                var (total, pending, generating, hasTerrain, processing, ready) = streamingManager.GetDetailedStats();
 
-                // Calculate streaming progress (60% to 95%)
-                var streamingProgress = ready / (float)targetChunkCount;
-                streamingProgress = Math.Clamp(streamingProgress, 0f, 1f);
+                // Calculate granular progress:
+                // - Terrain generation (Generating → HasTerrain): 0-50% of streaming phase
+                // - Meshing (Processing → Ready): 50-100% of streaming phase
+                var terrainComplete = hasTerrain + processing + ready;
+                var meshingComplete = ready;
                 
-                progressTracker.UpdateOperation(
-                    "Stream Initial Terrain", 
-                    streamingProgress, 
-                    $"{ready}/{targetChunkCount} chunks ready");
-
-                currentStage = $"Creating world...";
+                // Weight: terrain gen = 50%, meshing = 50%
+                var terrainProgress = terrainComplete / (float)targetChunkCount * 0.5f;
+                var meshingProgress = meshingComplete / (float)targetChunkCount * 0.5f;
+                var streamingProgress = Math.Clamp(terrainProgress + meshingProgress, 0f, 1f);
+                
+                // Build descriptive status
+                string status;
+                if (terrainComplete < targetChunkCount)
+                {
+                    status = $"Generating terrain: {terrainComplete}/{targetChunkCount}";
+                    currentStage = "Generating terrain...";
+                }
+                else if (ready < targetChunkCount)
+                {
+                    status = $"Building meshes: {ready}/{targetChunkCount}";
+                    currentStage = "Building meshes...";
+                }
+                else
+                {
+                    status = $"{ready}/{targetChunkCount} chunks ready";
+                    currentStage = "Finalizing...";
+                }
+                
+                progressTracker.UpdateOperation("Stream Initial Terrain", streamingProgress, status);
 
                 // Check if streaming is complete
                 var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);

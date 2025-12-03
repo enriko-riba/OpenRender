@@ -79,9 +79,9 @@ public class TerrainMeshBufferManager : IDisposable
         // Estimate memory requirements based on a reasonable worst-case per chunk
         // instead of theoretical worst-case (which would be >18GB for 1000 chunks)
         // A complex chunk might have ~10k-20k visible faces.
-        // We'll allocate for 2k faces per chunk on average to start small and avoid VRAM pressure.
-        // If we run out, the buffers will automatically resize.
-        const int ESTIMATED_FACES_PER_CHUNK = 2_000;
+        // We'll allocate for 4k faces per chunk on average based on observed usage.
+        // If we run out, the buffers will automatically resize (but that's expensive).
+        const int ESTIMATED_FACES_PER_CHUNK = 4_000;
 
         long totalFaces = (long)maxChunks * ESTIMATED_FACES_PER_CHUNK;
         

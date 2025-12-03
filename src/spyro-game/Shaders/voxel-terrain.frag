@@ -296,7 +296,7 @@ void main() {
     float NdotL = max(dot(finalNormal, L), 0.0);
     float diffuse = NdotL;
     
-    // Ambient occlusion
+    // Ambient occlusion - only affects ambient/indirect light
     float ao = vAO;
     
     // Blinn-Phong specular (reduced for terrain)
@@ -319,31 +319,39 @@ void main() {
         // ao = mix(ao, 1.0, 0.5); 
     }
 
-    // Combine lighting
+    // Combine lighting - Minecraft-style light calculation
+    // Use MAX of sky and block light for overall brightness
+    // This ensures torch light in daylight doesn't make things brighter than max sky light
     float skyFactor = vSkyLight;
+    float blockFactor = vBlockLight;
+    float combinedLight = max(skyFactor, blockFactor);
     
-    // Ambient depends on sky light (daylight)
-    vec3 ambient = dirLight.ambient * ao * max(skyFactor, 0.05);
+    // Ambient depends on combined light (max of sky and block)
+    // AO only affects ambient - direct light ignores occlusion
+    vec3 ambient = dirLight.ambient * ao * max(combinedLight, 0.05);
 
-    // Diffuse (Sun) depends on sky light
-    vec3 diffuseColor = dirLight.diffuse * diffuse * ao * skyFactor;
+    // Diffuse (Sun) depends on sky light only - NO AO on direct light
+    vec3 diffuseColor = dirLight.diffuse * diffuse * skyFactor;
 
-    // Specular (Sun) depends on sky light
+    // Specular (Sun) depends on sky light only - no AO on specular
     vec3 specularColor = dirLight.specular * specular * uMaterialSpecular * skyFactor;
 
-    // Block Light (Torches/Lava)
-    vec3 torchColor = vec3(1.0, 0.8, 0.6);
-    vec3 localLight = torchColor * vBlockLight * ao;
+    // Block Light tint - apply warm color when block light is dominant
+    // Only tint when block light > sky light (underground/night)
+    // No AO on block light - it's a point light source
+    vec3 blockLightColor = vec3(1.0, 0.8, 0.6); // Warm torch color
+    float blockLightDominance = max(0.0, blockFactor - skyFactor);
+    vec3 localLightTint = blockLightColor * blockLightDominance;
 
     // Emissive blocks (Lava, Glowstone, etc) ignore shading/AO
     if (vIsEmissive == 1u) {
         ambient = vec3(1.0);
         diffuseColor = vec3(0.0);
         specularColor = vec3(0.0);
-        localLight = vec3(0.0);
+        localLightTint = vec3(0.0);
     }
 
-    vec3 finalColor = baseColor.rgb * (ambient + diffuseColor + localLight) + specularColor;
+    vec3 finalColor = baseColor.rgb * (ambient + diffuseColor + localLightTint) + specularColor;
 
     // Fog for terrain seen through water from above
     if (!isCameraUnderwater && !isWater && isFragmentUnderwater) {

@@ -19,27 +19,46 @@ public enum RenderMethod : byte
 }
 
 /// <summary>
+/// Defines the geometric shape used for rendering a block.
+/// </summary>
+public enum BlockRenderShape : byte
+{
+    /// <summary>Not rendered (Air).</summary>
+    None = 0,
+    /// <summary>Standard 1x1x1 cube (most blocks).</summary>
+    FullCube = 1,
+    /// <summary>Two crossed quads forming an X shape (flowers, torches, saplings, tall grass).</summary>
+    CrossBillboard = 2,
+    /// <summary>Smaller centered cube (lanterns).</summary>
+    SmallCube = 3,
+    /// <summary>Thin vertical pillar (end rod).</summary>
+    ThinPillar = 4
+}
+
+/// <summary>
 /// Immutable properties for a block type that cannot be encoded in the <see cref="BlockId"/> bitfield.
 /// </summary>
 /// <param name="LightValue">Luminance emitted by the block (0-15). 0 = no light, 15 = maximum brightness.</param>
 /// <param name="LightFilter">How much light is diminished when passing through (0-15). 0 = fully transparent, 15 = fully opaque.</param>
 /// <param name="IsFullCube">Whether the block fills a full 1m³ cube for physics and face culling.</param>
 /// <param name="Render">How the GPU should render this block.</param>
+/// <param name="Shape">The geometric shape used for mesh generation.</param>
 public readonly record struct BlockProperties(
     byte LightValue,
     byte LightFilter,
     bool IsFullCube,
-    RenderMethod Render)
+    RenderMethod Render,
+    BlockRenderShape Shape = BlockRenderShape.FullCube)
 {
     /// <summary>
     /// Default properties for unknown or unregistered blocks (opaque solid block with no light emission).
     /// </summary>
-    public static readonly BlockProperties Default = new(0, 15, true, RenderMethod.Opaque);
+    public static readonly BlockProperties Default = new(0, 15, true, RenderMethod.Opaque, BlockRenderShape.FullCube);
 
     /// <summary>
     /// Properties for air (invisible, no collision, fully transparent to light).
     /// </summary>
-    public static readonly BlockProperties Air = new(0, 0, false, RenderMethod.None);
+    public static readonly BlockProperties Air = new(0, 0, false, RenderMethod.None, BlockRenderShape.None);
 }
 
 /// <summary>
@@ -136,24 +155,24 @@ public static class BlockRegistry
         RegisterLeaves(BlockId.JungleLeaves);
 
         // === Light Sources ===
-        // Torch: light value 14, filter 0 (fully transparent to light), not a full cube
-        Register(BlockId.Torch, new BlockProperties(14, 0, false, RenderMethod.AlphaTest));
-        Register(BlockId.WallTorch, new BlockProperties(14, 0, false, RenderMethod.AlphaTest));
+        // Torch: light value 14, filter 0 (fully transparent to light), not a full cube, cross billboard shape
+        Register(BlockId.Torch, new BlockProperties(14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+        Register(BlockId.WallTorch, new BlockProperties(14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         // Soul torch: dimmer light value 10
-        Register(BlockId.SoulTorch, new BlockProperties(10, 0, false, RenderMethod.AlphaTest));
+        Register(BlockId.SoulTorch, new BlockProperties(10, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         // Glowstone: light value 15, opaque, full cube
-        Register(BlockId.Glowstone, new BlockProperties(15, 15, true, RenderMethod.Opaque));
+        Register(BlockId.Glowstone, new BlockProperties(15, 15, true, RenderMethod.Opaque, BlockRenderShape.FullCube));
         // Sea lantern: light value 15, translucent
-        Register(BlockId.SeaLantern, new BlockProperties(15, 1, true, RenderMethod.Blend));
-        // Lantern: light value 15, not a full cube
-        Register(BlockId.Lantern, new BlockProperties(15, 0, false, RenderMethod.AlphaTest));
-        Register(BlockId.SoulLantern, new BlockProperties(10, 0, false, RenderMethod.AlphaTest));
+        Register(BlockId.SeaLantern, new BlockProperties(15, 1, true, RenderMethod.Blend, BlockRenderShape.FullCube));
+        // Lantern: light value 15, not a full cube (small cube shape)
+        Register(BlockId.Lantern, new BlockProperties(15, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+        Register(BlockId.SoulLantern, new BlockProperties(10, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         // Redstone lamp (off): no light
         RegisterOpaqueSolid(BlockId.RedstoneLamp);
         // Redstone lamp (on): light value 15
-        Register(BlockId.RedstoneLampOn, new BlockProperties(15, 15, true, RenderMethod.Opaque));
-        // End rod: light value 14
-        Register(BlockId.EndRod, new BlockProperties(14, 0, false, RenderMethod.AlphaTest));
+        Register(BlockId.RedstoneLampOn, new BlockProperties(15, 15, true, RenderMethod.Opaque, BlockRenderShape.FullCube));
+        // End rod: light value 14 (thin pillar shape)
+        Register(BlockId.EndRod, new BlockProperties(14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         // Shroomlight: light value 15
         Register(BlockId.Shroomlight, new BlockProperties(15, 15, true, RenderMethod.Opaque));
         // Jack o'Lantern: light value 15
@@ -191,7 +210,7 @@ public static class BlockRegistry
     /// <param name="properties">The properties to associate with this block.</param>
     private static void Register(BlockId block, BlockProperties properties)
     {
-        ushort id = block.GetId();
+        var id = block.GetId();
         if (id < MaxBlockIds)
         {
             Properties[id] = properties;
@@ -235,6 +254,13 @@ public static class BlockRegistry
     /// <param name="block">The block ID to look up.</param>
     /// <returns>The block's light filter value.</returns>
     public static byte GetLightFilter(BlockId block) => GetProperties(block).LightFilter;
+
+    /// <summary>
+    /// Gets the render shape for a block.
+    /// </summary>
+    /// <param name="block">The block ID to look up.</param>
+    /// <returns>The block's render shape.</returns>
+    public static BlockRenderShape GetRenderShape(BlockId block) => GetProperties(block).Shape;
 
     /// <summary>
     /// Gets the effective light decay when light passes through a block.

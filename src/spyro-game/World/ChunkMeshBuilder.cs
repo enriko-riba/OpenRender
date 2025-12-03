@@ -109,6 +109,21 @@ internal static class ChunkMeshBuilder
                     var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
                     var targetIndexList = isTranslucent ? translucentIndices : opaqueIndices;
 
+                    // Check if this block uses a special render shape
+                    var renderShape = BlockRegistry.GetRenderShape(block);
+                    if (renderShape == BlockRenderShape.CrossBillboard)
+                    {
+                        // Cross-billboard blocks always render (no face culling against neighbors)
+                        // Generates 8 vertices (4 per quad × 2 quads) and 24 indices (double-sided)
+                        // This equals 4 "faces" in the vertex/index counting system (24 indices ÷ 6 per face)
+                        AppendCrossBillboard(targetVertexList, targetIndexList, sampler, block, x, y, z);
+                        sampler.IncrementFaceCount(isTranslucent);
+                        sampler.IncrementFaceCount(isTranslucent);
+                        sampler.IncrementFaceCount(isTranslucent);
+                        sampler.IncrementFaceCount(isTranslucent); // 4 faces total for cross-billboard
+                        continue;
+                    }
+
                     for (uint face = 0; face < FaceDirections.Length; face++)
                     {
                         // WATER OPTIMIZATION: Only render top face (+Y, face index 2) for liquids
@@ -181,7 +196,21 @@ internal static class ChunkMeshBuilder
 
     private static bool IsOpaque(BlockId block) => block.IsOpaque();
 
-    private static bool IsTranslucent(BlockId block) => block.IsTranslucent();
+    /// <summary>
+    /// Checks if a block should be rendered in the translucent pass.
+    /// This includes blocks with the Translucent flag AND blocks using AlphaTest/Blend rendering.
+    /// AlphaTest blocks (torches, leaves, flowers) need translucent pass for proper depth sorting.
+    /// </summary>
+    private static bool IsTranslucent(BlockId block)
+    {
+        // Check the BlockId translucent flag first (water, ice, glass)
+        if (block.IsTranslucent())
+            return true;
+        
+        // Also check render method - AlphaTest and Blend need translucent pass
+        var renderMethod = BlockRegistry.GetProperties(block).Render;
+        return renderMethod == RenderMethod.AlphaTest || renderMethod == RenderMethod.Blend;
+    }
 
     private static bool ShouldEmitFace(BlockId block, BlockId neighborBlock)
     {
@@ -280,6 +309,63 @@ internal static class ChunkMeshBuilder
             indexScratch.Add(baseVertex + 2);
             indexScratch.Add(baseVertex + 3);
         }
+    }
+
+    /// <summary>
+    /// Append a cross-billboard (two crossed quads forming an X shape) for blocks like torches, flowers, saplings.
+    /// The quads are positioned diagonally across the voxel from corner to corner.
+    /// Generates 4 faces (16 vertices, 24 indices) for proper mesh buffer accounting.
+    /// </summary>
+    private static void AppendCrossBillboard(List<uint> vertexScratch, List<uint> indexScratch, ChunkVoxelSampler sampler, BlockId block, int x, int y, int z)
+    {
+        var biome = sampler.SampleBiome(x, z);
+        
+        // Sample light at the block's position (use the voxel's own light since it's transparent)
+        var light = sampler.SamplePackedLight(x, y, z);
+        if (light == 0xFFFFFFFFu) // DisabledLightValue
+        {
+            // Fallback: sample above the block
+            light = sampler.SamplePackedLight(x, y + 1, z);
+        }
+        // Convert packed light to the same format used by faces
+        var packedLight = (light != 0xFFFFFFFFu) ? (uint)Math.Max((int)(light & 0xF), (int)((light >> 4) & 0xF)) : 15u;
+
+        // Cross-billboard uses face index 6 (special marker) to indicate it's a billboard
+        const uint billboardFace = 6u;
+        const uint defaultAO = 0u; // No AO for billboards - they're transparent
+
+        // Helper to add a quad (4 vertices, 6 indices) - one "face" in the mesh system
+        void AddQuad(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int x3, int y3, int z3)
+        {
+            var baseVertex = (uint)(vertexScratch.Count / 2);
+            
+            vertexScratch.Add(PackVertexPosition(x0, y0, z0, billboardFace, defaultAO, 0));
+            vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
+            vertexScratch.Add(PackVertexPosition(x1, y1, z1, billboardFace, defaultAO, 1));
+            vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
+            vertexScratch.Add(PackVertexPosition(x2, y2, z2, billboardFace, defaultAO, 2));
+            vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
+            vertexScratch.Add(PackVertexPosition(x3, y3, z3, billboardFace, defaultAO, 3));
+            vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
+
+            // Two triangles: 0-1-2, 0-2-3
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 1);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex + 3);
+        }
+
+        // Quad 1 diagonal (0,0,0) to (1,1,1) - front face
+        AddQuad(x, y, z, x, y + 1, z, x + 1, y + 1, z + 1, x + 1, y, z + 1);
+        // Quad 1 diagonal - back face (reversed vertices)
+        AddQuad(x + 1, y, z + 1, x + 1, y + 1, z + 1, x, y + 1, z, x, y, z);
+
+        // Quad 2 diagonal (1,0,0) to (0,1,1) - front face
+        AddQuad(x + 1, y, z, x + 1, y + 1, z, x, y + 1, z + 1, x, y, z + 1);
+        // Quad 2 diagonal - back face (reversed vertices)
+        AddQuad(x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, x + 1, y, z);
     }
 
     private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner)
@@ -424,6 +510,12 @@ internal static class ChunkMeshBuilder
             var lSide2 = SamplePackedLight(s2x, s2y, s2z);
             var lCorner = SamplePackedLight(cx, cy, cz);
 
+            // Check if side blocks are opaque - if both are, light cannot reach through the corner
+            // This matches Minecraft's AO logic: diagonal corner is blocked when both adjacent sides are solid
+            var side1Opaque = SampleBlock(s1x, s1y, s1z).IsOpaque();
+            var side2Opaque = SampleBlock(s2x, s2y, s2z).IsOpaque();
+            var cornerBlocked = side1Opaque && side2Opaque;
+
             // Filter out missing neighbors (DisabledLightValue)
             // If a neighbor is missing, we exclude it from the average to avoid "glowing" artifacts (if we used 15)
             // or "black" artifacts (if we used 0).
@@ -446,31 +538,33 @@ internal static class ChunkMeshBuilder
             AddSample(lBase);
             AddSample(lSide1);
             AddSample(lSide2);
-            AddSample(lCorner);
+            // Only include corner light if light can physically reach through (both sides not opaque)
+            if (!cornerBlocked)
+            {
+                AddSample(lCorner);
+            }
 
             if (count == 0)
             {
-                // All neighbors missing?
-                // Fallback heuristic: Use the light level of the block ABOVE the current vertex.
-                // If we are underground, block above is likely solid (Light=0) -> Dark face (Correct).
-                // If we are on surface, block above is likely air (Light=15) -> Lit face (Correct).
-                // If we are at the top of the chunk, assume full sky light.
+                // All neighbors missing - this typically happens at chunk boundaries when 
+                // neighbor chunk data isn't in cache yet. The mesh will be incomplete and
+                // should be remeshed once neighbors are available.
                 
                 if (y >= VoxelHelper.ChunkYSize - 1)
                 {
-                    return 15 | (0 << 4); // Full sky light
+                    return 15 | (0 << 4); // Full sky light at world top
                 }
                 
-                // Sample block above (x, y+1, z)
-                // This is usually within the current chunk, so it should be valid.
+                // Sample block above (x, y+1, z) as fallback
                 var fallbackLight = SamplePackedLight(x, y + 1, z);
                 if (fallbackLight != DisabledLightValue)
                 {
                     return fallbackLight;
                 }
                 
-                // If even that is missing (shouldn't happen unless y is max), default to full light
-                return 15 | (0 << 4);
+                // Default to 0 light - face will be dark, indicating missing neighbor data
+                // This is correct behavior - the chunk will be remeshed when neighbors load
+                return 0;
             }
 
             // Simple average

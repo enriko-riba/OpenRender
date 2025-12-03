@@ -4,6 +4,11 @@ using OpenRender;
 
 namespace SpyroGame.World;
 
+/// <summary>
+/// Delegate for getting chunk data by chunk index for cross-chunk light operations.
+/// </summary>
+public delegate ChunkData? ChunkDataProvider(int chunkIdx);
+
 public static class LightingCalculator
 {
     private const int MaxLight = 15;
@@ -23,6 +28,45 @@ public static class LightingCalculator
             return t_lightQueue;
         }
     }
+    
+    // Secondary queue for light removal (stores position + old light value)
+    [ThreadStatic]
+    private static Queue<(int chunkIdx, int x, int y, int z, int lightLevel)>? t_removalQueue;
+    
+    private static Queue<(int chunkIdx, int x, int y, int z, int lightLevel)> RemovalQueue
+    {
+        get
+        {
+            t_removalQueue ??= new Queue<(int, int, int, int, int)>(4096);
+            return t_removalQueue;
+        }
+    }
+    
+    // Queue for re-propagation after removal (positions that need to spread light again)
+    [ThreadStatic]
+    private static Queue<(int chunkIdx, int x, int y, int z)>? t_repropagateQueue;
+    
+    private static Queue<(int chunkIdx, int x, int y, int z)> RepropagateQueue
+    {
+        get
+        {
+            t_repropagateQueue ??= new Queue<(int, int, int, int)>(4096);
+            return t_repropagateQueue;
+        }
+    }
+    
+    // Track which chunks were modified during cross-chunk operations
+    [ThreadStatic]
+    private static HashSet<int>? t_modifiedChunks;
+    
+    private static HashSet<int> ModifiedChunks
+    {
+        get
+        {
+            t_modifiedChunks ??= new HashSet<int>();
+            return t_modifiedChunks;
+        }
+    }
 
     public static void CalculateLighting(ChunkData chunk)
     {
@@ -40,6 +84,230 @@ public static class LightingCalculator
         
         // 5. Propagate Block Light
         PropagateLight(chunk, isSkyLight: false);
+    }
+
+    /// <summary>
+    /// Removes block light from a position and propagates the removal through the affected volume.
+    /// Works across chunk boundaries using the provided chunk data provider.
+    /// Returns the set of chunk indices that were modified and need remeshing.
+    /// </summary>
+    /// <param name="sourceChunkIdx">The chunk index where the light source was removed.</param>
+    /// <param name="localX">Local X coordinate within the chunk (0-15).</param>
+    /// <param name="localY">Local Y coordinate (0-383).</param>
+    /// <param name="localZ">Local Z coordinate within the chunk (0-15).</param>
+    /// <param name="removedLightLevel">The light level of the removed source (e.g., 14 for torch).</param>
+    /// <param name="getChunkData">Function to get chunk data by chunk index.</param>
+    /// <returns>Set of chunk indices that were modified.</returns>
+    public static HashSet<int> RemoveBlockLight(
+        int sourceChunkIdx,
+        int localX, int localY, int localZ,
+        int removedLightLevel,
+        ChunkDataProvider getChunkData)
+    {
+        var removalQueue = RemovalQueue;
+        var repropagateQueue = RepropagateQueue;
+        var modifiedChunks = ModifiedChunks;
+        
+        removalQueue.Clear();
+        repropagateQueue.Clear();
+        modifiedChunks.Clear();
+        
+        // Get the source chunk and clear the light at the source position
+        var sourceChunk = getChunkData(sourceChunkIdx);
+        if (sourceChunk == null)
+            return modifiedChunks;
+            
+        int sourceIndex = GetIndex(localX, localY, localZ);
+        SetBlockLight(sourceChunk, sourceIndex, 0);
+        modifiedChunks.Add(sourceChunkIdx);
+        
+        // Seed the removal queue with the source position
+        removalQueue.Enqueue((sourceChunkIdx, localX, localY, localZ, removedLightLevel));
+        
+        // Phase 1: BFS removal - clear light that came from the removed source
+        while (removalQueue.Count > 0)
+        {
+            var (chunkIdx, x, y, z, lightLevel) = removalQueue.Dequeue();
+            
+            // Check all 6 neighbors
+            CheckRemovalNeighbor(chunkIdx, x - 1, y, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckRemovalNeighbor(chunkIdx, x + 1, y, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckRemovalNeighbor(chunkIdx, x, y - 1, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckRemovalNeighbor(chunkIdx, x, y + 1, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckRemovalNeighbor(chunkIdx, x, y, z - 1, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckRemovalNeighbor(chunkIdx, x, y, z + 1, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+        }
+        
+        // Phase 2: Re-propagate from edges where we found other light sources
+        while (repropagateQueue.Count > 0)
+        {
+            var (chunkIdx, x, y, z) = repropagateQueue.Dequeue();
+            
+            var chunk = getChunkData(chunkIdx);
+            if (chunk == null) continue;
+            
+            var index = GetIndex(x, y, z);
+            var currentLight = GetBlockLight(chunk, index);
+            
+            if (currentLight <= 0) continue;
+            
+            // Propagate to neighbors
+            PropagateToNeighbor(chunkIdx, x - 1, y, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x + 1, y, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y - 1, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y + 1, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y, z - 1, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y, z + 1, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+        }
+        
+        return [.. modifiedChunks];
+    }
+    
+    /// <summary>
+    /// Check a neighbor during light removal BFS.
+    /// </summary>
+    private static void CheckRemovalNeighbor(
+        int chunkIdx, int x, int y, int z, int parentLightLevel,
+        ChunkDataProvider getChunkData,
+        Queue<(int, int, int, int, int)> removalQueue,
+        Queue<(int, int, int, int)> repropagateQueue,
+        HashSet<int> modifiedChunks)
+    {
+        // Handle Y bounds
+        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+            return;
+            
+        // Handle chunk boundary crossing
+        var targetChunkIdx = chunkIdx;
+        var targetX = x;
+        var targetZ = z;
+        
+        if (x < 0)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX == 0) return; // World edge
+            targetChunkIdx = chunkIdx - 1;
+            targetX = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (x >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
+            targetChunkIdx = chunkIdx + 1;
+            targetX = 0;
+        }
+        
+        if (z < 0)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ == 0) return; // World edge
+            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetZ = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (z >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
+            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetZ = 0;
+        }
+        
+        var chunk = getChunkData(targetChunkIdx);
+        if (chunk == null) return;
+
+        var index = GetIndex(targetX, y, targetZ);
+        var block = chunk.GetBlock(targetX, y, targetZ);
+        
+        if (block.IsOpaque()) return;
+
+        var neighborLight = GetBlockLight(chunk, index);
+        
+        if (neighborLight == 0) return; // Already dark
+        
+        // Expected light if it came from the removed source
+        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        var expectedLight = parentLightLevel - decay;
+
+        if (neighborLight != 0 && neighborLight < parentLightLevel)
+        {
+            // This light likely came from the removed source - remove it
+            SetBlockLight(chunk, index, 0);
+            modifiedChunks.Add(targetChunkIdx);
+            removalQueue.Enqueue((targetChunkIdx, targetX, y, targetZ, neighborLight));
+        }
+        else if (neighborLight >= parentLightLevel)
+        {
+            // This block has light from another source - add to re-propagation queue
+            repropagateQueue.Enqueue((targetChunkIdx, targetX, y, targetZ));
+        }
+    }
+    
+    /// <summary>
+    /// Propagate light to a neighbor during re-propagation phase.
+    /// </summary>
+    private static void PropagateToNeighbor(
+        int chunkIdx, int x, int y, int z, int parentLight,
+        ChunkDataProvider getChunkData,
+        Queue<(int, int, int, int)> repropagateQueue,
+        HashSet<int> modifiedChunks)
+    {
+        // Handle Y bounds
+        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+            return;
+            
+        // Handle chunk boundary crossing
+        var targetChunkIdx = chunkIdx;
+        var targetX = x;
+        var targetZ = z;
+        
+        if (x < 0)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX == 0) return;
+            targetChunkIdx = chunkIdx - 1;
+            targetX = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (x >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX >= VoxelHelper.WorldChunksXZ - 1) return;
+            targetChunkIdx = chunkIdx + 1;
+            targetX = 0;
+        }
+        
+        if (z < 0)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ == 0) return;
+            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetZ = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (z >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return;
+            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetZ = 0;
+        }
+        
+        var chunk = getChunkData(targetChunkIdx);
+        if (chunk == null) return;
+
+        var index = GetIndex(targetX, y, targetZ);
+        var block = chunk.GetBlock(targetX, y, targetZ);
+
+        if (block.IsOpaque()) return;
+
+        var neighborLight = GetBlockLight(chunk, index);
+        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        var newLight = parentLight - decay;
+
+        if (newLight > neighborLight)
+        {
+            SetBlockLight(chunk, index, newLight);
+            modifiedChunks.Add(targetChunkIdx);
+            repropagateQueue.Enqueue((targetChunkIdx, targetX, y, targetZ));
+        }
     }
 
     /// <summary>
@@ -99,16 +367,16 @@ public static class LightingCalculator
         // Pass 1: B -> A
         var queue = LightQueue;
         queue.Clear();
-        bool changedA = false;
+        var changedA = false;
 
-        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            for (var i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
             {
-                int cx = (loopX == 1) ? xA : i;
-                int cz = (loopX == 1) ? i : zA;
-                int nx = (loopX == 1) ? xB : i;
-                int nz = (loopX == 1) ? i : zB;
+                var cx = (loopX == 1) ? xA : i;
+                var cz = (loopX == 1) ? i : zA;
+                var nx = (loopX == 1) ? xB : i;
+                var nz = (loopX == 1) ? i : zB;
 
                 // Check B -> A
                 if (PropagateSingleBlock(chunkB, nx, y, nz, chunkA, cx, y, cz, true))
@@ -126,16 +394,16 @@ public static class LightingCalculator
 
         // Pass 2: A -> B
         queue.Clear();
-        bool changedB = false;
+        var changedB = false;
 
-        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            for (var i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
             {
-                int cx = (loopX == 1) ? xA : i;
-                int cz = (loopX == 1) ? i : zA;
-                int nx = (loopX == 1) ? xB : i;
-                int nz = (loopX == 1) ? i : zB;
+                var cx = (loopX == 1) ? xA : i;
+                var cz = (loopX == 1) ? i : zA;
+                var nx = (loopX == 1) ? xB : i;
+                var nz = (loopX == 1) ? i : zB;
 
                 // Check A -> B
                 if (PropagateSingleBlock(chunkA, cx, y, cz, chunkB, nx, y, nz, true))
@@ -153,15 +421,15 @@ public static class LightingCalculator
 
         // Also propagate block light between chunks
         queue.Clear();
-        bool changedABlock = false;
-        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        var changedABlock = false;
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            for (var i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
             {
-                int cx = (loopX == 1) ? xA : i;
-                int cz = (loopX == 1) ? i : zA;
-                int nx = (loopX == 1) ? xB : i;
-                int nz = (loopX == 1) ? i : zB;
+                var cx = (loopX == 1) ? xA : i;
+                var cz = (loopX == 1) ? i : zA;
+                var nx = (loopX == 1) ? xB : i;
+                var nz = (loopX == 1) ? i : zB;
 
                 if (PropagateSingleBlock(chunkB, nx, y, nz, chunkA, cx, y, cz, isSkyLight: false))
                 {
@@ -176,15 +444,15 @@ public static class LightingCalculator
         }
 
         queue.Clear();
-        bool changedBBlock = false;
-        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        var changedBBlock = false;
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (int i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
+            for (var i = 0; i < (loopX == 1 ? loopZ : loopX); i++)
             {
-                int cx = (loopX == 1) ? xA : i;
-                int cz = (loopX == 1) ? i : zA;
-                int nx = (loopX == 1) ? xB : i;
-                int nz = (loopX == 1) ? i : zB;
+                var cx = (loopX == 1) ? xA : i;
+                var cz = (loopX == 1) ? i : zA;
+                var nx = (loopX == 1) ? xB : i;
+                var nz = (loopX == 1) ? i : zB;
 
                 if (PropagateSingleBlock(chunkA, cx, y, cz, chunkB, nx, y, nz, isSkyLight: false))
                 {
@@ -201,17 +469,25 @@ public static class LightingCalculator
 
     private static bool PropagateSingleBlock(ChunkData sourceChunk, int sx, int sy, int sz, ChunkData targetChunk, int tx, int ty, int tz, bool isSkyLight)
     {
-        int targetIndex = GetIndex(tx, ty, tz);
-        BlockId targetBlock = targetChunk.GetBlock(tx, ty, tz);
+        var targetIndex = GetIndex(tx, ty, tz);
+        var targetBlock = targetChunk.GetBlock(tx, ty, tz);
 
+        // Target must be non-opaque to receive light
         if (targetBlock.IsOpaque()) return false;
 
-        int sourceIndex = GetIndex(sx, sy, sz);
-        int sourceLight = isSkyLight ? GetSkyLight(sourceChunk, sourceIndex) : GetBlockLight(sourceChunk, sourceIndex);
-        int targetLight = isSkyLight ? GetSkyLight(targetChunk, targetIndex) : GetBlockLight(targetChunk, targetIndex);
+        var sourceIndex = GetIndex(sx, sy, sz);
+        var sourceBlock = sourceChunk.GetBlock(sx, sy, sz);
+        
+        // Source must be non-opaque to transmit light (light doesn't pass through solid blocks)
+        // Exception: emissive blocks can emit light even if "opaque"
+        if (sourceBlock.IsOpaque() && !sourceBlock.IsEmissive())
+            return false;
 
-        int decay = Math.Max(1, (int)BlockRegistry.GetProperties(targetBlock).LightFilter);
-        int newLight = sourceLight - decay;
+        var sourceLight = isSkyLight ? GetSkyLight(sourceChunk, sourceIndex) : GetBlockLight(sourceChunk, sourceIndex);
+        var targetLight = isSkyLight ? GetSkyLight(targetChunk, targetIndex) : GetBlockLight(targetChunk, targetIndex);
+
+        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(targetBlock).LightFilter);
+        var newLight = sourceLight - decay;
 
         if (newLight > targetLight)
         {
@@ -229,15 +505,15 @@ public static class LightingCalculator
         var queue = LightQueue;
         queue.Clear();
 
-        for (int x = 0; x < VoxelHelper.ChunkSideSize; x++)
+        for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
         {
-            for (int z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
-                bool hitSolid = false;
-                for (int y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+                var hitSolid = false;
+                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
                 {
-                    int index = GetIndex(x, y, z);
-                    BlockId block = chunk.GetBlock(x, y, z);
+                    var index = GetIndex(x, y, z);
+                    var block = chunk.GetBlock(x, y, z);
 
                     if (!hitSolid)
                     {
@@ -276,9 +552,9 @@ public static class LightingCalculator
         var queue = LightQueue;
         queue.Clear();
 
-        for (int y = 0; y < VoxelHelper.ChunkYSize; y++)
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (int z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
                 for (int x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {

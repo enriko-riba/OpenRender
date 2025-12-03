@@ -12,7 +12,7 @@ public static class VoxelHelper
     // to avoid popping when chunks at the edge are culled
     // MaxDistanceInChunks * ChunkSideSize * 2 = 16 * 16 * 2 = 512 blocks
     // Far plane should be ~600 to account for chunk height and diagonal distance
-    public const float FarPlane = 600f; // Was 430f
+    public const float FarPlane = 500f; // Was 430f
     // Chunk loading distance: determines how far chunks are loaded/generated
     // LOD 0 (Full detail): 0-16 chunks = 256 blocks = 256m
     // LOD 1 (Medium): 16-32 chunks = 512m (future: half-res mesh)
@@ -20,7 +20,7 @@ public static class VoxelHelper
     // 
     // Current: No LOD system, so keep this small to avoid memory issues
     // For kilometers view: implement LOD tiers (Phase 6)
-    public const int MaxDistanceInChunks = 16; // 16 chunks = 512m diameter (256m radius)
+    public const int MaxDistanceInChunks = 14; // 16 chunks = 512m diameter (256m radius)
 
     // Future LOD tiers (Phase 6):
     // public const int LOD0_Distance = 16;  // Full detail
