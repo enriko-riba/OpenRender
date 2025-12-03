@@ -65,33 +65,44 @@ public class NeighborDataAvailableTests
     [Fact]
     public void NeighborAvailable_SkyLightUpdatesWhenNeighborLoads()
     {
-        // Arrange - Center chunk has a cave opening at boundary
+        // Arrange - Center chunk with solid roof and a horizontal tunnel at the boundary
         var centerChunkIdx = GetChunkIndex(CenterChunkX, CenterChunkZ);
         var centerChunk = CreateChunkWithFloor(floorY: 100, centerChunkIdx);
         
-        // Create a cave at the boundary that opens to the right
-        for (var y = 95; y <= 100; y++)
+        // Add a ceiling above the cave so it's actually dark
+        for (var y = 101; y < 110; y++)
         {
-            centerChunk.SetBlock(15, y, 8, BlockId.Air); // Opening at boundary
-            centerChunk.SetBlock(14, y, 8, BlockId.Air); // Cave tunnel
+            for (var x = 10; x <= 15; x++)
+            {
+                for (var z = 5; z <= 11; z++)
+                {
+                    centerChunk.SetBlock(x, y, z, BlockId.Stone);
+                }
+            }
         }
+        
+        // Create a horizontal cave at the boundary (underground, covered by stone)
+        // The cave goes from x=14 to x=15 at y=95 (in the floor stone)
+        centerChunk.SetBlock(15, 95, 8, BlockId.Air); // Opening at boundary
+        centerChunk.SetBlock(14, 95, 8, BlockId.Air); // Cave tunnel inside
         
         LightingCalculator.CalculateLighting(centerChunk);
         
-        // Cave should be dark initially (no connection to sky within chunk)
+        // Cave should be dark initially (stone above, stone around, no sky access)
         var initialLight = GetSkyLight(centerChunk, 14, 95, 8);
         
-        // Act - Neighbor loads with open sky
+        // Act - Neighbor loads which has an open sky path to the cave entrance
         var rightChunkIdx = GetChunkIndex(CenterChunkX + 1, CenterChunkZ);
         var rightChunk = CreateAirChunk(rightChunkIdx); // All air = full sky light
         LightingCalculator.CalculateLighting(rightChunk);
         
         LightingCalculator.PropagateNeighborLight(centerChunk, rightChunk, 1, 0);
 
-        // Assert - Cave should now receive sky light from neighbor
-        var finalLight = GetSkyLight(centerChunk, 15, 95, 8);
-        Assert.True(finalLight > initialLight || initialLight == 0,
-            "Cave at boundary should receive sky light when neighbor loads");
+        // Assert - The cave entrance at x=15 should receive sky light from neighbor
+        // The neighbor has sky light 15 at (0, 95, 8) since it's all air
+        var entranceLight = GetSkyLight(centerChunk, 15, 95, 8);
+        Assert.True(entranceLight > initialLight,
+            $"Cave at boundary should receive sky light when neighbor loads (initial={initialLight}, entrance={entranceLight})");
     }
 
     [Fact]

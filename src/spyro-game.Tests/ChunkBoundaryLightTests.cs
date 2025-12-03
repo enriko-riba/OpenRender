@@ -134,8 +134,24 @@ public class ChunkBoundaryLightTests
         // Place torch near right edge of left chunk
         PlaceTorch(chunks[leftChunkIdx], 14, 200, 8);
         
-        // Place stone wall at boundary
-        chunks[leftChunkIdx].SetBlock(15, 200, 8, BlockId.Stone);
+        // Place stone wall at boundary - create a 3x3 wall in Y-Z plane at x=15
+        // This prevents light from going around via Y or Z directions
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            for (var dz = -1; dz <= 1; dz++)
+            {
+                chunks[leftChunkIdx].SetBlock(15, 200 + dy, 8 + dz, BlockId.Stone);
+            }
+        }
+        
+        // Also block at x=0 in center chunk to prevent any leakage
+        for (var dy = -1; dy <= 1; dy++)
+        {
+            for (var dz = -1; dz <= 1; dz++)
+            {
+                chunks[centerChunkIdx].SetBlock(0, 200 + dy, 8 + dz, BlockId.Stone);
+            }
+        }
         
         // Calculate lighting
         LightingCalculator.CalculateLighting(chunks[leftChunkIdx]);

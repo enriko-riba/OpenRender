@@ -509,32 +509,30 @@ public static class LightingCalculator
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
-                var hitSolid = false;
+                var currentLight = MaxLight;
                 for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
                 {
                     var index = GetIndex(x, y, z);
                     var block = chunk.GetBlock(x, y, z);
 
-                    if (!hitSolid)
+                    if (block.IsOpaque())
                     {
-                        if (block.IsOpaque())
+                        // Opaque block completely blocks sky light
+                        currentLight = 0;
+                        // Don't set light value for opaque blocks (stays 0)
+                    }
+                    else
+                    {
+                        // Apply light filter for translucent blocks (water, ice, etc.)
+                        var filter = BlockRegistry.GetProperties(block).LightFilter;
+                        if (filter > 0 && currentLight > 0)
                         {
-                            hitSolid = true;
-                            // The opaque block itself blocks light, so it stays 0 (or maybe gets some light if we want soft shadows?)
-                            // In MC, the top surface of the opaque block gets light.
-                            // But here we store light IN the voxel.
-                            // If the block is opaque, it usually has 0 internal light.
-                            // But for rendering the face, we use neighbor light (AO style) or the block's own light?
-                            // Usually we use the light of the air block adjacent to the face.
-                            // So setting the opaque block to 0 is fine.
-                            
-                            // However, we need to propagate into caves.
-                            // So if we hit a solid, we stop setting 15.
+                            currentLight = Math.Max(0, currentLight - filter);
                         }
-                        else
+                        
+                        if (currentLight > 0)
                         {
-                            // Set Sky Light to 15
-                            SetSkyLight(chunk, index, MaxLight);
+                            SetSkyLight(chunk, index, currentLight);
                             queue.Enqueue(PackPos(x, y, z));
                         }
                     }

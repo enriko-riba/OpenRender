@@ -113,21 +113,40 @@ public class SkyLightTests
     [Fact]
     public void SkyLight_PropagatesToCaveEntrance()
     {
-        // Arrange - Create a simple cave entrance
+        // Arrange - Create a horizontal cave entrance under stone
         var chunk = CreateChunkWithFloor(floorY: 100);
         
-        // Carve a tunnel entrance at x=8, z=8 going down from y=101 to y=95
-        for (var y = 95; y <= 100; y++)
+        // Add stone roof at y=101 to y=105 over the cave area (except at entrance z=0)
+        for (var y = 101; y <= 105; y++)
         {
-            chunk.SetBlock(8, y, 8, BlockId.Air);
+            for (var z = 1; z < 10; z++)  // Leave z=0 open for entrance
+            {
+                for (var x = 5; x <= 11; x++)
+                {
+                    chunk.SetBlock(x, y, z, BlockId.Stone);
+                }
+            }
         }
+        
+        // Carve a horizontal tunnel at y=99 (inside the stone floor)
+        // Only the entrance at z=0 has open sky above
+        for (var z = 0; z < 8; z++)
+        {
+            chunk.SetBlock(8, 99, z, BlockId.Air);  // Tunnel at y=99
+        }
+        // Clear the entrance at z=0 to connect to sky
+        chunk.SetBlock(8, 100, 0, BlockId.Air);
 
         // Act
         LightingCalculator.CalculateLighting(chunk);
 
-        // Assert - Light should propagate into the cave but decay
-        Assert.Equal(15, GetSkyLight(chunk, 8, 100, 8)); // At surface level
-        Assert.True(GetSkyLight(chunk, 8, 95, 8) > 0);   // Should have some light at bottom
-        Assert.True(GetSkyLight(chunk, 8, 95, 8) < 15);  // But decayed
+        // Assert - At entrance (z=0), should have sky light from above
+        Assert.Equal(15, GetSkyLight(chunk, 8, 100, 0)); // Open to sky
+        Assert.Equal(15, GetSkyLight(chunk, 8, 99, 0));  // Direct vertical from above
+        
+        // Deeper in cave, light should decay (horizontal propagation decays)
+        // z=5 is 5 blocks away from z=0 horizontally
+        Assert.True(GetSkyLight(chunk, 8, 99, 5) > 0, "Should have some light 5 blocks into cave");
+        Assert.True(GetSkyLight(chunk, 8, 99, 5) < 15, "Light should decay horizontally into cave");
     }
 }

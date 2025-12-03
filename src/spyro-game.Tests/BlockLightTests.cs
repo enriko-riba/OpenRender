@@ -60,38 +60,52 @@ public class BlockLightTests
     [Fact]
     public void BlockLight_DecaysWithDistance()
     {
-        // Arrange
+        // Arrange - Place torch at x=1 so we can test decay up to x=14 (13 blocks)
         var chunk = CreateAirChunk();
-        PlaceTorch(chunk, 8, 200, 8);
+        PlaceTorch(chunk, 1, 200, 8);
 
         // Act
         LightingCalculator.CalculateLighting(chunk);
 
         // Assert - Light decays by 1 per block in air
-        Assert.Equal(14, GetBlockLight(chunk, 8, 200, 8));   // Distance 0
-        Assert.Equal(13, GetBlockLight(chunk, 9, 200, 8));   // Distance 1
-        Assert.Equal(12, GetBlockLight(chunk, 10, 200, 8));  // Distance 2
-        Assert.Equal(11, GetBlockLight(chunk, 11, 200, 8));  // Distance 3
-        Assert.Equal(1, GetBlockLight(chunk, 8, 200, 8 + 13)); // Distance 13 (14-13=1)
-        Assert.Equal(0, GetBlockLight(chunk, 8, 200, 8 + 14)); // Distance 14 (out of range)
+        Assert.Equal(14, GetBlockLight(chunk, 1, 200, 8));   // Distance 0 (torch)
+        Assert.Equal(13, GetBlockLight(chunk, 2, 200, 8));   // Distance 1
+        Assert.Equal(12, GetBlockLight(chunk, 3, 200, 8));   // Distance 2
+        Assert.Equal(11, GetBlockLight(chunk, 4, 200, 8));   // Distance 3
+        Assert.Equal(1, GetBlockLight(chunk, 14, 200, 8));   // Distance 13 (14-13=1)
+        Assert.Equal(0, GetBlockLight(chunk, 15, 200, 8));   // Distance 14 (out of range)
     }
 
     [Fact]
     public void BlockLight_StoppedByOpaqueBlocks()
     {
-        // Arrange
+        // Arrange - Create a floor to prevent light from going around via Y direction
         var chunk = CreateAirChunk();
+        
+        // Fill floor and ceiling around the test area to force light through XZ plane only
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            {
+                chunk.SetBlock(x, 199, z, BlockId.Stone); // Floor
+                chunk.SetBlock(x, 201, z, BlockId.Stone); // Ceiling
+            }
+        }
+        
         PlaceTorch(chunk, 8, 200, 8);
-        // Place stone wall between torch and target
-        chunk.SetBlock(9, 200, 8, BlockId.Stone);
+        // Place stone wall blocking all paths in the XZ plane
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            chunk.SetBlock(9, 200, z, BlockId.Stone); // Full wall at x=9
+        }
 
         // Act
         LightingCalculator.CalculateLighting(chunk);
 
-        // Assert - Light should not pass through stone
+        // Assert - Light should not pass through stone wall
         Assert.Equal(14, GetBlockLight(chunk, 8, 200, 8));  // Torch
-        Assert.Equal(0, GetBlockLight(chunk, 9, 200, 8));   // Stone block itself
-        Assert.Equal(0, GetBlockLight(chunk, 10, 200, 8));  // Behind stone
+        Assert.Equal(0, GetBlockLight(chunk, 9, 200, 8));   // Stone wall (opaque blocks have 0 light)
+        Assert.Equal(0, GetBlockLight(chunk, 10, 200, 8));  // Behind stone wall
     }
 
     [Fact]
@@ -149,32 +163,39 @@ public class BlockLightTests
     public void BlockLight_DoesNotBleedThroughCorner()
     {
         // This is a critical test for diagonal light bleeding
-        // Arrange - Create corner geometry
+        // Arrange - Create corner geometry with floor and ceiling to prevent going over
         var chunk = CreateAirChunk();
         
-        // Build an L-shaped wall
-        for (var y = 195; y <= 205; y++)
+        // Create floor and ceiling to constrain light to y=200 plane
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
         {
-            // Wall along X at z=8
-            for (var x = 6; x <= 10; x++)
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
-                chunk.SetBlock(x, y, 8, BlockId.Stone);
-            }
-            // Wall along Z at x=8  
-            for (var z = 8; z <= 12; z++)
-            {
-                chunk.SetBlock(8, y, z, BlockId.Stone);
+                chunk.SetBlock(x, 199, z, BlockId.Stone); // Floor
+                chunk.SetBlock(x, 201, z, BlockId.Stone); // Ceiling
             }
         }
         
-        // Place torch on one side of the L
+        // Build a complete wall that separates torch area from test area
+        // Wall along X at z=8 (from x=0 to x=15) - spans entire chunk
+        for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+        {
+            chunk.SetBlock(x, 200, 8, BlockId.Stone);
+        }
+        // Wall along Z at x=8 (from z=8 to z=15) - extends to edge
+        for (var z = 8; z < VoxelHelper.ChunkSideSize; z++)
+        {
+            chunk.SetBlock(8, 200, z, BlockId.Stone);
+        }
+        
+        // Place torch on one side of the L (at z=6, which is before the z=8 wall)
         PlaceTorch(chunk, 6, 200, 6);
 
         // Act
         LightingCalculator.CalculateLighting(chunk);
 
         // Assert - Light should NOT bleed diagonally through the corner
-        // Block at (10, 200, 10) is on the opposite side of both walls
+        // Block at (10, 200, 10) is completely enclosed by walls on all accessible paths
         Assert.Equal(0, GetBlockLight(chunk, 10, 200, 10));
     }
 
