@@ -164,6 +164,226 @@ public static class LightingCalculator
     }
     
     /// <summary>
+    /// Removes sky light from a position and propagates the removal through the affected volume.
+    /// Used when placing an opaque block that blocks sky light from flowing through.
+    /// Works across chunk boundaries using the provided chunk data provider.
+    /// Returns the set of chunk indices that were modified and need remeshing.
+    /// </summary>
+    /// <param name="sourceChunkIdx">The chunk index where the block was placed.</param>
+    /// <param name="localX">Local X coordinate within the chunk (0-15).</param>
+    /// <param name="localY">Local Y coordinate (0-383).</param>
+    /// <param name="localZ">Local Z coordinate within the chunk (0-15).</param>
+    /// <param name="blockedLightLevel">The sky light level that was at this position before blocking.</param>
+    /// <param name="getChunkData">Function to get chunk data by chunk index.</param>
+    /// <returns>Set of chunk indices that were modified.</returns>
+    public static HashSet<int> RemoveSkyLight(
+        int sourceChunkIdx,
+        int localX, int localY, int localZ,
+        int blockedLightLevel,
+        ChunkDataProvider getChunkData)
+    {
+        var removalQueue = RemovalQueue;
+        var repropagateQueue = RepropagateQueue;
+        var modifiedChunks = ModifiedChunks;
+        
+        removalQueue.Clear();
+        repropagateQueue.Clear();
+        modifiedChunks.Clear();
+        
+        // Get the source chunk - note: the block is already placed, so we don't set light here
+        var sourceChunk = getChunkData(sourceChunkIdx);
+        if (sourceChunk == null)
+            return modifiedChunks;
+        
+        modifiedChunks.Add(sourceChunkIdx);
+        
+        // Seed the removal queue with the source position
+        // The opaque block is already placed, so we start BFS from this position with the OLD light level
+        removalQueue.Enqueue((sourceChunkIdx, localX, localY, localZ, blockedLightLevel));
+        
+        // Phase 1: BFS removal - clear sky light that was flowing through the now-blocked position
+        while (removalQueue.Count > 0)
+        {
+            var (chunkIdx, x, y, z, lightLevel) = removalQueue.Dequeue();
+            
+            // Check all 6 neighbors
+            CheckSkyLightRemovalNeighbor(chunkIdx, x - 1, y, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckSkyLightRemovalNeighbor(chunkIdx, x + 1, y, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckSkyLightRemovalNeighbor(chunkIdx, x, y - 1, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckSkyLightRemovalNeighbor(chunkIdx, x, y + 1, z, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckSkyLightRemovalNeighbor(chunkIdx, x, y, z - 1, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+            CheckSkyLightRemovalNeighbor(chunkIdx, x, y, z + 1, lightLevel, getChunkData, removalQueue, repropagateQueue, modifiedChunks);
+        }
+        
+        // Phase 2: Re-propagate from edges where we found other sky light sources
+        while (repropagateQueue.Count > 0)
+        {
+            var (chunkIdx, x, y, z) = repropagateQueue.Dequeue();
+            
+            var chunk = getChunkData(chunkIdx);
+            if (chunk == null) continue;
+            
+            var index = GetIndex(x, y, z);
+            var currentLight = GetSkyLight(chunk, index);
+            
+            if (currentLight <= 0) continue;
+            
+            // Propagate to neighbors
+            PropagateSkyLightToNeighbor(chunkIdx, x - 1, y, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateSkyLightToNeighbor(chunkIdx, x + 1, y, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateSkyLightToNeighbor(chunkIdx, x, y - 1, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateSkyLightToNeighbor(chunkIdx, x, y + 1, z, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateSkyLightToNeighbor(chunkIdx, x, y, z - 1, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+            PropagateSkyLightToNeighbor(chunkIdx, x, y, z + 1, currentLight, getChunkData, repropagateQueue, modifiedChunks);
+        }
+        
+        return [.. modifiedChunks];
+    }
+    
+    /// <summary>
+    /// Check a neighbor during sky light removal BFS.
+    /// </summary>
+    private static void CheckSkyLightRemovalNeighbor(
+        int chunkIdx, int x, int y, int z, int parentLightLevel,
+        ChunkDataProvider getChunkData,
+        Queue<(int, int, int, int, int)> removalQueue,
+        Queue<(int, int, int, int)> repropagateQueue,
+        HashSet<int> modifiedChunks)
+    {
+        // Handle Y bounds
+        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+            return;
+            
+        // Handle chunk boundary crossing
+        var targetChunkIdx = chunkIdx;
+        var targetX = x;
+        var targetZ = z;
+        
+        if (x < 0)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX == 0) return; // World edge
+            targetChunkIdx = chunkIdx - 1;
+            targetX = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (x >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
+            targetChunkIdx = chunkIdx + 1;
+            targetX = 0;
+        }
+        
+        if (z < 0)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ == 0) return; // World edge
+            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetZ = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (z >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
+            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetZ = 0;
+        }
+        
+        var chunk = getChunkData(targetChunkIdx);
+        if (chunk == null) return;
+
+        var index = GetIndex(targetX, y, targetZ);
+        var block = chunk.GetBlock(targetX, y, targetZ);
+        
+        if (block.IsOpaque()) return;
+
+        var neighborLight = GetSkyLight(chunk, index);
+        
+        if (neighborLight == 0) return; // Already dark
+
+        if (neighborLight != 0 && neighborLight < parentLightLevel)
+        {
+            // This light likely came from the blocked source - remove it
+            SetSkyLight(chunk, index, 0);
+            modifiedChunks.Add(targetChunkIdx);
+            removalQueue.Enqueue((targetChunkIdx, targetX, y, targetZ, neighborLight));
+        }
+        else if (neighborLight >= parentLightLevel)
+        {
+            // This block has light from another source (direct sky access) - add to re-propagation queue
+            repropagateQueue.Enqueue((targetChunkIdx, targetX, y, targetZ));
+        }
+    }
+    
+    /// <summary>
+    /// Propagate sky light to a neighbor during re-propagation phase.
+    /// </summary>
+    private static void PropagateSkyLightToNeighbor(
+        int chunkIdx, int x, int y, int z, int parentLight,
+        ChunkDataProvider getChunkData,
+        Queue<(int, int, int, int)> repropagateQueue,
+        HashSet<int> modifiedChunks)
+    {
+        // Handle Y bounds
+        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+            return;
+            
+        // Handle chunk boundary crossing
+        var targetChunkIdx = chunkIdx;
+        var targetX = x;
+        var targetZ = z;
+        
+        if (x < 0)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX == 0) return;
+            targetChunkIdx = chunkIdx - 1;
+            targetX = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (x >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            if (chunkX >= VoxelHelper.WorldChunksXZ - 1) return;
+            targetChunkIdx = chunkIdx + 1;
+            targetX = 0;
+        }
+        
+        if (z < 0)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ == 0) return;
+            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetZ = VoxelHelper.ChunkSideSize - 1;
+        }
+        else if (z >= VoxelHelper.ChunkSideSize)
+        {
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return;
+            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetZ = 0;
+        }
+        
+        var chunk = getChunkData(targetChunkIdx);
+        if (chunk == null) return;
+
+        var index = GetIndex(targetX, y, targetZ);
+        var block = chunk.GetBlock(targetX, y, targetZ);
+
+        if (block.IsOpaque()) return;
+
+        var neighborLight = GetSkyLight(chunk, index);
+        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        var newLight = parentLight - decay;
+
+        if (newLight > neighborLight)
+        {
+            SetSkyLight(chunk, index, newLight);
+            modifiedChunks.Add(targetChunkIdx);
+            repropagateQueue.Enqueue((targetChunkIdx, targetX, y, targetZ));
+        }
+    }
+    
+    /// <summary>
     /// Check a neighbor during light removal BFS.
     /// </summary>
     private static void CheckRemovalNeighbor(

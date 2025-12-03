@@ -1548,11 +1548,18 @@ public sealed class ChunkStreamingManager : IDisposable
         var oldBlock = BlockId.Air;
         var oldLightValue = 0;
         var newLightValue = BlockRegistry.GetLightValue(blockId);
+        var oldSkyLight = 0;
+        var oldBlockLight = 0;
         
         if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var chunkData) && chunkData != null)
         {
             oldBlock = chunkData.GetBlock(localX, localY, localZ);
             oldLightValue = BlockRegistry.GetLightValue(oldBlock);
+            // Get current light values at this position BEFORE placing the block
+            // Index formula: y * ChunkSideSizeSquare + z * ChunkSideSize + x
+            var lightIndex = localY * VoxelHelper.ChunkSideSizeSquare + localZ * VoxelHelper.ChunkSideSize + localX;
+            oldSkyLight = (chunkData.LightData[lightIndex] >> 4) & 0xF;
+            oldBlockLight = chunkData.LightData[lightIndex] & 0xF;
         }
         
         var isRemovingLightSource = oldLightValue > 0 && newLightValue == 0;
@@ -1561,6 +1568,9 @@ public sealed class ChunkStreamingManager : IDisposable
         var oldIsOpaque = oldBlock.IsOpaque();
         var newIsOpaque = blockId.IsOpaque();
         var affectsLight = oldLightValue > 0 || newLightValue > 0 || (oldIsOpaque != newIsOpaque);
+        
+        // Placing an opaque block where there was light (sky or block) - need to use light removal algorithm
+        var isBlockingLight = !oldIsOpaque && newIsOpaque && (oldSkyLight > 0 || oldBlockLight > 0);
 
         // If removing a light source, use the cross-chunk light removal algorithm
         HashSet<int>? lightAffectedChunks = null;
@@ -1577,7 +1587,41 @@ public sealed class ChunkStreamingManager : IDisposable
                 idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
             );
             
-            Log.Info($"Light removal affected {lightAffectedChunks.Count} chunks: {string.Join(", ", lightAffectedChunks)}");
+            Log.Info($"Block light removal affected {lightAffectedChunks.Count} chunks: {string.Join(", ", lightAffectedChunks)}");
+        }
+        else if (isBlockingLight && chunkData != null)
+        {
+            // Placing an opaque block that blocks existing light - use light removal algorithm
+            // First update the block in the cache
+            chunkData.SetBlock(localX, localY, localZ, blockId);
+            
+            lightAffectedChunks = [];
+            
+            // Remove sky light that was flowing through this position
+            if (oldSkyLight > 0)
+            {
+                var skyAffected = LightingCalculator.RemoveSkyLight(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    oldSkyLight,
+                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+                );
+                lightAffectedChunks.UnionWith(skyAffected);
+                Log.Info($"Sky light removal affected {skyAffected.Count} chunks");
+            }
+            
+            // Remove block light that was flowing through this position (if any)
+            if (oldBlockLight > 0)
+            {
+                var blockAffected = LightingCalculator.RemoveBlockLight(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    oldBlockLight,
+                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+                );
+                lightAffectedChunks.UnionWith(blockAffected);
+                Log.Info($"Block light at position removal affected {blockAffected.Count} chunks");
+            }
         }
         else if (chunkData != null)
         {
@@ -1587,8 +1631,7 @@ public sealed class ChunkStreamingManager : IDisposable
             // Recalculate lighting for this chunk if:
             // - Placing a light source
             // - Breaking an opaque block (light can now flow through)
-            // - Placing an opaque block (light flow is now blocked)
-            if (isPlacingLightSource || affectsLight)
+            if (isPlacingLightSource || (!newIsOpaque && oldIsOpaque))
             {
                 LightingCalculator.CalculateLighting(chunkData);
             }
