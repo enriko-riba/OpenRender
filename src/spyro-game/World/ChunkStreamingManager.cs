@@ -298,7 +298,8 @@ public sealed class ChunkStreamingManager : IDisposable
     private static int CalculateMaxViewChunksForRadius(int radius)
     {
         var clamped = Math.Clamp(radius, 1, VoxelHelper.WorldChunksXZ);
-        return Math.Clamp(VoxelHelper.CalculateCircularChunkCount(clamped), 1, VoxelHelper.TotalChunks);
+        // Use square chunk count since DetermineVisibleChunks uses Chebyshev distance (square region)
+        return Math.Clamp(VoxelHelper.CalculateSquareChunkCount(clamped), 1, VoxelHelper.TotalChunks);
     }
 
     private int GetRetentionCapacity() => CalculateMaxViewChunksForRadius(GetRetentionDistanceChunks());
@@ -446,6 +447,7 @@ public sealed class ChunkStreamingManager : IDisposable
         // Choose which batch to add to: current if not processing, pending otherwise
         var targetBatch = batchProcessingInProgress ? pendingStreamingBatch : currentStreamingBatch;
 
+        var addedCount = 0;
         foreach (var chunkIdx in newChunks)
         {
             if (!EnsureRetentionCapacity(visibleChunks))
@@ -462,6 +464,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
             activeChunks[chunkIdx] = descriptor;
             targetBatch.Add(chunkIdx);
+            addedCount++;
 
             // Note: We do NOT mark neighbors for reprocess here.
             // Neighbors only need reprocess after terrain is generated AND
@@ -478,9 +481,9 @@ public sealed class ChunkStreamingManager : IDisposable
             }
         }
 
-        if (newChunks.Count > 10)
+        if (addedCount > 0)
         {
-            Log.Info($"ChunkStreamingManager: Queued {newChunks.Count} new chunks");
+            Log.Info($"ChunkStreamingManager: Queued {addedCount} new chunks (of {newChunks.Count} visible)");
         }
     }
 
@@ -1455,8 +1458,8 @@ public sealed class ChunkStreamingManager : IDisposable
     {
         var (_, pending, generating, ready) = GetStats();
 
-        // Calculate target based on current (prefetch-aware) load distance
-        var targetChunks = VoxelHelper.CalculateCircularChunkCount(GetActiveLoadDistance());
+        // Calculate target based on current (prefetch-aware) load distance using square region
+        var targetChunks = VoxelHelper.CalculateSquareChunkCount(GetActiveLoadDistance());
 
         // Progress is based on ready chunks vs target
         var progressPercent = ready / (float)Math.Max(1, targetChunks) * 100f;

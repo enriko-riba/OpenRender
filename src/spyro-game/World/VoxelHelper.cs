@@ -217,4 +217,15 @@ public static class VoxelHelper
 
         return Math.Max(count, 1);
     }
+
+    /// <summary>
+    /// Calculates the number of chunks in a square region (Chebyshev distance).
+    /// Used when visibility is determined by max(|dx|, |dz|) rather than Euclidean distance.
+    /// </summary>
+    public static int CalculateSquareChunkCount(int radius)
+    {
+        var clamped = Math.Clamp(radius, 0, WorldChunksXZ);
+        var side = 2 * clamped + 1;
+        return Math.Max(side * side, 1);
+    }
 }

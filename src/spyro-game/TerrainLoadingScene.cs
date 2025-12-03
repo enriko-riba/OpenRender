@@ -69,7 +69,8 @@ internal class TerrainLoadingScene : Scene
 
     private void BuildOperationQueue()
     {
-        minimumReadyChunksForTransition = VoxelHelper.CalculateCircularChunkCount(VoxelHelper.MaxDistanceInChunks);
+        // Use square chunk count since visibility uses Chebyshev distance (square region)
+        minimumReadyChunksForTransition = VoxelHelper.CalculateSquareChunkCount(VoxelHelper.MaxDistanceInChunks);
         targetChunkCount = minimumReadyChunksForTransition;
         
         // Define progress ranges for each operation
