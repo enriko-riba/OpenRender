@@ -157,9 +157,9 @@ internal sealed class ChunkClimateCache
         SampleContinentalness(terrainParams.ContinentalScale, seed);
         SampleErosion(terrainParams.ErosionScale, seed);
         SamplePeaksValleys(terrainParams.RidgeScale, seed);
-        SampleTemperature(1f / 400f, seed);  // TODO: Move to config
-        SampleHumidity(1f / 350f, seed);      // TODO: Move to config
-        SampleWeirdness(1f / 200f, seed);     // TODO: Move to config
+        SampleTemperature(terrainParams.TemperatureScale, seed);
+        SampleHumidity(terrainParams.HumidityScale, seed);
+        SampleWeirdness(terrainParams.WeirdnessScale, seed);
 
         _isValid = true;
 

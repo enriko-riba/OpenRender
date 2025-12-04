@@ -262,14 +262,18 @@ internal sealed class CpuTerrainGenerator
 
     private void PrepareChunkCaches(int chunkX, int chunkZ)
     {
-        // Phase 0: Sample climate cache (foundation for future phases)
-        // Currently runs in parallel with existing code for validation
+        // Phase 1: Sample climate cache - SINGLE POINT for all 2D climate noise
+        // The climate cache samples: Continentalness, Erosion, PeaksValleys, Temperature, Humidity, Weirdness
+        // using SIMD-batched operations. All subsequent code reads from this cache.
         profiler.BeginStep(TerrainGenerationProfiler.Step.ClimateSampling);
         climateCache.SampleForChunk(chunkX, chunkZ, config);
-        
         BuildColumnCoordinates(chunkX, chunkZ);
-        BuildColumnFieldCaches();
         profiler.EndStep(TerrainGenerationProfiler.Step.ClimateSampling);
+        
+        // Phase 1: Height calculation - uses cached climate values, samples additional detail noise
+        profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
+        BuildColumnFieldCaches();
+        profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
         
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
         UpdateBiomeDataFromTerrainValues(); // Fix: Use terrain's continentalness for biomes
@@ -299,61 +303,36 @@ internal sealed class CpuTerrainGenerator
 
     private void BuildColumnFieldCaches()
     {
+        // Phase 1: Use cached climate values instead of re-sampling noise
+        // Climate values (C, E, PV, T, H, W) come from ChunkClimateCache
+        // Only detail noise (cliff, terrainType) is sampled here
+        
         var xSpan = columnWorldX.AsSpan();
         var zSpan = columnWorldZ.AsSpan();
-        var warpInputX = scratch2DA.AsSpan();
-        var warpInputZ = scratch2DB.AsSpan();
-        var temp = scratch2DC.AsSpan();
 
+        // Copy climate values from cache to local arrays for compatibility with existing code
+        // This avoids modifying the downstream height calculation code
+        var cachedCont = climateCache.Continentalness;
+        var cachedCont01 = climateCache.Continentalness01;
+        var cachedErosion = climateCache.Erosion;
+        var cachedPeaks = climateCache.PeaksValleys;
+        var cachedWarpX = climateCache.WarpX;
+        var cachedWarpZ = climateCache.WarpZ;
+        
         for (var i = 0; i < ColumnCount; i++)
         {
-            warpInputX[i] = xSpan[i] * terrainParams.WarpScale;
-            warpInputZ[i] = zSpan[i] * terrainParams.WarpScale;
+            columnContinentalness[i] = cachedCont[i];
+            columnContinentalness01[i] = cachedCont01[i];
+            columnErosion[i] = cachedErosion[i];
+            columnPeaks[i] = cachedPeaks[i];
+            columnWarpX[i] = cachedWarpX[i];
+            columnWarpZ[i] = cachedWarpZ[i];
         }
 
-        SampleFbm2D(warpInputX, warpInputZ, 1f, terrainParams.Seed, 2, 0.5f, 2f, columnWarpX);
-
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            temp[i] = warpInputX[i] + 5.2f;
-            warpInputZ[i] += 1.3f;
-        }
-
-        SampleFbm2D(temp, warpInputZ, 1f, terrainParams.Seed, 2, 0.5f, 2f, columnWarpZ);
-
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            columnWarpX[i] *= terrainParams.WarpStrength;
-            columnWarpZ[i] *= terrainParams.WarpStrength;
-        }
-
-        var contX = scratch2DA.AsSpan();
-        var contZ = scratch2DB.AsSpan();
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            contX[i] = xSpan[i] + columnWarpX[i];
-            contZ[i] = zSpan[i] + columnWarpZ[i];
-        }
-
-        SampleFbm2D(contX, contZ, terrainParams.ContinentalScale, terrainParams.Seed, 3, 0.5f, 2f, columnContinentalness);
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            columnContinentalness01[i] = columnContinentalness[i] * 0.5f + 0.5f;
-        }
-
-        SampleFbm2D(xSpan, zSpan, terrainParams.ErosionScale, terrainParams.Seed + 100u, 3, 0.5f, 2f, columnErosion);
-
-        SampleFbm2D(xSpan, zSpan, terrainParams.RidgeScale, terrainParams.Seed + 200u, 3, 0.5f, 2f, scratch2DOutput.AsSpan());
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            columnPeaks[i] = 1f - MathF.Abs(scratch2DOutput[i]);
-        }
-
+        // Sample detail noise that isn't part of climate (used for terrain shaping)
+        // These are NOT duplicated - they're additional detail that the climate cache doesn't handle
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
 
-        // Sample additional coastal variation noise to break up the monotonous cliff pattern
-        // Using larger wavelengths for smoother, more natural terrain
-        var coastalVariation = scratch2DA.AsSpan();
         // Sample additional noise layers for terrain variety
         var terrainType = scratch2DA.AsSpan();      // Controls flat vs mountainous
         var cliffiness = scratch2DB.AsSpan();       // Controls cliff steepness

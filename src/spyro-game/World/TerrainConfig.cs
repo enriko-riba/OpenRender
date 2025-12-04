@@ -144,6 +144,39 @@ public sealed class TerrainConfig
     /// </summary>
     public float ClimateWarp { get; set; } = 1f / 25000f;
 
+    // Climate parameters for Minecraft-style terrain (Phase 1)
+    
+    /// <summary>
+    /// Gets or sets the temperature noise frequency (inverse of wavelength in blocks).
+    /// Controls the size of temperature bands across the world.
+    /// - 1/400 (default): Medium-scale temperature zones (~400 blocks)
+    /// - 1/800: Larger, continental-scale temperature bands
+    /// - 1/200: Smaller, more varied temperature changes
+    /// Technical: Sampled as 2-octave FBM noise, affects biome climate selection.
+    /// </summary>
+    public float TemperatureScale { get; set; } = 1f / 400f;
+    
+    /// <summary>
+    /// Gets or sets the humidity noise frequency (inverse of wavelength in blocks).
+    /// Controls the size of wet/dry zones across the world.
+    /// - 1/350 (default): Medium-scale humidity variation (~350 blocks)
+    /// - 1/600: Larger, regional humidity patterns
+    /// - 1/150: Smaller, more varied wet/dry zones
+    /// Technical: Sampled as 2-octave FBM noise, affects biome moisture selection.
+    /// </summary>
+    public float HumidityScale { get; set; } = 1f / 350f;
+    
+    /// <summary>
+    /// Gets or sets the weirdness noise frequency (inverse of wavelength in blocks).
+    /// Controls terrain variety - high weirdness creates unusual terrain features.
+    /// - 1/200 (default): Medium-scale weirdness zones (~200 blocks)
+    /// - 1/400: Larger, more gradual weirdness transitions
+    /// - 1/100: Smaller, more chaotic terrain variation
+    /// Technical: Minecraft-style "weirdness" parameter that drives terrain variety.
+    /// High |weirdness| enables 3D terrain features like overhangs and arches.
+    /// </summary>
+    public float WeirdnessScale { get; set; } = 1f / 200f;
+
     // Height mapping
     
     /// <summary>
@@ -439,6 +472,9 @@ public sealed class TerrainConfig
         public float WarpScale; public float WarpStrength;
         public float BaseTemperature; public float TemperatureLapseRate; public float BaseHumidity; public float CoastDrying;
         public float ClimateScale; public float ClimateWarp;
+        
+        // Phase 1: Climate caching parameters
+        public float TemperatureScale; public float HumidityScale; public float WeirdnessScale;
         public float RegionCellSize; public float RegionJitter; public float RegionFeatherWidth; public uint MaxRegionMix;
         public float CheeseFrequency; public float CheeseAmplitude; public float SpaghettiFrequency; public float SpaghettiAmplitude;
         public float CaveCarveThreshold; public float CurlScale; public float CurlStrength;
@@ -484,6 +520,9 @@ public sealed class TerrainConfig
             CoastDrying = CoastDrying,
             ClimateScale = ClimateScale,
             ClimateWarp = ClimateWarp,
+            TemperatureScale = TemperatureScale,
+            HumidityScale = HumidityScale,
+            WeirdnessScale = WeirdnessScale,
             RegionCellSize = BiomeRegions.CellSizeChunks,
             RegionJitter = BiomeRegions.JitterStrength,
             RegionFeatherWidth = BiomeRegions.FeatherWidth,
