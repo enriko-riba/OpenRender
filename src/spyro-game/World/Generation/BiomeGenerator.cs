@@ -106,8 +106,12 @@ public sealed class BiomeGenerator
             }
         }
         
-        // Generate 3D cave biomes (4×4×24 grid)
-        GenerateCaveBiomes(data, baseX, baseZ);
+        // Phase 3: Cave biomes disabled for performance - they're not currently used.
+        // Surface biome selection in CpuTerrainGenerator uses BiomeSelector which
+        // reads climate values from ChunkClimateCache, making this separate biome
+        // generation mostly redundant for surface blocks. Re-enable when implementing
+        // underground biome-dependent features (special cave decorations, etc.).
+        // GenerateCaveBiomes(data, baseX, baseZ);
         
         return data;
     }

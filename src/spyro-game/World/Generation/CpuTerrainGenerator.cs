@@ -62,6 +62,7 @@ internal sealed class CpuTerrainGenerator
 
     // Biome generation
     private BiomeGenerator? biomeGenerator;
+    private BiomeSelector? biomeSelector;  // Phase 3: Allocation-free biome selection
     private ChunkBiomeData? currentChunkBiome;
 
     // Phase 0 Infrastructure: Climate cache and performance profiling
@@ -86,6 +87,11 @@ internal sealed class CpuTerrainGenerator
         var baked = config.BakeHeightSplineLut(HeightSplineResolution);
         Array.Copy(baked, heightSpline, HeightSplineResolution);
         biomeGenerator = new BiomeGenerator(config);
+        
+        // Phase 3: Initialize allocation-free BiomeSelector
+        biomeSelector = new BiomeSelector(config.Biomes);
+        biomeSelector.UpdateConfig(config);
+        
         climateCache.Invalidate();
     }
 
@@ -498,37 +504,41 @@ internal sealed class CpuTerrainGenerator
     }
 
     /// <summary>
-    /// Updates the biome data using the terrain-computed continentalness values.
-    /// This ensures biome selection uses the SAME noise values as terrain height.
-    /// The biome data was pre-generated with separate noise sampling, but ocean/land
-    /// classification must match the actual terrain height.
+    /// Phase 3: Select biomes using BiomeSelector with climate cache values.
+    /// This uses SIMD-sampled climate values from ChunkClimateCache directly,
+    /// eliminating the need for BiomeGenerator's separate noise sampling.
+    /// Biome selection happens AFTER terrain height is computed so ocean/land
+    /// classification matches actual terrain surface.
     /// </summary>
     private void UpdateBiomeDataFromTerrainValues()
     {
-        if (currentChunkBiome == null) return;
+        if (currentChunkBiome == null || biomeSelector == null) return;
 
-        // For each 4x4 biome cell, update biome based on terrain values
+        // Get climate cache spans for direct access (no allocations)
+        var cont01 = climateCache.Continentalness01;
+        var temp01 = climateCache.Temperature01;
+        var humid01 = climateCache.Humidity01;
+        var erosion01 = climateCache.Erosion01;
+        var pv01 = climateCache.PeaksValleys01;
+
+        // For each 4x4 biome cell, select biome using climate cache + terrain height
         for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
         {
             for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
             {
                 var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
 
-                // Sample noise at cell center for climate values
+                // Sample at cell center - use climate cache values directly
                 var centerLocalX = cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
                 var centerLocalZ = cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
                 var centerColumnIndex = centerLocalZ * VoxelHelper.ChunkSideSize + centerLocalX;
 
-                // Use terrain's actual continentalness (this is what determines terrain height!)
-                var terrainCont = columnContinentalness[centerColumnIndex];
-                var terrainCont01 = columnContinentalness01[centerColumnIndex];
-                var terrainErosion = columnErosion[centerColumnIndex];
-                var terrainPeaks = columnPeaks[centerColumnIndex];
-
-                // Update the biome's stored values to match terrain
-                currentChunkBiome.Continentalness[cellIndex] = terrainCont;
-                currentChunkBiome.Erosion[cellIndex] = terrainErosion;
-                currentChunkBiome.PeaksValleys[cellIndex] = terrainPeaks;
+                // Update biome data with climate cache values (for other systems that read ChunkBiomeData)
+                currentChunkBiome.Continentalness[cellIndex] = climateCache.Continentalness[centerColumnIndex];
+                currentChunkBiome.Erosion[cellIndex] = climateCache.Erosion[centerColumnIndex];
+                currentChunkBiome.PeaksValleys[cellIndex] = climateCache.PeaksValleys[centerColumnIndex];
+                currentChunkBiome.Temperature[cellIndex] = temp01[centerColumnIndex];
+                currentChunkBiome.Humidity[cellIndex] = humid01[centerColumnIndex];
 
                 // For ocean detection, find the MAXIMUM terrain height in the entire 4x4 cell
                 // This prevents cells with some above-water blocks from being classified as ocean
@@ -545,83 +555,16 @@ internal sealed class CpuTerrainGenerator
                     }
                 }
 
-                // Re-select biome based on terrain's actual values
-                // Use maxTerrainHeight so any above-water block prevents ocean classification
-                var temp01 = currentChunkBiome.Temperature[cellIndex];
-                var humid01 = currentChunkBiome.Humidity[cellIndex];
-                var erosion01 = terrainErosion * 0.5f + 0.5f;
-                var pv01 = terrainPeaks; // Already 0-1 range after ridge transform
-
-                currentChunkBiome.BiomeIds[cellIndex] = SelectBiomeFromTerrainValues(
-                    terrainCont01, temp01, humid01, erosion01, pv01, maxTerrainHeight);
+                // Phase 3: Use BiomeSelector for allocation-free biome selection
+                currentChunkBiome.BiomeIds[cellIndex] = biomeSelector.SelectPrimary(
+                    cont01[centerColumnIndex],
+                    temp01[centerColumnIndex],
+                    humid01[centerColumnIndex],
+                    erosion01[centerColumnIndex],
+                    pv01[centerColumnIndex],
+                    maxTerrainHeight);
             }
         }
-    }
-
-    /// <summary>
-    /// Select biome using terrain-computed values including actual terrain height.
-    /// </summary>
-    private BiomeId SelectBiomeFromTerrainValues(
-        float cont01, float temperature, float humidity, float erosion01, float pv01, float actualTerrainHeight)
-    {
-        // Use ACTUAL terrain height (after all modifiers) to determine ocean vs land
-        // This is the definitive check - if terrain surface is below water, it's ocean
-        var isUnderwater = actualTerrainHeight < VoxelHelper.WaterLevel;
-        var altitudeAboveWater = actualTerrainHeight - VoxelHelper.WaterLevel;
-
-        // ============ OCEAN BIOMES (based on actual terrain height) ============
-        if (isUnderwater)
-        {
-            // Use continentalness to distinguish deep ocean from regular ocean
-            if (cont01 < terrainParams.DeepOceanThreshold)
-                return BiomeId.DeepOcean;
-            return BiomeId.Ocean;
-        }
-
-        // ============ BEACH BIOME ============
-        // Beach is determined primarily by HEIGHT, not just noise values.
-        // Any terrain at or very close to water level (within ShorelineRange) is beach.
-        // This ensures consistent sand/beach appearance at shorelines regardless of other biome factors.
-        if (altitudeAboveWater <= terrainParams.ShorelineRange)
-        {
-            return BiomeId.Beach;
-        }
-
-        // ============ ALPINE BIOME ============
-        // Use actual terrain height for altitude-based decisions
-        if (altitudeAboveWater > terrainParams.AlpineElevation || temperature < 0.12f)
-            return BiomeId.Alpine;
-
-        // ============ MOUNTAIN/HIGHLANDS ============
-        if (pv01 > 0.7f && erosion01 < 0.4f)
-            return temperature < 0.35f ? BiomeId.Alpine : BiomeId.Highlands;
-
-        // ============ CLIMATE-BASED LAND BIOMES ============
-        if (temperature > 0.65f)
-        {
-            if (humidity < 0.30f) return BiomeId.Desert;
-            if (humidity < 0.55f) return BiomeId.Savanna;
-            return BiomeId.Rainforest;
-        }
-
-        if (temperature < 0.35f)
-        {
-            if (humidity > 0.50f) return BiomeId.Taiga;
-            return BiomeId.Tundra;
-        }
-
-        // Temperate biomes
-        if (humidity > 0.55f)
-        {
-            if (cont01 < 0.50f && erosion01 > 0.6f)
-                return BiomeId.Swamp;
-            return BiomeId.Taiga;
-        }
-
-        if (pv01 > 0.55f || erosion01 < 0.45f)
-            return BiomeId.Highlands;
-
-        return BiomeId.Plains;
     }
 
     /// <summary>
