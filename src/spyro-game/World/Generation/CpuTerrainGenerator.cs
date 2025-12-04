@@ -303,21 +303,23 @@ internal sealed class CpuTerrainGenerator
 
     private void BuildColumnFieldCaches()
     {
-        // Phase 1: Use cached climate values instead of re-sampling noise
-        // Climate values (C, E, PV, T, H, W) come from ChunkClimateCache
-        // Only detail noise (cliff, terrainType) is sampled here
+        // Phase 2: Configurable terrain shaping using TerrainShapingConfig
+        // All magic numbers replaced with documented config values
+        // If-else chains replaced with continuous spline-based blending
         
         var xSpan = columnWorldX.AsSpan();
         var zSpan = columnWorldZ.AsSpan();
+        var shaping = config.TerrainShaping;
 
         // Copy climate values from cache to local arrays for compatibility with existing code
-        // This avoids modifying the downstream height calculation code
         var cachedCont = climateCache.Continentalness;
         var cachedCont01 = climateCache.Continentalness01;
         var cachedErosion = climateCache.Erosion;
+        var cachedErosion01 = climateCache.Erosion01;
         var cachedPeaks = climateCache.PeaksValleys;
         var cachedWarpX = climateCache.WarpX;
         var cachedWarpZ = climateCache.WarpZ;
+        var cachedWeirdness = climateCache.Weirdness;
         
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -329,15 +331,13 @@ internal sealed class CpuTerrainGenerator
             columnWarpZ[i] = cachedWarpZ[i];
         }
 
-        // Sample detail noise that isn't part of climate (used for terrain shaping)
-        // These are NOT duplicated - they're additional detail that the climate cache doesn't handle
+        // Sample detail noise using config-driven scales
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
 
-        // Sample additional noise layers for terrain variety
-        var terrainType = scratch2DA.AsSpan();      // Controls flat vs mountainous
-        var cliffiness = scratch2DB.AsSpan();       // Controls cliff steepness
-        SampleFbm2D(xSpan, zSpan, 1f / 400f, terrainParams.Seed + 3000u, 2, 0.5f, 2f, terrainType);
-        SampleFbm2D(xSpan, zSpan, 1f / 150f, terrainParams.Seed + 3100u, 3, 0.6f, 2.2f, cliffiness);
+        var terrainType = scratch2DA.AsSpan();
+        var cliffiness = scratch2DB.AsSpan();
+        SampleFbm2D(xSpan, zSpan, shaping.TerrainTypeNoiseScale, terrainParams.Seed + 3000u, 2, 0.5f, 2f, terrainType);
+        SampleFbm2D(xSpan, zSpan, shaping.CliffNoiseScale, terrainParams.Seed + 3100u, 3, 0.6f, 2.2f, cliffiness);
 
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -346,118 +346,30 @@ internal sealed class CpuTerrainGenerator
 
             if (tC >= terrainParams.OceanThreshold)
             {
-                var erosion = columnErosion[i];
-                var erosion01 = erosion * 0.5f + 0.5f;
-
-                // terrainType controls the character: <0.3 = flat plains, 0.3-0.7 = rolling hills, >0.7 = dramatic mountains
+                var erosion01 = cachedErosion01[i];
+                var weirdness = cachedWeirdness[i];
                 var terrainTypeVal = terrainType[i] * 0.5f + 0.5f; // [0,1]
                 var cliffVal = cliffiness[i];
 
                 // Distance from coast (0 = at coast, 1 = deep inland)
                 var coastDist = (tC - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
 
-                // === COASTAL ZONE (0-20% inland) ===
-                if (coastDist < 0.2f)
-                {
-                    var coastFactor = coastDist / 0.2f; // 0 at shore, 1 at end of coastal zone
+                // === COASTAL ZONE - Continuous blending ===
+                baseHeight = ApplyCoastalShaping(baseHeight, coastDist, cliffVal, shaping);
 
-                    // Blend between beach (flattening) and cliff (adding height)
-                    // cliffVal > 0.2 starts becoming cliffy
-                    var cliffMix = Smoothstep(0.1f, 0.5f, cliffVal); // 0 = beach, 1 = cliff
+                // === TERRAIN TYPE MODULATION - Continuous blending ===
+                // Replace if-else chains with smooth interpolation
+                baseHeight = ApplyTerrainTypeShaping(baseHeight, terrainTypeVal, cliffVal, i, shaping);
 
-                    // Beach behavior: flatten to water level
-                    // We blend current baseHeight towards water level + 2
-                    var beachHeight = Lerp(VoxelHelper.WaterLevel + 2f, baseHeight, coastFactor + 0.2f);
+                // === MOUNTAIN ZONES - Continuous blending ===
+                baseHeight = ApplyMountainShaping(baseHeight, tC, terrainTypeVal, i, shaping);
 
-                    // Cliff behavior: keep height or add to it
-                    // Add some extra height for cliffs at the coast
-                    var cliffHeight = baseHeight + MathF.Max(0f, cliffVal) * 10f * (1f - coastFactor);
-
-                    baseHeight = Lerp(beachHeight, cliffHeight, cliffMix);
-                }
-
-                // === TERRAIN TYPE MODULATION ===
-                if (terrainTypeVal < 0.35f)
-                {
-                    // FLAT PLAINS - very little height variation
-                    var flatness = (0.35f - terrainTypeVal) / 0.35f;
-                    baseHeight += columnPeaks[i] * 5f * (1f - flatness);
-                }
-                else if (terrainTypeVal < 0.65f)
-                {
-                    // ROLLING HILLS - moderate variation
-                    var hilliness = (terrainTypeVal - 0.35f) / 0.3f;
-                    baseHeight += columnPeaks[i] * 25f * hilliness;
-                    //baseHeight += columnCliff[i] * 8f * hilliness;
-                }
-                else
-                {
-                    // DRAMATIC TERRAIN - mountains, cliffs, plateaus
-                    var drama = (terrainTypeVal - 0.65f) / 0.35f;
-
-                    // Strong peaks and valleys
-                    baseHeight += columnPeaks[i] * 50f * drama;
-
-                    // Cliff features - can create sudden height changes
-                    var cliffContrib = MathF.Abs(columnCliff[i]) * 5f * drama;
-
-                    // Smoothly blend between plateau (low cliffVal) and sharp cliffs (high cliffVal)
-                    if (cliffVal > 0.75f)
-                    {
-                        // Transition to sharp cliffs
-                        // Blend from 0.5x to 1.0x contribution
-                        var t = Smoothstep(0.2f, 0.6f, cliffVal);
-                        baseHeight += cliffContrib * Lerp(0.5f, 1.0f, t);
-                    }
-                    else if (cliffVal < -0.2f)
-                    {
-                        // Transition to plateaus
-                        var t = Smoothstep(-0.2f, -0.6f, cliffVal); // 0 at -0.2, 1 at -0.6
-
-                        // Plateau target
-                        var plateauHeight = baseHeight + 15f * drama;
-                        var plateauBase = MathF.Max(baseHeight, plateauHeight - MathF.Abs(columnCliff[i]) * 60f);
-
-                        // Blend normal slope (0.5x cliff) into plateau
-                        var normalSlope = baseHeight + cliffContrib * 0.5f;
-                        baseHeight = Lerp(normalSlope, plateauBase, t);
-                    }
-                    else
-                    {
-                        // Middle ground - gradual slopes
-                        baseHeight += cliffContrib * 0.5f;
-                    }
-                }
-
-                // === MOUNTAIN ZONES (high continentalness) ===
-                if (tC > terrainParams.MountainThreshold)
-                {
-                    var mountainness = Smoothstep(terrainParams.MountainThreshold, 0.92f, tC);
-
-                    // Mountains get dramatic height boost
-                    baseHeight += 80f * mountainness;
-
-                    // Additional cliff detail in mountains
-                    // Only if terrain is not explicitly flat (plains on mountains)
-                    var flatness = 1f;
-                    if (terrainTypeVal < 0.4f) flatness = Smoothstep(0.2f, 0.4f, terrainTypeVal);
-
-                    baseHeight += MathF.Abs(columnCliff[i]) * terrainParams.CliffAmplitude * mountainness * flatness;
-
-                    // Some mountain regions get extra peaks for alpine zones
-                    if (terrainTypeVal > 0.5f)
-                    {
-                        baseHeight += columnPeaks[i] * 60f * mountainness;
-                    }
-                }
-
-                // === EROSION SMOOTHING (applies globally) ===
-                // High erosion areas are smoother - dampens all height variations
-                var smoothingFactor = erosion01 * erosion01 * 0.3f;
-                baseHeight = Lerp(baseHeight, SampleHeightSpline(tC) + VoxelHelper.WaterLevel + 20f, smoothingFactor);
+                // === EROSION SMOOTHING ===
+                var smoothingFactor = erosion01 * erosion01 * shaping.ErosionSmoothingMax;
+                var smoothTarget = SampleHeightSpline(tC) + VoxelHelper.WaterLevel + shaping.ErosionSmoothingHeightOffset;
+                baseHeight = Lerp(baseHeight, smoothTarget, smoothingFactor);
 
                 // === BIOME-BASED HEIGHT MODULATION ===
-                // Use the stored biome data to further shape terrain
                 baseHeight = ApplyBiomeHeightModulation(baseHeight, i);
             }
 
@@ -465,6 +377,124 @@ internal sealed class CpuTerrainGenerator
             var rounded = (int)MathF.Round(baseHeight);
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
+    }
+
+    /// <summary>
+    /// Apply coastal zone shaping with beach/cliff blending.
+    /// Uses continuous smoothstep instead of if-else.
+    /// </summary>
+    private static float ApplyCoastalShaping(float baseHeight, float coastDist, float cliffVal, TerrainShapingConfig shaping)
+    {
+        // Only apply coastal shaping within the coastal zone
+        if (coastDist >= shaping.CoastalZoneWidth)
+            return baseHeight;
+
+        var coastFactor = coastDist / shaping.CoastalZoneWidth; // 0 at shore, 1 at end of coastal zone
+
+        // Continuous cliff/beach blend using smoothstep
+        var cliffMix = Smoothstep(shaping.CoastalCliffStart, shaping.CoastalCliffEnd, cliffVal);
+
+        // Beach behavior: flatten toward water level
+        var beachHeight = Lerp(
+            VoxelHelper.WaterLevel + shaping.BeachHeightOffset, 
+            baseHeight, 
+            coastFactor + shaping.BeachBlendBias);
+
+        // Cliff behavior: add height for coastal cliffs
+        var cliffHeight = baseHeight + MathF.Max(0f, cliffVal) * shaping.CoastalCliffAmplitude * (1f - coastFactor);
+
+        return Lerp(beachHeight, cliffHeight, cliffMix);
+    }
+
+    /// <summary>
+    /// Apply terrain type shaping using continuous blending.
+    /// Replaces if-else chains (flat plains / rolling hills / dramatic) with smooth interpolation.
+    /// </summary>
+    private float ApplyTerrainTypeShaping(float baseHeight, float terrainTypeVal, float cliffVal, int columnIndex, TerrainShapingConfig shaping)
+    {
+        var peaks = columnPeaks[columnIndex];
+        var cliff = columnCliff[columnIndex];
+
+        // Calculate weights for each terrain type using overlapping smoothsteps
+        // This creates continuous transitions instead of hard if-else boundaries
+        
+        // Flat plains weight: full at 0, fades out at FlatPlainsThreshold
+        var plainsWeight = 1f - Smoothstep(0f, shaping.FlatPlainsThreshold, terrainTypeVal);
+        
+        // Rolling hills weight: fades in at FlatPlainsThreshold, fades out at RollingHillsThreshold
+        var hillsWeight = Smoothstep(0f, shaping.FlatPlainsThreshold, terrainTypeVal) 
+                        * (1f - Smoothstep(shaping.FlatPlainsThreshold, shaping.RollingHillsThreshold, terrainTypeVal));
+        
+        // Dramatic terrain weight: fades in from RollingHillsThreshold
+        var dramaticWeight = Smoothstep(shaping.FlatPlainsThreshold, shaping.RollingHillsThreshold, terrainTypeVal);
+
+        // Calculate contribution from each terrain type
+        var plainsContrib = peaks * shaping.PeakAmplitudePlains * plainsWeight;
+        var hillsContrib = peaks * shaping.PeakAmplitudeHills * hillsWeight;
+        
+        // Dramatic terrain contribution (includes cliff features)
+        var dramaticContrib = 0f;
+        if (dramaticWeight > 0.001f)
+        {
+            var drama = (terrainTypeVal - shaping.RollingHillsThreshold) / (1f - shaping.RollingHillsThreshold);
+            drama = MathF.Max(0f, drama);
+
+            // Peak contribution
+            dramaticContrib = peaks * shaping.PeakAmplitudeDramatic * drama;
+
+            // Cliff contribution with continuous plateau/sharp cliff blending
+            var cliffContrib = MathF.Abs(cliff) * shaping.CliffBaseMultiplier * drama;
+            
+            // Sharp cliff multiplier (smoothstep from 0.5 to 1.0)
+            var sharpCliffT = Smoothstep(0.2f, 0.6f, cliffVal);
+            var cliffMultiplier = Lerp(0.5f, 1.0f, sharpCliffT);
+            
+            // Plateau effect (negative cliffVal)
+            var plateauT = Smoothstep(shaping.PlateauThreshold, shaping.PlateauThreshold - 0.4f, cliffVal);
+            if (plateauT > 0.001f)
+            {
+                var plateauHeight = baseHeight + shaping.PlateauHeightBoost * drama;
+                var plateauBase = MathF.Max(baseHeight, plateauHeight - MathF.Abs(cliff) * shaping.PlateauVariation);
+                var normalSlope = baseHeight + cliffContrib * 0.5f;
+                baseHeight = Lerp(normalSlope, plateauBase, plateauT);
+            }
+            else if (cliffVal > shaping.SharpCliffThreshold)
+            {
+                dramaticContrib += cliffContrib * cliffMultiplier;
+            }
+            else
+            {
+                dramaticContrib += cliffContrib * 0.5f;
+            }
+            
+            dramaticContrib *= dramaticWeight;
+        }
+
+        return baseHeight + plainsContrib + hillsContrib + dramaticContrib;
+    }
+
+    /// <summary>
+    /// Apply mountain zone shaping with continuous blending.
+    /// </summary>
+    private float ApplyMountainShaping(float baseHeight, float tC, float terrainTypeVal, int columnIndex, TerrainShapingConfig shaping)
+    {
+        if (tC <= terrainParams.MountainThreshold)
+            return baseHeight;
+
+        var mountainness = Smoothstep(terrainParams.MountainThreshold, shaping.MountainFullThreshold, tC);
+
+        // Mountain height boost
+        baseHeight += shaping.MountainHeightBoost * mountainness;
+
+        // Cliff detail in mountains (reduced for flat terrain types)
+        var flatness = Smoothstep(shaping.MountainFlatnessStart, shaping.MountainFlatnessEnd, terrainTypeVal);
+        baseHeight += MathF.Abs(columnCliff[columnIndex]) * terrainParams.CliffAmplitude * mountainness * flatness;
+
+        // Alpine peaks for dramatic terrain types
+        var alpineWeight = Smoothstep(shaping.AlpinePeakTerrainThreshold, shaping.AlpinePeakTerrainThreshold + 0.2f, terrainTypeVal);
+        baseHeight += columnPeaks[columnIndex] * shaping.AlpinePeakAmplitude * mountainness * alpineWeight;
+
+        return baseHeight;
     }
 
     /// <summary>

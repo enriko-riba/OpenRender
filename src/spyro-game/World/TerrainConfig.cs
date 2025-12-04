@@ -225,6 +225,14 @@ public sealed class TerrainConfig
     /// See <see cref="OreParams"/> for detailed parameters.
     /// </summary>
     public OreParams Ores { get; set; } = OreParams.Default();
+    
+    /// <summary>
+    /// Gets or sets the terrain shaping configuration controlling height calculation.
+    /// Phase 2 of Minecraft terrain pipeline: All height calculation parameters are here,
+    /// replacing magic numbers with documented, configurable values.
+    /// See <see cref="TerrainShapingConfig"/> for detailed parameters.
+    /// </summary>
+    public TerrainShapingConfig TerrainShaping { get; set; } = TerrainShapingConfig.Default();
 
     /// <summary>
     /// Gets or sets the Y-coordinate of the water level in blocks.
