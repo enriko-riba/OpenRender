@@ -150,6 +150,14 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                 var result = generator.GenerateChunk(work.ChunkIndex, writable, work.BlockIdEdits);
                 terrainSw.Stop();
                 metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
+                
+                // Record detailed terrain breakdown from profiler
+                var profiler = generator.Profiler;
+                metrics?.RecordTerrainBreakdown(
+                    profiler.GetLastMs(TerrainGenerationProfiler.Step.ClimateSampling),
+                    profiler.GetLastMs(TerrainGenerationProfiler.Step.Noise3DSampling),
+                    profiler.GetLastMs(TerrainGenerationProfiler.Step.BiomeSelection),
+                    profiler.GetLastMs(TerrainGenerationProfiler.Step.BlockGeneration));
 
                 // Store biome data alongside voxels
                 var biomeData = generator.GetLastChunkBiomeData();

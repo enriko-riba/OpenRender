@@ -433,11 +433,7 @@ internal class GameScene : Scene
             lineY += lineHeight;
         }
 
-        // Header
-        WriteLine("SPYRO GAME - PROCEDURAL TERRAIN", highlightColor);
-        WriteLine("", textColor);
-
-        // Performance
+        // Performance - FPS at very top (no title)
         WriteLine($"FPS: {SceneManager.Fps:F0} ({SceneManager.AvgFrameDuration:F2}ms)", textColor);
         WriteLine($"View Distance: {VoxelHelper.MaxDistanceInChunks} chunks", textColor);
         WriteLine("", textColor);
@@ -446,7 +442,7 @@ internal class GameScene : Scene
         WriteLine($"Time: {dayNightCycle.TimeOfDay:hh\\:mm\\:ss}", new Vector3(1, 1, 0));
         WriteLine("", textColor);
 
-        // Chunk Stats (FIXED - Show actual generated chunks, not theoretical surrounding)
+        // Chunk Stats
         int readyChunks;
         int queuedChunks;
         int targetChunks;
@@ -462,7 +458,6 @@ internal class GameScene : Scene
         }
         else
         {
-            // Fallback to VoxelWorld (old system)
             readyChunks = world.LoadedChunksCount;
             queuedChunks = 0;
             targetChunks = world.LoadedChunksCount;
@@ -482,7 +477,7 @@ internal class GameScene : Scene
         }
         WriteLine("", textColor);
 
-        // Processing Metrics
+        // Processing Metrics with terrain breakdown
         if (streamingManager != null)
         {
             var m = streamingManager.Metrics;
@@ -490,6 +485,12 @@ internal class GameScene : Scene
             WriteLine($"  Terrain Gen: {m.AvgTerrainGenerationMs:F1}ms | Light Calc: {m.AvgLightCalculationMs:F1}ms", textColor);
             WriteLine($"  Light Prop: {m.AvgLightPropagationMs:F1}ms | Mesh Build: {m.AvgMeshBuildMs:F1}ms", textColor);
             WriteLine($"  Gen/s: {m.ChunksGeneratedPerSecond} | Mesh/s: {m.ChunksMeshedPerSecond} | Reproc/s: {m.ChunksReprocessedPerSecond}", textColor);
+            WriteLine("", textColor);
+            
+            // NEW: Terrain generation breakdown
+            WriteLine("Terrain Breakdown:", highlightColor);
+            WriteLine($"  Climate: {m.AvgClimateMs:F2}ms | 3D Noise: {m.AvgNoise3DMs:F2}ms", textColor);
+            WriteLine($"  Biome: {m.AvgBiomeMs:F2}ms | Blocks: {m.AvgBlockGenMs:F2}ms", textColor);
             WriteLine("", textColor);
         }
 
@@ -585,24 +586,14 @@ internal class GameScene : Scene
             WriteLine("", textColor);
         }
 
-        // Controls
-        WriteLine("Controls:", highlightColor);
-        WriteLine("  WASD - Move", textColor);
-        WriteLine("  Shift/Ctrl - Up/Down", textColor);
-        WriteLine("  Mouse - Look", textColor);
-        WriteLine("  F - Toggle Ghost/Physics", textColor);
-        WriteLine("  F3 - Toggle Biome Debug", textColor);
-        WriteLine("  F5 - Toggle Wireframe Debug", textColor);
-        WriteLine("  Left Click - Break Block", textColor);
-        WriteLine("  Esc - Exit", textColor);
-
-        // Inventory Display
-        // Render stacked on right side
-        var invSlotHeight = 30;
+        // === RIGHT SIDE: Inventory at center, Controls below ===
+        const int rightMargin = 200;
+        var rightX = Width - rightMargin;
+        const int invSlotHeight = 30;
         var invTotalHeight = Inventory.HotbarSize * invSlotHeight;
-        var startX = Width - 200;
-        var startY = (Height - invTotalHeight) / 2;
+        var invStartY = (Height - invTotalHeight) / 2;
 
+        // Inventory Display - centered vertically on right side
         for (var i = 0; i < Inventory.HotbarSize; i++)
         {
             var item = player.Inventory.GetItem(i);
@@ -612,9 +603,29 @@ internal class GameScene : Scene
             string content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
             if (isSelected) content = $"> {content}";
 
-            // Simple text rendering for now
-            textRenderer.Render(content, 22, startX, startY + i * invSlotHeight, color);
+            textRenderer.Render(content, 22, rightX, invStartY + i * invSlotHeight, color);
         }
+
+        // Controls below inventory
+        var controlsStartY = invStartY + invTotalHeight + 20;
+        const int controlLineHeight = 22;
+        var controlY = controlsStartY;
+
+        void WriteControlLine(string text, Vector3 color)
+        {
+            textRenderer.Render(text, 20, rightX, controlY, color);
+            controlY += controlLineHeight;
+        }
+
+        WriteControlLine("Controls:", highlightColor);
+        WriteControlLine("  WASD - Move", textColor);
+        WriteControlLine("  Shift/Ctrl - Up/Down", textColor);
+        WriteControlLine("  Mouse - Look", textColor);
+        WriteControlLine("  F - Toggle Ghost/Physics", textColor);
+        WriteControlLine("  F3 - Toggle Biome Debug", textColor);
+        WriteControlLine("  F5 - Toggle Wireframe", textColor);
+        WriteControlLine("  Left Click - Break Block", textColor);
+        WriteControlLine("  Esc - Exit", textColor);
     }
 
     /// <summary>

@@ -266,12 +266,15 @@ internal static class ChunkMeshBuilder
     {
         var baseVertex = (uint)(vertexScratch.Count / 2);
         var offsets = FaceCornerOffsets[(int)face];
-        Span<uint> ao = stackalloc uint[4];
 
         // Get biome at this block position (same for all vertices of the face)
         var biome = sampler.SampleBiome(x, z);
 
-        var (dx, dy, dz) = FaceDirections[(int)face];
+        // Performance optimization: Compute all 4 corner light/AO values with a single pass
+        // over the 9-block neighborhood instead of 4 separate passes with 4 samples each.
+        Span<uint> ao = stackalloc uint[4];
+        Span<uint> light = stackalloc uint[4];
+        sampler.ComputeFaceLightingAndAO(face, x, y, z, ao, light);
 
         for (uint corner = 0; corner < 4; corner++)
         {
@@ -279,13 +282,9 @@ internal static class ChunkMeshBuilder
             var vx = x + ox;
             var vy = y + oy;
             var vz = z + oz;
-            ao[(int)corner] = sampler.ComputeAmbientOcclusion(face, corner, x, y, z);
-
-            // Use smooth lighting (average of 4 neighbors) to prevent banding
-            var light = sampler.ComputeSmoothLight(face, corner, x, y, z);
             
             vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner));
-            vertexScratch.Add(PackVertexAttributes(block, light, biome));
+            vertexScratch.Add(PackVertexAttributes(block, light[(int)corner], biome));
         }
 
         // Minecraft-style quad flip to avoid "bowtie" AO interpolation artifacts.
@@ -596,6 +595,138 @@ internal static class ChunkMeshBuilder
             localX = Math.Clamp(localX, 0, VoxelHelper.ChunkSideSize - 1);
             localZ = Math.Clamp(localZ, 0, VoxelHelper.ChunkSideSize - 1);
             return biomeData.GetBiomeAt(localX, localZ);
+        }
+
+        /// <summary>
+        /// Performance-optimized method to compute light and AO for all 4 corners of a face.
+        /// Instead of 4 corners × 4 samples = 16 lookups, we sample the 9-block neighborhood once
+        /// and compute all corner values from those cached samples.
+        /// </summary>
+        public void ComputeFaceLightingAndAO(uint face, int x, int y, int z, Span<uint> ao, Span<uint> light)
+        {
+            var (nx, ny, nz) = FaceDirections[(int)face];
+            var (t1x, t1y, t1z, t2x, t2y, t2z) = GetFaceTangents(face);
+            
+            // Base position (air block directly in front of the face)
+            var bx = x + nx;
+            var by = y + ny;
+            var bz = z + nz;
+            
+            // Sample all 9 positions in the 3x3 grid around the face (in tangent space)
+            // Layout (looking at face from outside):
+            //   [6] [7] [8]   = (-1,+1) (0,+1) (+1,+1) in (t1, t2) space
+            //   [3] [4] [5]   = (-1, 0) (0, 0) (+1, 0)
+            //   [0] [1] [2]   = (-1,-1) (0,-1) (+1,-1)
+            // Index 4 is the base position (center)
+            
+            Span<uint> lightSamples = stackalloc uint[9];
+            Span<bool> opaqueSamples = stackalloc bool[9];
+            
+            // Sample the 3x3 grid
+            for (int t2 = -1; t2 <= 1; t2++)
+            {
+                for (int t1 = -1; t1 <= 1; t1++)
+                {
+                    var idx = (t2 + 1) * 3 + (t1 + 1);
+                    var sx = bx + t1x * t1 + t2x * t2;
+                    var sy = by + t1y * t1 + t2y * t2;
+                    var sz = bz + t1z * t1 + t2z * t2;
+                    
+                    lightSamples[idx] = SamplePackedLight(sx, sy, sz);
+                    opaqueSamples[idx] = SampleBlock(sx, sy, sz).IsOpaque();
+                }
+            }
+            
+            // For each corner, compute AO and smooth light from the cached samples
+            // Corner indices map to specific 2x2 quadrants of the 3x3 grid:
+            // Each corner uses: center (4) + side1 + side2 + corner
+            
+            for (uint corner = 0; corner < 4; corner++)
+            {
+                // Get corner signs to determine which quadrant to use
+                var (c1, c2) = GetCornerSigns(face, corner);
+                
+                // Map corner signs to grid indices
+                // c1, c2 are each -1 or +1
+                // Grid index for t1 offset: c1 = -1 -> 0, c1 = +1 -> 2
+                // Grid index for t2 offset: c2 = -1 -> 0, c2 = +1 -> 2
+                var t1Idx = c1 < 0 ? 0 : 2;
+                var t2Idx = c2 < 0 ? 0 : 2;
+                
+                // Sample indices for this corner:
+                // base = center = index 4
+                // side1 = center + t1 offset = 4 + (t1Idx - 1) = 3 (if t1=-1) or 5 (if t1=+1)
+                // side2 = center + t2 offset = 4 + (t2Idx - 1) * 3 = 1 (if t2=-1) or 7 (if t2=+1)
+                // corner = t1 + t2 offset combined
+                var baseIdx = 4;
+                var side1Idx = 4 + (t1Idx - 1);  // 3 or 5
+                var side2Idx = 4 + (t2Idx - 1) * 3;  // 1 or 7
+                var cornerIdx = t2Idx * 3 + t1Idx;  // 0, 2, 6, or 8
+                
+                var side1Opaque = opaqueSamples[side1Idx];
+                var side2Opaque = opaqueSamples[side2Idx];
+                var cornerBlocked = side1Opaque && side2Opaque;
+                
+                // === AO Calculation ===
+                var cornerOccluder = opaqueSamples[cornerIdx];
+                uint aoVal;
+                if (side1Opaque && side2Opaque)
+                {
+                    aoVal = 0; // Maximum occlusion
+                }
+                else
+                {
+                    var occluders = (side1Opaque ? 1 : 0) + (side2Opaque ? 1 : 0) + (cornerOccluder ? 1 : 0);
+                    aoVal = (uint)(3 - occluders);
+                }
+                ao[(int)corner] = aoVal + 1; // Shader expects 1-4 range
+                
+                // === Smooth Light Calculation ===
+                var lBase = lightSamples[baseIdx];
+                var lSide1 = lightSamples[side1Idx];
+                var lSide2 = lightSamples[side2Idx];
+                var lCorner = lightSamples[cornerIdx];
+                
+                int skySum = 0;
+                int blockSum = 0;
+                int count = 0;
+                
+                void AddLightSample(uint l)
+                {
+                    if (l != DisabledLightValue)
+                    {
+                        skySum += (int)(l & 0xF);
+                        blockSum += (int)((l >> 4) & 0xF);
+                        count++;
+                    }
+                }
+                
+                AddLightSample(lBase);
+                AddLightSample(lSide1);
+                AddLightSample(lSide2);
+                if (!cornerBlocked)
+                {
+                    AddLightSample(lCorner);
+                }
+                
+                if (count == 0)
+                {
+                    // Fallback for missing neighbor data
+                    if (y >= VoxelHelper.ChunkYSize - 1)
+                    {
+                        light[(int)corner] = 15 | (0 << 4);
+                    }
+                    else
+                    {
+                        var fallbackLight = SamplePackedLight(x, y + 1, z);
+                        light[(int)corner] = fallbackLight != DisabledLightValue ? fallbackLight : 0u;
+                    }
+                }
+                else
+                {
+                    light[(int)corner] = (uint)((skySum / count) | ((blockSum / count) << 4));
+                }
+            }
         }
 
         /// <summary>

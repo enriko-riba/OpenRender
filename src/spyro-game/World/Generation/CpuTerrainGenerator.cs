@@ -64,6 +64,16 @@ internal sealed class CpuTerrainGenerator
     private BiomeGenerator? biomeGenerator;
     private ChunkBiomeData? currentChunkBiome;
 
+    // Phase 0 Infrastructure: Climate cache and performance profiling
+    private readonly ChunkClimateCache climateCache = new();
+    private readonly TerrainGenerationProfiler profiler = new();
+
+    /// <summary>Gets the performance profiler for terrain generation.</summary>
+    public TerrainGenerationProfiler Profiler => profiler;
+
+    /// <summary>Gets the climate cache for the current chunk.</summary>
+    public ChunkClimateCache ClimateCache => climateCache;
+
     public CpuTerrainGenerator(TerrainConfig config)
     {
         UpdateConfig(config);
@@ -76,6 +86,7 @@ internal sealed class CpuTerrainGenerator
         var baked = config.BakeHeightSplineLut(HeightSplineResolution);
         Array.Copy(baked, heightSpline, HeightSplineResolution);
         biomeGenerator = new BiomeGenerator(config);
+        climateCache.Invalidate();
     }
 
     /// <summary>
@@ -89,6 +100,8 @@ internal sealed class CpuTerrainGenerator
     /// </summary>
     public ChunkGenerationResult GenerateChunk(int chunkIndex, ChunkData chunkData, IReadOnlyDictionary<int, BlockId>? edits = null)
     {
+        profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
+        
         if (chunkData.VoxelData.Length < VoxelHelper.ChunkVoxelCount)
         {
             throw new ArgumentException($"Destination buffer must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(chunkData));
@@ -106,6 +119,9 @@ internal sealed class CpuTerrainGenerator
 
         FillChunk(chunkIndex, chunkData, collision, spanPairs, spanTypes, spanCounts, edits);
 
+        profiler.EndStep(TerrainGenerationProfiler.Step.Total);
+        profiler.FinalizeChunk();
+        
         return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
     }
 
@@ -129,6 +145,8 @@ internal sealed class CpuTerrainGenerator
         // Air is always index 0
         chunkData.GetOrAddPaletteEntry(BlockId.Air);
 
+        profiler.BeginStep(TerrainGenerationProfiler.Step.BlockGeneration);
+        
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             var worldZ = chunkZ * VoxelHelper.ChunkSideSize + lz;
@@ -213,18 +231,53 @@ internal sealed class CpuTerrainGenerator
                 var recorded = (byte)Math.Min(spanCount, ChunkCollisionData.MaxSpansPerColumn);
                 spanCounts[columnIndex] = recorded;
                 collision.SpanCounts[columnIndex] = recorded;
+                
+                // Performance optimization: Compute surface height for this column (highest opaque block)
+                // This is used by lighting to quickly skip underground air columns
+                chunkData.SurfaceHeights[columnIndex] = ComputeSurfaceHeight(chunkData, lx, lz);
             }
         }
+        
+        profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
 
         // ChunkCollisionData.Spans populated inside TryCommitSpan
+    }
+    
+    /// <summary>
+    /// Compute the surface height for a column (highest opaque block Y coordinate).
+    /// Returns -1 if the column is entirely air.
+    /// </summary>
+    private static int ComputeSurfaceHeight(ChunkData chunkData, int lx, int lz)
+    {
+        for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+        {
+            var block = chunkData.GetBlock(lx, y, lz);
+            if (block.IsOpaque())
+            {
+                return y;
+            }
+        }
+        return -1; // Column is entirely air/transparent
     }
 
     private void PrepareChunkCaches(int chunkX, int chunkZ)
     {
+        // Phase 0: Sample climate cache (foundation for future phases)
+        // Currently runs in parallel with existing code for validation
+        profiler.BeginStep(TerrainGenerationProfiler.Step.ClimateSampling);
+        climateCache.SampleForChunk(chunkX, chunkZ, config);
+        
         BuildColumnCoordinates(chunkX, chunkZ);
         BuildColumnFieldCaches();
+        profiler.EndStep(TerrainGenerationProfiler.Step.ClimateSampling);
+        
+        profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
         UpdateBiomeDataFromTerrainValues(); // Fix: Use terrain's continentalness for biomes
+        profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
+        
+        profiler.BeginStep(TerrainGenerationProfiler.Step.Noise3DSampling);
         BuildColumnVolumes();
+        profiler.EndStep(TerrainGenerationProfiler.Step.Noise3DSampling);
     }
 
     private void BuildColumnCoordinates(int chunkX, int chunkZ)
@@ -1512,6 +1565,21 @@ internal sealed class CpuTerrainGenerator
         return warp;
     }
 
+    /// <summary>
+    /// Log performance statistics for terrain generation.
+    /// Call periodically (e.g., every 100 chunks or on demand via F3 key).
+    /// </summary>
+    public void LogPerformanceStats()
+    {
+        profiler.LogStatistics();
+#if DEBUG
+        if (climateCache.IsValid)
+        {
+            OpenRender.Log.Debug($"ClimateCache last sample time: {climateCache.LastSampleTimeMs:F2}ms");
+        }
+#endif
+    }
+
     #endregion
 
     internal readonly record struct ChunkGenerationResult(
@@ -1520,5 +1588,3 @@ internal sealed class CpuTerrainGenerator
         byte[] SpanCounts,
         BlockId[] SpanTypes);
 }
-
-

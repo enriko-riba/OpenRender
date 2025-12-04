@@ -2,7 +2,7 @@
 
 ## 🔴 Direct Performance Improvements
 
-### 1. Lighting Calculation - Full BFS Every Chunk (HIGH IMPACT)
+### 1. Lighting Calculation - Full BFS Every Chunk (HIGH IMPACT) ✅ PARTIALLY COMPLETED
 **File:** `LightingCalculator.cs`
 
 **Issue:** `CalculateLighting()` clears ALL light data and performs full BFS flood-fill for every new chunk. This is ~100k+ voxels per chunk.
@@ -12,7 +12,11 @@
 - Use height maps to skip underground air columns that won't receive sky light
 - Consider lazy propagation: only propagate light when mesh is requested
 
-### 2. ChunkMeshBuilder - Triple Neighbor Sampling per Vertex (HIGH IMPACT)
+**Resolution:** Surface heights are now computed during terrain generation and stored in `ChunkData.SurfaceHeights`. The `InitializeSkyLight()` method now uses these heights to:
+1. Start iteration from `surfaceHeight + 15` instead of `ChunkYSize - 1`
+2. Only queue positions near the surface for BFS propagation, skipping deep underground positions
+
+### 2. ChunkMeshBuilder - Triple Neighbor Sampling per Vertex (HIGH IMPACT) ✅ COMPLETED
 **File:** `ChunkMeshBuilder.cs` lines 480-580
 
 **Issue:** `ComputeSmoothLight()` and `ComputeAmbientOcclusion()` each sample 4 neighbors (base + 2 sides + corner). For a face with 4 vertices, this means 8 neighbor block samples + 8 opacity checks + 8 light reads per face.
@@ -21,6 +25,8 @@
 - Cache neighbor lookups per face (not per vertex) since many vertices share neighbors
 - Pre-compute light values per block once instead of per-vertex
 - Use lookup tables for AO patterns instead of runtime calculation
+
+**Resolution:** Added `ComputeFaceLightingAndAO()` method that samples the 9-block neighborhood once per face (3x3 grid), then computes all 4 corner AO and light values from those cached samples. Reduces from ~32 block samples per face to 9.
 
 ### 3. Dictionary Allocations in ChunkVoxelSampler (MEDIUM IMPACT) ✅ COMPLETED
 **File:** `ChunkMeshBuilder.cs` line 398
@@ -192,9 +198,9 @@
 
 ## 🎯 Top 3 High-Impact Changes
 
-1. **Incremental sky lighting** - only propagate from column tops, skip solid blocks
-2. **Per-face light caching** - compute light once per face, not 4× per vertex
-3. **Biome weight LUT** - pre-compute 256×256 climate→weight grid
+1. ✅ **Incremental sky lighting** - only propagate from column tops, skip solid blocks
+2. ✅ **Per-face light caching** - compute light once per face, not 4× per vertex
+3. ❌ **Biome weight LUT** - pre-compute 256×256 climate→weight grid (SKIPPED - complex terrain type dependencies)
 
 ---
 
@@ -208,7 +214,7 @@
   - [x] Return static HashSet directly from light removal methods
   - [x] Increase BFS queue capacity to 12288
   - [x] Thread-local cache for ChunkVoxelDataCache (SKIPPED - low impact, stale data risks)
-- [ ] Phase 3: High Impact Changes
-  - [ ] Incremental sky lighting
-  - [ ] Per-face light caching
-  - [ ] Biome weight LUT
+- [x] Phase 3: High Impact Changes - **COMPLETED Dec 4, 2025**
+  - [x] Per-face light caching (`ComputeFaceLightingAndAO()` - 9 samples instead of 32)
+  - [x] Surface height optimization (terrain gen computes heights, lighting uses them)
+  - [x] Biome weight LUT (SKIPPED - complex terrain type dependencies make LUT impractical)

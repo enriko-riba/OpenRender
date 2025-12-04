@@ -14,16 +14,32 @@ public sealed class ChunkProcessingMetrics
     private readonly double[] lightCalcSamples = new double[SampleSize];
     private readonly double[] lightPropSamples = new double[SampleSize];
     private readonly double[] meshBuildSamples = new double[SampleSize];
+    
+    // Terrain generation breakdown buffers
+    private readonly double[] climateSamples = new double[SampleSize];
+    private readonly double[] noise3DSamples = new double[SampleSize];
+    private readonly double[] biomeSamples = new double[SampleSize];
+    private readonly double[] blockGenSamples = new double[SampleSize];
 
     private int terrainGenIndex;
     private int lightCalcIndex;
     private int lightPropIndex;
     private int meshBuildIndex;
+    
+    private int climateIndex;
+    private int noise3DIndex;
+    private int biomeIndex;
+    private int blockGenIndex;
 
     private int terrainGenCount;
     private int lightCalcCount;
     private int lightPropCount;
     private int meshBuildCount;
+    
+    private int climateCount;
+    private int noise3DCount;
+    private int biomeCount;
+    private int blockGenCount;
 
     // Per-second counters
     private int chunksGeneratedThisInterval;
@@ -42,6 +58,18 @@ public sealed class ChunkProcessingMetrics
 
     /// <summary>Average mesh build time in milliseconds.</summary>
     public double AvgMeshBuildMs { get; private set; }
+    
+    /// <summary>Average climate sampling time in milliseconds (part of terrain gen).</summary>
+    public double AvgClimateMs { get; private set; }
+    
+    /// <summary>Average 3D noise sampling time in milliseconds (part of terrain gen).</summary>
+    public double AvgNoise3DMs { get; private set; }
+    
+    /// <summary>Average biome selection time in milliseconds (part of terrain gen).</summary>
+    public double AvgBiomeMs { get; private set; }
+    
+    /// <summary>Average block generation time in milliseconds (part of terrain gen).</summary>
+    public double AvgBlockGenMs { get; private set; }
 
     /// <summary>Chunks generated in the last second.</summary>
     public int ChunksGeneratedPerSecond { get; private set; }
@@ -92,6 +120,34 @@ public sealed class ChunkProcessingMetrics
         chunksMeshedThisInterval++;
         UpdateAverage(meshBuildSamples, meshBuildCount, out var avg);
         AvgMeshBuildMs = avg;
+    }
+    
+    /// <summary>Record terrain generation breakdown stats.</summary>
+    public void RecordTerrainBreakdown(double climateMs, double noise3DMs, double biomeMs, double blockGenMs)
+    {
+        climateSamples[climateIndex] = climateMs;
+        climateIndex = (climateIndex + 1) % SampleSize;
+        climateCount = Math.Min(climateCount + 1, SampleSize);
+        UpdateAverage(climateSamples, climateCount, out var climateAvg);
+        AvgClimateMs = climateAvg;
+        
+        noise3DSamples[noise3DIndex] = noise3DMs;
+        noise3DIndex = (noise3DIndex + 1) % SampleSize;
+        noise3DCount = Math.Min(noise3DCount + 1, SampleSize);
+        UpdateAverage(noise3DSamples, noise3DCount, out var noise3DAvg);
+        AvgNoise3DMs = noise3DAvg;
+        
+        biomeSamples[biomeIndex] = biomeMs;
+        biomeIndex = (biomeIndex + 1) % SampleSize;
+        biomeCount = Math.Min(biomeCount + 1, SampleSize);
+        UpdateAverage(biomeSamples, biomeCount, out var biomeAvg);
+        AvgBiomeMs = biomeAvg;
+        
+        blockGenSamples[blockGenIndex] = blockGenMs;
+        blockGenIndex = (blockGenIndex + 1) % SampleSize;
+        blockGenCount = Math.Min(blockGenCount + 1, SampleSize);
+        UpdateAverage(blockGenSamples, blockGenCount, out var blockGenAvg);
+        AvgBlockGenMs = blockGenAvg;
     }
 
     /// <summary>Record a chunk reprocessing (neighbor update).</summary>

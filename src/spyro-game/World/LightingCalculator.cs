@@ -984,8 +984,19 @@ public static class LightingCalculator
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
+                var columnIndex = z * VoxelHelper.ChunkSideSize + x;
+                var surfaceHeight = chunk.SurfaceHeights[columnIndex];
+                
+                // Performance optimization: Use surface height to start from a reasonable position
+                // surfaceHeight > 0 means it was computed by terrain generation
+                // surfaceHeight = 0 could be uninitialized OR actual surface at y=0, so start from top to be safe
+                // surfaceHeight < 0 means column is entirely air (start from top)
+                var startY = surfaceHeight > 0 
+                    ? Math.Min(surfaceHeight + MaxLight, VoxelHelper.ChunkYSize - 1) 
+                    : VoxelHelper.ChunkYSize - 1;
+                
                 var currentLight = MaxLight;
-                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+                for (var y = startY; y >= 0; y--)
                 {
                     var index = GetIndex(x, y, z);
                     var block = chunk.GetBlock(x, y, z);
@@ -1008,7 +1019,14 @@ public static class LightingCalculator
                         if (currentLight > 0)
                         {
                             SetSkyLight(chunk, index, currentLight);
-                            queue.Enqueue(PackPos(x, y, z));
+                            
+                            // Only queue for BFS propagation if this position might spread light horizontally
+                            // Positions deep underground (below surface - 15) won't have neighbors to spread to
+                            // If surfaceHeight is 0 (possibly uninitialized), queue everything to be safe
+                            if (surfaceHeight <= 0 || y >= surfaceHeight - MaxLight)
+                            {
+                                queue.Enqueue(PackPos(x, y, z));
+                            }
                         }
                     }
                 }
