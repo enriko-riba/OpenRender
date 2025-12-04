@@ -26,6 +26,9 @@ internal static class ChunkMeshBuilder
     [ThreadStatic] private static List<uint>? t_opaqueIndices;
     [ThreadStatic] private static List<uint>? t_translucentVertices;
     [ThreadStatic] private static List<uint>? t_translucentIndices;
+    
+    // Performance optimization: Thread-local pooled dictionary for neighbor chunk cache
+    [ThreadStatic] private static Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>? t_neighborCache;
 
     private static readonly (int dx, int dy, int dz)[] FaceDirections =
     [
@@ -388,7 +391,7 @@ internal static class ChunkMeshBuilder
         private readonly ChunkVoxelDataCache cache;
         private readonly ChunkVoxelDataCache.ChunkVoxelDataView centerView;
         private readonly ChunkMeshingJobSystem.ChunkMeshWorkItem workItem;
-        private readonly Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView> neighborCache = [];
+        private readonly Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView> neighborCache;
         private readonly int chunkX;
         private readonly int chunkZ;
         private readonly ChunkBiomeData? biomeData;
@@ -401,6 +404,11 @@ internal static class ChunkMeshBuilder
             chunkX = workItem.ChunkIndex % VoxelHelper.WorldChunksXZ;
             chunkZ = workItem.ChunkIndex / VoxelHelper.WorldChunksXZ;
             cache.TryGetBiomeData(workItem.ChunkIndex, out biomeData);
+            
+            // Use thread-static pooled dictionary to avoid allocation per mesh build
+            t_neighborCache ??= new Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>(8);
+            t_neighborCache.Clear();
+            neighborCache = t_neighborCache;
         }
 
         public int FaceCount { get; private set; }

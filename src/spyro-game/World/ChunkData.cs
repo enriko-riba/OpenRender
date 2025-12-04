@@ -39,6 +39,13 @@ public class ChunkData
     public long Version;
 
     private int paletteCount;
+    
+    /// <summary>
+    /// Performance optimization: Reverse lookup from BlockId to palette index.
+    /// Avoids O(n) linear search in GetOrAddPaletteEntry.
+    /// Key = BlockId.GetId(), Value = palette index.
+    /// </summary>
+    private readonly Dictionary<int, byte> reversePalette = new(32);
 
     public ChunkData()
     {
@@ -51,6 +58,7 @@ public class ChunkData
 
         // Always add Air as index 0
         Palette[0] = BlockId.Air;
+        reversePalette[BlockId.Air.GetId()] = 0;
         paletteCount = 1;
     }
 
@@ -76,14 +84,16 @@ public class ChunkData
 
     /// <summary>
     /// Get or add a palette entry, returns the palette index.
+    /// Uses O(1) dictionary lookup instead of O(n) linear search.
     /// </summary>
     public byte GetOrAddPaletteEntry(BlockId blockId)
     {
-        // Linear search is fine for small palettes (typically < 20 entries)
-        for (int i = 0; i < paletteCount; i++)
+        var blockIdValue = blockId.GetId();
+        
+        // O(1) lookup via reverse palette dictionary
+        if (reversePalette.TryGetValue(blockIdValue, out var existingIndex))
         {
-            if (Palette[i] == blockId)
-                return (byte)i;
+            return existingIndex;
         }
 
         // Not found, add new entry
@@ -100,8 +110,12 @@ public class ChunkData
             Array.Resize(ref Palette, Palette.Length * 2);
         }
 
+        var newIndex = (byte)paletteCount;
         Palette[paletteCount] = blockId;
-        return (byte)paletteCount++;
+        reversePalette[blockIdValue] = newIndex;
+        paletteCount++;
+        
+        return newIndex;
     }
     
     /// <summary>

@@ -57,7 +57,12 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly HashSet<int> currentStreamingBatch = [];
     private readonly HashSet<int> pendingStreamingBatch = [];  // Chunks waiting for next batch
     private readonly HashSet<int> chunksNeedingReprocess = [];
+    private readonly HashSet<int> chunksWithLightRecalculated = [];  // Chunks that already had light fully recalculated
     private bool batchProcessingInProgress;  // True when currentStreamingBatch is being processed
+    
+    // Performance optimization: Reusable lists to avoid LINQ allocations
+    private readonly List<int> reusableChunkList = new(256);
+    private readonly List<int> reusableChunkList2 = new(256);  // Second list for nested operations
 
     private TerrainMeshBufferManager? meshBuffers;
     private VoxelTerrainRenderer? terrainRenderer;
@@ -191,6 +196,7 @@ public sealed class ChunkStreamingManager : IDisposable
         pendingStreamingBatch.Clear();
         batchProcessingInProgress = false;
         chunksNeedingReprocess.Clear();
+        chunksWithLightRecalculated.Clear();
         cpuMeshingJobs.DrainPendingWorkItems();
         ClearPendingCpuMeshingQueue();
 
@@ -437,18 +443,26 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     private void QueueNewChunks(HashSet<int> visibleChunks)
     {
-        var newChunks = visibleChunks.Except(activeChunks.Keys).ToList();
+        // Performance optimization: Use reusable list instead of LINQ .Except().ToList()
+        reusableChunkList.Clear();
+        foreach (var chunkIdx in visibleChunks)
+        {
+            if (!activeChunks.ContainsKey(chunkIdx))
+            {
+                reusableChunkList.Add(chunkIdx);
+            }
+        }
 
-        if (newChunks.Count == 0)
+        if (reusableChunkList.Count == 0)
             return;
 
-        newChunks.Sort((a, b) => CalculatePriority(a).CompareTo(CalculatePriority(b)));
+        reusableChunkList.Sort((a, b) => CalculatePriority(a).CompareTo(CalculatePriority(b)));
 
         // Choose which batch to add to: current if not processing, pending otherwise
         var targetBatch = batchProcessingInProgress ? pendingStreamingBatch : currentStreamingBatch;
 
         var addedCount = 0;
-        foreach (var chunkIdx in newChunks)
+        foreach (var chunkIdx in reusableChunkList)
         {
             if (!EnsureRetentionCapacity(visibleChunks))
                 break;
@@ -483,7 +497,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         if (addedCount > 0)
         {
-            Log.Info($"ChunkStreamingManager: Queued {addedCount} new chunks (of {newChunks.Count} visible)");
+            Log.Info($"ChunkStreamingManager: Queued {addedCount} new chunks (of {reusableChunkList.Count} candidates)");
         }
     }
 
@@ -612,10 +626,17 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         // All remaining chunks have terrain - process them
-        var toProcess = currentStreamingBatch.Where(idx =>
-            activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain).ToList();
+        // Performance optimization: Use reusable list instead of LINQ .Where().ToList()
+        reusableChunkList2.Clear();
+        foreach (var idx in currentStreamingBatch)
+        {
+            if (activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain)
+            {
+                reusableChunkList2.Add(idx);
+            }
+        }
 
-        if (toProcess.Count == 0)
+        if (reusableChunkList2.Count == 0)
         {
             // All chunks were either processed already or unloaded
             currentStreamingBatch.Clear();
@@ -634,7 +655,7 @@ public sealed class ChunkStreamingManager : IDisposable
 
         // Mark cardinal neighbors for reprocess now that we have terrain
         var neighborsToReprocess = new HashSet<int>();
-        foreach (var chunkIdx in toProcess)
+        foreach (var chunkIdx in reusableChunkList2)
         {
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
@@ -668,12 +689,12 @@ public sealed class ChunkStreamingManager : IDisposable
             {
                 desc.State = TerrainChunkState.HasTerrain;
                 activeChunks[neighborIdx] = desc;
-                toProcess.Add(neighborIdx);
+                reusableChunkList2.Add(neighborIdx);
             }
         }
 
         // Queue all for meshing (light propagation happens on background thread)
-        foreach (var chunkIdx in toProcess)
+        foreach (var chunkIdx in reusableChunkList2)
         {
             if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
             {
@@ -683,7 +704,7 @@ public sealed class ChunkStreamingManager : IDisposable
             }
         }
 
-        Log.Info($"ChunkStreamingManager: Processing batch of {toProcess.Count} chunks (new={currentStreamingBatch.Count}, neighbors={neighborsToReprocess.Count})");
+        Log.Info($"ChunkStreamingManager: Processing batch of {reusableChunkList2.Count} chunks (new={currentStreamingBatch.Count}, neighbors={neighborsToReprocess.Count})");
 
         // Clear batch tracking
         currentStreamingBatch.Clear();
@@ -708,27 +729,39 @@ public sealed class ChunkStreamingManager : IDisposable
         if (chunksNeedingReprocess.Count == 0)
             return;
 
-        var toProcess = chunksNeedingReprocess.Where(idx =>
-            activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain).ToList();
+        // Performance optimization: Use reusable list instead of LINQ .Where().ToList()
+        reusableChunkList.Clear();
+        foreach (var idx in chunksNeedingReprocess)
+        {
+            if (activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain)
+            {
+                reusableChunkList.Add(idx);
+            }
+        }
 
-        if (toProcess.Count == 0)
+        if (reusableChunkList.Count == 0)
             return;
 
-        // Queue for meshing immediately (light propagation happens on background thread)
-        foreach (var chunkIdx in toProcess)
+        // Queue for meshing immediately
+        foreach (var chunkIdx in reusableChunkList)
         {
             if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
             {
                 desc.State = TerrainChunkState.Processing;
                 activeChunks[chunkIdx] = desc;
-                ScheduleCpuMeshing(chunkIdx, propagateLight: true);
+                
+                // If light was already recalculated for this chunk (e.g., from RecalculateLightingAroundBlock),
+                // don't re-propagate as that would undo the precise calculation
+                var skipLightPropagation = chunksWithLightRecalculated.Remove(chunkIdx);
+                ScheduleCpuMeshing(chunkIdx, propagateLight: !skipLightPropagation);
+                
                 chunksNeedingReprocess.Remove(chunkIdx);
             }
         }
 
-        if (toProcess.Count > 0)
+        if (reusableChunkList.Count > 0)
         {
-            Log.Info($"ChunkStreamingManager: Immediate reprocess of {toProcess.Count} chunks (block edits)");
+            Log.Info($"ChunkStreamingManager: Immediate reprocess of {reusableChunkList.Count} chunks (block edits)");
         }
     }
 
@@ -1569,7 +1602,7 @@ public sealed class ChunkStreamingManager : IDisposable
         var newIsOpaque = blockId.IsOpaque();
         var affectsLight = oldLightValue > 0 || newLightValue > 0 || (oldIsOpaque != newIsOpaque);
         
-        // Placing an opaque block where there was light (sky or block) - need to use light removal algorithm
+        // Placing an opaque block where there was light (sky or block) - need full recalculation
         var isBlockingLight = !oldIsOpaque && newIsOpaque && (oldSkyLight > 0 || oldBlockLight > 0);
 
         // If removing a light source, use the cross-chunk light removal algorithm
@@ -1591,37 +1624,23 @@ public sealed class ChunkStreamingManager : IDisposable
         }
         else if (isBlockingLight && chunkData != null)
         {
-            // Placing an opaque block that blocks existing light - use light removal algorithm
-            // First update the block in the cache
+            // Placing an opaque block that blocks existing light
+            // Use comprehensive recalculation: find all light sources in radius 15, clear, and re-propagate
             chunkData.SetBlock(localX, localY, localZ, blockId);
             
-            lightAffectedChunks = [];
+            lightAffectedChunks = LightingCalculator.RecalculateLightingAroundBlock(
+                chunkIdx,
+                localX, localY, localZ,
+                idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+            );
             
-            // Remove sky light that was flowing through this position
-            if (oldSkyLight > 0)
+            // Mark these chunks as having light already recalculated - don't re-propagate during meshing
+            foreach (var affectedIdx in lightAffectedChunks)
             {
-                var skyAffected = LightingCalculator.RemoveSkyLight(
-                    chunkIdx,
-                    localX, localY, localZ,
-                    oldSkyLight,
-                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
-                );
-                lightAffectedChunks.UnionWith(skyAffected);
-                Log.Info($"Sky light removal affected {skyAffected.Count} chunks");
+                chunksWithLightRecalculated.Add(affectedIdx);
             }
             
-            // Remove block light that was flowing through this position (if any)
-            if (oldBlockLight > 0)
-            {
-                var blockAffected = LightingCalculator.RemoveBlockLight(
-                    chunkIdx,
-                    localX, localY, localZ,
-                    oldBlockLight,
-                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
-                );
-                lightAffectedChunks.UnionWith(blockAffected);
-                Log.Info($"Block light at position removal affected {blockAffected.Count} chunks");
-            }
+            Log.Info($"Light recalculation around placed block affected {lightAffectedChunks.Count} chunks");
         }
         else if (chunkData != null)
         {

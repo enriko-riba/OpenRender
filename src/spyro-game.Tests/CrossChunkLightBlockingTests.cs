@@ -399,7 +399,149 @@ public class CrossChunkLightBlockingTests
         Assert.Equal(0, rightBoundaryLightUpperAfter);
     }
 
+    /// <summary>
+    /// Torch is in LEFT (neighbor) chunk. Player is in RIGHT (current) chunk.
+    /// Player places a block at RIGHT chunk x=0 boundary to seal the opening.
+    /// This tests the exact scenario from the bug report - blocking light from neighbor chunk
+    /// by placing a block at the boundary of your current chunk.
+    /// Light near the block may be HIGHER than at the block position itself (closer to torch).
+    /// </summary>
+    [Fact]
+    public void TorchInNeighborChunk_BlockAtCurrentChunkBoundary_CurrentChunkBecomesDark()
+    {
+        // Arrange
+        var leftChunkIdx = GetChunkIndex(TestChunkX - 1, TestChunkZ);  // Neighbor with torch
+        var rightChunkIdx = GetChunkIndex(TestChunkX, TestChunkZ);     // Current chunk (player is here)
+
+        var leftChunk = new ChunkData { ChunkIndex = leftChunkIdx };
+        var rightChunk = new ChunkData { ChunkIndex = rightChunkIdx };
+
+        // Fill both chunks with stone
+        FillWithStone(leftChunk, 60);
+        FillWithStone(rightChunk, 60);
+
+        // Create horizontal tunnel in both chunks (2 blocks high at z=8)
+        CreateHorizontalTunnel(leftChunk, y: 50, z: 8);
+        CreateHorizontalTunnel(rightChunk, y: 50, z: 8);
+
+        // Place torch in LEFT (neighbor) chunk - close to boundary so light is strong there
+        PlaceTorch(leftChunk, 14, 50, 8);  // Torch at x=14, one block from boundary
+
+        // Calculate initial lighting
+        LightingCalculator.CalculateLighting(leftChunk);
+        LightingCalculator.CalculateLighting(rightChunk);
+        LightingCalculator.PropagateNeighborLight(leftChunk, rightChunk, 1, 0);
+
+        // Verify light reaches right chunk (current chunk)
+        var rightChunkLight = GetBlockLight(rightChunk, 5, 50, 8);
+        Assert.True(rightChunkLight > 0, 
+            $"Right chunk should have torch light before blocking. Got: {rightChunkLight}");
+
+        // Record light values at right chunk boundary (x=0) - this is where we'll place blocks
+        // These values may be LOWER than the light in left chunk at x=15 (closer to torch)
+        var oldLightAtBoundaryLower = GetBlockLight(rightChunk, 0, 50, 8);
+        var oldLightAtBoundaryUpper = GetBlockLight(rightChunk, 0, 51, 8);
+        
+        // Debug: Print light values to understand the gradient
+        var leftBoundaryLight = GetBlockLight(leftChunk, 15, 50, 8);
+        
+        Assert.True(oldLightAtBoundaryLower > 0 || oldLightAtBoundaryUpper > 0,
+            $"Should have some light at boundary. Lower:{oldLightAtBoundaryLower} Upper:{oldLightAtBoundaryUpper} LeftBoundary:{leftBoundaryLight}");
+
+        // Act - Place blocks in RIGHT (current) chunk at boundary (x=0)
+        rightChunk.SetBlock(0, 50, 8, BlockId.Stone);
+        rightChunk.SetBlock(0, 51, 8, BlockId.Stone);
+
+        ChunkDataProvider getChunk = idx => {
+            if (idx == leftChunkIdx) return leftChunk;
+            if (idx == rightChunkIdx) return rightChunk;
+            return null;
+        };
+
+        // Remove block light starting from the blocked positions in RIGHT chunk
+        if (oldLightAtBoundaryLower > 0)
+        {
+            LightingCalculator.RemoveBlockLight(rightChunkIdx, 0, 50, 8, oldLightAtBoundaryLower, getChunk);
+        }
+        if (oldLightAtBoundaryUpper > 0)
+        {
+            LightingCalculator.RemoveBlockLight(rightChunkIdx, 0, 51, 8, oldLightAtBoundaryUpper, getChunk);
+        }
+
+        // Assert - Right chunk interior should now be dark
+        var rightChunkLightAfter = GetBlockLight(rightChunk, 5, 50, 8);
+        var rightChunkLightAtBoundaryAfter = GetBlockLight(rightChunk, 1, 50, 8);  // Just past the block
+        
+        Assert.Equal(0, rightChunkLightAfter);
+        Assert.Equal(0, rightChunkLightAtBoundaryAfter);
+    }
+
     // Helper methods
+
+    /// <summary>
+    /// Test RecalculateLightingAroundBlock - the comprehensive recalculation method.
+    /// Torch in neighbor chunk, place block at boundary of current chunk.
+    /// Uses the full recalculation approach that finds all light sources in radius.
+    /// </summary>
+    [Fact]
+    public void RecalculateLightingAroundBlock_TorchInNeighborChunk_CurrentChunkBecomesDark()
+    {
+        // Arrange
+        var leftChunkIdx = GetChunkIndex(TestChunkX - 1, TestChunkZ);  // Neighbor with torch
+        var rightChunkIdx = GetChunkIndex(TestChunkX, TestChunkZ);     // Current chunk (player is here)
+
+        var leftChunk = new ChunkData { ChunkIndex = leftChunkIdx };
+        var rightChunk = new ChunkData { ChunkIndex = rightChunkIdx };
+
+        // Fill both chunks with stone
+        FillWithStone(leftChunk, 60);
+        FillWithStone(rightChunk, 60);
+
+        // Create horizontal tunnel in both chunks (2 blocks high at z=8)
+        CreateHorizontalTunnel(leftChunk, y: 50, z: 8);
+        CreateHorizontalTunnel(rightChunk, y: 50, z: 8);
+
+        // Place torch in LEFT (neighbor) chunk - close to boundary
+        PlaceTorch(leftChunk, 14, 50, 8);
+
+        // Calculate initial lighting
+        LightingCalculator.CalculateLighting(leftChunk);
+        LightingCalculator.CalculateLighting(rightChunk);
+        LightingCalculator.PropagateNeighborLight(leftChunk, rightChunk, 1, 0);
+
+        // Verify light reaches right chunk before blocking
+        var rightChunkLightBefore = GetBlockLight(rightChunk, 5, 50, 8);
+        Assert.True(rightChunkLightBefore > 0, 
+            $"Right chunk should have torch light before blocking. Got: {rightChunkLightBefore}");
+
+        // Act - Place blocks in RIGHT (current) chunk at boundary (x=0) - both tunnel levels
+        rightChunk.SetBlock(0, 50, 8, BlockId.Stone);
+        rightChunk.SetBlock(0, 51, 8, BlockId.Stone);
+
+        ChunkDataProvider getChunk = idx => {
+            if (idx == leftChunkIdx) return leftChunk;
+            if (idx == rightChunkIdx) return rightChunk;
+            return null;
+        };
+
+        // Use the new comprehensive recalculation method
+        var affectedChunks = LightingCalculator.RecalculateLightingAroundBlock(
+            rightChunkIdx,
+            0, 50, 8,  // Block placed at x=0, y=50, z=8
+            getChunk
+        );
+
+        // Assert - Right chunk interior should now be dark
+        var rightChunkLightAfter = GetBlockLight(rightChunk, 5, 50, 8);
+        var rightChunkLightNearBoundary = GetBlockLight(rightChunk, 1, 50, 8);
+        
+        Assert.Equal(0, rightChunkLightAfter);
+        Assert.Equal(0, rightChunkLightNearBoundary);
+        
+        // Both chunks should be in affected set
+        Assert.Contains(rightChunkIdx, affectedChunks);
+        Assert.Contains(leftChunkIdx, affectedChunks);
+    }
 
     private static void FillWithStone(ChunkData chunk, int maxY)
     {
