@@ -32,6 +32,37 @@ public static class LightingCalculator
             return t_lightQueue;
         }
     }
+
+    private static void BuildSkyVisibilityMap(ChunkData chunk, byte[] skyVisibility)
+    {
+        for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+        {
+            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            {
+                var currentLight = MaxLight;
+                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+                {
+                    var index = GetIndex(x, y, z);
+                    var block = chunk.GetBlock(x, y, z);
+
+                    if (block.IsOpaque())
+                    {
+                        currentLight = 0;
+                        skyVisibility[index] = 0;
+                        continue;
+                    }
+
+                    var filter = BlockRegistry.GetProperties(block).LightFilter;
+                    if (filter > 0 && currentLight > 0)
+                    {
+                        currentLight = Math.Max(0, currentLight - filter);
+                    }
+
+                    skyVisibility[index] = (byte)(currentLight > 0 ? 1 : 0);
+                }
+            }
+        }
+    }
     
     // Secondary queue for light removal (stores position + old light value)
     [ThreadStatic]
@@ -72,16 +103,36 @@ public static class LightingCalculator
         }
     }
 
+    [ThreadStatic]
+    private static byte[]? t_skyVisibility;
+
+    private static byte[] RentSkyVisibilityBuffer()
+    {
+        var buffer = t_skyVisibility;
+        if (buffer == null || buffer.Length != VoxelHelper.ChunkVoxelCount)
+        {
+            buffer = new byte[VoxelHelper.ChunkVoxelCount];
+            t_skyVisibility = buffer;
+        }
+        else
+        {
+            Array.Clear(buffer, 0, buffer.Length);
+        }
+
+        return buffer;
+    }
+
     public static void CalculateLighting(ChunkData chunk)
     {
         // 1. Clear Light Data
         Array.Clear(chunk.LightData, 0, chunk.LightData.Length);
 
-        // 2. Initialize Sky Light
-        InitializeSkyLight(chunk);
+        // 2. Initialize Sky Light (track direct-sky visibility)
+        var skyVisibility = RentSkyVisibilityBuffer();
+        InitializeSkyLight(chunk, skyVisibility);
 
-        // 3. Propagate Sky Light
-        PropagateLight(chunk, isSkyLight: true);
+        // 3. Propagate Sky Light (respect visibility map)
+        PropagateLight(chunk, isSkyLight: true, skyVisibility);
 
         // 4. Initialize Block Light (scan for emissive blocks like Torch, Glowstone, Lava)
         InitializeBlockLight(chunk);
@@ -376,7 +427,9 @@ public static class LightingCalculator
         // Phase 3: Propagate sky light within each affected chunk
         foreach (var (chunkIdx, chunkData) in affectedChunks)
         {
-            PropagateLight(chunkData, isSkyLight: true);
+            var skyVisibility = RentSkyVisibilityBuffer();
+            BuildSkyVisibilityMap(chunkData, skyVisibility);
+            PropagateLight(chunkData, isSkyLight: true, skyVisibility);
             modifiedChunks.Add(chunkIdx);
         }
         
@@ -958,7 +1011,9 @@ public static class LightingCalculator
 
         if (changedA)
         {
-            PropagateLight(chunkA, isSkyLight: true);
+            var skyVisibility = RentSkyVisibilityBuffer();
+            BuildSkyVisibilityMap(chunkA, skyVisibility);
+            PropagateLight(chunkA, isSkyLight: true, skyVisibility);
         }
 
         // Pass 2: A -> B
@@ -985,7 +1040,9 @@ public static class LightingCalculator
 
         if (changedB)
         {
-            PropagateLight(chunkB, isSkyLight: true);
+            var skyVisibility = RentSkyVisibilityBuffer();
+            BuildSkyVisibilityMap(chunkB, skyVisibility);
+            PropagateLight(chunkB, isSkyLight: true, skyVisibility);
         }
 
         // Also propagate block light between chunks
@@ -1069,7 +1126,7 @@ public static class LightingCalculator
         return false;
     }
 
-    private static void InitializeSkyLight(ChunkData chunk)
+    private static void InitializeSkyLight(ChunkData chunk, byte[] skyVisibility)
     {
         var queue = LightQueue;
         queue.Clear();
@@ -1099,7 +1156,7 @@ public static class LightingCalculator
                     {
                         // Opaque block completely blocks sky light
                         currentLight = 0;
-                        // Don't set light value for opaque blocks (stays 0)
+                        skyVisibility[index] = 0;
                     }
                     else
                     {
@@ -1109,18 +1166,21 @@ public static class LightingCalculator
                         {
                             currentLight = Math.Max(0, currentLight - filter);
                         }
-                        
+
                         if (currentLight > 0)
                         {
                             SetSkyLight(chunk, index, currentLight);
+                            skyVisibility[index] = 1;
                             
                             // Only queue for BFS propagation if this position might spread light horizontally
-                            // Positions deep underground (below surface - 15) won't have neighbors to spread to
-                            // If surfaceHeight is 0 (possibly uninitialized), queue everything to be safe
                             if (surfaceHeight <= 0 || y >= surfaceHeight - MaxLight)
                             {
                                 queue.Enqueue(PackPos(x, y, z));
                             }
+                        }
+                        else
+                        {
+                            skyVisibility[index] = 0;
                         }
                     }
                 }
@@ -1157,9 +1217,19 @@ public static class LightingCalculator
         }
     }
 
-    public static void PropagateLight(ChunkData chunk, bool isSkyLight)
+    public static void PropagateLight(ChunkData chunk, bool isSkyLight, byte[]? skyVisibility = null)
     {
         var queue = LightQueue;
+
+        if (isSkyLight)
+        {
+            if (skyVisibility == null)
+            {
+                skyVisibility = RentSkyVisibilityBuffer();
+                BuildSkyVisibilityMap(chunk, skyVisibility);
+            }
+        }
+
         while (queue.Count > 0)
         {
             int packedPos = queue.Dequeue();
@@ -1170,17 +1240,30 @@ public static class LightingCalculator
 
             if (currentLight <= 0) continue;
 
+            var horizontalOpenNeighbors = isSkyLight ? CountHorizontalOpenNeighbors(chunk, x, y, z) : 0;
+
             // Check 6 neighbors
-            CheckNeighbor(chunk, x + 1, y, z, currentLight, isSkyLight, queue);
-            CheckNeighbor(chunk, x - 1, y, z, currentLight, isSkyLight, queue);
-            CheckNeighbor(chunk, x, y + 1, z, currentLight, isSkyLight, queue);
-            CheckNeighbor(chunk, x, y - 1, z, currentLight, isSkyLight, queue);
-            CheckNeighbor(chunk, x, y, z + 1, currentLight, isSkyLight, queue);
-            CheckNeighbor(chunk, x, y, z - 1, currentLight, isSkyLight, queue);
+            CheckNeighbor(chunk, x + 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
+            CheckNeighbor(chunk, x - 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
+            CheckNeighbor(chunk, x, y + 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
+            CheckNeighbor(chunk, x, y - 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: true, horizontalOpenNeighbors);
+            CheckNeighbor(chunk, x, y, z + 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
+            CheckNeighbor(chunk, x, y, z - 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
         }
     }
 
-    private static void CheckNeighbor(ChunkData chunk, int x, int y, int z, int currentLight, bool isSkyLight, Queue<int> queue)
+    private static void CheckNeighbor(
+        ChunkData chunk,
+        int x,
+        int y,
+        int z,
+        int currentLight,
+        bool isSkyLight,
+        Queue<int> queue,
+        byte[]? skyVisibility,
+        int sourceIndex,
+        bool isVerticalDown,
+        int horizontalOpenNeighbors)
     {
         if (x < 0 || x >= VoxelHelper.ChunkSideSize ||
             y < 0 || y >= VoxelHelper.ChunkYSize ||
@@ -1199,6 +1282,19 @@ public static class LightingCalculator
         // Decay
         int decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
 
+        if (isSkyLight && skyVisibility != null && !isVerticalDown)
+        {
+            var targetVisible = skyVisibility[index] != 0;
+            var sourceVisible = skyVisibility[sourceIndex] != 0;
+            if (!targetVisible && !sourceVisible && horizontalOpenNeighbors >= 4)
+            {
+                if (!HasDirectSkyNeighbor(chunk, x, y, z, skyVisibility))
+                {
+                    decay += 4; // Open interior without direct sky nearby: decay faster
+                }
+            }
+        }
+
         int newLight = currentLight - decay;
 
         if (newLight > neighborLight)
@@ -1210,6 +1306,56 @@ public static class LightingCalculator
 
             queue.Enqueue(PackPos(x, y, z));
         }
+    }
+
+    private static int CountHorizontalOpenNeighbors(ChunkData chunk, int x, int y, int z)
+    {
+        var count = 0;
+        if (IsTransparent(chunk, x + 1, y, z)) count++;
+        if (IsTransparent(chunk, x - 1, y, z)) count++;
+        if (IsTransparent(chunk, x, y, z + 1)) count++;
+        if (IsTransparent(chunk, x, y, z - 1)) count++;
+        return count;
+    }
+    
+    private static bool IsTransparent(ChunkData chunk, int x, int y, int z)
+    {
+        if (x < 0 || x >= VoxelHelper.ChunkSideSize ||
+            y < 0 || y >= VoxelHelper.ChunkYSize ||
+            z < 0 || z >= VoxelHelper.ChunkSideSize)
+        {
+            return false;
+        }
+
+        var block = chunk.GetBlock(x, y, z);
+        return !block.IsOpaque();
+    }
+
+    private static bool HasDirectSkyNeighbor(ChunkData chunk, int x, int y, int z, byte[] skyVisibility)
+    {
+        static bool HasVisible(ChunkData chunkData, int nx, int ny, int nz, byte[] visibility)
+        {
+            if (nx < 0 || nx >= VoxelHelper.ChunkSideSize ||
+                ny < 0 || ny >= VoxelHelper.ChunkYSize ||
+                nz < 0 || nz >= VoxelHelper.ChunkSideSize)
+            {
+                return false;
+            }
+
+            var neighborIndex = GetIndex(nx, ny, nz);
+            if (visibility[neighborIndex] == 0)
+            {
+                return false;
+            }
+
+            // Only treat it as an interior shaft if the neighbor is still constrained horizontally.
+            return CountHorizontalOpenNeighbors(chunkData, nx, ny, nz) <= 2;
+        }
+
+        return HasVisible(chunk, x + 1, y, z, skyVisibility)
+               || HasVisible(chunk, x - 1, y, z, skyVisibility)
+               || HasVisible(chunk, x, y, z + 1, skyVisibility)
+               || HasVisible(chunk, x, y, z - 1, skyVisibility);
     }
 
     private static int GetIndex(int x, int y, int z)

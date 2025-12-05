@@ -149,4 +149,35 @@ public class SkyLightTests
         Assert.True(GetSkyLight(chunk, 8, 99, 5) > 0, "Should have some light 5 blocks into cave");
         Assert.True(GetSkyLight(chunk, 8, 99, 5) < 15, "Light should decay horizontally into cave");
     }
+
+    [Fact]
+    public void SkyLight_SealedRoomInterior_RemainsDark()
+    {
+        // Arrange - fully sealed stone room
+        var chunk = CreateSealedRoom(4, 195, 4, 12, 205, 12);
+
+        // Act
+        LightingCalculator.CalculateLighting(chunk);
+
+        // Assert - Center stays dark because roof blocks sky light
+        Assert.Equal(0, GetSkyLight(chunk, 8, 200, 8));
+        Assert.Equal(0, GetSkyLight(chunk, 9, 200, 9));
+    }
+
+    [Fact]
+    public void SkyLight_Doorway_AllowsLimitedInteriorLight()
+    {
+        // Arrange - sealed room with a doorway carved into one wall
+        var chunk = CreateSealedRoom(4, 195, 4, 12, 205, 12);
+        chunk.SetBlock(4, 200, 8, BlockId.Air);
+        chunk.SetBlock(4, 201, 8, BlockId.Air);
+
+        // Act
+        LightingCalculator.CalculateLighting(chunk);
+
+        // Assert - Light enters near doorway but decays quickly deeper inside
+        Assert.True(GetSkyLight(chunk, 5, 200, 8) > 0);
+        Assert.Equal(0, GetSkyLight(chunk, 8, 200, 8));
+        Assert.Equal(0, GetSkyLight(chunk, 9, 200, 9));
+    }
 }
