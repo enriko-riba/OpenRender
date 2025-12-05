@@ -69,6 +69,7 @@ in vec3 vViewDir;
 flat in uint vBlockDescriptor;  // BlockId (lower 10 bits = unique ID)
 flat in uint vBiomeId;          // CPU-computed biome ID (for debug display only)
 flat in uint vIsEmissive;       // Emissive flag (1 = full brightness)
+flat in uint vFaceId;           // Face ID (0-5 for cube faces, 6 for cross-billboard)
 in float vSkyLight;
 in float vBlockLight;
 
@@ -84,14 +85,16 @@ layout(location = 0) out vec4 FragColor;
 
 // Sample block texture using the 150×50 atlas format
 // Face determines which 50-pixel column to sample from
-vec4 sampleBlockTexture(uint blockId, vec2 localUV, vec3 normal) {
+vec4 sampleBlockTexture(uint blockId, vec2 localUV, vec3 normal, uint face) {
     // Determine face type from normal
     // Top (+Y): use first 50 pixels
     // Bottom (-Y): use middle 50 pixels  
     // Sides (±X, ±Z): use last 50 pixels
     
     float uOffset;
-    if (normal.y > 0.5) {
+    if (face == 6u) {
+        uOffset = ATLAS_SIDE_U_MIN;
+    } else if (normal.y > 0.5) {
         // Top face
         uOffset = ATLAS_TOP_U_MIN;
     } else if (normal.y < -0.5) {
@@ -198,8 +201,11 @@ void main() {
     if (isWater && isTopFace) {
         baseColor = sampleWaterTexture(blockId, vTexCoord, N, uTime);
     } else {
-        baseColor = sampleBlockTexture(blockId, vTexCoord, N);
+        baseColor = sampleBlockTexture(blockId, vTexCoord, N, vFaceId);
     }
+
+    // Alpha test: Discard fully transparent pixels (fixes artifacts for cutout blocks in Opaque queue)
+    if (baseColor.a < 0.05) discard;
 
     // Procedural Water Normal
     vec3 waterNormal = N;

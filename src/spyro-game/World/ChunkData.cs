@@ -80,6 +80,18 @@ public class ChunkData
         byte paletteIndex = GetOrAddPaletteEntry(block);
         int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
         VoxelData[idx] = paletteIndex;
+
+        // Update surface height if we placed a block above the current surface
+        if (!block.IsAir())
+        {
+            int colIdx = z * VoxelHelper.ChunkSideSize + x;
+            if (y > SurfaceHeights[colIdx])
+            {
+                SurfaceHeights[colIdx] = y;
+            }
+        }
+        // Note: If we remove a block (set to Air), we don't strictly need to lower SurfaceHeights immediately.
+        // Leaving it high is safe for meshing (just iterates a bit of air), whereas scanning down is expensive.
     }
 
     /// <summary>

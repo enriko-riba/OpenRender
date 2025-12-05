@@ -1072,7 +1072,22 @@ internal sealed class CpuTerrainGenerator
         BiomeDefinition? biomeDef,
         float slope)
     {
-        if (y > height)
+        // Optimization: If we are significantly above the base height + overhang range,
+        // the density will definitely be negative (air).
+        // This avoids density calculations for the empty sky.
+        if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
+        {
+            return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
+        }
+
+        // 1. Calculate 3D Density
+        // This replaces the simple "y > height" check with a full density check.
+        // It allows for overhangs, arches, and floating islands where the 3D noise is strong enough.
+        var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
+
+        // 2. Density Check
+        // If density is negative, it's air (or water).
+        if (density < 0f)
         {
             return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
         }
@@ -1080,15 +1095,8 @@ internal sealed class CpuTerrainGenerator
         var tC = continentalness01;
         var isLand = tC >= terrainParams.OceanThreshold;
 
-        if (isLand && tC > terrainParams.MountainThreshold && y > height - 50 && y > VoxelHelper.WaterLevel + 20)
-        {
-            var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
-            if (density < 0f)
-            {
-                return BlockId.Air;
-            }
-        }
-
+        // 3. Cave Systems (Cheese & Spaghetti)
+        // Only apply caves if we have solid terrain
         if (isLand && y > 0)
         {
             var depth = height - y;
@@ -1115,6 +1123,8 @@ internal sealed class CpuTerrainGenerator
         var isUnderwater = y <= VoxelHelper.WaterLevel && (isOceanBiome || height < VoxelHelper.WaterLevel);
 
         // Surface block - determined entirely by biome
+        // Note: With 3D terrain, 'height' is the 2D surface. Floating islands (y > height)
+        // will fall through to DeepBlock (Stone), which is acceptable for now.
         if (y == height)
         {
             if (isUnderwater)
@@ -1126,7 +1136,7 @@ internal sealed class CpuTerrainGenerator
 
         // Subsurface blocks - use biome's subsurface block
         var depthBelowSurface = height - y;
-        if (depthBelowSurface <= terrainParams.SubsurfaceDepth)
+        if (depthBelowSurface <= terrainParams.SubsurfaceDepth && depthBelowSurface >= 0)
         {
             if (isUnderwater)
             {

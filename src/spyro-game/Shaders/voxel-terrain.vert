@@ -3,8 +3,8 @@
 #version 460
 #extension GL_ARB_shader_draw_parameters : require
 
-const vec3 FACE_NORMALS[6] = vec3[](
-    vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1)
+const vec3 FACE_NORMALS[7] = vec3[](
+    vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0), vec3(0,0,1), vec3(0,0,-1), vec3(0,1,0)
 );
 const uint FACE_POS_X=0u, FACE_NEG_X=1u, FACE_POS_Y=2u, FACE_NEG_Y=3u, FACE_POS_Z=4u, FACE_NEG_Z=5u;
 
@@ -16,6 +16,7 @@ layout(location=0) in uvec2 aPackedData;
 
 out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec3 vViewDir; 
 flat out uint vBlockDescriptor; flat out uint vBiomeId; flat out uint vIsEmissive;
+flat out uint vFaceId;
 out float vSkyLight; out float vBlockLight;
 
 vec2 getBaseUV(uint c){
@@ -46,6 +47,7 @@ void main(){
     uint lightByte = (p2 >> 10) & 0xFFu;
     vBiomeId = (p2 >> 18) & 0xFFu;
     vIsEmissive = (p2 >> 26) & 1u;
+    vFaceId = face;
     
     vSkyLight = float(lightByte & 0xF) / 15.0;
     vBlockLight = float((lightByte >> 4) & 0xF) / 15.0;

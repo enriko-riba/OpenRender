@@ -123,9 +123,9 @@ public sealed class TerrainMeshBufferManager : IDisposable
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indexBuffer, -1, "per_chunk_indices_ibo");
 
         // Multi-draw indirect command buffer
-        // 2 commands per slot (Opaque + Transparent)
+        // 3 commands per slot (Opaque + Water + Transparent)
         GL.CreateBuffers(1, out indirectDrawBuffer);
-        var indirectSize = (nint)maxChunks * 2 * 5 * sizeof(uint);
+        var indirectSize = (nint)maxChunks * 3 * 5 * sizeof(uint);
         GL.NamedBufferStorage(indirectDrawBuffer, indirectSize, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indirectDrawBuffer, -1, "indirect_draw_commands");
@@ -183,8 +183,8 @@ public sealed class TerrainMeshBufferManager : IDisposable
         // Index buffer: worst-case indices * sizeof(uint)
         total += (long)maxIndices * sizeof(uint);
         
-        // Indirect draw buffer: max chunks * 5 uints per command
-        total += (long)maxChunks * 5 * sizeof(uint);
+        // Indirect draw buffer: max chunks * 3 commands * 5 uints per command
+        total += (long)maxChunks * 3 * 5 * sizeof(uint);
 
         // Chunk Info buffer: max chunks * sizeof(int)
         total += (long)maxChunks * sizeof(int);
@@ -614,14 +614,14 @@ public sealed class TerrainMeshBufferManager : IDisposable
     /// </summary>
     public void ResizeIndirectDrawBuffer(uint newCommandCount)
     {
-        // Each slot now holds 2 commands (Opaque + Transparent)
-        var newSize = (int)(newCommandCount * 2 * 5 * sizeof(uint)); // 5 uints per command * 2
-        var oldSize = maxChunks * 2 * 5 * sizeof(uint);
+        // Each slot now holds 3 commands (Opaque + Water + Transparent)
+        var newSize = (int)(newCommandCount * 3 * 5 * sizeof(uint)); // 5 uints per command * 3
+        var oldSize = maxChunks * 3 * 5 * sizeof(uint);
 
         if (newSize <= oldSize)
             return; // Already big enough
 
-        Log.Info($"Resizing indirect draw buffer from {maxChunks} to {newCommandCount} slots (x2 commands)");
+        Log.Info($"Resizing indirect draw buffer from {maxChunks} to {newCommandCount} slots (x3 commands)");
 
         // Create new buffer
         GL.CreateBuffers(1, out uint newBuffer);
@@ -690,9 +690,9 @@ public sealed class TerrainMeshBufferManager : IDisposable
         freeCommandSlots.Enqueue(slot);
 
         // Zero out the command in the buffer so it doesn't draw anything
-        // Command is 5 uints = 20 bytes. We have 2 commands per slot = 40 bytes.
-        var zeros = new uint[10]; // all zero
-        GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 40), 40, zeros);
+        // Command is 5 uints = 20 bytes. We have 3 commands per slot = 60 bytes.
+        var zeros = new uint[15]; // all zero
+        GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 60), 60, zeros);
 
         // Mark chunk info as invalid (-1)
         var invalid = -1;

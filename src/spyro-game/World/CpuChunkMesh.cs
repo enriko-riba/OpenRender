@@ -13,13 +13,14 @@ public sealed record CpuChunkMesh(
     uint[] IndexData,
     int VisibleFaceCount,
     int TranslucentFaceCount,
+    int WaterFaceCount,
     long CacheVersion,
     long EnqueueId,
     long BuildId)
 {
     public int VertexCount => VertexData.Length / 2;
     public int IndexCount => IndexData.Length;
-    public int OpaqueFaceCount => Math.Max(0, VisibleFaceCount - TranslucentFaceCount);
+    public int OpaqueFaceCount => Math.Max(0, VisibleFaceCount - TranslucentFaceCount - WaterFaceCount);
 
     public void Deconstruct(out int chunkIndex, out byte placeholderMask, out uint[] vertices, out uint[] indices, out int visibleFaces)
     {

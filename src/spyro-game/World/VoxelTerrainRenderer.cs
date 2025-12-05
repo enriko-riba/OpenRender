@@ -284,6 +284,10 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.CullFace(TriangleFace.Back);
         GL.FrontFace(FrontFaceDirection.Ccw);
 
+        // Enable Depth Test for opaque terrain rendering
+        GL.Enable(EnableCap.DepthTest);
+        GL.DepthFunc(DepthFunction.Less);
+
         var shader = Material.Shader;
 
         // DEBUG: Check if shader is valid
@@ -340,17 +344,17 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         }
         
         // 1. Draw Opaque (Command 1 of each pair)
-        // Stride = 2 * sizeof(DrawElementsIndirectCommand) = 2 * 5 * 4 = 40 bytes
+        // Stride = 3 * sizeof(DrawElementsIndirectCommand) = 3 * 5 * 4 = 60 bytes
         // Offset = 0
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
             IntPtr.Zero,
             drawCount,
-            40 // Stride
+            60 // Stride
         );
 
-        // 2. Draw Transparent (Command 2 of each pair)
+        // 2. Draw Water (Command 2 of each pair)
         // Enable blending and disable depth write (optional, but good for water)
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -361,14 +365,26 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.Enable(EnableCap.PolygonOffsetFill);
         GL.PolygonOffset(-0.5f, -1.0f);
 
-        // Stride = 40 bytes
+        // Stride = 60 bytes
         // Offset = 20 bytes (start of second command)
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
             (IntPtr)20, // Offset to second command
             drawCount,
-            40 // Stride
+            60 // Stride
+        );
+
+        // 3. Draw Translucent (Command 3 of each pair)
+        // Keep same state as Water (Blend, No Depth Write, No Cull)
+        // Stride = 60 bytes
+        // Offset = 40 bytes (start of third command)
+        GL.MultiDrawElementsIndirect(
+            PrimitiveType.Triangles,
+            DrawElementsType.UnsignedInt,
+            (IntPtr)40, // Offset to third command
+            drawCount,
+            60 // Stride
         );
 
         // Restore state

@@ -26,6 +26,7 @@ internal static class ChunkMeshBuilder
     [ThreadStatic] private static List<uint>? t_opaqueIndices;
     [ThreadStatic] private static List<uint>? t_translucentVertices;
     [ThreadStatic] private static List<uint>? t_translucentIndices;
+    [ThreadStatic] private static List<uint>? t_waterIndices;
     
     // Performance optimization: Thread-local pooled dictionary for neighbor chunk cache
     [ThreadStatic] private static Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>? t_neighborCache;
@@ -53,20 +54,22 @@ internal static class ChunkMeshBuilder
     /// <summary>
     /// Get or create thread-local pooled lists for mesh building.
     /// </summary>
-    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx) GetPooledLists()
+    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx, List<uint> waterIdx) GetPooledLists()
     {
         t_opaqueVertices ??= new List<uint>(16384);
         t_opaqueIndices ??= new List<uint>(16384);
         t_translucentVertices ??= new List<uint>(2048);
         t_translucentIndices ??= new List<uint>(2048);
+        t_waterIndices ??= new List<uint>(2048);
 
         // Clear for reuse
         t_opaqueVertices.Clear();
         t_opaqueIndices.Clear();
         t_translucentVertices.Clear();
         t_translucentIndices.Clear();
+        t_waterIndices.Clear();
 
-        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices);
+        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices);
     }
 
     public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out CpuChunkMesh mesh)
@@ -91,7 +94,7 @@ internal static class ChunkMeshBuilder
         }
 
         // Performance optimization: Use thread-local pooled lists instead of allocating new ones
-        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices) = GetPooledLists();
+        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
 
         // Optimization: Iterate columns (X, Z) first, then Y up to surface height
@@ -122,8 +125,11 @@ internal static class ChunkMeshBuilder
 
                     var isTranslucent = IsTranslucent(block);
                     var isLiquid = block.IsLiquid();
+                    var isWater = block.IsWater();
+                    
                     var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
-                    var targetIndexList = isTranslucent ? translucentIndices : opaqueIndices;
+                    // Split translucent indices into Water and Other (Translucent)
+                    var targetIndexList = isTranslucent ? (isWater ? waterIndices : translucentIndices) : opaqueIndices;
 
                     // Check if this block uses a special render shape
                     var renderShape = BlockRegistry.GetRenderShape(block);
@@ -178,14 +184,27 @@ internal static class ChunkMeshBuilder
         opaqueVertices.CopyTo(mergedVertices, 0);
         translucentVertices.CopyTo(mergedVertices, opaqueVertices.Count);
 
-        var mergedIndices = new uint[opaqueIndices.Count + translucentIndices.Count];
+        var mergedIndices = new uint[opaqueIndices.Count + waterIndices.Count + translucentIndices.Count];
         opaqueIndices.CopyTo(mergedIndices, 0);
+        
+        var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
+        
+        // Append Water indices (offset by opaque vertex count)
+        if (waterIndices.Count > 0)
+        {
+            for (var i = 0; i < waterIndices.Count; i++)
+            {
+                mergedIndices[opaqueIndices.Count + i] = waterIndices[i] + (uint)vertexOffset;
+            }
+        }
+        
+        // Append Translucent indices (offset by opaque vertex count)
         if (translucentIndices.Count > 0)
         {
-            var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
+            var waterOffset = opaqueIndices.Count + waterIndices.Count;
             for (var i = 0; i < translucentIndices.Count; i++)
             {
-                mergedIndices[opaqueIndices.Count + i] = translucentIndices[i] + (uint)vertexOffset;
+                mergedIndices[waterOffset + i] = translucentIndices[i] + (uint)vertexOffset;
             }
         }
 
@@ -194,13 +213,21 @@ internal static class ChunkMeshBuilder
             Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
         }
 
+        // Calculate face counts for CpuChunkMesh
+        // Note: Indices are 6 per face (triangles)
+        var waterFaceCount = waterIndices.Count / 6;
+        var translucentFaceCount = translucentIndices.Count / 6;
+        // Total translucent faces tracked by sampler includes both water and other translucent
+        // But we need to pass them separately to CpuChunkMesh
+        
         mesh = new CpuChunkMesh(
             workItem.ChunkIndex,
             workItem.PlaceholderMask,
             mergedVertices,
             mergedIndices,
             faceCount,
-            sampler.TranslucentFaceCount,
+            translucentFaceCount, // This is now just the non-water translucent faces
+            waterFaceCount,       // New parameter
             chunkView.Version,
             workItem.EnqueueId,
             workItem.BuildId);
@@ -214,8 +241,8 @@ internal static class ChunkMeshBuilder
 
     /// <summary>
     /// Checks if a block should be rendered in the translucent pass.
-    /// This includes blocks with the Translucent flag AND blocks using AlphaTest/Blend rendering.
-    /// AlphaTest blocks (torches, leaves, flowers) need translucent pass for proper depth sorting.
+    /// This includes blocks with the Translucent flag AND blocks using Blend rendering.
+    /// AlphaTest blocks (torches, leaves, flowers) go to OPAQUE queue and use discard in shader.
     /// </summary>
     private static bool IsTranslucent(BlockId block)
     {
@@ -223,9 +250,10 @@ internal static class ChunkMeshBuilder
         if (block.IsTranslucent())
             return true;
         
-        // Also check render method - AlphaTest and Blend need translucent pass
+        // Only Blend needs translucent pass (Water, Stained Glass).
+        // AlphaTest (Torches, Leaves) should be Opaque to write depth.
         var renderMethod = BlockRegistry.GetProperties(block).Render;
-        return renderMethod is RenderMethod.AlphaTest or RenderMethod.Blend;
+        return renderMethod is RenderMethod.Blend;
     }
 
     private static bool ShouldEmitFace(BlockId block, BlockId neighborBlock)
@@ -347,7 +375,7 @@ internal static class ChunkMeshBuilder
         var light = sampler.SamplePackedLight(x, y, z);
         
         // Debug: Log light value for torch at specific position
-        if (block == BlockId.Torch && VerboseBuilderLogging)
+        if (block.IsEmissive() && VerboseBuilderLogging)
         {
             Log.Debug($"AppendCrossBillboard: Torch at ({x},{y},{z}) chunk={sampler.GetChunkIndex()} rawLight=0x{light:X8} sky={(light & 0xF)} block={(light >> 4) & 0xF}");
         }
@@ -357,8 +385,8 @@ internal static class ChunkMeshBuilder
             // Fallback: sample above the block
             light = sampler.SamplePackedLight(x, y + 1, z);
         }
-        // Convert packed light to the same format used by faces
-        var packedLight = (light != 0xFFFFFFFFu) ? (uint)Math.Max((int)(light & 0xF), (int)((light >> 4) & 0xF)) : 15u;
+        // Use the packed light directly (preserve both sky and block light channels)
+        var packedLight = (light != 0xFFFFFFFFu) ? light : 0xFFu;
 
         // Cross-billboard uses face index 6 (special marker) to indicate it's a billboard
         const uint billboardFace = 6u;

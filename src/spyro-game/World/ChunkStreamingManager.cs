@@ -1009,8 +1009,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         var faceCount = Math.Max(0, mesh.VisibleFaceCount);
-        var translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, faceCount);
-        var opaqueFaceCount = Math.Max(0, faceCount - translucentFaceCount);
+        var waterFaceCount = Math.Clamp(mesh.WaterFaceCount, 0, faceCount);
+        var translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, faceCount - waterFaceCount);
+        var opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount);
         var vertexCount = faceCount * 4;
         var indexCount = faceCount * 6;
 
@@ -1043,9 +1044,9 @@ public sealed class ChunkStreamingManager : IDisposable
         UploadCpuMeshData(mesh, vertexOffset, vertexCount, indexOffset, indexCount);
 
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : meshBuffers.AllocateCommandSlot();
-        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)translucentFaceCount);
+        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)waterFaceCount, (uint)translucentFaceCount);
 
-        Log.Debug($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} translucent={translucentFaceCount} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
+        Log.Debug($"Chunk {mesh.ChunkIndex} mesh upload faces={faceCount} water={waterFaceCount} translucent={translucentFaceCount} cacheVer={mesh.CacheVersion} enqueue={mesh.EnqueueId} build={mesh.BuildId}");
 
         var refreshedDescriptor = new ChunkDescriptor
         {
@@ -1087,7 +1088,7 @@ public sealed class ChunkStreamingManager : IDisposable
         meshBuffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset);
     }
 
-    private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces)
+    private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces, uint translucentFaces)
     {
         if (meshBuffers == null || slot < 0)
         {
@@ -1097,24 +1098,35 @@ public sealed class ChunkStreamingManager : IDisposable
         var baseVertex = vertexOffset >= 0 ? (uint)vertexOffset : 0u;
         var firstIndex = indexOffset >= 0 ? (uint)indexOffset : 0u;
 
+        // 3 commands per slot: Opaque, Water, Translucent
+        // Each command is 5 uints (20 bytes)
+        // Total slot size = 60 bytes
         Span<uint> command =
         [
+            // Command 1: Opaque
             opaqueFaces * 6u,
             1u,
             firstIndex,
             baseVertex,
             0u,
+            // Command 2: Water
             waterFaces * 6u,
             1u,
             firstIndex + opaqueFaces * 6u,
             baseVertex,
             0u,
+            // Command 3: Translucent (Non-Water)
+            translucentFaces * 6u,
+            1u,
+            firstIndex + (opaqueFaces + waterFaces) * 6u,
+            baseVertex,
+            0u
         ];
         unsafe
         {
             fixed (uint* cmdPtr = command)
             {
-                GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 40), 40, (IntPtr)cmdPtr);
+                GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 60), 60, (IntPtr)cmdPtr);
             }
         }
 
@@ -2047,15 +2059,21 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         var buffer = (int)meshBuffers.IndirectDrawBuffer;
-        var slotBase = commandSlot * 10 * sizeof(uint); // 2 commands * 5 uints each
+        // 3 commands per slot * 5 uints per command = 15 uints
+        var slotBase = commandSlot * 15 * sizeof(uint); 
+        
+        // Instance count is the 2nd uint in the command struct (offset 4 bytes)
         var opaqueInstanceOffset = slotBase + sizeof(uint);
-        var transparentInstanceOffset = slotBase + 5 * sizeof(uint) + sizeof(uint);
+        var waterInstanceOffset = slotBase + 5 * sizeof(uint) + sizeof(uint);
+        var translucentInstanceOffset = slotBase + 10 * sizeof(uint) + sizeof(uint);
+        
         var instanceValue = isVisible ? 1u : 0u;
 
         unsafe
         {
             GL.NamedBufferSubData(buffer, (IntPtr)opaqueInstanceOffset, sizeof(uint), (IntPtr)(&instanceValue));
-            GL.NamedBufferSubData(buffer, (IntPtr)transparentInstanceOffset, sizeof(uint), (IntPtr)(&instanceValue));
+            GL.NamedBufferSubData(buffer, (IntPtr)waterInstanceOffset, sizeof(uint), (IntPtr)(&instanceValue));
+            GL.NamedBufferSubData(buffer, (IntPtr)translucentInstanceOffset, sizeof(uint), (IntPtr)(&instanceValue));
         }
     }
 
