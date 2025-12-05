@@ -319,7 +319,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         shader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
 
         // DEBUG: Verify buffer binding
-        if (bufferManager.IndirectDrawBuffer == 0)
+        if (bufferManager!.IndirectDrawBuffer == 0)
         {
             Log.Error("VoxelTerrainRenderer.OnDraw: IndirectDrawBuffer is 0!");
             return;

@@ -150,16 +150,17 @@ internal sealed class ChunkClimateCache
         BuildWorldCoordinates(chunkX, chunkZ);
 
         // Step 2: Sample domain warp noise (used to distort other noise)
-        SampleDomainWarp(terrainParams.WarpScale, terrainParams.WarpStrength, seed);
+        // Note: Warp settings are currently global in TerrainConfig, but could be moved to a NoiseLayer too
+        SampleDomainWarp(config.WarpScale, config.WarpStrength, seed);
 
         // Step 3: Sample all 6 climate parameters using SIMD batching
         // Each parameter is sampled with domain-warped coordinates where applicable
-        SampleContinentalness(terrainParams.ContinentalScale, seed);
-        SampleErosion(terrainParams.ErosionScale, seed);
-        SamplePeaksValleys(terrainParams.RidgeScale, seed);
-        SampleTemperature(terrainParams.TemperatureScale, seed);
-        SampleHumidity(terrainParams.HumidityScale, seed);
-        SampleWeirdness(terrainParams.WeirdnessScale, seed);
+        SampleContinentalness(config.Continentalness, seed);
+        SampleErosion(config.Erosion, seed);
+        SamplePeaksValleys(config.PeaksValleys, seed);
+        SampleTemperature(config.Temperature, seed);
+        SampleHumidity(config.Humidity, seed);
+        SampleWeirdness(config.Weirdness, seed);
 
         _isValid = true;
 
@@ -228,7 +229,7 @@ internal sealed class ChunkClimateCache
     /// Sample continentalness using domain-warped coordinates.
     /// Controls ocean vs land distribution.
     /// </summary>
-    private void SampleContinentalness(float scale, uint seed)
+    private void SampleContinentalness(NoiseLayer layer, uint seed)
     {
         var warpedX = _scratch1.AsSpan();
         var warpedZ = _scratch2.AsSpan();
@@ -239,21 +240,27 @@ internal sealed class ChunkClimateCache
             warpedZ[i] = _worldZ[i] + _warpZ[i];
         }
 
-        SampleFbm2DBatched(warpedX, warpedZ, scale, seed, 3, 0.5f, 2f, _continentalness);
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed, layer.Octaves, layer.Persistence, layer.Lacunarity, _continentalness);
 
-        // Normalize to [0, 1]
+        // Normalize to [0, 1] with contrast boost
         for (var i = 0; i < ColumnCount; i++)
         {
-            _continentalness01[i] = _continentalness[i] * 0.5f + 0.5f;
+            var raw = _continentalness[i] * 0.5f + 0.5f;
+            var centered = raw - 0.5f;
+            var sign = MathF.Sign(centered);
+            var magnitude = MathF.Abs(centered) * 2f;
+            const float ContrastPower = 0.7f;
+            var stretched = MathF.Pow(magnitude, ContrastPower);
+            _continentalness01[i] = Math.Clamp(sign * stretched * 0.5f + 0.5f, 0f, 1f);
         }
     }
 
     /// <summary>
     /// Sample erosion noise. Controls terrain smoothness vs roughness.
     /// </summary>
-    private void SampleErosion(float scale, uint seed)
+    private void SampleErosion(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), scale, seed + 100u, 3, 0.5f, 2f, _erosion);
+        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), layer.BaseScale, seed + 100u, layer.Octaves, layer.Persistence, layer.Lacunarity, _erosion);
 
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -265,24 +272,33 @@ internal sealed class ChunkClimateCache
     /// Sample peaks/valleys noise using ridge transformation.
     /// Controls mountain peaks and valley depth.
     /// </summary>
-    private void SamplePeaksValleys(float scale, uint seed)
+    private void SamplePeaksValleys(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), scale, seed + 200u, 3, 0.5f, 2f, _scratch3);
+        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), layer.BaseScale, seed + 200u, layer.Octaves, layer.Persistence, layer.Lacunarity, _scratch3);
 
         // Ridge transform: 1 - |noise| creates ridges/peaks
         for (var i = 0; i < ColumnCount; i++)
         {
             _peaksValleys[i] = 1f - MathF.Abs(_scratch3[i]);
-            _peaksValleys01[i] = _peaksValleys[i]; // Already in [0, 1] after ridge transform
+            _peaksValleys01[i] = _peaksValleys[i];
         }
     }
 
     /// <summary>
     /// Sample temperature noise. Affects biome climate zones.
+    /// Uses domain-warped coordinates for organic biome borders.
     /// </summary>
-    private void SampleTemperature(float scale, uint seed)
+    private void SampleTemperature(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), scale, seed + 600u, 2, 0.5f, 2f, _temperature);
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            warpedX[i] = _worldX[i] + _warpX[i];
+            warpedZ[i] = _worldZ[i] + _warpZ[i];
+        }
+        
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 600u, layer.Octaves, layer.Persistence, layer.Lacunarity, _temperature);
 
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -292,10 +308,19 @@ internal sealed class ChunkClimateCache
 
     /// <summary>
     /// Sample humidity noise. Affects wet vs dry biomes.
+    /// Uses domain-warped coordinates for organic biome borders.
     /// </summary>
-    private void SampleHumidity(float scale, uint seed)
+    private void SampleHumidity(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), scale, seed + 700u, 2, 0.5f, 2f, _humidity);
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            warpedX[i] = _worldX[i] + _warpX[i];
+            warpedZ[i] = _worldZ[i] + _warpZ[i];
+        }
+        
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 700u, layer.Octaves, layer.Persistence, layer.Lacunarity, _humidity);
 
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -306,9 +331,9 @@ internal sealed class ChunkClimateCache
     /// <summary>
     /// Sample weirdness noise. Controls terrain "weirdness" for unique features.
     /// </summary>
-    private void SampleWeirdness(float scale, uint seed)
+    private void SampleWeirdness(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), scale, seed + 800u, 2, 0.5f, 2f, _weirdness);
+        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), layer.BaseScale, seed + 800u, layer.Octaves, layer.Persistence, layer.Lacunarity, _weirdness);
 
         for (var i = 0; i < ColumnCount; i++)
         {

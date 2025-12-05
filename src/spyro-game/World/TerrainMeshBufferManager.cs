@@ -9,7 +9,7 @@ namespace SpyroGame.World;
 /// Implements explicit initialization strategy to avoid garbage data issues.
 /// Adds incremental updates and buffer reuse for streaming.
 /// </summary>
-public class TerrainMeshBufferManager : IDisposable
+public sealed class TerrainMeshBufferManager : IDisposable
 {
     // Buffer handles
     private uint vertexBuffer;
@@ -53,7 +53,9 @@ public class TerrainMeshBufferManager : IDisposable
     public uint CurrentVertexBufferEnd => currentVertexBufferEnd;
     public uint CurrentIndexBufferEnd => currentIndexBufferEnd;
 
-    private const int UploadChannelCount = 4; // Increased from 2 for better async upload handling
+    // Increased to 40 to prevent main thread blocking during rapid movement.
+    // We reduced the per-channel size to 4MB to keep total memory usage reasonable (~512MB).
+    private const int UploadChannelCount = 40;
 
     private struct MeshUploadChannel
     {
@@ -192,8 +194,11 @@ public class TerrainMeshBufferManager : IDisposable
 
     private void InitializeUploadChannels()
     {
-        maxChunkVertexBytes = Math.Max(VoxelHelper.ChunkVoxelCount * 6 * 4 * VERTEX_STRIDE, 256);
-        maxChunkIndexBytes = Math.Max(VoxelHelper.ChunkVoxelCount * 6 * 6 * sizeof(uint), 256);
+        // Allocate 4MB per channel, which is enough for ~125k faces (500k vertices).
+        // Theoretical max (checkerboard) is ~18MB, but typical terrain is <1MB.
+        // 64 channels * 8MB (vertex+index) = 512MB total staging memory.
+        maxChunkVertexBytes = 4 * 1024 * 1024;
+        maxChunkIndexBytes = 4 * 1024 * 1024;
 
         for (var i = 0; i < uploadChannels.Length; i++)
         {
@@ -289,7 +294,7 @@ public class TerrainMeshBufferManager : IDisposable
         return channelIndex;
     }
 
-    private void WaitForChannelFence(ref MeshUploadChannel channel)
+    private static void WaitForChannelFence(ref MeshUploadChannel channel)
     {
         if (channel.Fence == IntPtr.Zero)
         {
@@ -306,7 +311,7 @@ public class TerrainMeshBufferManager : IDisposable
         channel.Fence = IntPtr.Zero;
     }
 
-    private unsafe int CopyToMappedBuffer(IntPtr destination, ReadOnlySpan<uint> source, int capacityBytes, string label)
+    private static unsafe int CopyToMappedBuffer(IntPtr destination, ReadOnlySpan<uint> source, int capacityBytes, string label)
     {
         if (destination == IntPtr.Zero || source.Length == 0)
         {

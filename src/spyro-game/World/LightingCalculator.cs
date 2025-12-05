@@ -91,6 +91,100 @@ public static class LightingCalculator
     }
 
     /// <summary>
+    /// Adds block light from a newly placed light source and propagates it across chunk boundaries.
+    /// This is used when placing torches, glowstone, etc.
+    /// </summary>
+    /// <param name="sourceChunkIdx">The chunk index where the light source was placed.</param>
+    /// <param name="localX">Local X coordinate within the chunk (0-15).</param>
+    /// <param name="localY">Local Y coordinate (0-383).</param>
+    /// <param name="localZ">Local Z coordinate within the chunk (0-15).</param>
+    /// <param name="lightLevel">The light level of the source (e.g., 14 for torch).</param>
+    /// <param name="getChunkData">Function to get chunk data by chunk index.</param>
+    /// <returns>Set of chunk indices that were modified.</returns>
+    public static HashSet<int> AddBlockLight(
+        int sourceChunkIdx,
+        int localX, int localY, int localZ,
+        int lightLevel,
+        ChunkDataProvider getChunkData)
+    {
+        var propagateQueue = RepropagateQueue;  // Reuse the queue
+        var modifiedChunks = ModifiedChunks;
+        
+        propagateQueue.Clear();
+        modifiedChunks.Clear();
+        
+        if (lightLevel <= 0) return modifiedChunks;
+        
+        // Get the source chunk and set the light at the source position
+        var sourceChunk = getChunkData(sourceChunkIdx);
+        if (sourceChunk == null)
+            return modifiedChunks;
+            
+        var sourceIndex = GetIndex(localX, localY, localZ);
+        var oldLight = sourceChunk.LightData[sourceIndex];
+        SetBlockLight(sourceChunk, sourceIndex, lightLevel);
+        var newLight = sourceChunk.LightData[sourceIndex];
+        Log.Debug($"AddBlockLight: source chunk={sourceChunkIdx} pos=({localX},{localY},{localZ}) idx={sourceIndex} lightLevel={lightLevel} oldLightData=0x{oldLight:X2} newLightData=0x{newLight:X2}");
+        modifiedChunks.Add(sourceChunkIdx);
+        
+        // Seed the propagation queue with the source position
+        propagateQueue.Enqueue((sourceChunkIdx, localX, localY, localZ));
+        
+        // BFS propagation with cross-chunk support
+        while (propagateQueue.Count > 0)
+        {
+            var (chunkIdx, x, y, z) = propagateQueue.Dequeue();
+            
+            var chunk = getChunkData(chunkIdx);
+            if (chunk == null) continue;
+            
+            var index = GetIndex(x, y, z);
+            var currentLight = GetBlockLight(chunk, index);
+            
+            if (currentLight <= 1) continue;  // Can't propagate further
+            
+            // Propagate to all 6 neighbors
+            PropagateToNeighbor(chunkIdx, x - 1, y, z, currentLight, getChunkData, propagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x + 1, y, z, currentLight, getChunkData, propagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y - 1, z, currentLight, getChunkData, propagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y + 1, z, currentLight, getChunkData, propagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y, z - 1, currentLight, getChunkData, propagateQueue, modifiedChunks);
+            PropagateToNeighbor(chunkIdx, x, y, z + 1, currentLight, getChunkData, propagateQueue, modifiedChunks);
+        }
+        
+        // Debug: Verify light values after propagation
+        if (sourceChunk != null)
+        {
+            var srcLight = sourceChunk.LightData[sourceIndex];
+            var srcBlockLight = (srcLight >> 4) & 0xF;
+            Log.Info($"AddBlockLight DONE: source pos=({localX},{localY},{localZ}) finalLight=0x{srcLight:X2} blockLight={srcBlockLight}");
+            
+            // Check a few neighbors
+            void LogNeighbor(int dx, int dy, int dz)
+            {
+                var nx = localX + dx;
+                var ny = localY + dy;
+                var nz = localZ + dz;
+                if (nx >= 0 && nx < VoxelHelper.ChunkSideSize && 
+                    ny >= 0 && ny < VoxelHelper.ChunkYSize &&
+                    nz >= 0 && nz < VoxelHelper.ChunkSideSize)
+                {
+                    var nIdx = GetIndex(nx, ny, nz);
+                    var nLight = sourceChunk.LightData[nIdx];
+                    Log.Info($"  Neighbor ({nx},{ny},{nz}): light=0x{nLight:X2} block={(nLight >> 4) & 0xF} sky={nLight & 0xF}");
+                }
+            }
+            LogNeighbor(-1, 0, 0);
+            LogNeighbor(1, 0, 0);
+            LogNeighbor(0, -1, 0);
+            LogNeighbor(0, 1, 0);
+            LogNeighbor(0, 0, -1);
+        }
+        
+        return modifiedChunks;
+    }
+
+    /// <summary>
     /// Recalculates lighting when an opaque block is placed.
     /// This finds all light sources (block lights and sky light columns) within the max light radius (15),
     /// clears their light, and re-propagates from scratch.
@@ -286,7 +380,8 @@ public static class LightingCalculator
             modifiedChunks.Add(chunkIdx);
         }
         
-        // Phase 4: Re-initialize block light sources
+        // Phase 4: Re-initialize and propagate block light sources using cross-chunk BFS
+        // We use AddBlockLight for each source because it properly propagates across chunk boundaries
         foreach (var (chunkIdx, x, y, z, lightValue) in blockLightSources)
         {
             var chunkData = getChunkData(chunkIdx);
@@ -295,19 +390,18 @@ public static class LightingCalculator
             var block = chunkData.GetBlock(x, y, z);
             if (!block.IsOpaque() || block.IsEmissive())
             {
-                var index = GetIndex(x, y, z);
-                SetBlockLight(chunkData, index, lightValue);
-                modifiedChunks.Add(chunkIdx);
+                // Use AddBlockLight which does proper cross-chunk BFS propagation
+                var affected = AddBlockLight(chunkIdx, x, y, z, lightValue, getChunkData);
+                foreach (var affectedIdx in affected)
+                {
+                    modifiedChunks.Add(affectedIdx);
+                }
             }
         }
         
-        // Phase 5: Propagate block light within each affected chunk
-        foreach (var (chunkIdx, chunkData) in affectedChunks)
-        {
-            PropagateLight(chunkData, isSkyLight: false);
-        }
+        // Phase 5 removed - AddBlockLight already propagates properly
         
-        // Phase 6: Propagate light across chunk boundaries
+        // Phase 6: Propagate light across chunk boundaries (for sky light)
         foreach (var (chunkIdx, chunkData) in affectedChunks)
         {
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;

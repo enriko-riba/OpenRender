@@ -436,13 +436,19 @@ internal class GameScene : Scene
         // Performance - FPS at very top (no title)
         WriteLine($"FPS: {SceneManager.Fps:F0} ({SceneManager.AvgFrameDuration:F2}ms)", textColor);
         WriteLine($"View Distance: {VoxelHelper.MaxDistanceInChunks} chunks", textColor);
+        
+        // Show biome debug mode indicator
+        if (terrainRenderer?.ShowBiomes == true)
+        {
+            WriteLine("[F3] BIOME DEBUG MODE", new Vector3(0.0f, 1.0f, 1.0f)); // Cyan
+        }
         WriteLine("", textColor);
 
         // Time
         WriteLine($"Time: {dayNightCycle.TimeOfDay:hh\\:mm\\:ss}", new Vector3(1, 1, 0));
         WriteLine("", textColor);
 
-        // Chunk Stats
+        // Rendering Stats (Merged Chunks + Rendering)
         int readyChunks;
         int queuedChunks;
         int targetChunks;
@@ -463,17 +469,19 @@ internal class GameScene : Scene
             targetChunks = world.LoadedChunksCount;
         }
 
-        WriteLine("Chunks:", highlightColor);
+        WriteLine("Rendering:", highlightColor);
         WriteLine($"  GPU Ready: {readyChunks:N0} | Queued: {queuedChunks:N0} | Target: {targetChunks:N0}", textColor);
 
         // Get visibility stats from terrain renderer (GPU-based)
         if (terrainRenderer != null && streamingManager != null)
         {
-            WriteLine($"  Visible: {streamingManager.StatVisibleChunks:N0}", textColor);
-            WriteLine($"  Frustum Culled: {streamingManager.StatFrustumCulledChunks:N0}", textColor);
+            WriteLine($"  Visible: {streamingManager.StatVisibleChunks:N0} | Culled: {streamingManager.StatFrustumCulledChunks:N0}", textColor);
             WriteLine($"  Indices: {streamingManager.StatVisibleIndices:N0} / {streamingManager.StatTotalIndices:N0}", textColor);
-            var (curBatch, pendBatch, processing) = streamingManager.GetBatchStats();
-            WriteLine($"  Batch: {curBatch} | Pending: {pendBatch} | Processing: {processing}", textColor);
+        }
+        
+        if (terrainRenderer != null)
+        {
+            WriteLine($"  Visible Chunks: {terrainRenderer.VisibleDraws:N0} | Draw Calls: {terrainRenderer.DrawCallCount}", textColor);
         }
         WriteLine("", textColor);
 
@@ -484,7 +492,6 @@ internal class GameScene : Scene
             WriteLine("Processing:", highlightColor);
             WriteLine($"  Terrain Gen: {m.AvgTerrainGenerationMs:F1}ms | Light Calc: {m.AvgLightCalculationMs:F1}ms", textColor);
             WriteLine($"  Light Prop: {m.AvgLightPropagationMs:F1}ms | Mesh Build: {m.AvgMeshBuildMs:F1}ms", textColor);
-            WriteLine($"  Gen/s: {m.ChunksGeneratedPerSecond} | Mesh/s: {m.ChunksMeshedPerSecond} | Reproc/s: {m.ChunksReprocessedPerSecond}", textColor);
             WriteLine("", textColor);
             
             // NEW: Terrain generation breakdown
@@ -494,18 +501,13 @@ internal class GameScene : Scene
             WriteLine("", textColor);
         }
 
-        // Rendering Stats
-        WriteLine("Rendering:", highlightColor);
-        if (terrainRenderer != null)
-        {
-            WriteLine($"  Visible Chunks: {terrainRenderer.VisibleDraws:N0}", textColor);
-            WriteLine($"  Capacity: {terrainRenderer.RenderedBlocks:N0}", textColor);
-            WriteLine($"  Draw Calls: {terrainRenderer.DrawCallCount}", textColor);
-        }
-        WriteLine("", textColor);
-
         // Player Stats
         WriteLine("Player:", highlightColor);
+
+        var modeStr = player.IsGhostMode ? "Ghost" : "Phys";
+        var groundedStr = player.IsGrounded ? "Grnd" : "Air";
+        var jumpStr = player.IsJumping ? "Jump" : "";
+        WriteLine($"  {modeStr} | {groundedStr} {jumpStr} | VelY: {player.VelocityY:F2}", textColor);
 
         var pLocal = player.ChunkLocalPosition;
         var pChunk = player.CurrentChunk?.Index ?? -1;
@@ -532,10 +534,7 @@ internal class GameScene : Scene
             WriteLine($"  Block Below: n/a", textColor);
         }
 
-        var modeStr = player.IsGhostMode ? "Ghost" : "Phys";
-        var groundedStr = player.IsGrounded ? "Grnd" : "Air";
-        var jumpStr = player.IsJumping ? "Jump" : "";
-        WriteLine($"  {modeStr} | {groundedStr} {jumpStr} | VelY: {player.VelocityY:F2}", textColor);
+        // Removed duplicate player mode line (moved to top of section)
 
         // Climate data for block below player - show RAW CELL values (not interpolated)
         // This matches what biome selection actually uses
@@ -553,7 +552,50 @@ internal class GameScene : Scene
                 var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
                 var cellX = localX / ChunkBiomeData.BlocksPerCell;
                 var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
+                
+                // Compact format for normal display
                 WriteLine($"  C:{c.C:F3} T:{c.T:F3} H:{c.H:F2} E:{c.E:F2} PV:{c.PV:F2} Cell:({cellX},{cellZ})", textColor);
+                
+                // Extended climate info when F3 biome debug is active
+                if (terrainRenderer?.ShowBiomes == true)
+                {
+                    // Interpret climate values
+                    // NOTE: c.C and c.E are RAW [-1, 1]; convert to [0, 1] for display thresholds
+                    var cont01 = c.C * 0.5f + 0.5f;
+                    var erosion01 = c.E * 0.5f + 0.5f;
+                    // Erosion: low = dramatic terrain, high = flat
+                    var terrainType = erosion01 < 0.25f ? "Dramatic" : erosion01 < 0.6f ? "Hills" : "Flat";
+                    var tempZone = c.T < 0.3f ? "Cold" : c.T > 0.7f ? "Hot" : "Temperate";
+                    var moistZone = c.H < 0.3f ? "Dry" : c.H > 0.7f ? "Humid" : "Moderate";
+                    // Use actual terrain config thresholds for consistency
+                    var config = streamingManager?.Config;
+                    string landType;
+
+                    if (config != null)
+                    {
+                        var height = bb.GlobalPosition.Y;
+                        var isUnderwater = height < VoxelHelper.WaterLevel;
+                        var altitudeAboveWater = height - VoxelHelper.WaterLevel;
+                        var isCoastal = !isUnderwater && altitudeAboveWater <= config.ShorelineRange;
+                        var isAlpine = altitudeAboveWater > config.AlpineElevation;
+
+                        if (isAlpine) landType = "Alpine";
+                        else if (isCoastal) landType = "Coast";
+                        else if (isUnderwater) landType = "Ocean";
+                        else
+                        {
+                            // Fallback to continentalness if not height-determined
+                            landType = cont01 < config.OceanThreshold ? "Ocean" : 
+                                      cont01 < config.MountainThreshold ? "Inland" : "Mountain";
+                        }
+                    }
+                    else
+                    {
+                        landType = cont01 < 0.30f ? "Ocean" : cont01 < 0.40f ? "Coast" : cont01 < 0.65f ? "Inland" : "Mountain";
+                    }
+                    
+                    WriteLine($"  {landType} | {terrainType} | {tempZone} | {moistZone}", new Vector3(0.8f, 1.0f, 0.8f)); // Light green
+                }
             }
         }
         WriteLine("", textColor);

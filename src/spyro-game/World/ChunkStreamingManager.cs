@@ -70,7 +70,7 @@ public sealed class ChunkStreamingManager : IDisposable
     private long currentFrame;
     private long lastRetentionGuardLogFrame = long.MinValue;
     private Vector3 lastCameraPosition;
-    private int maxConcurrentCpuGenerations;
+    private readonly int maxConcurrentCpuGenerations;
     private int inFlightCpuGenerations;
 
     private TerrainConfig terrainConfig;
@@ -97,6 +97,7 @@ public sealed class ChunkStreamingManager : IDisposable
     }
 
     public VoxelWorld World => world;
+    public TerrainConfig Config => terrainConfig;
     public CollisionManager CollisionManager { get; }
 
     /// <summary>
@@ -733,9 +734,16 @@ public sealed class ChunkStreamingManager : IDisposable
         reusableChunkList.Clear();
         foreach (var idx in chunksNeedingReprocess)
         {
-            if (activeChunks.TryGetValue(idx, out var d) && d.State == TerrainChunkState.HasTerrain)
+            if (activeChunks.TryGetValue(idx, out var d))
             {
-                reusableChunkList.Add(idx);
+                // Process chunks that have terrain data and are not currently being meshed
+                // HasTerrain: normal case - chunk was marked dirty and has voxel data
+                // Ready: chunk was in Processing when marked, has now completed meshing and needs remesh
+                if (d.State is TerrainChunkState.HasTerrain or TerrainChunkState.Ready)
+                {
+                    reusableChunkList.Add(idx);
+                }
+                // If Processing: leave in set, will be processed after mesh completes
             }
         }
 
@@ -745,7 +753,8 @@ public sealed class ChunkStreamingManager : IDisposable
         // Queue for meshing immediately
         foreach (var chunkIdx in reusableChunkList)
         {
-            if (activeChunks.TryGetValue(chunkIdx, out var desc) && desc.State == TerrainChunkState.HasTerrain)
+            if (activeChunks.TryGetValue(chunkIdx, out var desc) && 
+                (desc.State == TerrainChunkState.HasTerrain || desc.State == TerrainChunkState.Ready))
             {
                 desc.State = TerrainChunkState.Processing;
                 activeChunks[chunkIdx] = desc;
@@ -869,7 +878,7 @@ public sealed class ChunkStreamingManager : IDisposable
             }
         }
 
-        return affected.ToList();
+        return [.. affected];
     }
 
     /// <summary>
@@ -1530,6 +1539,44 @@ public sealed class ChunkStreamingManager : IDisposable
     /// Apply a block edit (break or place) at world position
     /// Marks affected chunk(s) as dirty and queues for regeneration
     /// </summary>
+    /// <summary>
+    /// Helper to set a block and update the column's surface height cache.
+    /// This ensures the mesher knows how high to scan for geometry.
+    /// </summary>
+    private static void SetBlockWithHeightUpdate(ChunkData chunkData, int x, int y, int z, BlockId block)
+    {
+        chunkData.SetBlock(x, y, z, block);
+        
+        // Update surface height (highest non-air block)
+        // This ensures meshing and lighting include non-opaque blocks like torches, glass, leaves
+        var idx = z * VoxelHelper.ChunkSideSize + x;
+        var currentHeight = chunkData.SurfaceHeights[idx];
+        var isAir = block.IsAir();
+
+        if (!isAir)
+        {
+            if (y > currentHeight)
+            {
+                chunkData.SurfaceHeights[idx] = y;
+            }
+        }
+        else if (y == currentHeight)
+        {
+            // Removed the highest block, scan down to find new highest
+            var newHeight = -1; // Default for empty column
+            // Scan down from just below the removed block
+            for (var scanY = y - 1; scanY >= 0; scanY--)
+            {
+                if (!chunkData.GetBlock(x, scanY, z).IsAir())
+                {
+                    newHeight = scanY;
+                    break;
+                }
+            }
+            chunkData.SurfaceHeights[idx] = newHeight;
+        }
+    }
+
     public void ApplyBlockEdit(Vector3 worldPosition, BlockId blockId, bool isBreaking)
     {
         // Convert world position to chunk coordinates
@@ -1590,9 +1637,10 @@ public sealed class ChunkStreamingManager : IDisposable
             oldLightValue = BlockRegistry.GetLightValue(oldBlock);
             // Get current light values at this position BEFORE placing the block
             // Index formula: y * ChunkSideSizeSquare + z * ChunkSideSize + x
+            // Light data format: low nibble = sky light, high nibble = block light
             var lightIndex = localY * VoxelHelper.ChunkSideSizeSquare + localZ * VoxelHelper.ChunkSideSize + localX;
-            oldSkyLight = (chunkData.LightData[lightIndex] >> 4) & 0xF;
-            oldBlockLight = chunkData.LightData[lightIndex] & 0xF;
+            oldSkyLight = chunkData.LightData[lightIndex] & 0xF;              // Low nibble = sky light
+            oldBlockLight = (chunkData.LightData[lightIndex] >> 4) & 0xF;     // High nibble = block light
         }
         
         var isRemovingLightSource = oldLightValue > 0 && newLightValue == 0;
@@ -1610,7 +1658,7 @@ public sealed class ChunkStreamingManager : IDisposable
         if (isRemovingLightSource && chunkData != null)
         {
             // First update the block in the cache so light removal sees the new state
-            chunkData.SetBlock(localX, localY, localZ, blockId);
+            SetBlockWithHeightUpdate(chunkData, localX, localY, localZ, blockId);
             
             // Remove light using BFS that crosses chunk boundaries
             lightAffectedChunks = LightingCalculator.RemoveBlockLight(
@@ -1626,7 +1674,7 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             // Placing an opaque block that blocks existing light
             // Use comprehensive recalculation: find all light sources in radius 15, clear, and re-propagate
-            chunkData.SetBlock(localX, localY, localZ, blockId);
+            SetBlockWithHeightUpdate(chunkData, localX, localY, localZ, blockId);
             
             lightAffectedChunks = LightingCalculator.RecalculateLightingAroundBlock(
                 chunkIdx,
@@ -1645,14 +1693,80 @@ public sealed class ChunkStreamingManager : IDisposable
         else if (chunkData != null)
         {
             // For all other block changes (including placing light sources), update the voxel cache directly
-            chunkData.SetBlock(localX, localY, localZ, blockId);
+            SetBlockWithHeightUpdate(chunkData, localX, localY, localZ, blockId);
             
             // Recalculate lighting for this chunk if:
-            // - Placing a light source
+            // - Placing a light source (use cross-chunk propagation)
             // - Breaking an opaque block (light can now flow through)
-            if (isPlacingLightSource || (!newIsOpaque && oldIsOpaque))
+            if (isPlacingLightSource)
             {
-                LightingCalculator.CalculateLighting(chunkData);
+                // Log available neighbor chunks for debugging
+                var chunkXCoord = chunkIdx % VoxelHelper.WorldChunksXZ;
+                var chunkZCoord = chunkIdx / VoxelHelper.WorldChunksXZ;
+                var neighbors = new List<int>();
+                for (var dz = -1; dz <= 1; dz++)
+                for (var dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    var nx = chunkXCoord + dx;
+                    var nz = chunkZCoord + dz;
+                    if (nx >= 0 && nx < VoxelHelper.WorldChunksXZ && nz >= 0 && nz < VoxelHelper.WorldChunksXZ)
+                    {
+                        var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+                        if (chunkVoxelCache.TryGetChunkData(neighborIdx, out _))
+                            neighbors.Add(neighborIdx);
+                    }
+                }
+                Log.Info($"Placing light source at ({localX},{localY},{localZ}) in chunk {chunkIdx}, {neighbors.Count}/8 neighbors in cache: [{string.Join(",", neighbors)}]");
+                
+                // Use cross-chunk light propagation for placed light sources
+                lightAffectedChunks = LightingCalculator.AddBlockLight(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    newLightValue,
+                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+                );
+                
+                // Mark these chunks as having light already calculated - don't re-propagate during meshing
+                foreach (var affectedIdx in lightAffectedChunks)
+                {
+                    chunksWithLightRecalculated.Add(affectedIdx);
+                }
+                
+                Log.Info($"Block light addition affected {lightAffectedChunks.Count} chunks: {string.Join(", ", lightAffectedChunks)}");
+            }
+            else if (!newIsOpaque && oldIsOpaque)
+            {
+                // Breaking opaque block - use cross-chunk recalculation to preserve neighbor light
+                // This finds all light sources (block + sky) within radius 15 and re-propagates
+                lightAffectedChunks = LightingCalculator.RecalculateLightingAroundBlock(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    idx => chunkVoxelCache.TryGetChunkData(idx, out var data) ? data : null
+                );
+                
+                // Mark these chunks as having light already recalculated
+                foreach (var affectedIdx in lightAffectedChunks)
+                {
+                    chunksWithLightRecalculated.Add(affectedIdx);
+                }
+                
+                Log.Info($"Breaking opaque block - light recalculation affected {lightAffectedChunks.Count} chunks");
+            }
+        }
+
+        // Update collision data immediately so player collision and block picking work correctly
+        // This rebuilds the collision spans for the affected column from voxel data
+        if (chunkData != null)
+        {
+            // Update CollisionManager (used for raycasting/picking)
+            CollisionManager.RebuildColumnFromVoxelData(chunkIdx, localX, localZ, chunkData);
+            
+            // Update Chunk spans (used for player collision via VoxelWorld)
+            var chunk = world[chunkIdx];
+            if (chunk != null)
+            {
+                chunk.RebuildColumnSpans(localX, localZ, chunkData);
             }
         }
 
@@ -1700,6 +1814,8 @@ public sealed class ChunkStreamingManager : IDisposable
 
     /// <summary>
     /// Mark a specific chunk for reprocessing (light recalc + remesh).
+    /// Unlike highPriorityPending (which goes to terrain generation), chunksNeedingReprocess 
+    /// only triggers meshing - the voxel data is preserved.
     /// </summary>
     private void MarkChunkForReprocess(int chunkIdx)
     {
@@ -1710,12 +1826,21 @@ public sealed class ChunkStreamingManager : IDisposable
         if (!activeChunks.TryGetValue(chunkIdx, out var desc))
             return;
 
-        if (desc.State == TerrainChunkState.Ready)
+        // Accept chunks in Ready state (normal case) or Processing state (chunk is being meshed
+        // but needs to be remeshed again with updated data)
+        if (desc.State == TerrainChunkState.Ready || desc.State == TerrainChunkState.Processing)
         {
-            desc.State = TerrainChunkState.HasTerrain;
-            activeChunks[chunkIdx] = desc;
+            // Only change state from Ready to HasTerrain; leave Processing as-is
+            // Processing chunks will finish meshing, become Ready, then get reprocessed
+            if (desc.State == TerrainChunkState.Ready)
+            {
+                desc.State = TerrainChunkState.HasTerrain;
+                activeChunks[chunkIdx] = desc;
+            }
             chunksNeedingReprocess.Add(chunkIdx);
-            highPriorityPending.Enqueue(chunkIdx);
+            // NOTE: Do NOT add to highPriorityPending - that triggers terrain regeneration
+            // which would destroy our voxel data including light values. Chunks in
+            // chunksNeedingReprocess are processed by ProcessReprocessChunks which only remeshes.
             Metrics.RecordReprocess();
         }
     }
@@ -1760,7 +1885,9 @@ public sealed class ChunkStreamingManager : IDisposable
             desc.State = TerrainChunkState.HasTerrain;
             activeChunks[chunkIdx] = desc;
             chunksNeedingReprocess.Add(chunkIdx);
-            highPriorityPending.Enqueue(chunkIdx);
+            // NOTE: Do NOT add to highPriorityPending - that triggers terrain regeneration
+            // which would destroy our voxel data including light values. Chunks in
+            // chunksNeedingReprocess are processed by ProcessReprocessChunks which only remeshes.
 
             Log.Debug($"Marked chunk {chunkIdx} for reprocessing (was Ready, now HasTerrain)");
         }

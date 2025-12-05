@@ -29,36 +29,10 @@ public sealed class TerrainConfig
     public float WorldScale { get; set; } = 1.0f;
 
     // Macro field scales (world-space → noise frequencies)
-    
-    /// <summary>
-    /// Gets or sets the continentalness noise frequency (inverse of wavelength in blocks).
-    /// Controls the size of oceans and continents. Lower values create larger land masses.
-    /// - 1/800 (default): Very large continents and ocean basins (800-block features)
-    /// - 1/1200: Massive continental scale (Earth-like)
-    /// - 1/400: Smaller, more fragmented continents
-    /// Technical: This is the primary driver for ocean/land distribution via the height spline.
-    /// </summary>
-    public float ContinentalnessScale { get; set; } = 1f / 1200f;
-    
-    /// <summary>
-    /// Gets or sets the erosion noise frequency (inverse of wavelength in blocks).
-    /// Controls the scale of terrain roughness and flat areas.
-    /// - 1/300 (default): Large erosion patterns (300-block smooth/rough zones)
-    /// - 1/500: Very gradual terrain character changes
-    /// - 1/150: More chaotic, rapidly changing terrain roughness
-    /// Technical: Modulates peaks/valleys amplitude. High erosion = flatter terrain, low = more dramatic relief.
-    /// </summary>
-    public float ErosionScale { get; set; } = 1f / 500f;
-    
-    /// <summary>
-    /// Gets or sets the peaks/valleys ridge noise frequency (inverse of wavelength in blocks).
-    /// Controls the spacing of mountain ridges and valley systems.
-    /// - 1/120 (default): Wide ridges and valleys (120-block spacing)
-    /// - 1/200: Broad, gentle mountain systems
-    /// - 1/60: Tight, jagged ridge patterns
-    /// Technical: Uses ridged noise (abs of FBM) to create sharp peaks and linear valleys.
-    /// </summary>
-    public float RidgeScale { get; set; } = 1f / 120f;
+    // NOTE: These are now handled by NoiseLayer objects below, but kept here for reference if needed
+    // or removed if fully replaced. The errors indicate they are duplicates of the Obsolete properties
+    // I added later in the file. I should remove these original definitions.
+
 
     // Domain warp
     
@@ -70,7 +44,7 @@ public sealed class TerrainConfig
     /// - 1/80: Aggressive, swirling terrain patterns
     /// Technical: Applies 2D FBM offset to input coordinates, creating natural curved features.
     /// </summary>
-    public float WarpScale { get; set; } = 1f / 150f;
+    public float WarpScale { get; set; } = 1f / 200f;
     
     /// <summary>
     /// Gets or sets the domain warp displacement strength in blocks.
@@ -79,8 +53,9 @@ public sealed class TerrainConfig
     /// - 100: Strong displacement, highly organic flowing terrain
     /// - 30: Subtle displacement, more regular terrain grid
     /// Technical: Multiplies the warp noise output to determine actual coordinate offset.
+    /// Step 5.2: Increased to 100 for more organic, irregular biome borders.
     /// </summary>
-    public float WarpStrength { get; set; } = 60f;
+    public float WarpStrength { get; set; } = 100f;
 
     // Climate
     
@@ -123,59 +98,95 @@ public sealed class TerrainConfig
     /// Technical: Applied as: hum -= (continentalness - coastThreshold) * CoastDrying.
     /// </summary>
     public float CoastDrying { get; set; } = 0.3f;
-    
-    /// <summary>
-    /// Gets or sets the climate noise frequency (inverse of wavelength in blocks).
-    /// Controls the size of temperature and humidity variation zones.
-    /// - 1/15000 (default): Very large climate zones (15km weather systems)
-    /// - 1/25000: Continental-scale climate patterns
-    /// - 1/8000: Smaller, more varied climate zones
-    /// Technical: Applied to both temperature and humidity as FBM noise with ±0.2 range.
-    /// </summary>
-    public float ClimateScale { get; set; } = 1f / 15000f;
-    
-    /// <summary>
-    /// Gets or sets the climate warp frequency (inverse of wavelength in blocks).
-    /// Controls the scale of flow patterns in climate distribution.
-    /// - 1/25000 (default): Very large climate flow patterns (25km distortions)
-    /// - 1/40000: Continental-scale climate swirls
-    /// - 1/12000: Smaller, more chaotic climate boundaries
-    /// Technical: Domain warp applied before climate noise sampling for organic boundaries.
-    /// </summary>
-    public float ClimateWarp { get; set; } = 1f / 25000f;
 
     // Climate parameters for Minecraft-style terrain (Phase 1)
     
     /// <summary>
-    /// Gets or sets the temperature noise frequency (inverse of wavelength in blocks).
+    /// Continentalness noise configuration.
+    /// Controls the size of oceans and continents.
+    /// </summary>
+    public NoiseLayer Continentalness { get; set; } = new()
+    {
+        BaseScale = 1f / 1500f,
+        Octaves = 3,
+        Persistence = 0.5f,
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 800f,
+        DomainWarpStrength = 120f
+    };
+
+    /// <summary>
+    /// Erosion noise configuration.
+    /// Controls the scale of terrain roughness and flat areas.
+    /// </summary>
+    public NoiseLayer Erosion { get; set; } = new()
+    {
+        BaseScale = 1f / 600f,
+        Octaves = 4,
+        Persistence = 0.45f,
+        Lacunarity = 2.2f,
+        DomainWarpScale = 1f / 400f,
+        DomainWarpStrength = 80f
+    };
+
+    /// <summary>
+    /// Peaks/Valleys noise configuration.
+    /// Controls the spacing of mountain ridges and valley systems.
+    /// </summary>
+    public NoiseLayer PeaksValleys { get; set; } = new()
+    {
+        BaseScale = 1f / 150f,
+        Octaves = 4,
+        Persistence = 0.55f,
+        Lacunarity = 2.0f,
+        UseRidged = true,
+        RidgeSharpness = 2.0f
+    };
+
+    /// <summary>
+    /// Temperature noise configuration.
     /// Controls the size of temperature bands across the world.
-    /// - 1/400 (default): Medium-scale temperature zones (~400 blocks)
-    /// - 1/800: Larger, continental-scale temperature bands
-    /// - 1/200: Smaller, more varied temperature changes
-    /// Technical: Sampled as 2-octave FBM noise, affects biome climate selection.
     /// </summary>
-    public float TemperatureScale { get; set; } = 1f / 400f;
-    
+    public NoiseLayer Temperature { get; set; } = new()
+    {
+        BaseScale = 1f / 8000f,
+        Octaves = 2,
+        Persistence = 0.4f,
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 5000f,
+        DomainWarpStrength = 200f
+    };
+
     /// <summary>
-    /// Gets or sets the humidity noise frequency (inverse of wavelength in blocks).
+    /// Humidity noise configuration.
     /// Controls the size of wet/dry zones across the world.
-    /// - 1/350 (default): Medium-scale humidity variation (~350 blocks)
-    /// - 1/600: Larger, regional humidity patterns
-    /// - 1/150: Smaller, more varied wet/dry zones
-    /// Technical: Sampled as 2-octave FBM noise, affects biome moisture selection.
     /// </summary>
-    public float HumidityScale { get; set; } = 1f / 350f;
-    
+    public NoiseLayer Humidity { get; set; } = new()
+    {
+        BaseScale = 1f / 5000f,
+        Octaves = 2,
+        Persistence = 0.45f,
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 3000f,
+        DomainWarpStrength = 150f
+    };
+
     /// <summary>
-    /// Gets or sets the weirdness noise frequency (inverse of wavelength in blocks).
+    /// Weirdness noise configuration.
     /// Controls terrain variety - high weirdness creates unusual terrain features.
-    /// - 1/200 (default): Medium-scale weirdness zones (~200 blocks)
-    /// - 1/400: Larger, more gradual weirdness transitions
-    /// - 1/100: Smaller, more chaotic terrain variation
-    /// Technical: Minecraft-style "weirdness" parameter that drives terrain variety.
-    /// High |weirdness| enables 3D terrain features like overhangs and arches.
     /// </summary>
-    public float WeirdnessScale { get; set; } = 1f / 200f;
+    public NoiseLayer Weirdness { get; set; } = new()
+    {
+        BaseScale = 1f / 300f,
+        Octaves = 3,
+        Persistence = 0.6f,
+        Lacunarity = 1.8f,
+        DomainWarpScale = 1f / 200f,
+        DomainWarpStrength = 50f
+    };
+
+    // Legacy properties removed
+
 
     // Height mapping
     
@@ -476,10 +487,9 @@ public sealed class TerrainConfig
         public uint Seed;
         public float WorldScale;
         public float MacroScale;
-        public float ContinentalScale; public float ErosionScale; public float RidgeScale;
+        public float ContinentalnessScale; public float ErosionScale; public float PeaksValleysScale;
         public float WarpScale; public float WarpStrength;
         public float BaseTemperature; public float TemperatureLapseRate; public float BaseHumidity; public float CoastDrying;
-        public float ClimateScale; public float ClimateWarp;
         
         // Phase 1: Climate caching parameters
         public float TemperatureScale; public float HumidityScale; public float WeirdnessScale;
@@ -517,20 +527,18 @@ public sealed class TerrainConfig
             Seed = (uint)Seed,
             WorldScale = WorldScale,
             MacroScale = 1.0f,
-            ContinentalScale = ContinentalnessScale,
-            ErosionScale = ErosionScale,
-            RidgeScale = RidgeScale,
+            ContinentalnessScale = Continentalness.BaseScale,
+            ErosionScale = Erosion.BaseScale,
+            PeaksValleysScale = PeaksValleys.BaseScale,
             WarpScale = WarpScale,
             WarpStrength = WarpStrength,
             BaseTemperature = BaseTemperature,
             TemperatureLapseRate = LapseRate,
             BaseHumidity = BaseHumidity,
             CoastDrying = CoastDrying,
-            ClimateScale = ClimateScale,
-            ClimateWarp = ClimateWarp,
-            TemperatureScale = TemperatureScale,
-            HumidityScale = HumidityScale,
-            WeirdnessScale = WeirdnessScale,
+            TemperatureScale = Temperature.BaseScale,
+            HumidityScale = Humidity.BaseScale,
+            WeirdnessScale = Weirdness.BaseScale,
             RegionCellSize = BiomeRegions.CellSizeChunks,
             RegionJitter = BiomeRegions.JitterStrength,
             RegionFeatherWidth = BiomeRegions.FeatherWidth,
@@ -924,11 +932,11 @@ public sealed class BiomeDefinition
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Beach: at water level, completely flat
+            // Beach: at water level, completely flat - coastal areas only
             new ((int)BiomeId.Beach, nameof(BiomeId.Beach), 
-                new(0.5f, 0.75f), new(0.0f, 0.33f),
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
+                new(0.0f, 1.0f), new(0.0f, 1.0f),  // Any climate near shore
+                priority: 80,  // Higher than regular land biomes but below ocean
+                terrainType: TerrainType.CoastOnly,
                 baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                 underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
@@ -1381,22 +1389,79 @@ public sealed class Spline1D
         
         // Height values are relative to WaterLevel (35).
         // Valid absolute Y range: 0-383. So relative range: -35 to +348.
-        // Ocean floor: Y=5 → relative -30
-        // Max peaks: Y=370 → relative +335
-        s.Add(0.00f, -30f);   // Deep ocean floor (Y=5)
-        s.Add(0.15f, -25f);   // Ocean basin (Y=10)
-        s.Add(0.25f, -15f);   // Shallow ocean (Y=20)
-        s.Add(0.32f, -5f);    // Near coast (Y=30)
-        s.Add(0.38f, 10f);    // Beach/coastal lowland (Y=45)
-        s.Add(0.45f, 30f);    // Coastal plains (Y=65)
-        s.Add(0.55f, 60f);    // Inland hills (Y=95)
-        s.Add(0.65f, 100f);   // Highlands (Y=135)
-        s.Add(0.75f, 150f);   // Foothills (Y=185)
-        s.Add(0.80f, 220f);   // Mountains (Y=255)
-        s.Add(0.90f, 300f);   // High peaks (Y=335)
-        s.Add(1.00f, 380f);   // Maximum peaks (Y=415)
+        // Tuned for Minecraft-style terrain with proper ocean/land distribution
+        
+        // Deep ocean - large flat basins
+        s.Add(0.00f, -28f);   // Deep ocean floor (Y=7)
+        s.Add(0.10f, -25f);   // Ocean basin (Y=10) - gradual slope
+        s.Add(0.20f, -18f);   // Mid ocean (Y=17)
+        
+        // Shallow ocean to coast transition - steeper here
+        s.Add(0.30f, -8f);    // Shallow ocean (Y=27)
+        s.Add(0.35f, 0f);     // Sea level transition (Y=35) - CRITICAL point
+        s.Add(0.40f, 8f);     // Beach/coastal lowland (Y=43)
+        
+        // Inland plains - relatively flat
+        s.Add(0.50f, 20f);    // Coastal plains (Y=55)
+        s.Add(0.60f, 35f);    // Inland plains (Y=70)
+        
+        // Hills and highlands - more varied
+        s.Add(0.70f, 55f);    // Rolling hills (Y=90)
+        s.Add(0.78f, 80f);    // Highlands (Y=115)
+        
+        // Mountains - dramatic increase
+        s.Add(0.85f, 120f);   // Foothills (Y=155)
+        s.Add(0.92f, 180f);   // Mountains (Y=215)
+        s.Add(1.00f, 280f);   // High peaks (Y=315)
         
         s.Sort();
         return s;
     }
+}
+
+/// <summary>
+/// Configuration for a single layer of noise (FBM).
+/// Encapsulates all parameters needed to sample noise for a specific climate factor.
+/// </summary>
+public sealed class NoiseLayer
+{
+    /// <summary>
+    /// Base frequency of the noise (inverse of wavelength).
+    /// </summary>
+    public float BaseScale { get; set; }
+    
+    /// <summary>
+    /// Number of octaves of noise to sum.
+    /// </summary>
+    public int Octaves { get; set; }
+    
+    /// <summary>
+    /// Persistence (amplitude multiplier per octave).
+    /// </summary>
+    public float Persistence { get; set; }
+    
+    /// <summary>
+    /// Lacunarity (frequency multiplier per octave).
+    /// </summary>
+    public float Lacunarity { get; set; }
+    
+    /// <summary>
+    /// Scale of domain warp applied before sampling this noise.
+    /// </summary>
+    public float DomainWarpScale { get; set; }
+    
+    /// <summary>
+    /// Strength of domain warp applied before sampling this noise.
+    /// </summary>
+    public float DomainWarpStrength { get; set; }
+    
+    /// <summary>
+    /// Whether to use ridged noise (1 - |noise|) instead of standard noise.
+    /// </summary>
+    public bool UseRidged { get; set; }
+    
+    /// <summary>
+    /// Sharpness of ridges if UseRidged is true.
+    /// </summary>
+    public float RidgeSharpness { get; set; } = 1.0f;
 }

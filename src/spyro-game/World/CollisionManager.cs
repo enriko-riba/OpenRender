@@ -46,6 +46,92 @@ public class CollisionManager
         }
     }
 
+    /// <summary>
+    /// Rebuild collision spans for a single column from voxel data.
+    /// This properly handles all cases including span splitting and merging.
+    /// </summary>
+    public void RebuildColumnFromVoxelData(int chunkIndex, int localX, int localZ, ChunkData voxelData)
+    {
+        lock (lockObj)
+        {
+            if (!chunkCollisionData.TryGetValue(chunkIndex, out var data))
+            {
+                data = new ChunkCollisionData();
+                chunkCollisionData[chunkIndex] = data;
+            }
+
+            var colIdx = localZ * 16 + localX;
+            var offset = colIdx * ChunkCollisionData.MaxSpansPerColumn;
+            
+            // Rebuild spans by scanning the column from voxel data
+            // Include ALL non-air blocks (not just solid) so torches etc. can be picked
+            var spanCount = 0;
+            var inSpan = false;
+            var spanStart = 0;
+            var spanBlock = BlockId.Air;
+            
+            for (var y = 0; y < VoxelHelper.ChunkYSize && spanCount < ChunkCollisionData.MaxSpansPerColumn; y++)
+            {
+                var block = voxelData.GetBlock(localX, y, localZ);
+                var isNonAir = !block.IsAir();  // Include ALL non-air blocks for picking
+                
+                if (isNonAir && !inSpan)
+                {
+                    // Start new span
+                    inSpan = true;
+                    spanStart = y;
+                    spanBlock = block;
+                }
+                else if (!isNonAir && inSpan)
+                {
+                    // End current span
+                    data.Spans[offset + spanCount] = new ColumnSpan
+                    {
+                        StartY = (short)spanStart,
+                        EndY = (short)(y - 1),
+                        Block = (ushort)spanBlock
+                    };
+                    spanCount++;
+                    inSpan = false;
+                }
+                else if (isNonAir && inSpan && block != spanBlock)
+                {
+                    // Block type changed mid-span, end current and start new
+                    data.Spans[offset + spanCount] = new ColumnSpan
+                    {
+                        StartY = (short)spanStart,
+                        EndY = (short)(y - 1),
+                        Block = (ushort)spanBlock
+                    };
+                    spanCount++;
+                    if (spanCount < ChunkCollisionData.MaxSpansPerColumn)
+                    {
+                        spanStart = y;
+                        spanBlock = block;
+                    }
+                    else
+                    {
+                        inSpan = false;
+                    }
+                }
+            }
+            
+            // Close final span if still open
+            if (inSpan && spanCount < ChunkCollisionData.MaxSpansPerColumn)
+            {
+                data.Spans[offset + spanCount] = new ColumnSpan
+                {
+                    StartY = (short)spanStart,
+                    EndY = (short)(VoxelHelper.ChunkYSize - 1),
+                    Block = (ushort)spanBlock
+                };
+                spanCount++;
+            }
+            
+            data.SpanCounts[colIdx] = (byte)spanCount;
+        }
+    }
+
     public void RemoveChunkData(int chunkIndex)
     {
         lock (lockObj)
@@ -54,7 +140,7 @@ public class CollisionManager
         }
     }
 
-    public bool TryGetChunkData(int chunkIndex, out ChunkCollisionData data)
+    public bool TryGetChunkData(int chunkIndex, out ChunkCollisionData? data)
     {
         lock (lockObj)
         {
@@ -172,7 +258,7 @@ public class CollisionManager
         var chunkZ = (int)Math.Floor((float)z / 16.0f);
         var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
 
-        if (TryGetChunkData(chunkIdx, out var data))
+        if (TryGetChunkData(chunkIdx, out var data) && data != null)
         {
             var localX = x % 16;
             var localZ = z % 16;

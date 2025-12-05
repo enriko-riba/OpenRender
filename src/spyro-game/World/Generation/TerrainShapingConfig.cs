@@ -240,6 +240,156 @@ public sealed class TerrainShapingConfig
     /// </summary>
     public float CliffNoiseScale { get; set; } = 1f / 150f;
     
+    // === 3D TERRAIN FACTOR (Phase 4: Weirdness → 3D Features) ===
+    
+    /// <summary>
+    /// Weirdness threshold below which terrain is purely 2D heightmap.
+    /// Weirdness values closer to 0 result in "normal" terrain.
+    /// - 0.3 (default): |weirdness| &lt; 0.3 = pure 2D terrain
+    /// - 0.2: Less terrain uses 3D features
+    /// - 0.4: More terrain uses 3D features (more overhangs)
+    /// </summary>
+    public float Weirdness3DThresholdLow { get; set; } = 0.3f;
+    
+    /// <summary>
+    /// Weirdness threshold above which terrain has maximum 3D features.
+    /// - 0.7 (default): |weirdness| > 0.7 = full 3D features
+    /// - 0.6: Reach full 3D earlier (more dramatic terrain)
+    /// - 0.9: Only very weird terrain gets full 3D
+    /// </summary>
+    public float Weirdness3DThresholdHigh { get; set; } = 0.7f;
+    
+    /// <summary>
+    /// Erosion threshold below which 3D features are allowed.
+    /// Low erosion + high weirdness = dramatic overhangs.
+    /// - 0.6 (default): 3D features where erosion &lt; 0.6
+    /// - 0.4: 3D only in very rough terrain
+    /// - 0.8: 3D features in most terrain types
+    /// </summary>
+    public float Erosion3DThreshold { get; set; } = 0.6f;
+    
+    /// <summary>
+    /// Minimum 3D factor multiplier [0, 1].
+    /// Even "normal" terrain gets at least this much 3D effect.
+    /// - 0.1 (default): Always at least 10% overhang strength
+    /// - 0.0: Completely flat in normal areas
+    /// - 0.3: Always some 3D variety
+    /// </summary>
+    public float Min3DFactor { get; set; } = 0.1f;
+    
+    /// <summary>
+    /// Maximum 3D factor multiplier [0, 1].
+    /// Caps 3D effect even in extreme weirdness.
+    /// - 1.0 (default): Full overhang amplitude possible
+    /// - 0.7: Limit extreme 3D features
+    /// - 1.2: Allow extra-dramatic overhangs
+    /// </summary>
+    public float Max3DFactor { get; set; } = 1.0f;
+
+    // === PHASE 2: MAGIC NUMBER REPLACEMENTS ===
+
+    /// <summary>
+    /// Amplitude multiplier for weirdness-based terrain variation.
+    /// Replaces hardcoded 70f.
+    /// </summary>
+    public float WeirdnessAmplitude { get; set; } = 70f;
+
+    /// <summary>
+    /// Base influence of weirdness on terrain height.
+    /// Replaces hardcoded 0.3f in (0.3f + roughness * 0.7f).
+    /// </summary>
+    public float WeirdnessInfluenceBase { get; set; } = 0.3f;
+
+    /// <summary>
+    /// Roughness influence of weirdness on terrain height.
+    /// Replaces hardcoded 0.7f in (0.3f + roughness * 0.7f).
+    /// </summary>
+    public float WeirdnessInfluenceRoughness { get; set; } = 0.7f;
+
+    /// <summary>
+    /// Threshold for extreme weirdness boost.
+    /// Replaces hardcoded 0.4f.
+    /// </summary>
+    public float ExtremeWeirdnessThreshold { get; set; } = 0.4f;
+
+    /// <summary>
+    /// Height boost for extreme weirdness.
+    /// Replaces hardcoded 60f.
+    /// </summary>
+    public float ExtremeWeirdnessBoost { get; set; } = 60f;
+
+    /// <summary>
+    /// Continentalness threshold where mountains begin.
+    /// Replaces hardcoded 0.50f.
+    /// </summary>
+    public float MountainStartThreshold { get; set; } = 0.50f;
+
+    /// <summary>
+    /// Multiplier for mountain height boost.
+    /// Replaces hardcoded 1.3f.
+    /// </summary>
+    public float MountainHeightBoostMultiplier { get; set; } = 1.3f;
+
+    /// <summary>
+    /// Multiplier for cliff amplitude.
+    /// Replaces hardcoded 1.5f.
+    /// </summary>
+    public float CliffAmplitudeMultiplier { get; set; } = 1.5f;
+
+    /// <summary>
+    /// Multiplier for valley depth carving.
+    /// Replaces hardcoded 60f.
+    /// </summary>
+    public float ValleyDepthMultiplier { get; set; } = 60f;
+
+    /// <summary>
+    /// Multiplier for ridge peak boost.
+    /// Replaces hardcoded 80f.
+    /// </summary>
+    public float RidgeBoostMultiplier { get; set; } = 80f;
+
+    /// <summary>
+    /// Multiplier for plains amplitude.
+    /// Replaces hardcoded 2f.
+    /// </summary>
+    public float PlainsAmplitudeMultiplier { get; set; } = 2f;
+
+    /// <summary>
+    /// Erosion threshold for smoothing.
+    /// Replaces hardcoded 0.7f.
+    /// </summary>
+    public float ErosionSmoothingThreshold { get; set; } = 0.7f;
+
+    /// <summary>
+    /// Factor for erosion smoothing strength.
+    /// Replaces hardcoded 0.15f.
+    /// </summary>
+    public float ErosionSmoothingFactor { get; set; } = 0.15f;
+
+    /// <summary>
+    /// Amplitude for ocean floor variation.
+    /// Replaces hardcoded 25f.
+    /// </summary>
+    public float OceanVariationAmplitude { get; set; } = 25f;
+
+    /// <summary>
+    /// Multiplier for overhang amplitude.
+    /// Replaces hardcoded 2.0f.
+    /// </summary>
+    public float OverhangMultiplier { get; set; } = 2.0f;
+
+    /// <summary>
+    /// Continentalness threshold where overhangs begin.
+    /// Replaces hardcoded 0.40f.
+    /// </summary>
+    public float OverhangStartThreshold { get; set; } = 0.40f;
+
+    /// <summary>
+    /// Continentalness threshold where overhangs are fully effective.
+    /// Replaces hardcoded 0.75f.
+    /// </summary>
+    public float OverhangFullThreshold { get; set; } = 0.75f;
+    
     /// <summary>
     /// Creates default terrain shaping configuration.
     /// </summary>

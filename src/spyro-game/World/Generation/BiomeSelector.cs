@@ -1,9 +1,15 @@
 namespace SpyroGame.World;
 
 /// <summary>
-/// Allocation-free biome selector using Minecraft-style multi-parameter climate matching.
+/// Config-driven biome selector using BiomeDefinition climate ranges.
 /// Phase 3 of the terrain pipeline: Biome selection happens AFTER terrain height is known,
 /// using cached climate values from ChunkClimateCache.
+/// 
+/// All biome selection is driven by BiomeDefinition properties:
+/// - AllowedTerrain: OceanOnly, LandOnly, CoastOnly, MountainOnly, Any
+/// - Temperature/Humidity: Climate ranges for matching
+/// - MinElevation/MaxElevation: Height constraints
+/// - Priority: Higher priority biomes checked first
 /// 
 /// Performance: Zero allocations during selection - all arrays pre-allocated.
 /// </summary>
@@ -13,7 +19,7 @@ internal sealed class BiomeSelector
     private readonly float[] _biomeDistances;
     private readonly int _biomeCount;
     
-    // Reference to biome definitions (snapshot as array for iteration performance)
+    // Reference to biome definitions sorted by priority (highest first)
     private readonly BiomeDefinition[] _biomes;
     
     // Terrain thresholds from config
@@ -21,6 +27,7 @@ internal sealed class BiomeSelector
     private float _deepOceanThreshold;
     private float _alpineElevation;
     private float _shorelineRange;
+    private float _coastRange;
     
     /// <summary>
     /// Creates a new biome selector with pre-allocated arrays.
@@ -29,7 +36,8 @@ internal sealed class BiomeSelector
     public BiomeSelector(IReadOnlyList<BiomeDefinition> biomes)
     {
         ArgumentNullException.ThrowIfNull(biomes);
-        _biomes = [.. biomes];  // Copy to array for iteration performance
+        // Sort by priority (highest first) for correct evaluation order
+        _biomes = [.. biomes.OrderByDescending(b => b.Priority)];
         _biomeCount = _biomes.Length;
         _biomeDistances = new float[_biomeCount];
     }
@@ -44,10 +52,12 @@ internal sealed class BiomeSelector
         _deepOceanThreshold = config.DeepOceanThreshold;
         _alpineElevation = config.AlpineElevation;
         _shorelineRange = config.ShorelineRange;
+        _coastRange = config.CoastRange;
     }
     
     /// <summary>
     /// Select the best-matching biome for the given climate values and terrain height.
+    /// Fully config-driven using BiomeDefinition properties.
     /// Zero allocations - uses pre-allocated arrays for distance calculations.
     /// </summary>
     /// <param name="continentalness01">Continentalness [0,1] where 0=deep ocean, 1=far inland.</param>
@@ -65,70 +75,90 @@ internal sealed class BiomeSelector
         float peaksValleys01,
         float actualHeight)
     {
-        // Fast path: Use terrain height to determine ocean vs land
-        // This is the definitive check - terrain below water = ocean biome
+        // Derive terrain context from actual height
         var isUnderwater = actualHeight < VoxelHelper.WaterLevel;
         var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
+        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
+        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
+        var isOceanic = continentalness01 < _oceanThreshold;
         
-        // ============ OCEAN BIOMES (based on actual terrain height) ============
-        if (isUnderwater)
+        // Coast = near shoreline in elevation.
+        // Note: We ignore continentalness here because it can cause beaches to climb cliffs/mountains
+        // if the continentalness gradient is shallow.
+        var isCoastal = !isUnderwater && isNearWaterHeight;
+        var isMountain = altitudeAboveWater > _alpineElevation;
+        
+        // Track best climate match among eligible biomes
+        var bestBiomeId = BiomeId.Plains;  // Fallback
+        var bestScore = float.MaxValue;
+        
+        // Iterate biomes in priority order (sorted in constructor)
+        for (var i = 0; i < _biomeCount; i++)
         {
-            // Use continentalness to distinguish deep ocean from regular ocean
-            return continentalness01 < _deepOceanThreshold ? BiomeId.DeepOcean : BiomeId.Ocean;
+            var biome = _biomes[i];
+            
+            // ========== TERRAIN TYPE FILTER ==========
+            // Check if biome's AllowedTerrain matches current terrain context
+            var terrainMatch = biome.AllowedTerrain switch
+            {
+                TerrainType.OceanOnly => isUnderwater && isOceanic,
+                TerrainType.LandOnly => !isUnderwater && !isOceanic && !isCoastal,
+                TerrainType.CoastOnly => isCoastal,
+                TerrainType.MountainOnly => isMountain,
+                TerrainType.Any => true,
+                _ => true
+            };
+            
+            if (!terrainMatch) continue;
+            
+            // ========== ELEVATION FILTER ==========
+            // Check biome's elevation constraints
+            if (actualHeight < biome.MinElevation || actualHeight > biome.MaxElevation)
+                continue;
+            
+            // ========== SPECIAL CASE: DEEP OCEAN ==========
+            // For ocean biomes, use continentalness to distinguish deep vs shallow
+            if (biome.AllowedTerrain == TerrainType.OceanOnly)
+            {
+                var isDeep = continentalness01 < _deepOceanThreshold;
+                if (biome.Id == (int)BiomeId.DeepOcean && !isDeep) continue;
+                if (biome.Id == (int)BiomeId.Ocean && isDeep) continue;
+            }
+            
+            // ========== CLIMATE DISTANCE SCORING ==========
+            // Calculate how well the climate matches this biome's ranges
+            var tempDist = biome.Temperature.Contains(temperature01) 
+                ? 0f 
+                : MathF.Min(MathF.Abs(temperature01 - biome.Temperature.Min),
+                            MathF.Abs(temperature01 - biome.Temperature.Max));
+            
+            var humidDist = biome.Humidity.Contains(humidity01)
+                ? 0f
+                : MathF.Min(MathF.Abs(humidity01 - biome.Humidity.Min),
+                            MathF.Abs(humidity01 - biome.Humidity.Max));
+            
+            // Combined score: priority-weighted distance
+            // Higher priority biomes get a bonus (lower score)
+            var priorityBonus = (100 - biome.Priority) * 0.01f;  // 0 for p=100, 1.0 for p=0
+            var climateScore = tempDist + humidDist + priorityBonus;
+            
+            // Store for blend calculations
+            _biomeDistances[i] = climateScore;
+            
+            // Track best match
+            if (climateScore < bestScore)
+            {
+                bestScore = climateScore;
+                bestBiomeId = (BiomeId)biome.Id;
+            }
         }
         
-        // ============ BEACH BIOME ============
-        // Beach is determined by HEIGHT - terrain at or very close to water level
-        if (altitudeAboveWater <= _shorelineRange)
-        {
-            return BiomeId.Beach;
-        }
-        
-        // ============ ALPINE BIOME ============
-        // Use actual terrain height for altitude-based alpine
-        if (altitudeAboveWater > _alpineElevation || temperature01 < 0.12f)
-        {
-            return BiomeId.Alpine;
-        }
-        
-        // ============ MOUNTAIN/HIGHLANDS ============
-        if (peaksValleys01 > 0.7f && erosion01 < 0.4f)
-        {
-            return temperature01 < 0.35f ? BiomeId.Alpine : BiomeId.Highlands;
-        }
-        
-        // ============ CLIMATE-BASED LAND BIOMES ============
-        // Hot biomes
-        if (temperature01 > 0.65f)
-        {
-            if (humidity01 < 0.30f) return BiomeId.Desert;
-            if (humidity01 < 0.55f) return BiomeId.Savanna;
-            return BiomeId.Rainforest;
-        }
-        
-        // Cold biomes
-        if (temperature01 < 0.35f)
-        {
-            if (humidity01 > 0.50f) return BiomeId.Taiga;
-            return BiomeId.Tundra;
-        }
-        
-        // Temperate biomes
-        if (humidity01 > 0.55f)
-        {
-            if (continentalness01 < 0.50f && erosion01 > 0.6f)
-                return BiomeId.Swamp;
-            return BiomeId.Taiga;
-        }
-        
-        if (peaksValleys01 > 0.55f || erosion01 < 0.45f)
-            return BiomeId.Highlands;
-        
-        return BiomeId.Plains;
+        return bestBiomeId;
     }
     
     /// <summary>
     /// Select biome with blend weights for smooth transitions.
+    /// Config-driven using BiomeDefinition properties.
     /// Zero allocations - uses pre-allocated arrays.
     /// Only call when blending is actually needed (biome transitions).
     /// </summary>
@@ -152,36 +182,18 @@ internal sealed class BiomeSelector
         out BiomeId secondary,
         out float blendWeight)
     {
-        // For terrain-based biomes (ocean, beach, alpine), no blending
+        // Derive terrain context
         var isUnderwater = actualHeight < VoxelHelper.WaterLevel;
         var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
+        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
+        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
+        var isOceanic = continentalness01 < _oceanThreshold;
         
-        if (isUnderwater)
-        {
-            primary = continentalness01 < _deepOceanThreshold ? BiomeId.DeepOcean : BiomeId.Ocean;
-            secondary = primary;
-            blendWeight = 0f;
-            return;
-        }
+        // Coast if near shoreline by height OR continentalness proximity
+        var isCoastal = !isUnderwater && (isNearWaterHeight || contDistance <= _coastRange);
+        var isMountain = altitudeAboveWater > _alpineElevation;
         
-        if (altitudeAboveWater <= _shorelineRange)
-        {
-            primary = BiomeId.Beach;
-            secondary = BiomeId.Beach;
-            blendWeight = 0f;
-            return;
-        }
-        
-        if (altitudeAboveWater > _alpineElevation)
-        {
-            primary = BiomeId.Alpine;
-            secondary = BiomeId.Alpine;
-            blendWeight = 0f;
-            return;
-        }
-        
-        // For land biomes, use temperature+humidity distance matching
-        // Calculate distances for all land biomes
+        // Calculate distances for all eligible biomes
         var best1Idx = -1;
         var best2Idx = -1;
         var best1Dist = float.MaxValue;
@@ -191,19 +203,54 @@ internal sealed class BiomeSelector
         {
             var biome = _biomes[i];
             
-            // Skip ocean/beach/alpine - handled above
-            if (biome.Id == (int)BiomeId.Ocean || biome.Id == (int)BiomeId.DeepOcean || 
-                biome.Id == (int)BiomeId.Beach || biome.Id == (int)BiomeId.Alpine)
+            // Check terrain type eligibility
+            var terrainMatch = biome.AllowedTerrain switch
+            {
+                TerrainType.OceanOnly => isUnderwater && isOceanic,
+                TerrainType.LandOnly => !isUnderwater && !isOceanic && !isCoastal,
+                TerrainType.CoastOnly => !isUnderwater && (isNearWaterHeight || contDistance <= _coastRange),
+                TerrainType.MountainOnly => isMountain,
+                TerrainType.Any => true,
+                _ => true
+            };
+            
+            if (!terrainMatch)
             {
                 _biomeDistances[i] = float.MaxValue;
                 continue;
             }
             
-            // Calculate weighted climate distance using Temperature and Humidity
+            // Check elevation constraints
+            if (actualHeight < biome.MinElevation || actualHeight > biome.MaxElevation)
+            {
+                _biomeDistances[i] = float.MaxValue;
+                continue;
+            }
+            
+            // Special handling for ocean depth distinction
+            if (biome.AllowedTerrain == TerrainType.OceanOnly)
+            {
+                var isDeep = continentalness01 < _deepOceanThreshold;
+                if (biome.Id == (int)BiomeId.DeepOcean && !isDeep)
+                {
+                    _biomeDistances[i] = float.MaxValue;
+                    continue;
+                }
+                if (biome.Id == (int)BiomeId.Ocean && isDeep)
+                {
+                    _biomeDistances[i] = float.MaxValue;
+                    continue;
+                }
+            }
+            
+            // Calculate climate distance using biome's ranges
             var tIn = biome.Temperature.Contains(temperature01);
             var hIn = biome.Humidity.Contains(humidity01);
             var dist = tIn && hIn ? 0f 
                 : MathF.Abs(biome.Temperature.Center - temperature01) + MathF.Abs(biome.Humidity.Center - humidity01);
+            
+            // Apply priority bonus
+            dist += (100 - biome.Priority) * 0.01f;
             
             _biomeDistances[i] = dist;
             

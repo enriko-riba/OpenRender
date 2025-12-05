@@ -148,21 +148,24 @@ vec4 sampleWaterTexture(uint blockId, vec2 localUV, vec3 normal, float time) {
 
 // Biome debug colors (for visualization when ShowBiomes is enabled)
 vec3 getBiomeDebugColor(uint biomeId) {
-    // 10 distinct colors for 10 biomes
-    vec3 colors[10] = vec3[10](
-        vec3(0.0, 0.3, 0.8),   // 0: Ocean (deep blue)
-        vec3(0.9, 0.8, 0.5),   // 1: Beach (sand)
-        vec3(0.4, 0.7, 0.3),   // 2: Plains (green)
-        vec3(0.7, 0.6, 0.3),   // 3: Savanna (tan)
-        vec3(0.9, 0.7, 0.4),   // 4: Desert (yellow)
-        vec3(0.2, 0.5, 0.2),   // 5: Rainforest (dark green)
-        vec3(0.3, 0.5, 0.4),   // 6: Taiga (blue-green)
-        vec3(0.6, 0.7, 0.8),   // 7: Tundra (light blue-gray)
-        vec3(0.5, 0.4, 0.3),   // 8: Highlands (brown)
-        vec3(0.95, 0.95, 0.98) // 9: Alpine (white)
+    // 13 distinct colors for all biomes (including DeepOcean, River, Swamp)
+    vec3 colors[13] = vec3[13](
+        vec3(0.0, 0.3, 0.8),   // 0: Ocean (blue)
+        vec3(0.95, 0.85, 0.55),// 1: Beach (sand yellow)
+        vec3(0.4, 0.75, 0.3),  // 2: Plains (bright green)
+        vec3(0.8, 0.65, 0.35), // 3: Savanna (tan/orange)
+        vec3(0.95, 0.85, 0.45),// 4: Desert (bright yellow)
+        vec3(0.15, 0.55, 0.2), // 5: Rainforest (dark green)
+        vec3(0.2, 0.45, 0.35), // 6: Taiga (dark blue-green)
+        vec3(0.85, 0.90, 0.95),// 7: Tundra (white-gray, NOT blue)
+        vec3(0.55, 0.45, 0.35),// 8: Highlands (brown)
+        vec3(0.98, 0.98, 1.0), // 9: Alpine (pure white)
+        vec3(0.0, 0.15, 0.5),  // 10: DeepOcean (very dark blue)
+        vec3(0.2, 0.5, 0.8),   // 11: River (light blue)
+        vec3(0.35, 0.5, 0.3)   // 12: Swamp (murky green)
     );
     
-    if (biomeId < 10u) {
+    if (biomeId < 13u) {
         return colors[biomeId];
     }
     return vec3(1.0, 0.0, 1.0); // Magenta for unknown
@@ -320,10 +323,15 @@ void main() {
     }
 
     // Combine lighting - Minecraft-style light calculation
-    // Use MAX of sky and block light for overall brightness
-    // This ensures torch light in daylight doesn't make things brighter than max sky light
+    // vSkyLight/vBlockLight are per-vertex light levels (0-1, from 0-15 range)
+    // dirLight.ambient reflects day/night cycle brightness
     float skyFactor = vSkyLight;
     float blockFactor = vBlockLight;
+    
+    // Calculate ambient brightness from day/night cycle (0 = night, ~1 = day)
+    float ambientBrightness = dot(dirLight.ambient, vec3(0.299, 0.587, 0.114)); // Luminance
+    
+    // Combined light uses MAX of sky and block for overall brightness
     float combinedLight = max(skyFactor, blockFactor);
     
     // Ambient depends on combined light (max of sky and block)
@@ -337,11 +345,12 @@ void main() {
     vec3 specularColor = dirLight.specular * specular * uMaterialSpecular * skyFactor;
 
     // Block Light tint - apply warm color when block light is dominant
-    // Only tint when block light > sky light (underground/night)
-    // No AO on block light - it's a point light source
+    // At night: use block light when it exceeds effective sky brightness
+    // Effective sky = skyFactor * ambientBrightness (accounts for day/night)
+    float effectiveSkyBrightness = skyFactor * ambientBrightness;
     vec3 blockLightColor = vec3(1.0, 0.8, 0.6); // Warm torch color
-    float blockLightDominance = max(0.0, blockFactor - skyFactor);
-    vec3 localLightTint = blockLightColor * blockLightDominance;
+    float blockLightDominance = max(0.0, blockFactor - effectiveSkyBrightness);
+    vec3 localLightTint = blockLightColor * blockLightDominance * ao;
 
     // Emissive blocks (Lava, Glowstone, etc) ignore shading/AO
     if (vIsEmissive == 1u) {

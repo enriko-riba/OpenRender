@@ -19,7 +19,7 @@ internal static class ChunkMeshBuilder
     private const byte PLACEHOLDER_NEG_Z = 1 << 3;
     private const bool MirrorMissingNeighbors = false;
     private const uint DisabledLightValue = 0xFFFFFFFFu; // Use a value outside valid range (0-255)
-    private static bool VerboseBuilderLogging = false;
+    private static bool VerboseBuilderLogging = true;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
     [ThreadStatic] private static List<uint>? t_opaqueVertices;
@@ -94,12 +94,25 @@ internal static class ChunkMeshBuilder
         var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
 
-       
-        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+        // Optimization: Iterate columns (X, Z) first, then Y up to surface height
+        // This allows us to skip the vast majority of air blocks above the terrain.
+        // While Y-inner loop has a larger stride (256 bytes), the massive reduction in iterations
+        // outweighs the cache locality cost.
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
         {
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
-                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+                // Determine the maximum Y to check for this column
+                // We need to go up to the highest opaque block (SurfaceHeight)
+                // OR the water level (for ocean surfaces)
+                // Plus 1 to ensure we check the air block *above* the surface for face culling
+                var surfaceHeight = chunkView.GetSurfaceHeight(x, z);
+                var maxY = Math.Max(surfaceHeight + 1, VoxelHelper.WaterLevel + 1);
+                
+                // Clamp to chunk bounds
+                maxY = Math.Min(maxY, VoxelHelper.ChunkYSize);
+
+                for (var y = 0; y < maxY; y++)
                 {
                     var block = sampler.SampleBlock(x, y, z);
                     if (!HasRenderableGeometry(block))
@@ -212,7 +225,7 @@ internal static class ChunkMeshBuilder
         
         // Also check render method - AlphaTest and Blend need translucent pass
         var renderMethod = BlockRegistry.GetProperties(block).Render;
-        return renderMethod == RenderMethod.AlphaTest || renderMethod == RenderMethod.Blend;
+        return renderMethod is RenderMethod.AlphaTest or RenderMethod.Blend;
     }
 
     private static bool ShouldEmitFace(BlockId block, BlockId neighborBlock)
@@ -276,6 +289,14 @@ internal static class ChunkMeshBuilder
         Span<uint> light = stackalloc uint[4];
         sampler.ComputeFaceLightingAndAO(face, x, y, z, ao, light);
 
+        // Debug: Log light values being packed for faces near torch
+        if (VerboseBuilderLogging && y == 42 && z == 15 && x <= 2)
+        {
+            var avgLight = (light[0] + light[1] + light[2] + light[3]) / 4;
+            var avgBlock = ((light[0] >> 4) + (light[1] >> 4) + (light[2] >> 4) + (light[3] >> 4)) / 4;
+            Log.Debug($"AppendFace: chunk={sampler.GetChunkIndex()} block=({x},{y},{z}) face={face} light=[0x{light[0]:X2},0x{light[1]:X2},0x{light[2]:X2},0x{light[3]:X2}] avgBlock={avgBlock}");
+        }
+
         for (uint corner = 0; corner < 4; corner++)
         {
             var (ox, oy, oz) = offsets[corner];
@@ -324,6 +345,13 @@ internal static class ChunkMeshBuilder
         
         // Sample light at the block's position (use the voxel's own light since it's transparent)
         var light = sampler.SamplePackedLight(x, y, z);
+        
+        // Debug: Log light value for torch at specific position
+        if (block == BlockId.Torch && VerboseBuilderLogging)
+        {
+            Log.Debug($"AppendCrossBillboard: Torch at ({x},{y},{z}) chunk={sampler.GetChunkIndex()} rawLight=0x{light:X8} sky={(light & 0xF)} block={(light >> 4) & 0xF}");
+        }
+        
         if (light == 0xFFFFFFFFu) // DisabledLightValue
         {
             // Fallback: sample above the block
@@ -410,6 +438,7 @@ internal static class ChunkMeshBuilder
             neighborCache = t_neighborCache;
         }
 
+        public int GetChunkIndex() => workItem.ChunkIndex;
         public int FaceCount { get; private set; }
         public int TranslucentFaceCount { get; private set; }
         public int NeighborMisses { get; private set; }
@@ -471,14 +500,24 @@ internal static class ChunkMeshBuilder
         {
             if (centerView.IsWithinBounds(x, y, z))
             {
-                return centerView.ReadLight(x, y, z);
+                var light = centerView.ReadLight(x, y, z);
+                if (VerboseBuilderLogging && y == 43 && z == 15 && x >= 0 && x <= 2)
+                {
+                    Log.Debug($"  SamplePackedLight: chunk={workItem.ChunkIndex} pos=({x},{y},{z}) FROM_CENTER light=0x{light:X2}");
+                }
+                return light;
             }
 
             if (TryGetNeighborView(x, z, out var neighborView, out var localX, out var localZ))
             {
                 if (neighborView.IsWithinBounds(localX, y, localZ))
                 {
-                    return neighborView.ReadLight(localX, y, localZ);
+                    var light = neighborView.ReadLight(localX, y, localZ);
+                    if (VerboseBuilderLogging && y == 43 && z == 15)
+                    {
+                        Log.Debug($"  SamplePackedLight: chunk={workItem.ChunkIndex} pos=({x},{y},{z}) FROM_NEIGHBOR={neighborView.ChunkIndex} localPos=({localX},{y},{localZ}) light=0x{light:X2}");
+                    }
+                    return light;
                 }
             }
 
@@ -528,9 +567,9 @@ internal static class ChunkMeshBuilder
             // or "black" artifacts (if we used 0).
             // We average only the valid samples.
             
-            int skySum = 0;
-            int blockSum = 0;
-            int count = 0;
+            var skySum = 0;
+            var blockSum = 0;
+            var count = 0;
 
             void AddSample(uint l)
             {
@@ -575,15 +614,15 @@ internal static class ChunkMeshBuilder
             }
 
             // Simple average
-            int skyAvg = skySum / count;
-            int blockAvg = blockSum / count;
+            var skyAvg = skySum / count;
+            var blockAvg = blockSum / count;
 
             return (uint)(skyAvg | (blockAvg << 4));
         }
 
         /// <summary>
         /// Get the biome ID at the given local chunk coordinates.
-        /// Uses the 4x4 biome grid (each cell covers 4x4 blocks).
+        /// Uses per-column biome storage for voxel-resolution borders.
         /// </summary>
         public BiomeId SampleBiome(int localX, int localZ)
         {
@@ -612,6 +651,14 @@ internal static class ChunkMeshBuilder
             var by = y + ny;
             var bz = z + nz;
             
+            // DEBUG: Log when sampling from a position that might have torch light
+            var debugThisFace = VerboseBuilderLogging && by == 43 && bz == 15 && bx >= 0 && bx <= 2;
+            if (debugThisFace)
+            {
+                var rawLight = SamplePackedLight(bx, by, bz);
+                Log.Debug($"ComputeFaceLightingAndAO: chunk={workItem.ChunkIndex} block=({x},{y},{z}) face={face} basePos=({bx},{by},{bz}) rawLight=0x{rawLight:X8}");
+            }
+            
             // Sample all 9 positions in the 3x3 grid around the face (in tangent space)
             // Layout (looking at face from outside):
             //   [6] [7] [8]   = (-1,+1) (0,+1) (+1,+1) in (t1, t2) space
@@ -623,9 +670,9 @@ internal static class ChunkMeshBuilder
             Span<bool> opaqueSamples = stackalloc bool[9];
             
             // Sample the 3x3 grid
-            for (int t2 = -1; t2 <= 1; t2++)
+            for (var t2 = -1; t2 <= 1; t2++)
             {
-                for (int t1 = -1; t1 <= 1; t1++)
+                for (var t1 = -1; t1 <= 1; t1++)
                 {
                     var idx = (t2 + 1) * 3 + (t1 + 1);
                     var sx = bx + t1x * t1 + t2x * t2;
@@ -686,11 +733,11 @@ internal static class ChunkMeshBuilder
                 var lSide1 = lightSamples[side1Idx];
                 var lSide2 = lightSamples[side2Idx];
                 var lCorner = lightSamples[cornerIdx];
-                
-                int skySum = 0;
-                int blockSum = 0;
-                int count = 0;
-                
+
+                var skySum = 0;
+                var blockSum = 0;
+                var count = 0;
+
                 void AddLightSample(uint l)
                 {
                     if (l != DisabledLightValue)
@@ -775,17 +822,15 @@ internal static class ChunkMeshBuilder
             // Our ao is 0-3, shift to 1-4 for shader compatibility
             return (uint)(ao + 1);
         }
-        
+
         /// <summary>
         /// Check if a block is an occluder for AO purposes.
         /// Solid opaque blocks occlude; air and water don't.
         /// </summary>
-        private static bool IsOccluder(BlockId block)
-        {
+        private static bool IsOccluder(BlockId block) =>
             // Air and Water don't occlude - use BlockId opaque flag
-            return block.IsOpaque();
-        }
-        
+            block.IsOpaque();
+
         /// <summary>
         /// Get the two tangent vectors for a face (perpendicular to normal).
         /// t1 and t2 define the two axes along which the face extends.

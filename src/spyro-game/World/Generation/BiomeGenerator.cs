@@ -12,12 +12,12 @@ public sealed class BiomeGenerator
     private readonly uint seed;
     
     // Climate noise parameters - use config values for consistency with CpuTerrainGenerator
-    private float ContinentalnessScale => config.ContinentalnessScale;
-    private const float TemperatureScale = 1f / 400f;
-    private const float HumidityScale = 1f / 350f;
-    private float ErosionScale => config.ErosionScale;
-    private float PeaksValleysScale => config.RidgeScale;
-    private const float WeirdnessScale = 1f / 200f;
+    private float ContinentalnessScale => config.Continentalness.BaseScale;
+    private float TemperatureScale => config.Temperature.BaseScale;
+    private float HumidityScale => config.Humidity.BaseScale;
+    private float ErosionScale => config.Erosion.BaseScale;
+    private float PeaksValleysScale => config.PeaksValleys.BaseScale;
+    private float WeirdnessScale => config.Weirdness.BaseScale;
     
     // Warp parameters - use config values for consistency with CpuTerrainGenerator
     private float WarpScale => config.WarpScale;
@@ -103,6 +103,50 @@ public sealed class BiomeGenerator
                 data.BiomeIds[cellIndex] = SelectBiome(
                     continentalness, temp01, humid01, erosion, peaksValleys, weirdness,
                     estimatedAltitude);
+            }
+        }
+
+        // Generate per-column biomes (16x16) for accurate borders
+        // This populates the ColumnBiomes array which is the primary source for rendering and gameplay
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var worldX = baseX + lx;
+                var worldZ = baseZ + lz;
+
+                // Apply domain warp (same as 4x4 grid)
+                var warpX = SampleNoise2D(worldX, worldZ, WarpScale, seed + 1000u);
+                var warpZ = SampleNoise2D(worldX + 5.2f, worldZ + 1.3f, WarpScale, seed + 1001u);
+                var warpedX = worldX + warpX * WarpStrength;
+                var warpedZ = worldZ + warpZ * WarpStrength;
+
+                // Sample climate parameters
+                var continentalness = SampleNoise2D(warpedX, warpedZ, ContinentalnessScale, seed);
+                var temperature = SampleNoise2D(worldX, worldZ, TemperatureScale, seed + 100u);
+                var humidity = SampleNoise2D(worldX, worldZ, HumidityScale, seed + 200u);
+                var erosion = SampleNoise2D(worldX, worldZ, ErosionScale, seed + 300u);
+                var peaksValleys = SampleNoise2D(worldX, worldZ, PeaksValleysScale, seed + 400u);
+                var weirdness = SampleNoise2D(worldX, worldZ, WeirdnessScale, seed + 500u);
+
+                // Process temperature/humidity
+                var temp01 = temperature * 0.5f + 0.5f;
+                var humid01 = humidity * 0.5f + 0.5f;
+                
+                var estimatedAltitude = GetEstimatedAltitude(continentalness, erosion, peaksValleys, weirdness);
+                var altitudeAboveWater = Math.Max(0, estimatedAltitude - VoxelHelper.WaterLevel);
+                temp01 -= altitudeAboveWater * config.LapseRate;
+                temp01 = Math.Clamp(temp01, 0f, 1f);
+                
+                var cont01 = continentalness * 0.5f + 0.5f;
+                if (cont01 > config.CoastThreshold)
+                {
+                    humid01 -= (cont01 - config.CoastThreshold) * config.CoastDrying;
+                    humid01 = Math.Clamp(humid01, 0f, 1f);
+                }
+
+                var biomeId = SelectBiome(continentalness, temp01, humid01, erosion, peaksValleys, weirdness, estimatedAltitude);
+                data.SetBiomeAt(lx, lz, biomeId);
             }
         }
         

@@ -68,6 +68,91 @@ public class Chunk(int index)
     }
 
     /// <summary>
+    /// Rebuild collision spans for a single column from voxel data.
+    /// Used for immediate block edit updates.
+    /// </summary>
+    internal void RebuildColumnSpans(int localX, int localZ, ChunkData voxelData)
+    {
+        // Initialize arrays if needed
+        columnSpanPairs ??= new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
+        columnSpanCounts ??= new byte[VoxelHelper.ChunkSideSizeSquare];
+        columnSpanTypes ??= new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
+        
+        var col = localX + localZ * VoxelHelper.ChunkSideSize;
+        var pairBase = col * ChunkCollisionData.MaxSpansPerColumn * 2;
+        var typeBase = col * ChunkCollisionData.MaxSpansPerColumn;
+        
+        // Rebuild spans by scanning the column
+        // Include ALL non-air blocks (not just solid) so torches etc. can be picked
+        var spanCount = 0;
+        var inSpan = false;
+        var spanStart = 0;
+        var spanBlock = BlockId.Air;
+        
+        for (var y = 0; y < VoxelHelper.ChunkYSize && spanCount < ChunkCollisionData.MaxSpansPerColumn; y++)
+        {
+            var block = voxelData.GetBlock(localX, y, localZ);
+            var isNonAir = !block.IsAir();  // Include ALL non-air blocks for picking
+            
+            if (isNonAir && !inSpan)
+            {
+                inSpan = true;
+                spanStart = y;
+                spanBlock = block;
+            }
+            else if (!isNonAir && inSpan)
+            {
+                // Commit span
+                columnSpanPairs[pairBase + spanCount * 2] = spanStart;
+                columnSpanPairs[pairBase + spanCount * 2 + 1] = y; // exclusive end
+                columnSpanTypes[typeBase + spanCount] = spanBlock;
+                spanCount++;
+                inSpan = false;
+            }
+            else if (isNonAir && inSpan && block != spanBlock)
+            {
+                // Block type changed
+                columnSpanPairs[pairBase + spanCount * 2] = spanStart;
+                columnSpanPairs[pairBase + spanCount * 2 + 1] = y;
+                columnSpanTypes[typeBase + spanCount] = spanBlock;
+                spanCount++;
+                if (spanCount < ChunkCollisionData.MaxSpansPerColumn)
+                {
+                    spanStart = y;
+                    spanBlock = block;
+                }
+                else
+                {
+                    inSpan = false;
+                }
+            }
+        }
+        
+        // Close final span
+        if (inSpan && spanCount < ChunkCollisionData.MaxSpansPerColumn)
+        {
+            columnSpanPairs[pairBase + spanCount * 2] = spanStart;
+            columnSpanPairs[pairBase + spanCount * 2 + 1] = VoxelHelper.ChunkYSize;
+            columnSpanTypes[typeBase + spanCount] = spanBlock;
+            spanCount++;
+        }
+        
+        columnSpanCounts[col] = (byte)spanCount;
+        
+        // Update maxHeights for this column
+        var maxH = 0;
+        for (var i = 0; i < spanCount; i++)
+        {
+            var y1 = columnSpanPairs[pairBase + i * 2 + 1];
+            if (y1 > maxH) maxH = y1;
+        }
+        maxHeights[localX, localZ] = maxH - 1;
+        
+        HasSpanData = true;
+        HasCollisionData = true;
+    }
+
+    /// <summary>
     /// Try to get the raw span data arrays.
     /// </summary>
     internal bool TryGetSpanData(out int[] spansPairs, out byte[] counts, out BlockId[] types)

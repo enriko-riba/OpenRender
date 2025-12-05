@@ -1,14 +1,21 @@
 namespace SpyroGame.World;
 
 /// <summary>
-/// Stores biome and climate data for a chunk using a coarse 4x4 grid (like Minecraft).
-/// Each cell covers a 4x4 block area, so 16 cells cover the 16x16 chunk.
+/// Stores biome and climate data for a chunk using both:
+/// - Per-column biome IDs (256 columns per chunk) for accurate voxel-resolution borders
+/// - Coarse 4x4 grid (16 cells) for climate interpolation (legacy compatibility)
 /// Also stores 3D cave biome data using a 4×4×24 grid for underground biome variation.
 /// </summary>
 public sealed class ChunkBiomeData
 {
     /// <summary>
+    /// Number of columns per chunk (16×16 = 256).
+    /// </summary>
+    public const int ColumnCount = VoxelHelper.ChunkSideSizeSquare; // 256
+    
+    /// <summary>
     /// Grid resolution: 4x4 cells per chunk (each cell = 4x4 blocks).
+    /// Used for climate interpolation, NOT for biome lookup.
     /// </summary>
     public const int GridSize = 4;
     public const int CellCount = GridSize * GridSize; // 16
@@ -23,7 +30,25 @@ public sealed class ChunkBiomeData
     public const int CaveBiomeCellCount = GridSize * GridSize * GridSizeY; // 4×4×24 = 384
     
     /// <summary>
-    /// Biome ID for each cell in the 4x4 grid.
+    /// Per-column biome ID for voxel-resolution borders.
+    /// Index = localZ * 16 + localX where localX, localZ are [0,15].
+    /// This is the PRIMARY biome storage used for rendering.
+    /// Initialized to Plains (not Ocean=0) to prevent spurious ocean biomes on uninitialized columns.
+    /// </summary>
+    public readonly BiomeId[] ColumnBiomes;
+    
+    /// <summary>
+    /// Creates a new ChunkBiomeData with all columns initialized to Plains.
+    /// </summary>
+    public ChunkBiomeData()
+    {
+        ColumnBiomes = new BiomeId[ColumnCount];
+        // Initialize to Plains (the fallback biome) instead of default Ocean (0)
+        Array.Fill(ColumnBiomes, BiomeId.Plains);
+    }
+    
+    /// <summary>
+    /// Biome ID for each cell in the 4x4 grid (legacy, for climate interpolation).
     /// Index = z * GridSize + x where x,z are cell coordinates [0,3].
     /// </summary>
     public readonly BiomeId[] BiomeIds = new BiomeId[CellCount];
@@ -66,11 +91,33 @@ public sealed class ChunkBiomeData
     
     /// <summary>
     /// Get the biome at a specific block position within the chunk.
+    /// Uses per-column biome storage for voxel-resolution borders.
     /// </summary>
     public BiomeId GetBiomeAt(int localX, int localZ)
     {
-        var cellX = localX / BlocksPerCell;
-        var cellZ = localZ / BlocksPerCell;
+        // Use per-column storage for accurate borders
+        localX = Math.Clamp(localX, 0, VoxelHelper.ChunkSideSize - 1);
+        localZ = Math.Clamp(localZ, 0, VoxelHelper.ChunkSideSize - 1);
+        return ColumnBiomes[localZ * VoxelHelper.ChunkSideSize + localX];
+    }
+    
+    /// <summary>
+    /// Set the biome for a specific column.
+    /// </summary>
+    public void SetBiomeAt(int localX, int localZ, BiomeId biome)
+    {
+        localX = Math.Clamp(localX, 0, VoxelHelper.ChunkSideSize - 1);
+        localZ = Math.Clamp(localZ, 0, VoxelHelper.ChunkSideSize - 1);
+        ColumnBiomes[localZ * VoxelHelper.ChunkSideSize + localX] = biome;
+    }
+    
+    /// <summary>
+    /// Get the biome from the 4x4 grid cell (legacy, for climate interpolation).
+    /// </summary>
+    public BiomeId GetCellBiome(int cellX, int cellZ)
+    {
+        cellX = Math.Clamp(cellX, 0, GridSize - 1);
+        cellZ = Math.Clamp(cellZ, 0, GridSize - 1);
         return BiomeIds[cellZ * GridSize + cellX];
     }
     

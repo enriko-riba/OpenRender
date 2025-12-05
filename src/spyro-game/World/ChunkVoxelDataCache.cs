@@ -255,6 +255,17 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
 
         public bool IsValid => chunkData != null && chunkData.VoxelData != null;
 
+        /// <summary>
+        /// Gets the surface height (highest opaque block Y) for a column in the chunk.
+        /// Returns -1 if the column is empty/air.
+        /// </summary>
+        public int GetSurfaceHeight(int x, int z)
+        {
+            if (!IsWithinBounds(x, 0, z)) return -1;
+            var idx = z * VoxelHelper.ChunkSideSize + x;
+            return chunkData.SurfaceHeights[idx];
+        }
+
         public bool TryReadVoxel(int x, int y, int z, out BlockId voxel)
         {
             if (!IsWithinBounds(x, y, z))
