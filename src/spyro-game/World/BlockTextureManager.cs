@@ -1,7 +1,5 @@
 using OpenRender;
-using OpenRender.Core;
 using OpenTK.Graphics.OpenGL4;
-using System;
 
 namespace SpyroGame.World;
 
@@ -61,7 +59,7 @@ public sealed class BlockTextureManager : IDisposable
     {
         // Create sampler with pixelated look (nearest filtering) and repeat wrap
         sampler = GL.GenSampler();
-        
+
         // Use NearestMipmapLinear to reduce aliasing/shimmering at distance while keeping pixelated look
         GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.NearestMipmapLinear);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
@@ -102,20 +100,20 @@ public sealed class BlockTextureManager : IDisposable
     private void LoadBlockTextures()
     {
         var loadedCount = 0;
-        var missingCount = 0;
+        var missingBlocks = new List<BlockId>();
 
         // Load default/fallback texture for missing blocks
         LoadFallbackTexture();
 
-        // Get all block types (excluding pure flags and Air)
+        // Get all block types (excluding Air which has no texture)
         var allBlockIds = Enum.GetValues<BlockId>()
-            .Where(b => !IsFlagOnly(b) && b != BlockId.Air)
+            .Where(b => b != BlockId.Air)
             .ToList();
 
         foreach (var blockId in allBlockIds)
         {
             var texturePath = GetTexturePathForBlock(blockId);
-            
+
             if (File.Exists(texturePath))
             {
                 if (LoadBlockTexture(blockId, texturePath))
@@ -125,12 +123,22 @@ public sealed class BlockTextureManager : IDisposable
             }
             else
             {
-                missingCount++;
-                Log.Debug($"BlockTextureManager: No texture file for {blockId} (expected: {texturePath})");
+                missingBlocks.Add(blockId);
             }
         }
 
-        Log.Info($"BlockTextureManager: Loaded {loadedCount} block textures, {missingCount} missing (will show fallback)");
+        // Log warnings for missing textures
+        if (missingBlocks.Count > 0)
+        {
+            Log.Warn($"BlockTextureManager: Missing textures for {missingBlocks.Count} block types (will show fallback):");
+            foreach (var block in missingBlocks)
+            {
+                var expectedPath = GetTexturePathForBlock(block);
+                Log.Warn($"  - {block} (expected: {expectedPath})");
+            }
+        }
+
+        Log.Info($"BlockTextureManager: Loaded {loadedCount} block textures successfully");
     }
 
     /// <summary>
@@ -170,11 +178,11 @@ public sealed class BlockTextureManager : IDisposable
             return pascalCase;
 
         var result = new System.Text.StringBuilder();
-        
+
         for (var i = 0; i < pascalCase.Length; i++)
         {
             var c = pascalCase[i];
-            
+
             if (char.IsUpper(c))
             {
                 // Add underscore before uppercase letters (except at start)
@@ -187,18 +195,8 @@ public sealed class BlockTextureManager : IDisposable
                 result.Append(c);
             }
         }
-        
+
         return result.ToString();
-    }
-    
-    /// <summary>
-    /// Checks if a BlockId value is a pure flag (not a real block type).
-    /// </summary>
-    private static bool IsFlagOnly(BlockId blockId)
-    {
-        // Pure flags have no ID component (lower 10 bits are 0) and are power-of-2 values >= 1024
-        var rawValue = (ushort)blockId;
-        return rawValue >= 1024 && (rawValue & (rawValue - 1)) == 0;
     }
 
     /// <summary>
@@ -286,7 +284,7 @@ public sealed class BlockTextureManager : IDisposable
             GL.TexSubImage3D(TextureTarget.Texture2DArray, 0, 0, 0, layer, AtlasWidth, AtlasHeight, 1,
                 PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
         }
-        
+
         Log.Info($"BlockTextureManager: Initialized {MaxBlockTypes} layers with fallback texture");
     }
 

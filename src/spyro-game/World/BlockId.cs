@@ -1,284 +1,253 @@
 namespace SpyroGame.World;
 
 /// <summary>
-/// Block identifier with embedded property flags.
-/// Lower 10 bits = unique block ID (supports up to 1024 blocks).
-/// Upper 6 bits = property flags (Solid, Opaque, Liquid, Translucent, Replaceable).
+/// Block identifier - a simple enum with unique IDs.
+/// All block properties (solid, opaque, light, etc.) are stored in <see cref="BlockRegistry"/>.
+/// Use <see cref="BlockRegistry"/> extension methods for property lookups.
 /// </summary>
 /// <remarks>
-/// This replaces both BlockType and BlockDescriptor enums.
-/// Properties are embedded directly in the enum value via flags, eliminating
-/// the need for separate lookup tables. Use extension methods like IsSolid(),
-/// IsOpaque() etc. which are simple bitmask operations.
+/// IDs are organized into ranges for logical grouping:
+/// - 0-9: Special/Air/Liquids
+/// - 10-19: Dirt/Grass variants
+/// - 20-29: Sand variants
+/// - 30-39: Gravel/Clay
+/// - 40-49: Snow/Ice
+/// - 50-59: Terracotta
+/// - 100-109: Ores
+/// - 120-139: Wood
+/// - 140-149: Leaves
+/// - 200-219: Light sources
+/// - 220-239: Glass
 /// </remarks>
-[Flags]
 public enum BlockId : ushort
 {
-    // === Property Flags (upper 6 bits) ===
-    /// <summary>Blocks movement, needs faces rendered.</summary>
-    Solid = 1 << 10,
-    /// <summary>Blocks light, culls neighbor faces when adjacent.</summary>
-    Opaque = 1 << 11,
-    /// <summary>Water/lava flow behavior.</summary>
-    Liquid = 1 << 12,
-    /// <summary>Partial transparency (water, ice, leaves).</summary>
-    Translucent = 1 << 13,
-    /// <summary>Can be overwritten by other blocks (air, water, tall grass).</summary>
-    Replaceable = 1 << 14,
-    /// <summary>Emits light, rendered at full brightness.</summary>
-    Emissive = 1 << 15,
-
-    // === Block IDs with embedded flags (lower 10 bits = unique ID) ===
-    
     // --- Special (0-9) ---
     /// <summary>Empty space - replaceable, not solid.</summary>
-    Air = 0 | Replaceable,
+    Air = 0,
     /// <summary>Water block - liquid, translucent, replaceable.</summary>
-    Water = 1 | Liquid | Translucent | Replaceable,
+    Water = 1,
     /// <summary>Lava block - liquid, emissive, replaceable.</summary>
-    Lava = 2 | Liquid | Emissive | Replaceable,
-    
-    // --- Stone variants (2-9) ---
+    Lava = 2,
+
+    // --- Stone variants (3-9) ---
     /// <summary>Basic stone - solid, opaque.</summary>
-    Stone = 3 | Solid | Opaque,
+    Stone = 3,
     /// <summary>Indestructible bedrock - solid, opaque.</summary>
-    Bedrock = 4 | Solid | Opaque,
+    Bedrock = 4,
     /// <summary>Cobblestone - solid, opaque.</summary>
-    Cobblestone = 5 | Solid | Opaque,
+    Cobblestone = 5,
     /// <summary>Mossy cobblestone - solid, opaque.</summary>
-    MossyCobblestone = 6 | Solid | Opaque,
-    
+    MossyCobblestone = 6,
+
     // --- Dirt/Grass (10-19) ---
     /// <summary>Dirt block - solid, opaque.</summary>
-    Dirt = 10 | Solid | Opaque,
+    Dirt = 10,
     /// <summary>Grass block (green top) - solid, opaque.</summary>
-    Grass = 11 | Solid | Opaque,
+    Grass = 11,
     /// <summary>Grass with snow on top - solid, opaque.</summary>
-    GrassSnowy = 12 | Solid | Opaque,
+    GrassSnowy = 12,
     /// <summary>Taiga forest floor - solid, opaque.</summary>
-    Podzol = 13 | Solid | Opaque,
+    Podzol = 13,
     /// <summary>Mushroom biome ground - solid, opaque.</summary>
-    Mycelium = 14 | Solid | Opaque,
+    Mycelium = 14,
     /// <summary>Coarse dirt (no grass growth) - solid, opaque.</summary>
-    CoarseDirt = 15 | Solid | Opaque,
-    
+    CoarseDirt = 15,
+
     // --- Sand (20-29) ---
     /// <summary>Sand block - solid, opaque.</summary>
-    Sand = 20 | Solid | Opaque,
+    Sand = 20,
     /// <summary>Red sand (mesa biome) - solid, opaque.</summary>
-    RedSand = 21 | Solid | Opaque,
+    RedSand = 21,
     /// <summary>Sandstone - solid, opaque.</summary>
-    Sandstone = 22 | Solid | Opaque,
+    Sandstone = 22,
     /// <summary>Red sandstone - solid, opaque.</summary>
-    RedSandstone = 23 | Solid | Opaque,
-    
+    RedSandstone = 23,
+
     // --- Gravel/Clay (30-39) ---
     /// <summary>Gravel - solid, opaque.</summary>
-    Gravel = 30 | Solid | Opaque,
+    Gravel = 30,
     /// <summary>Clay - solid, opaque.</summary>
-    Clay = 31 | Solid | Opaque,
-    
+    Clay = 31,
+
     // --- Snow/Ice (40-49) ---
     /// <summary>Snow layer - solid, opaque.</summary>
-    Snow = 40 | Solid | Opaque,
+    Snow = 40,
     /// <summary>Full snow block - solid, opaque.</summary>
-    SnowDirt = 41 | Solid | Opaque,
+    SnowDirt = 41,
     /// <summary>Ice - solid, translucent.</summary>
-    Ice = 42 | Solid | Translucent,
+    Ice = 42,
     /// <summary>Packed ice - solid, translucent.</summary>
-    PackedIce = 43 | Solid | Translucent,
+    PackedIce = 43,
     /// <summary>Blue ice - solid, translucent.</summary>
-    BlueIce = 44 | Solid | Translucent,
-    
+    BlueIce = 44,
+
     // --- Terracotta (50-59) ---
     /// <summary>Terracotta - solid, opaque.</summary>
-    Terracotta = 50 | Solid | Opaque,
+    Terracotta = 50,
     /// <summary>White terracotta - solid, opaque.</summary>
-    WhiteTerracotta = 51 | Solid | Opaque,
+    WhiteTerracotta = 51,
     /// <summary>Orange terracotta - solid, opaque.</summary>
-    OrangeTerracotta = 52 | Solid | Opaque,
+    OrangeTerracotta = 52,
     /// <summary>Red terracotta - solid, opaque.</summary>
-    RedTerracotta = 53 | Solid | Opaque,
+    RedTerracotta = 53,
     /// <summary>Brown terracotta - solid, opaque.</summary>
-    BrownTerracotta = 54 | Solid | Opaque,
+    BrownTerracotta = 54,
     /// <summary>Yellow terracotta - solid, opaque.</summary>
-    YellowTerracotta = 55 | Solid | Opaque,
-    
+    YellowTerracotta = 55,
+
     // --- Ores (100-109) ---
     /// <summary>Coal ore - solid, opaque.</summary>
-    CoalOre = 100 | Solid | Opaque,
+    CoalOre = 100,
     /// <summary>Iron ore - solid, opaque.</summary>
-    IronOre = 101 | Solid | Opaque,
+    IronOre = 101,
     /// <summary>Gold ore - solid, opaque.</summary>
-    GoldOre = 102 | Solid | Opaque,
+    GoldOre = 102,
     /// <summary>Diamond ore - solid, opaque.</summary>
-    DiamondOre = 103 | Solid | Opaque,
+    DiamondOre = 103,
     /// <summary>Copper ore - solid, opaque.</summary>
-    CopperOre = 104 | Solid | Opaque,
-    
+    CopperOre = 104,
+
     // --- Wood (120-139) ---
     /// <summary>Oak log - solid, opaque.</summary>
-    OakLog = 120 | Solid | Opaque,
+    OakLog = 120,
     /// <summary>Birch log - solid, opaque.</summary>
-    BirchLog = 121 | Solid | Opaque,
+    BirchLog = 121,
     /// <summary>Spruce log - solid, opaque.</summary>
-    SpruceLog = 122 | Solid | Opaque,
+    SpruceLog = 122,
     /// <summary>Jungle log - solid, opaque.</summary>
-    JungleLog = 123 | Solid | Opaque,
-    
+    JungleLog = 123,
+
     // --- Leaves (140-149) ---
-    /// <summary>Oak leaves - solid (for collision), translucent.</summary>
-    OakLeaves = 140 | Solid | Translucent,
+    /// <summary>Oak leaves - solid, translucent.</summary>
+    OakLeaves = 140,
     /// <summary>Birch leaves - solid, translucent.</summary>
-    BirchLeaves = 141 | Solid | Translucent,
+    BirchLeaves = 141,
     /// <summary>Spruce leaves - solid, translucent.</summary>
-    SpruceLeaves = 142 | Solid | Translucent,
+    SpruceLeaves = 142,
     /// <summary>Jungle leaves - solid, translucent.</summary>
-    JungleLeaves = 143 | Solid | Translucent,
-    
+    JungleLeaves = 143,
+
     // --- Light Sources (200-219) ---
     /// <summary>Torch - non-solid, emissive, light value 14.</summary>
-    Torch = 200 | Emissive,
+    Torch = 200,
     /// <summary>Wall torch - non-solid, emissive, light value 14.</summary>
-    WallTorch = 201 | Emissive,
+    WallTorch = 201,
     /// <summary>Soul torch - non-solid, emissive, light value 10.</summary>
-    SoulTorch = 202 | Emissive,
+    SoulTorch = 202,
     /// <summary>Glowstone - solid, opaque, emissive, light value 15.</summary>
-    Glowstone = 203 | Solid | Opaque | Emissive,
+    Glowstone = 203,
     /// <summary>Sea lantern - solid, translucent, emissive, light value 15.</summary>
-    SeaLantern = 204 | Solid | Translucent | Emissive,
+    SeaLantern = 204,
     /// <summary>Lantern - non-solid, emissive, light value 15.</summary>
-    Lantern = 205 | Emissive,
+    Lantern = 205,
     /// <summary>Soul lantern - non-solid, emissive, light value 10.</summary>
-    SoulLantern = 206 | Emissive,
+    SoulLantern = 206,
     /// <summary>Redstone lamp (off) - solid, opaque.</summary>
-    RedstoneLamp = 207 | Solid | Opaque,
+    RedstoneLamp = 207,
     /// <summary>Redstone lamp (on) - solid, opaque, emissive, light value 15.</summary>
-    RedstoneLampOn = 208 | Solid | Opaque | Emissive,
+    RedstoneLampOn = 208,
     /// <summary>End rod - non-solid, emissive, light value 14.</summary>
-    EndRod = 209 | Emissive,
+    EndRod = 209,
     /// <summary>Shroomlight - solid, opaque, emissive, light value 15.</summary>
-    Shroomlight = 210 | Solid | Opaque | Emissive,
+    Shroomlight = 210,
     /// <summary>Jack o'Lantern - solid, opaque, emissive, light value 15.</summary>
-    JackOLantern = 211 | Solid | Opaque | Emissive,
+    JackOLantern = 211,
     /// <summary>Campfire - non-solid, emissive, light value 15.</summary>
-    Campfire = 212 | Emissive,
+    Campfire = 212,
     /// <summary>Soul campfire - non-solid, emissive, light value 10.</summary>
-    SoulCampfire = 213 | Emissive,
-    
+    SoulCampfire = 213,
+
     // --- Glass (220-239) ---
     /// <summary>Glass - solid, translucent, fully transparent to light (filter 0).</summary>
-    Glass = 220 | Solid | Translucent,
+    Glass = 220,
     /// <summary>White stained glass - solid, translucent.</summary>
-    WhiteStainedGlass = 221 | Solid | Translucent,
+    WhiteStainedGlass = 221,
     /// <summary>Orange stained glass - solid, translucent.</summary>
-    OrangeStainedGlass = 222 | Solid | Translucent,
+    OrangeStainedGlass = 222,
     /// <summary>Magenta stained glass - solid, translucent.</summary>
-    MagentaStainedGlass = 223 | Solid | Translucent,
+    MagentaStainedGlass = 223,
     /// <summary>Light blue stained glass - solid, translucent.</summary>
-    LightBlueStainedGlass = 224 | Solid | Translucent,
+    LightBlueStainedGlass = 224,
     /// <summary>Yellow stained glass - solid, translucent.</summary>
-    YellowStainedGlass = 225 | Solid | Translucent,
+    YellowStainedGlass = 225,
     /// <summary>Lime stained glass - solid, translucent.</summary>
-    LimeStainedGlass = 226 | Solid | Translucent,
+    LimeStainedGlass = 226,
     /// <summary>Pink stained glass - solid, translucent.</summary>
-    PinkStainedGlass = 227 | Solid | Translucent,
+    PinkStainedGlass = 227,
     /// <summary>Gray stained glass - solid, translucent.</summary>
-    GrayStainedGlass = 228 | Solid | Translucent,
+    GrayStainedGlass = 228,
     /// <summary>Light gray stained glass - solid, translucent.</summary>
-    LightGrayStainedGlass = 229 | Solid | Translucent,
+    LightGrayStainedGlass = 229,
     /// <summary>Cyan stained glass - solid, translucent.</summary>
-    CyanStainedGlass = 230 | Solid | Translucent,
+    CyanStainedGlass = 230,
     /// <summary>Purple stained glass - solid, translucent.</summary>
-    PurpleStainedGlass = 231 | Solid | Translucent,
+    PurpleStainedGlass = 231,
     /// <summary>Blue stained glass - solid, translucent.</summary>
-    BlueStainedGlass = 232 | Solid | Translucent,
+    BlueStainedGlass = 232,
     /// <summary>Brown stained glass - solid, translucent.</summary>
-    BrownStainedGlass = 233 | Solid | Translucent,
+    BrownStainedGlass = 233,
     /// <summary>Green stained glass - solid, translucent.</summary>
-    GreenStainedGlass = 234 | Solid | Translucent,
+    GreenStainedGlass = 234,
     /// <summary>Red stained glass - solid, translucent.</summary>
-    RedStainedGlass = 235 | Solid | Translucent,
+    RedStainedGlass = 235,
     /// <summary>Black stained glass - solid, translucent.</summary>
-    BlackStainedGlass = 236 | Solid | Translucent,
+    BlackStainedGlass = 236,
     /// <summary>Tinted glass - solid, translucent, blocks all light (filter 15) but see-through.</summary>
-    TintedGlass = 237 | Solid | Translucent,
+    TintedGlass = 237,
 }
 
 /// <summary>
-/// Mask constants for extracting BlockId parts.
-/// </summary>
-public static class BlockIdMasks
-{
-    /// <summary>Lower 10 bits = unique block ID (0-1023).</summary>
-    public const ushort IdMask = 0x03FF;
-    /// <summary>Upper 6 bits = property flags.</summary>
-    public const ushort FlagsMask = 0xFC00;
-}
-
-/// <summary>
-/// Extension methods for BlockId flag checking and ID extraction.
-/// All methods are simple bitmask operations - no lookup tables required.
+/// Extension methods for BlockId. All property checks delegate to <see cref="BlockRegistry"/>.
 /// </summary>
 public static class BlockIdExtensions
 {
     /// <summary>
-    /// Gets the unique block ID (lower 10 bits, range 0-1023).
+    /// Gets the block ID value (for texture array indexing, etc.).
     /// </summary>
-    public static ushort GetId(this BlockId block) 
-        => (ushort)((ushort)block & BlockIdMasks.IdMask);
+    public static ushort GetId(this BlockId block) => (ushort)block;
 
     /// <summary>
     /// Returns true if this block is solid (blocks movement, needs faces rendered).
     /// </summary>
-    public static bool IsSolid(this BlockId block) 
-        => (block & BlockId.Solid) != 0;
+    public static bool IsSolid(this BlockId block) => BlockRegistry.IsSolid(block);
 
     /// <summary>
     /// Returns true if this block is opaque (blocks light, culls neighbor faces).
     /// </summary>
-    public static bool IsOpaque(this BlockId block) 
-        => (block & BlockId.Opaque) != 0;
+    public static bool IsOpaque(this BlockId block) => BlockRegistry.IsOpaque(block);
 
     /// <summary>
     /// Returns true if this block is a liquid (water, lava).
     /// </summary>
-    public static bool IsLiquid(this BlockId block) 
-        => (block & BlockId.Liquid) != 0;
+    public static bool IsLiquid(this BlockId block) => BlockRegistry.IsLiquid(block);
 
     /// <summary>
     /// Returns true if this block is translucent (partial transparency).
     /// </summary>
-    public static bool IsTranslucent(this BlockId block) 
-        => (block & BlockId.Translucent) != 0;
+    public static bool IsTranslucent(this BlockId block) => BlockRegistry.IsTranslucent(block);
 
     /// <summary>
     /// Returns true if this block can be replaced by other blocks (air, water, tall grass).
     /// </summary>
-    public static bool IsReplaceable(this BlockId block) 
-        => (block & BlockId.Replaceable) != 0;
-
-    /// <summary>
-    /// Returns true if this block is transparent (air or water - not solid and replaceable).
-    /// </summary>
-    public static bool IsTransparent(this BlockId block) 
-        => !block.IsSolid() || block.IsLiquid();
-
-    /// <summary>
-    /// Returns true if this block is water.
-    /// </summary>
-    public static bool IsWater(this BlockId block) 
-        => block.GetId() == BlockId.Water.GetId();
-
-    /// <summary>
-    /// Returns true if this block is air.
-    /// </summary>
-    public static bool IsAir(this BlockId block) 
-        => block.GetId() == BlockId.Air.GetId();
+    public static bool IsReplaceable(this BlockId block) => BlockRegistry.IsReplaceable(block);
 
     /// <summary>
     /// Returns true if this block is emissive (glows).
     /// </summary>
-    public static bool IsEmissive(this BlockId block) 
-        => (block & BlockId.Emissive) != 0;
+    public static bool IsEmissive(this BlockId block) => BlockRegistry.IsEmissive(block);
+
+    /// <summary>
+    /// Returns true if this block is transparent (air or liquid - not solid and replaceable).
+    /// </summary>
+    public static bool IsTransparent(this BlockId block) => !block.IsSolid() || block.IsLiquid();
+
+    /// <summary>
+    /// Returns true if this block is water.
+    /// </summary>
+    public static bool IsWater(this BlockId block) => block == BlockId.Water;
+
+    /// <summary>
+    /// Returns true if this block is air.
+    /// </summary>
+    public static bool IsAir(this BlockId block) => block == BlockId.Air;
 }

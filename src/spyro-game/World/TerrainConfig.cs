@@ -104,29 +104,31 @@ public sealed class TerrainConfig
     /// <summary>
     /// Continentalness noise configuration.
     /// Controls the size of oceans and continents.
+    /// LARGER scale = bigger continents, fewer isolated ponds.
     /// </summary>
     public NoiseLayer Continentalness { get; set; } = new()
     {
-        BaseScale = 1f / 1500f,
+        BaseScale = 1f / 2500f,  // Was 1/1500 - larger scale = bigger land masses
         Octaves = 3,
-        Persistence = 0.5f,
+        Persistence = 0.45f,     // Slightly reduced for smoother transitions
         Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 800f,
-        DomainWarpStrength = 120f
+        DomainWarpScale = 1f / 1200f,  // Was 1/800 - larger warp scale
+        DomainWarpStrength = 100f      // Was 120 - slightly reduced
     };
 
     /// <summary>
     /// Erosion noise configuration.
     /// Controls the scale of terrain roughness and flat areas.
+    /// LARGER scale = bigger zones of flat vs rough terrain.
     /// </summary>
     public NoiseLayer Erosion { get; set; } = new()
     {
-        BaseScale = 1f / 600f,
-        Octaves = 4,
-        Persistence = 0.45f,
-        Lacunarity = 2.2f,
-        DomainWarpScale = 1f / 400f,
-        DomainWarpStrength = 80f
+        BaseScale = 1f / 900f,   // Was 1/600 - larger = bigger flat plains zones
+        Octaves = 3,             // Reduced from 4 for smoother transitions
+        Persistence = 0.4f,      // Was 0.45 - smoother
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 600f,   // Was 1/400
+        DomainWarpStrength = 60f       // Was 80 - less warping
     };
 
     /// <summary>
@@ -135,12 +137,12 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer PeaksValleys { get; set; } = new()
     {
-        BaseScale = 1f / 150f,
-        Octaves = 4,
-        Persistence = 0.55f,
+        BaseScale = 1f / 200f,   // Was 1/150 - larger features
+        Octaves = 3,             // Reduced from 4
+        Persistence = 0.5f,      // Was 0.55
         Lacunarity = 2.0f,
         UseRidged = true,
-        RidgeSharpness = 2.0f
+        RidgeSharpness = 1.5f    // Was 2.0 - softer ridges
     };
 
     /// <summary>
@@ -174,15 +176,16 @@ public sealed class TerrainConfig
     /// <summary>
     /// Weirdness noise configuration.
     /// Controls terrain variety - high weirdness creates unusual terrain features.
+    /// REDUCED influence for more normal, Earth-like terrain.
     /// </summary>
     public NoiseLayer Weirdness { get; set; } = new()
     {
-        BaseScale = 1f / 300f,
-        Octaves = 3,
-        Persistence = 0.6f,
-        Lacunarity = 1.8f,
-        DomainWarpScale = 1f / 200f,
-        DomainWarpStrength = 50f
+        BaseScale = 1f / 450f,   // Was 1/300 - larger = more uniform areas
+        Octaves = 2,             // Reduced from 3
+        Persistence = 0.5f,      // Was 0.6
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 300f,   // Was 1/200
+        DomainWarpStrength = 30f       // Was 50 - less distortion
     };
 
     // Legacy properties removed
@@ -314,11 +317,11 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Height amplitude of cliff variations in blocks.
-    /// Example: 40 means cliffs can vary up to 40 blocks in height.
-    /// - Lower values (25): Gentler, less dramatic cliffs
-    /// - Higher values (60): Very dramatic, towering cliff faces
+    /// Example: 25 means cliffs can vary up to 25 blocks in height.
+    /// - Lower values (15): Gentler, less dramatic cliffs
+    /// - Higher values (40): Very dramatic, towering cliff faces
     /// </summary>
-    public float CliffAmplitude { get; set; } = 10f;
+    public float CliffAmplitude { get; set; } = 25f;
     
     /// <summary>
     /// Frequency of 3D overhang noise (inverse of feature size).
@@ -330,11 +333,11 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Strength/amplitude of overhang displacement in blocks.
-    /// Example: 15 means overhangs can extend up to 15 blocks.
-    /// - Lower values (8): Subtle overhangs, barely noticeable
-    /// - Higher values (25): Extreme overhangs, floating islands
+    /// Example: 26 means overhangs can extend up to 26 blocks.
+    /// - Lower values (12): Subtle overhangs
+    /// - Higher values (40): Extreme overhangs, dramatic arches
     /// </summary>
-    public float OverhangAmplitude { get; set; } = 15f;
+    public float OverhangAmplitude { get; set; } = 26f;
     
     /// <summary>
     /// Range in blocks around sea level where shoreline detection occurs.
@@ -345,12 +348,12 @@ public sealed class TerrainConfig
     public float ShorelineRange { get; set; } = 2f;
     
     /// <summary>
-    /// Depth in blocks of the subsurface dirt layer below grass/surface.
-    /// Example: 2 means 2 blocks of dirt below the surface before stone.
-    /// - Lower values (1): Thin topsoil, stone closer to surface
-    /// - Higher values (4): Thick soil layer, more digging before stone
+    /// Depth in blocks of the subsurface layer below surface (e.g., dirt under grass).
+    /// Example: 4 means 4 blocks of subsurface material below the surface before deep stone.
+    /// - Lower values (2): Thin topsoil, stone closer to surface (can cause surface stone in steep areas)
+    /// - Higher values (6): Thick soil layer, more digging before stone
     /// </summary>
-    public float SubsurfaceDepth { get; set; } = 2f;
+    public float SubsurfaceDepth { get; set; } = 4f;
     
     /// <summary>
     /// Distance in blocks below surface where caves fade to prevent surface breaches.
@@ -378,27 +381,27 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Vertical range below terrain surface where overhang effects are applied (in blocks).
-    /// Example: 50 means overhangs can form up to 50 blocks below the surface.
-    /// - Lower values (30): Shallower overhangs, limited to near-surface
-    /// - Higher values (70): Deeper overhangs, more dramatic caves
+    /// Example: 65 means overhangs can form up to 65 blocks below the surface.
+    /// - Lower values (40): Shallower overhangs, limited to near-surface
+    /// - Higher values (90): Deeper overhangs, more dramatic caves
     /// </summary>
-    public float OverhangDepthRange { get; set; } = 50f;
+    public float OverhangDepthRange { get; set; } = 65f;
     
     /// <summary>
     /// Vertical range above terrain surface where overhang effects extend (in blocks).
-    /// Example: 30 means overhangs can extend up to 30 blocks above the base surface.
-    /// - Lower values (20): Smaller overhangs
-    /// - Higher values (50): Larger, more dramatic floating islands
+    /// Example: 45 means overhangs can extend up to 45 blocks above the base surface.
+    /// - Lower values (25): Smaller overhangs
+    /// - Higher values (70): Larger, more dramatic floating formations
     /// </summary>
-    public float OverhangHeightRange { get; set; } = 30f;
+    public float OverhangHeightRange { get; set; } = 45f;
     
     /// <summary>
     /// Height factor denominator for overhang strength falloff.
-    /// Example: 40 means overhang effect fades over 40-block vertical range.
-    /// - Lower values (25): Sharper falloff, more concentrated overhangs
-    /// - Higher values (60): Gentler falloff, more gradual overhang transitions
+    /// Example: 48 means overhang effect fades over 48-block vertical range.
+    /// - Lower values (30): Sharper falloff, more concentrated overhangs
+    /// - Higher values (65): Gentler falloff, more gradual overhang transitions
     /// </summary>
-    public float OverhangFalloffRange { get; set; } = 40f;
+    public float OverhangFalloffRange { get; set; } = 48f;
 
     public static TerrainConfig Default() => new();
 
@@ -1376,43 +1379,47 @@ public sealed class Spline1D
     /// <summary>
     /// Creates the default height spline for ocean-to-mountain elevation mapping.
     /// Maps continentalness [0,1] to elevation in blocks:
-    /// - 0.00-0.25: Ocean basin (-80 to -20 blocks)
-    /// - 0.32-0.38: Steep coastal cliffs (-5 to +35 blocks)
-    /// - 0.50-0.65: Coastal plains and inland hills (+50 to +80 blocks)
-    /// - 0.75-1.00: Mountain regions (+120 to +320 blocks)
+    /// - 0.00-0.25: Ocean basin
+    /// - 0.30-0.40: Coastal transition with moderate cliffs
+    /// - 0.40-0.60: Coastal lowlands rising to hills
+    /// - 0.60-0.80: Highlands with significant variation
+    /// - 0.80-1.00: Mountain regions with high peaks
     /// Note: Spline values are relative. GPU adds WATER_LEVEL (35) for absolute Y coordinates.
     /// </summary>
-    /// <returns>Configured height spline with 11 control points.</returns>
+    /// <returns>Configured height spline with terrain transitions.</returns>
     public static Spline1D DefaultHeightSpline()
     {
         var s = new Spline1D();
         
         // Height values are relative to WaterLevel (35).
         // Valid absolute Y range: 0-383. So relative range: -35 to +348.
-        // Tuned for Minecraft-style terrain with proper ocean/land distribution
+        // Normalized between old boring and new extreme values (75% toward new)
         
-        // Deep ocean - large flat basins
-        s.Add(0.00f, -28f);   // Deep ocean floor (Y=7)
-        s.Add(0.10f, -25f);   // Ocean basin (Y=10) - gradual slope
-        s.Add(0.20f, -18f);   // Mid ocean (Y=17)
+        // Deep ocean - moderate trenches
+        s.Add(0.00f, -30f);   // Deep ocean floor (Y=5)
+        s.Add(0.08f, -27f);   // Ocean basin (Y=8)
+        s.Add(0.18f, -20f);   // Mid ocean (Y=15)
         
-        // Shallow ocean to coast transition - steeper here
-        s.Add(0.30f, -8f);    // Shallow ocean (Y=27)
-        s.Add(0.35f, 0f);     // Sea level transition (Y=35) - CRITICAL point
-        s.Add(0.40f, 8f);     // Beach/coastal lowland (Y=43)
+        // Coastal cliff transition - moderately steep
+        s.Add(0.28f, -9f);    // Shallow ocean shelf (Y=26)
+        s.Add(0.33f, -1f);    // Approaching shore (Y=34)
+        s.Add(0.35f, 1f);     // Beach level (Y=36) - just above water
+        s.Add(0.38f, 12f);    // Coastal cliff top (Y=47) - moderate rise
         
-        // Inland plains - relatively flat
-        s.Add(0.50f, 20f);    // Coastal plains (Y=55)
-        s.Add(0.60f, 35f);    // Inland plains (Y=70)
+        // Coastal lowlands to rolling terrain
+        s.Add(0.45f, 23f);    // Coastal plains (Y=58)
+        s.Add(0.52f, 38f);    // Low hills (Y=73)
         
-        // Hills and highlands - more varied
-        s.Add(0.70f, 55f);    // Rolling hills (Y=90)
-        s.Add(0.78f, 80f);    // Highlands (Y=115)
+        // Hill/highland transition
+        s.Add(0.60f, 55f);    // Rolling hills (Y=90)
+        s.Add(0.68f, 82f);    // High hills (Y=117)
+        s.Add(0.75f, 115f);   // Highlands base (Y=150)
         
-        // Mountains - dramatic increase
-        s.Add(0.85f, 120f);   // Foothills (Y=155)
-        s.Add(0.92f, 180f);   // Mountains (Y=215)
-        s.Add(1.00f, 280f);   // High peaks (Y=315)
+        // Mountain range - good drama but not extreme
+        s.Add(0.82f, 155f);   // Mountain foothills (Y=190)
+        s.Add(0.88f, 205f);   // Lower mountains (Y=240)
+        s.Add(0.94f, 260f);   // High mountains (Y=295)
+        s.Add(1.00f, 320f);   // High peaks (Y=355)
         
         s.Sort();
         return s;

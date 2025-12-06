@@ -417,11 +417,11 @@ public partial class Shader
 
         // Process Includes
         var sb = new System.Text.StringBuilder();
-        using (var reader = new StringReader(src))
+        using (var reader = new StringReader(src)!)
         {
             string line;
             var inBlockComment = false;
-            while ((line = reader.ReadLine()) != null)
+            while ((line = reader!.ReadLine()) != null)
             {
                 var trimmed = line.Trim();
 

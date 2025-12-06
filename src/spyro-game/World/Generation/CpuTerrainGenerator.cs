@@ -205,7 +205,7 @@ internal sealed class CpuTerrainGenerator
                     }
 
                     // Palette lookup
-                    byte paletteIndex = chunkData.GetOrAddPaletteEntry(block);
+                    var paletteIndex = chunkData.GetOrAddPaletteEntry(block);
                     chunkData.VoxelData[localIndex] = paletteIndex;
 
                     if (!block.IsAir())
@@ -812,7 +812,7 @@ internal sealed class CpuTerrainGenerator
         return x0 + (x1 - x0) * tz;
     }
 
-    private void SampleValueNoiseSliceSparse(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    private static void SampleValueNoiseSliceSparse(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
     {
         var count = destination.Length;
         for (var i = 0; i < count; i++)
@@ -1055,6 +1055,9 @@ internal sealed class CpuTerrainGenerator
     /// Generate the block type for a voxel at the given world position.
     /// Returns appropriate BlockId based on height, depth, biome, and cave systems.
     /// Uses biome-specific blocks (SurfaceBlock, SubsurfaceBlock, DeepBlock) from BiomeDefinition.
+    /// 
+    /// FIXED: Surface detection now works with 3D terrain by checking if the block above is air,
+    /// rather than comparing y to 2D height. This correctly places grass/snow on overhangs.
     /// </summary>
     private BlockId GenerateBlock(
         int height,
@@ -1080,13 +1083,10 @@ internal sealed class CpuTerrainGenerator
             return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
         }
 
-        // 1. Calculate 3D Density
-        // This replaces the simple "y > height" check with a full density check.
-        // It allows for overhangs, arches, and floating islands where the 3D noise is strong enough.
+        // 1. Calculate 3D Density for THIS voxel
         var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
 
-        // 2. Density Check
-        // If density is negative, it's air (or water).
+        // 2. Density Check - If density is negative, it's air (or water).
         if (density < 0f)
         {
             return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
@@ -1100,56 +1100,88 @@ internal sealed class CpuTerrainGenerator
         if (isLand && y > 0)
         {
             var depth = height - y;
-            // Slope is now pre-calculated per column
             if (IsCave(depth, slope, cheeseSlice[y], spaghettiSlice[y]))
             {
                 return y <= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.CaveFloodExtension ? BlockId.Water : BlockId.Air;
             }
         }
 
-        // Get the biome for this position to determine block types
-        // IMPORTANT: Block types are fully determined by biome - no overrides!
-        // This ensures deterministic block types for inventory/block-breaking.
-        // BiomeDefinition is now passed in from FillChunk (optimization)
-        
-        // If biome definition is missing, log warning and use fallback
-        // This should not happen in production - all BiomeIds should have definitions
+        // 4. Determine if this is a SURFACE block by checking if block above is air
+        // This works correctly with 3D terrain (overhangs, floating islands, etc.)
+        var isSurface = false;
+        if (y < VoxelHelper.ChunkYSize - 1)
+        {
+            // Check density of block above - if negative, this is the surface
+            var densityAbove = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y + 1], y + 1, column3DFactor[columnIndex]);
+            
+            // Also check caves above - if there's a cave above, this could be a cave ceiling (surface)
+            var isCaveAbove = false;
+            if (isLand && y + 1 > 0)
+            {
+                var depthAbove = height - (y + 1);
+                isCaveAbove = IsCave(depthAbove, slope, cheeseSlice[y + 1], spaghettiSlice[y + 1]);
+            }
+            
+            isSurface = densityAbove < 0f || isCaveAbove;
+        }
+        else
+        {
+            // Top of world is always surface
+            isSurface = true;
+        }
+
+        // 5. Determine block type based on position and biome
         if (biomeDef == null)
         {
-            // Log.Warn($"Missing BiomeDefinition, using fallback blocks");
+            // Fallback for missing biome definition
+            return isSurface ? BlockId.Grass : BlockId.Stone;
         }
 
-        var isOceanBiome = (BiomeId?)biomeDef?.Id is BiomeId.Ocean or BiomeId.DeepOcean;
+        var isOceanBiome = (BiomeId)biomeDef.Id is BiomeId.Ocean or BiomeId.DeepOcean;
         var isUnderwater = y <= VoxelHelper.WaterLevel && (isOceanBiome || height < VoxelHelper.WaterLevel);
 
-        // Surface block - determined entirely by biome
-        // Note: With 3D terrain, 'height' is the 2D surface. Floating islands (y > height)
-        // will fall through to DeepBlock (Stone), which is acceptable for now.
-        if (y == height)
+        // Surface block - now correctly detected even on overhangs
+        if (isSurface)
         {
-            if (isUnderwater)
-            {
-                return biomeDef?.UnderwaterSurfaceBlock ?? BlockId.Gravel;
-            }
-            return biomeDef?.SurfaceBlock ?? BlockId.Grass;
+            return isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
         }
 
-        // Subsurface blocks - use biome's subsurface block
-        var depthBelowSurface = height - y;
-        if (depthBelowSurface <= terrainParams.SubsurfaceDepth && depthBelowSurface >= 0)
+        // Subsurface blocks - check depth below the ACTUAL surface
+        // For 3D terrain, we need to find how far below the nearest surface we are
+        // Approximate by checking how many solid blocks are above us
+        var solidAboveCount = 0;
+        for (var checkY = y + 1; checkY < Math.Min(y + (int)terrainParams.SubsurfaceDepth + 2, VoxelHelper.ChunkYSize); checkY++)
         {
-            if (isUnderwater)
+            var checkDensity = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[checkY], checkY, column3DFactor[columnIndex]);
+            if (checkDensity >= 0f)
             {
-                return biomeDef?.UnderwaterSubsurfaceBlock ?? BlockId.Stone;
+                solidAboveCount++;
             }
-            return biomeDef?.SubsurfaceBlock ?? BlockId.Dirt;
+            else
+            {
+                break; // Found air, stop counting
+            }
+        }
+        
+        // If we're within subsurface depth of any surface above, use subsurface block
+        // This handles both regular terrain and overhangs
+        var effectiveDepth = solidAboveCount;
+        if (effectiveDepth == 0)
+        {
+            // We're right below a surface (the surface check above passed)
+            // Use traditional depth calculation as fallback
+            effectiveDepth = Math.Max(0, height - y);
+        }
+        
+        if (effectiveDepth <= terrainParams.SubsurfaceDepth)
+        {
+            return isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
         }
 
         // Deep blocks - try to generate ore in stone regions
-        var deepBlock = biomeDef?.DeepBlock ?? BlockId.Stone;
+        var deepBlock = biomeDef.DeepBlock;
         if (deepBlock == BlockId.Stone)
         {
-            // Only generate ores in stone blocks
             var oreBlock = TryGenerateOre(wx, y, wz);
             if (oreBlock != BlockId.Air)
             {
@@ -1288,13 +1320,24 @@ internal sealed class CpuTerrainGenerator
         return density;
     }
 
+    /// <summary>
+    /// Calculate slope at a world position using consistent height sampling.
+    /// IMPORTANT: Uses GetHeight() for ALL samples (including in-chunk) to ensure
+    /// consistent height calculations at chunk boundaries. This fixes grid-pattern
+    /// cave artifacts caused by height discontinuities when slope was computed
+    /// using cached heights (from BuildColumnFieldCaches) for in-chunk positions
+    /// but GetHeight() for out-of-chunk positions.
+    /// </summary>
     private float GetSlope(int wx, int wz)
     {
-        var h0 = GenerateHeight(wx, wz);
-        var h1 = GenerateHeight(wx + 1, wz);
-        var h2 = GenerateHeight(wx, wz + 1);
-        var h3 = GenerateHeight(wx - 1, wz);
-        var h4 = GenerateHeight(wx, wz - 1);
+        // Use GetHeight() consistently for all samples to avoid discontinuities at chunk edges
+        // GetHeight() uses the simplified terrain formula, but it's consistent across all positions
+        var p = new Vector2(wx, wz);
+        var h0 = GetHeight(p);
+        var h1 = GetHeight(new Vector2(wx + 1, wz));
+        var h2 = GetHeight(new Vector2(wx, wz + 1));
+        var h3 = GetHeight(new Vector2(wx - 1, wz));
+        var h4 = GetHeight(new Vector2(wx, wz - 1));
 
         var dx = Math.Max(Math.Abs(h1 - h0), Math.Abs(h3 - h0));
         var dz = Math.Max(Math.Abs(h2 - h0), Math.Abs(h4 - h0));
@@ -1329,7 +1372,7 @@ internal sealed class CpuTerrainGenerator
         var slopeAtten = Smoothstep(terrainParams.CaveSlopeFadeMin, terrainParams.CaveSlopeFadeMax, slope);
         var attenuation = Math.Clamp(Math.Max(depthAtten, slopeAtten * 1.2f), 0f, 1f);
 
-        return cheeseDensity * attenuation > terrainParams.CaveCarveThreshold ? true : spaghettiDensity * attenuation > terrainParams.CaveCarveThreshold;
+        return cheeseDensity * attenuation > terrainParams.CaveCarveThreshold || spaghettiDensity * attenuation > terrainParams.CaveCarveThreshold;
     }
 
     private float GetContinentalness(Vector2 p)

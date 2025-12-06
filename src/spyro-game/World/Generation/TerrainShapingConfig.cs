@@ -14,11 +14,11 @@ public sealed class TerrainShapingConfig
     /// <summary>
     /// Width of the coastal transition zone as a fraction of inland distance [0, 1].
     /// At coastDist &lt; CoastalZoneWidth, beach/cliff blending is applied.
-    /// - 0.2 (default): 20% of inland distance is coastal zone
-    /// - 0.1: Narrow coastal zone, abrupt beach-to-land transition
-    /// - 0.3: Wide coastal zone, gradual beach-to-land transition
+    /// - 0.35 (default): 35% of inland distance is coastal zone (wide beaches/plains)
+    /// - 0.15: Narrow coastal zone, cliffs appear quickly
+    /// - 0.5: Very wide coastal zone, lots of flat coastal land
     /// </summary>
-    public float CoastalZoneWidth { get; set; } = 0.2f;
+    public float CoastalZoneWidth { get; set; } = 0.35f;
     
     /// <summary>
     /// Minimum cliffiness value where cliff behavior begins to appear [−1, 1].
@@ -87,27 +87,27 @@ public sealed class TerrainShapingConfig
     
     /// <summary>
     /// Peaks contribution in flat plains biomes in blocks.
-    /// - 5 (default): Subtle 5-block variations
-    /// - 2: Very flat plains
-    /// - 10: More hilly "plains"
+    /// - 6 (default): Gentle rolling terrain in plains
+    /// - 3: Very flat plains
+    /// - 12: Hilly plains
     /// </summary>
-    public float PeakAmplitudePlains { get; set; } = 5f;
+    public float PeakAmplitudePlains { get; set; } = 6f;
     
     /// <summary>
     /// Peaks contribution in rolling hills biomes in blocks.
-    /// - 25 (default): Moderate 25-block hills
-    /// - 15: Gentler hills
-    /// - 40: More dramatic hills
+    /// - 30 (default): Good hills with moderate height variation
+    /// - 20: Gentler hills
+    /// - 50: Dramatic hills
     /// </summary>
-    public float PeakAmplitudeHills { get; set; } = 25f;
+    public float PeakAmplitudeHills { get; set; } = 30f;
     
     /// <summary>
     /// Peaks contribution in dramatic terrain biomes in blocks.
-    /// - 50 (default): Strong 50-block peaks
-    /// - 30: Less dramatic peaks
-    /// - 80: Very dramatic mountainous peaks
+    /// - 65 (default): Large peaks for mountain biomes
+    /// - 45: Less dramatic peaks
+    /// - 90: Extreme mountainous peaks
     /// </summary>
-    public float PeakAmplitudeDramatic { get; set; } = 50f;
+    public float PeakAmplitudeDramatic { get; set; } = 65f;
     
     // === CLIFF PARAMETERS ===
     
@@ -164,19 +164,19 @@ public sealed class TerrainShapingConfig
     
     /// <summary>
     /// Base height boost for mountain zones in blocks.
-    /// - 80 (default): Mountains rise 80 blocks above baseline
-    /// - 50: Lower mountains
-    /// - 120: Very high mountains
+    /// - 110 (default): Mountains rise 110 blocks above baseline
+    /// - 80: Lower mountains
+    /// - 150: Very high mountains
     /// </summary>
-    public float MountainHeightBoost { get; set; } = 80f;
+    public float MountainHeightBoost { get; set; } = 110f;
     
     /// <summary>
     /// Additional peak amplitude in alpine mountain zones.
-    /// - 60 (default): Extra 60-block peaks in mountains
-    /// - 30: Gentler mountain tops
-    /// - 100: Very jagged mountain peaks
+    /// - 90 (default): Extra 90-block peaks in mountains
+    /// - 60: Gentler mountain tops
+    /// - 120: Very jagged mountain peaks
     /// </summary>
-    public float AlpinePeakAmplitude { get; set; } = 60f;
+    public float AlpinePeakAmplitude { get; set; } = 90f;
     
     /// <summary>
     /// TerrainType threshold where flatness scaling begins in mountains [0, 1].
@@ -207,11 +207,11 @@ public sealed class TerrainShapingConfig
     
     /// <summary>
     /// Maximum smoothing factor from erosion (squared erosion × this value).
-    /// - 0.3 (default): Up to 30% blend toward smooth baseline
-    /// - 0.15: Less erosion smoothing, rougher terrain
-    /// - 0.5: More erosion smoothing, smoother terrain
+    /// - 0.17 (default): Light erosion smoothing, keeps terrain interesting
+    /// - 0.1: Very rough terrain
+    /// - 0.3: More erosion smoothing, smoother terrain
     /// </summary>
-    public float ErosionSmoothingMax { get; set; } = 0.3f;
+    public float ErosionSmoothingMax { get; set; } = 0.17f;
     
     /// <summary>
     /// Height offset for erosion smoothing target in blocks.
@@ -245,44 +245,45 @@ public sealed class TerrainShapingConfig
     /// <summary>
     /// Weirdness threshold below which terrain is purely 2D heightmap.
     /// Weirdness values closer to 0 result in "normal" terrain.
-    /// - 0.3 (default): |weirdness| &lt; 0.3 = pure 2D terrain
-    /// - 0.2: Less terrain uses 3D features
-    /// - 0.4: More terrain uses 3D features (more overhangs)
+    /// - 0.15 (default): Slight weirdness activates 3D features
+    /// - 0.25: More conservative 3D activation
+    /// - 0.1: Very aggressive 3D activation
     /// </summary>
-    public float Weirdness3DThresholdLow { get; set; } = 0.3f;
+    public float Weirdness3DThresholdLow { get; set; } = 0.15f;
     
     /// <summary>
     /// Weirdness threshold above which terrain has maximum 3D features.
-    /// - 0.7 (default): |weirdness| > 0.7 = full 3D features
-    /// - 0.6: Reach full 3D earlier (more dramatic terrain)
-    /// - 0.9: Only very weird terrain gets full 3D
+    /// - 0.51 (default): Moderate weirdness = full 3D features
+    /// - 0.6: Reach full 3D later
+    /// - 0.4: Very aggressive 3D activation
     /// </summary>
-    public float Weirdness3DThresholdHigh { get; set; } = 0.7f;
+    public float Weirdness3DThresholdHigh { get; set; } = 0.51f;
     
     /// <summary>
     /// Erosion threshold below which 3D features are allowed.
     /// Low erosion + high weirdness = dramatic overhangs.
-    /// - 0.6 (default): 3D features where erosion &lt; 0.6
-    /// - 0.4: 3D only in very rough terrain
-    /// - 0.8: 3D features in most terrain types
+    /// - 0.75 (default): 3D features in most terrain types
+    /// - 0.6: 3D only in rougher terrain
+    /// - 0.5: 3D only in very rough terrain
     /// </summary>
-    public float Erosion3DThreshold { get; set; } = 0.6f;
+    public float Erosion3DThreshold { get; set; } = 0.75f;
     
     /// <summary>
     /// Minimum 3D factor multiplier [0, 1].
     /// Even "normal" terrain gets at least this much 3D effect.
-    /// - 0.1 (default): Always at least 10% overhang strength
-    /// - 0.0: Completely flat in normal areas
-    /// - 0.3: Always some 3D variety
+    /// REDUCED for more traditional flat terrain in plains.
+    /// - 0.08 (default): Minimal 3D in normal areas (mostly flat)
+    /// - 0.0: Pure 2D heightmap in low-weirdness areas
+    /// - 0.2: Noticeable overhangs even in normal terrain
     /// </summary>
-    public float Min3DFactor { get; set; } = 0.1f;
+    public float Min3DFactor { get; set; } = 0.08f;
     
     /// <summary>
     /// Maximum 3D factor multiplier [0, 1].
     /// Caps 3D effect even in extreme weirdness.
-    /// - 1.0 (default): Full overhang amplitude possible
-    /// - 0.7: Limit extreme 3D features
-    /// - 1.2: Allow extra-dramatic overhangs
+    /// - 1.0 (default): Standard overhang amplitude
+    /// - 0.8: Limit extreme 3D features
+    /// - 1.3: Extra-dramatic overhangs
     /// </summary>
     public float Max3DFactor { get; set; } = 1.0f;
 
@@ -290,9 +291,12 @@ public sealed class TerrainShapingConfig
 
     /// <summary>
     /// Amplitude multiplier for weirdness-based terrain variation.
-    /// Replaces hardcoded 70f.
+    /// REDUCED for more Earth-like, predictable terrain.
+    /// - 55 (default): Moderate weirdness influence
+    /// - 30: Very normal terrain
+    /// - 90: Dramatic unexpected terrain
     /// </summary>
-    public float WeirdnessAmplitude { get; set; } = 70f;
+    public float WeirdnessAmplitude { get; set; } = 55f;
 
     /// <summary>
     /// Base influence of weirdness on terrain height.
@@ -314,15 +318,21 @@ public sealed class TerrainShapingConfig
 
     /// <summary>
     /// Height boost for extreme weirdness.
-    /// Replaces hardcoded 60f.
+    /// REDUCED for more natural-looking terrain.
+    /// - 50 (default): Moderate sudden terrain changes
+    /// - 30: Very gradual transitions
+    /// - 100: Dramatic terrain shifts
     /// </summary>
-    public float ExtremeWeirdnessBoost { get; set; } = 60f;
+    public float ExtremeWeirdnessBoost { get; set; } = 50f;
 
     /// <summary>
     /// Continentalness threshold where mountains begin.
-    /// Replaces hardcoded 0.50f.
+    /// Higher values = mountains only appear far from coast.
+    /// - 0.60 (default): Mountains start at 60% inland
+    /// - 0.50: Mountains appear closer to coast
+    /// - 0.70: Mountains only in deep interior
     /// </summary>
-    public float MountainStartThreshold { get; set; } = 0.50f;
+    public float MountainStartThreshold { get; set; } = 0.60f;
 
     /// <summary>
     /// Multiplier for mountain height boost.
@@ -338,33 +348,39 @@ public sealed class TerrainShapingConfig
 
     /// <summary>
     /// Multiplier for valley depth carving.
-    /// Replaces hardcoded 60f.
+    /// Higher values create deeper, more dramatic valleys.
     /// </summary>
-    public float ValleyDepthMultiplier { get; set; } = 60f;
+    public float ValleyDepthMultiplier { get; set; } = 90f;
 
     /// <summary>
     /// Multiplier for ridge peak boost.
-    /// Replaces hardcoded 80f.
+    /// Higher values create taller, more dramatic ridges.
     /// </summary>
-    public float RidgeBoostMultiplier { get; set; } = 80f;
+    public float RidgeBoostMultiplier { get; set; } = 118f;
 
     /// <summary>
     /// Multiplier for plains amplitude.
-    /// Replaces hardcoded 2f.
+    /// Higher values create more varied plains terrain.
     /// </summary>
-    public float PlainsAmplitudeMultiplier { get; set; } = 2f;
+    public float PlainsAmplitudeMultiplier { get; set; } = 3.1f;
 
     /// <summary>
     /// Erosion threshold for smoothing.
-    /// Replaces hardcoded 0.7f.
+    /// LOWER threshold = more areas get smoothed = more flat terrain variety.
+    /// - 0.55 (default): Good balance of flat and rough terrain
+    /// - 0.40: More terrain gets smoothed
+    /// - 0.75: Less smoothing, rougher terrain
     /// </summary>
-    public float ErosionSmoothingThreshold { get; set; } = 0.7f;
+    public float ErosionSmoothingThreshold { get; set; } = 0.55f;
 
     /// <summary>
     /// Factor for erosion smoothing strength.
-    /// Replaces hardcoded 0.15f.
+    /// Higher = more smoothing effect when erosion is high.
+    /// - 0.35 (default): Noticeable smoothing in eroded areas
+    /// - 0.15: Subtle smoothing
+    /// - 0.50: Strong smoothing (very flat high-erosion areas)
     /// </summary>
-    public float ErosionSmoothingFactor { get; set; } = 0.15f;
+    public float ErosionSmoothingFactor { get; set; } = 0.35f;
 
     /// <summary>
     /// Amplitude for ocean floor variation.
@@ -374,19 +390,25 @@ public sealed class TerrainShapingConfig
 
     /// <summary>
     /// Multiplier for overhang amplitude.
-    /// Replaces hardcoded 2.0f.
+    /// REDUCED for less extreme overhangs in normal areas.
+    /// - 2.5 (default): Moderate overhangs
+    /// - 1.5: Subtle overhangs
+    /// - 4.0: Very dramatic overhangs
     /// </summary>
-    public float OverhangMultiplier { get; set; } = 2.0f;
+    public float OverhangMultiplier { get; set; } = 2.5f;
 
     /// <summary>
     /// Continentalness threshold where overhangs begin.
-    /// Replaces hardcoded 0.40f.
+    /// RAISED so overhangs only appear in mountainous regions.
+    /// - 0.55 (default): Overhangs in highlands and mountains
+    /// - 0.45: Overhangs in more terrain
+    /// - 0.65: Overhangs only in mountains
     /// </summary>
-    public float OverhangStartThreshold { get; set; } = 0.40f;
-
+    public float OverhangStartThreshold { get; set; } = 0.55f;
+    
     /// <summary>
     /// Continentalness threshold where overhangs are fully effective.
-    /// Replaces hardcoded 0.75f.
+    /// - 0.75 (default): Full overhangs in mountain regions
     /// </summary>
     public float OverhangFullThreshold { get; set; } = 0.75f;
     

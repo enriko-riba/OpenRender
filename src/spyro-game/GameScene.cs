@@ -150,7 +150,7 @@ internal class GameScene : Scene
                 100,
                 VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
             );
-            player = new Player(camera!, startPos, world, streamingManager);
+            player = new Player(camera!, startPos, world!, streamingManager);
         }
         else if (streamingManager != null)
         {
@@ -546,7 +546,7 @@ internal class GameScene : Scene
             var climate = streamingManager.GetCellClimateAtWorldPos(worldX, worldZ);
             if (climate.HasValue)
             {
-                var c = climate.Value;
+                var (C, T, H, E, PV) = climate.Value;
                 // Show cell coordinates (4x4 grid per chunk)
                 var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
                 var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
@@ -554,19 +554,19 @@ internal class GameScene : Scene
                 var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
                 
                 // Compact format for normal display
-                WriteLine($"  C:{c.C:F3} T:{c.T:F3} H:{c.H:F2} E:{c.E:F2} PV:{c.PV:F2} Cell:({cellX},{cellZ})", textColor);
+                WriteLine($"  C:{C:F3} T:{T:F3} H:{H:F2} E:{E:F2} PV:{PV:F2} Cell:({cellX},{cellZ})", textColor);
                 
                 // Extended climate info when F3 biome debug is active
                 if (terrainRenderer?.ShowBiomes == true)
                 {
                     // Interpret climate values
                     // NOTE: c.C and c.E are RAW [-1, 1]; convert to [0, 1] for display thresholds
-                    var cont01 = c.C * 0.5f + 0.5f;
-                    var erosion01 = c.E * 0.5f + 0.5f;
+                    var cont01 = C * 0.5f + 0.5f;
+                    var erosion01 = E * 0.5f + 0.5f;
                     // Erosion: low = dramatic terrain, high = flat
                     var terrainType = erosion01 < 0.25f ? "Dramatic" : erosion01 < 0.6f ? "Hills" : "Flat";
-                    var tempZone = c.T < 0.3f ? "Cold" : c.T > 0.7f ? "Hot" : "Temperate";
-                    var moistZone = c.H < 0.3f ? "Dry" : c.H > 0.7f ? "Humid" : "Moderate";
+                    var tempZone = T < 0.3f ? "Cold" : T > 0.7f ? "Hot" : "Temperate";
+                    var moistZone = H < 0.3f ? "Dry" : H > 0.7f ? "Humid" : "Moderate";
                     // Use actual terrain config thresholds for consistency
                     var config = streamingManager?.Config;
                     string landType;
@@ -642,7 +642,7 @@ internal class GameScene : Scene
             var isSelected = i == player.Inventory.SelectedSlot;
             var color = isSelected ? new Vector3(1, 1, 0) : new Vector3(0.7f, 0.7f, 0.7f);
 
-            string content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
+            var content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
             if (isSelected) content = $"> {content}";
 
             textRenderer.Render(content, 22, rightX, invStartY + i * invSlotHeight, color);

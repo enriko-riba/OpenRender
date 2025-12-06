@@ -98,7 +98,7 @@ public static class LightingCalculator
     {
         get
         {
-            t_modifiedChunks ??= new HashSet<int>();
+            t_modifiedChunks ??= [];
             return t_modifiedChunks;
         }
     }
@@ -295,7 +295,61 @@ public static class LightingCalculator
         
         // After recalculating each chunk independently, propagate light across chunk boundaries
         // This ensures light flows correctly between chunks (e.g., doorway spanning two chunks)
+        // IMPORTANT: We must also recalculate neighbor chunks that receive propagated light,
+        // otherwise stale light from neighbors can flow back into sealed areas.
+        var neighborsToRecalculate = new HashSet<int>();
         foreach (var (chunkIdx, chunkData) in affectedChunks)
+        {
+            var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+            var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+            
+            // Identify neighbors that need recalculation
+            (int dx, int dz)[] neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+            foreach (var (dx, dz) in neighbors)
+            {
+                var nx = chunkX + dx;
+                var nz = chunkZ + dz;
+                if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                    continue;
+                    
+                var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+                
+                // Skip if already in affected chunks (already recalculated)
+                if (affectedChunks.Exists(c => c.chunkIdx == neighborIdx))
+                    continue;
+                    
+                var neighborData = getChunkData(neighborIdx);
+                if (neighborData != null)
+                {
+                    neighborsToRecalculate.Add(neighborIdx);
+                }
+            }
+        }
+        
+        // Recalculate lighting for all identified neighbor chunks
+        // This ensures they don't have stale light that could propagate back
+        foreach (var neighborIdx in neighborsToRecalculate)
+        {
+            var neighborData = getChunkData(neighborIdx);
+            if (neighborData != null)
+            {
+                CalculateLighting(neighborData);
+                modifiedChunks.Add(neighborIdx);
+            }
+        }
+        
+        // Now propagate light between all affected chunks (including the newly recalculated neighbors)
+        var allChunksToPropagate = new List<(int chunkIdx, ChunkData data)>(affectedChunks);
+        foreach (var neighborIdx in neighborsToRecalculate)
+        {
+            var neighborData = getChunkData(neighborIdx);
+            if (neighborData != null)
+            {
+                allChunksToPropagate.Add((neighborIdx, neighborData));
+            }
+        }
+        
+        foreach (var (chunkIdx, chunkData) in allChunksToPropagate)
         {
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
@@ -353,7 +407,7 @@ public static class LightingCalculator
         if (sourceChunk == null)
             return modifiedChunks;
             
-        int sourceIndex = GetIndex(localX, localY, localZ);
+        var sourceIndex = GetIndex(localX, localY, localZ);
         SetBlockLight(sourceChunk, sourceIndex, 0);
         modifiedChunks.Add(sourceChunkIdx);
         
@@ -491,7 +545,7 @@ public static class LightingCalculator
         HashSet<int> modifiedChunks)
     {
         // Handle Y bounds
-        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+        if (y is < 0 or >= VoxelHelper.ChunkYSize)
             return;
             
         // Handle chunk boundary crossing
@@ -518,14 +572,14 @@ public static class LightingCalculator
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ == 0) return; // World edge
-            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetChunkIdx -= VoxelHelper.WorldChunksXZ;
             targetZ = VoxelHelper.ChunkSideSize - 1;
         }
         else if (z >= VoxelHelper.ChunkSideSize)
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
-            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetChunkIdx += VoxelHelper.WorldChunksXZ;
             targetZ = 0;
         }
         
@@ -565,7 +619,7 @@ public static class LightingCalculator
         HashSet<int> modifiedChunks)
     {
         // Handle Y bounds
-        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+        if (y is < 0 or >= VoxelHelper.ChunkYSize)
             return;
             
         // Handle chunk boundary crossing
@@ -592,14 +646,14 @@ public static class LightingCalculator
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ == 0) return;
-            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetChunkIdx -= VoxelHelper.WorldChunksXZ;
             targetZ = VoxelHelper.ChunkSideSize - 1;
         }
         else if (z >= VoxelHelper.ChunkSideSize)
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return;
-            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetChunkIdx += VoxelHelper.WorldChunksXZ;
             targetZ = 0;
         }
         
@@ -634,7 +688,7 @@ public static class LightingCalculator
         HashSet<int> modifiedChunks)
     {
         // Handle Y bounds
-        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+        if (y is < 0 or >= VoxelHelper.ChunkYSize)
             return;
             
         // Handle chunk boundary crossing
@@ -661,14 +715,14 @@ public static class LightingCalculator
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ == 0) return; // World edge
-            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetChunkIdx -= VoxelHelper.WorldChunksXZ;
             targetZ = VoxelHelper.ChunkSideSize - 1;
         }
         else if (z >= VoxelHelper.ChunkSideSize)
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return; // World edge
-            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetChunkIdx += VoxelHelper.WorldChunksXZ;
             targetZ = 0;
         }
         
@@ -685,8 +739,8 @@ public static class LightingCalculator
         if (neighborLight == 0) return; // Already dark
         
         // Expected light if it came from the removed source
-        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
-        var expectedLight = parentLightLevel - decay;
+        //var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        //var expectedLight = parentLightLevel - decay;
 
         if (neighborLight != 0 && neighborLight < parentLightLevel)
         {
@@ -712,7 +766,7 @@ public static class LightingCalculator
         HashSet<int> modifiedChunks)
     {
         // Handle Y bounds
-        if (y < 0 || y >= VoxelHelper.ChunkYSize)
+        if (y is < 0 or >= VoxelHelper.ChunkYSize)
             return;
             
         // Handle chunk boundary crossing
@@ -739,14 +793,14 @@ public static class LightingCalculator
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ == 0) return;
-            targetChunkIdx = targetChunkIdx - VoxelHelper.WorldChunksXZ;
+            targetChunkIdx -= VoxelHelper.WorldChunksXZ;
             targetZ = VoxelHelper.ChunkSideSize - 1;
         }
         else if (z >= VoxelHelper.ChunkSideSize)
         {
             var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
             if (chunkZ >= VoxelHelper.WorldChunksXZ - 1) return;
-            targetChunkIdx = targetChunkIdx + VoxelHelper.WorldChunksXZ;
+            targetChunkIdx += VoxelHelper.WorldChunksXZ;
             targetZ = 0;
         }
         
@@ -1049,14 +1103,14 @@ public static class LightingCalculator
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
-                for (int x = 0; x < VoxelHelper.ChunkSideSize; x++)
+                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    BlockId block = chunk.GetBlock(x, y, z);
-                    byte lightValue = BlockRegistry.GetLightValue(block);
-                    
+                    var block = chunk.GetBlock(x, y, z);
+                    var lightValue = BlockRegistry.GetLightValue(block);
+
                     if (lightValue > 0)
                     {
-                        int index = GetIndex(x, y, z);
+                        var index = GetIndex(x, y, z);
                         SetBlockLight(chunk, index, lightValue);
                         queue.Enqueue(PackPos(x, y, z));
                     }
@@ -1080,11 +1134,11 @@ public static class LightingCalculator
 
         while (queue.Count > 0)
         {
-            int packedPos = queue.Dequeue();
-            UnpackPos(packedPos, out int x, out int y, out int z);
+            var packedPos = queue.Dequeue();
+            UnpackPos(packedPos, out var x, out var y, out var z);
 
-            int index = GetIndex(x, y, z);
-            int currentLight = isSkyLight ? GetSkyLight(chunk, index) : GetBlockLight(chunk, index);
+            var index = GetIndex(x, y, z);
+            var currentLight = isSkyLight ? GetSkyLight(chunk, index) : GetBlockLight(chunk, index);
 
             if (currentLight <= 0) continue;
 
@@ -1176,15 +1230,9 @@ public static class LightingCalculator
         }
     }
 
-    private static int GetIndex(int x, int y, int z)
-    {
-        return y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
-    }
+    private static int GetIndex(int x, int y, int z) => y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
 
-    private static int PackPos(int x, int y, int z)
-    {
-        return x | (y << 4) | (z << 13);
-    }
+    private static int PackPos(int x, int y, int z) => x | (y << 4) | (z << 13);
 
     private static void UnpackPos(int packed, out int x, out int y, out int z)
     {
@@ -1193,23 +1241,11 @@ public static class LightingCalculator
         z = (packed >> 13) & 0xF;
     }
 
-    private static int GetSkyLight(ChunkData chunk, int index)
-    {
-        return chunk.LightData[index] & 0xF;
-    }
+    private static int GetSkyLight(ChunkData chunk, int index) => chunk.LightData[index] & 0xF;
 
-    private static void SetSkyLight(ChunkData chunk, int index, int value)
-    {
-        chunk.LightData[index] = (byte)((chunk.LightData[index] & 0xF0) | (value & 0xF));
-    }
+    private static void SetSkyLight(ChunkData chunk, int index, int value) => chunk.LightData[index] = (byte)((chunk.LightData[index] & 0xF0) | (value & 0xF));
 
-    private static int GetBlockLight(ChunkData chunk, int index)
-    {
-        return (chunk.LightData[index] >> 4) & 0xF;
-    }
+    private static int GetBlockLight(ChunkData chunk, int index) => (chunk.LightData[index] >> 4) & 0xF;
 
-    private static void SetBlockLight(ChunkData chunk, int index, int value)
-    {
-        chunk.LightData[index] = (byte)((chunk.LightData[index] & 0x0F) | ((value & 0xF) << 4));
-    }
+    private static void SetBlockLight(ChunkData chunk, int index, int value) => chunk.LightData[index] = (byte)((chunk.LightData[index] & 0x0F) | ((value & 0xF) << 4));
 }
