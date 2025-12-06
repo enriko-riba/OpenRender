@@ -285,176 +285,16 @@ public static class LightingCalculator
             }
         }
         
-        // Collect all block light sources within radius 15 of the placed block
-        var blockLightSources = new List<(int chunkIdx, int x, int y, int z, int lightValue)>();
-        // Collect all sky light columns that could affect the area
-        var skyLightColumns = new List<(int chunkIdx, int x, int z)>();
-        
+        // SIMPLIFIED APPROACH: Fully recalculate lighting for all affected chunks
+        // This is more reliable than incremental updates and handles cross-chunk propagation correctly
         foreach (var (chunkIdx, chunkData) in affectedChunks)
         {
-            var chunkWorldX = (chunkIdx % VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize;
-            var chunkWorldZ = (chunkIdx / VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize;
-            
-            // Scan for block light sources
-            for (var y = Math.Max(0, localY - MaxLight); y <= Math.Min(VoxelHelper.ChunkYSize - 1, localY + MaxLight); y++)
-            {
-                for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-                {
-                    var blockWorldZ = chunkWorldZ + z;
-                    var dz = Math.Abs(blockWorldZ - worldZ);
-                    if (dz > MaxLight) continue;
-                    
-                    for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
-                    {
-                        var blockWorldX = chunkWorldX + x;
-                        var dx = Math.Abs(blockWorldX - worldX);
-                        var dy = Math.Abs(y - localY);
-                        
-                        // Manhattan distance check (light uses taxicab geometry)
-                        if (dx + dy + dz > MaxLight) continue;
-                        
-                        var block = chunkData.GetBlock(x, y, z);
-                        var lightValue = BlockRegistry.GetLightValue(block);
-                        if (lightValue > 0)
-                        {
-                            blockLightSources.Add((chunkIdx, x, y, z, lightValue));
-                        }
-                    }
-                }
-            }
-            
-            // Find sky light columns (columns that have direct sky access)
-            // These need special handling as sky light propagates infinitely downward
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-            {
-                var blockWorldZ = chunkWorldZ + z;
-                var dz = Math.Abs(blockWorldZ - worldZ);
-                if (dz > MaxLight) continue;
-                
-                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
-                {
-                    var blockWorldX = chunkWorldX + x;
-                    var dx = Math.Abs(blockWorldX - worldX);
-                    
-                    if (dx + dz > MaxLight) continue;
-                    
-                    // Add this column for sky light recalculation
-                    // Sky light fills from top downward until hitting opaque
-                    skyLightColumns.Add((chunkIdx, x, z));
-                }
-            }
-        }
-        
-        // Phase 1: Clear ALL light in affected chunks within radius
-        foreach (var (chunkIdx, chunkData) in affectedChunks)
-        {
-            var chunkWorldX = (chunkIdx % VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize;
-            var chunkWorldZ = (chunkIdx / VoxelHelper.WorldChunksXZ) * VoxelHelper.ChunkSideSize;
-            var anyCleared = false;
-            
-            for (var y = Math.Max(0, localY - MaxLight); y <= Math.Min(VoxelHelper.ChunkYSize - 1, localY + MaxLight); y++)
-            {
-                for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-                {
-                    var blockWorldZ = chunkWorldZ + z;
-                    var dz = Math.Abs(blockWorldZ - worldZ);
-                    if (dz > MaxLight) continue;
-                    
-                    for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
-                    {
-                        var blockWorldX = chunkWorldX + x;
-                        var dx = Math.Abs(blockWorldX - worldX);
-                        var dy = Math.Abs(y - localY);
-                        
-                        if (dx + dy + dz > MaxLight) continue;
-                        
-                        var index = GetIndex(x, y, z);
-                        if (chunkData.LightData[index] != 0)
-                        {
-                            chunkData.LightData[index] = 0;
-                            anyCleared = true;
-                        }
-                    }
-                }
-            }
-            
-            if (anyCleared)
-            {
-                modifiedChunks.Add(chunkIdx);
-            }
-        }
-        
-        // Phase 2: Re-initialize and propagate sky light for affected columns
-        var skyQueue = LightQueue;
-        skyQueue.Clear();
-        
-        foreach (var (chunkIdx, x, z) in skyLightColumns)
-        {
-            var chunkData = getChunkData(chunkIdx);
-            if (chunkData == null) continue;
-            
-            var currentLight = MaxLight;
-            for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
-            {
-                var block = chunkData.GetBlock(x, y, z);
-                
-                if (block.IsOpaque())
-                {
-                    currentLight = 0;
-                }
-                else
-                {
-                    var filter = BlockRegistry.GetProperties(block).LightFilter;
-                    if (filter > 0 && currentLight > 0)
-                    {
-                        currentLight = Math.Max(0, currentLight - filter);
-                    }
-                    
-                    if (currentLight > 0)
-                    {
-                        var index = GetIndex(x, y, z);
-                        var existing = GetSkyLight(chunkData, index);
-                        if (currentLight > existing)
-                        {
-                            SetSkyLight(chunkData, index, currentLight);
-                            modifiedChunks.Add(chunkIdx);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Phase 3: Propagate sky light within each affected chunk
-        foreach (var (chunkIdx, chunkData) in affectedChunks)
-        {
-            var skyVisibility = RentSkyVisibilityBuffer();
-            BuildSkyVisibilityMap(chunkData, skyVisibility);
-            PropagateLight(chunkData, isSkyLight: true, skyVisibility);
+            CalculateLighting(chunkData);
             modifiedChunks.Add(chunkIdx);
         }
         
-        // Phase 4: Re-initialize and propagate block light sources using cross-chunk BFS
-        // We use AddBlockLight for each source because it properly propagates across chunk boundaries
-        foreach (var (chunkIdx, x, y, z, lightValue) in blockLightSources)
-        {
-            var chunkData = getChunkData(chunkIdx);
-            if (chunkData == null) continue;
-            
-            var block = chunkData.GetBlock(x, y, z);
-            if (!block.IsOpaque() || block.IsEmissive())
-            {
-                // Use AddBlockLight which does proper cross-chunk BFS propagation
-                var affected = AddBlockLight(chunkIdx, x, y, z, lightValue, getChunkData);
-                foreach (var affectedIdx in affected)
-                {
-                    modifiedChunks.Add(affectedIdx);
-                }
-            }
-        }
-        
-        // Phase 5 removed - AddBlockLight already propagates properly
-        
-        // Phase 6: Propagate light across chunk boundaries (for sky light)
+        // After recalculating each chunk independently, propagate light across chunk boundaries
+        // This ensures light flows correctly between chunks (e.g., doorway spanning two chunks)
         foreach (var (chunkIdx, chunkData) in affectedChunks)
         {
             var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
@@ -479,8 +319,6 @@ public static class LightingCalculator
             }
         }
         
-        // Return the static modified chunks directly - callers must iterate immediately
-        // or copy the result if they need to store it across calls.
         return modifiedChunks;
     }
 
@@ -1126,6 +964,13 @@ public static class LightingCalculator
         return false;
     }
 
+    /// <summary>
+    /// Minecraft-style sky light initialization:
+    /// 1. Iterate downward from build height limit
+    /// 2. Air blocks that can "see" the top of the world get sky light 15 (NO DECAY going down through air)
+    /// 3. Translucent blocks (water, leaves, ice) apply their light filter even during vertical descent
+    /// 4. Opaque blocks stop downward propagation in that column
+    /// </summary>
     private static void InitializeSkyLight(ChunkData chunk, byte[] skyVisibility)
     {
         var queue = LightQueue;
@@ -1146,6 +991,10 @@ public static class LightingCalculator
                     ? Math.Min(surfaceHeight + MaxLight, VoxelHelper.ChunkYSize - 1) 
                     : VoxelHelper.ChunkYSize - 1;
                 
+                // Minecraft-style: direct sky column
+                // - Air: level 15 with NO decay (sunlight goes straight through)
+                // - Translucent (water, ice, leaves): apply light filter during descent
+                // - Opaque: blocks completely, column below loses direct sky access
                 var currentLight = MaxLight;
                 for (var y = startY; y >= 0; y--)
                 {
@@ -1154,13 +1003,14 @@ public static class LightingCalculator
 
                     if (block.IsOpaque())
                     {
-                        // Opaque block completely blocks sky light
+                        // Opaque block completely blocks sky light - column below is no longer direct sky
                         currentLight = 0;
                         skyVisibility[index] = 0;
                     }
                     else
                     {
-                        // Apply light filter for translucent blocks (water, ice, etc.)
+                        // Apply light filter for translucent blocks (water, ice, leaves, etc.)
+                        // Air has filter=0 so no decay; water has filter=2 so decays
                         var filter = BlockRegistry.GetProperties(block).LightFilter;
                         if (filter > 0 && currentLight > 0)
                         {
@@ -1170,13 +1020,11 @@ public static class LightingCalculator
                         if (currentLight > 0)
                         {
                             SetSkyLight(chunk, index, currentLight);
-                            skyVisibility[index] = 1;
+                            // Mark as direct-sky if we still have max light (pure air column)
+                            skyVisibility[index] = (byte)(currentLight == MaxLight ? 1 : 0);
                             
-                            // Only queue for BFS propagation if this position might spread light horizontally
-                            if (surfaceHeight <= 0 || y >= surfaceHeight - MaxLight)
-                            {
-                                queue.Enqueue(PackPos(x, y, z));
-                            }
+                            // Queue for BFS lateral propagation
+                            queue.Enqueue(PackPos(x, y, z));
                         }
                         else
                         {
@@ -1240,18 +1088,23 @@ public static class LightingCalculator
 
             if (currentLight <= 0) continue;
 
-            var horizontalOpenNeighbors = isSkyLight ? CountHorizontalOpenNeighbors(chunk, x, y, z) : 0;
-
-            // Check 6 neighbors
-            CheckNeighbor(chunk, x + 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
-            CheckNeighbor(chunk, x - 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
-            CheckNeighbor(chunk, x, y + 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
-            CheckNeighbor(chunk, x, y - 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: true, horizontalOpenNeighbors);
-            CheckNeighbor(chunk, x, y, z + 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
-            CheckNeighbor(chunk, x, y, z - 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false, horizontalOpenNeighbors);
+            // Check 6 neighbors - Minecraft-style flood fill
+            CheckNeighbor(chunk, x + 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false);
+            CheckNeighbor(chunk, x - 1, y, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false);
+            CheckNeighbor(chunk, x, y + 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false);
+            CheckNeighbor(chunk, x, y - 1, z, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: true);
+            CheckNeighbor(chunk, x, y, z + 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false);
+            CheckNeighbor(chunk, x, y, z - 1, currentLight, isSkyLight, queue, skyVisibility, index, isVerticalDown: false);
         }
     }
 
+    /// <summary>
+    /// Minecraft-style light propagation rules:
+    /// - Sky light going DOWN from a pure-air direct-sky column (level 15): NO DECAY (stays 15)
+    /// - Sky light going DOWN through translucent blocks: applies their light filter
+    /// - Sky light going HORIZONTAL or UP: normal decay (1 per block, or more for light filters)
+    /// - Block light: always decays by 1 (or more for light filters)
+    /// </summary>
     private static void CheckNeighbor(
         ChunkData chunk,
         int x,
@@ -1262,8 +1115,7 @@ public static class LightingCalculator
         Queue<int> queue,
         byte[]? skyVisibility,
         int sourceIndex,
-        bool isVerticalDown,
-        int horizontalOpenNeighbors)
+        bool isVerticalDown)
     {
         if (x < 0 || x >= VoxelHelper.ChunkSideSize ||
             y < 0 || y >= VoxelHelper.ChunkYSize ||
@@ -1272,30 +1124,46 @@ public static class LightingCalculator
             return; // Skip out of bounds (Phase 1: Intra-chunk only)
         }
 
-        int index = GetIndex(x, y, z);
-        BlockId block = chunk.GetBlock(x, y, z);
+        var index = GetIndex(x, y, z);
+        var block = chunk.GetBlock(x, y, z);
 
         if (block.IsOpaque()) return; // Light doesn't pass through opaque blocks
 
-        int neighborLight = isSkyLight ? GetSkyLight(chunk, index) : GetBlockLight(chunk, index);
+        var neighborLight = isSkyLight ? GetSkyLight(chunk, index) : GetBlockLight(chunk, index);
         
-        // Decay
-        int decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
-
-        if (isSkyLight && skyVisibility != null && !isVerticalDown)
+        // Minecraft-style decay rules for sky light:
+        // - Downward from pure-air direct-sky column (level 15 source, skyVisibility=1): 
+        //   - Through AIR: NO decay (continue at 15)
+        //   - Through translucent: apply filter
+        // - Horizontal/upward OR from non-direct-sky source: normal decay of 1 per block
+        int decay;
+        var blockFilter = (int)BlockRegistry.GetProperties(block).LightFilter;
+        
+        if (isSkyLight && isVerticalDown && currentLight == MaxLight && skyVisibility != null && skyVisibility[sourceIndex] != 0)
         {
-            var targetVisible = skyVisibility[index] != 0;
-            var sourceVisible = skyVisibility[sourceIndex] != 0;
-            if (!targetVisible && !sourceVisible && horizontalOpenNeighbors >= 4)
+            // Minecraft behavior: sky light propagates straight down through AIR with NO decay
+            // But translucent blocks (water, leaves) still apply their filter
+            if (blockFilter == 0)
             {
-                if (!HasDirectSkyNeighbor(chunk, x, y, z, skyVisibility))
-                {
-                    decay += 4; // Open interior without direct sky nearby: decay faster
-                }
+                // Air block - no decay, continue direct-sky column
+                decay = 0;
+                skyVisibility[index] = 1; // Mark target as direct-sky
+            }
+            else
+            {
+                // Translucent block (water, leaves, ice) - apply filter
+                decay = blockFilter;
+                skyVisibility[index] = 0; // No longer pure direct-sky
             }
         }
+        else
+        {
+            // Minecraft-style: lateral/upward sky light OR block light decays by 1 per block
+            // (or more if the block has a light filter like water)
+            decay = Math.Max(1, blockFilter);
+        }
 
-        int newLight = currentLight - decay;
+        var newLight = currentLight - decay;
 
         if (newLight > neighborLight)
         {
@@ -1306,56 +1174,6 @@ public static class LightingCalculator
 
             queue.Enqueue(PackPos(x, y, z));
         }
-    }
-
-    private static int CountHorizontalOpenNeighbors(ChunkData chunk, int x, int y, int z)
-    {
-        var count = 0;
-        if (IsTransparent(chunk, x + 1, y, z)) count++;
-        if (IsTransparent(chunk, x - 1, y, z)) count++;
-        if (IsTransparent(chunk, x, y, z + 1)) count++;
-        if (IsTransparent(chunk, x, y, z - 1)) count++;
-        return count;
-    }
-    
-    private static bool IsTransparent(ChunkData chunk, int x, int y, int z)
-    {
-        if (x < 0 || x >= VoxelHelper.ChunkSideSize ||
-            y < 0 || y >= VoxelHelper.ChunkYSize ||
-            z < 0 || z >= VoxelHelper.ChunkSideSize)
-        {
-            return false;
-        }
-
-        var block = chunk.GetBlock(x, y, z);
-        return !block.IsOpaque();
-    }
-
-    private static bool HasDirectSkyNeighbor(ChunkData chunk, int x, int y, int z, byte[] skyVisibility)
-    {
-        static bool HasVisible(ChunkData chunkData, int nx, int ny, int nz, byte[] visibility)
-        {
-            if (nx < 0 || nx >= VoxelHelper.ChunkSideSize ||
-                ny < 0 || ny >= VoxelHelper.ChunkYSize ||
-                nz < 0 || nz >= VoxelHelper.ChunkSideSize)
-            {
-                return false;
-            }
-
-            var neighborIndex = GetIndex(nx, ny, nz);
-            if (visibility[neighborIndex] == 0)
-            {
-                return false;
-            }
-
-            // Only treat it as an interior shaft if the neighbor is still constrained horizontally.
-            return CountHorizontalOpenNeighbors(chunkData, nx, ny, nz) <= 2;
-        }
-
-        return HasVisible(chunk, x + 1, y, z, skyVisibility)
-               || HasVisible(chunk, x - 1, y, z, skyVisibility)
-               || HasVisible(chunk, x, y, z + 1, skyVisibility)
-               || HasVisible(chunk, x, y, z - 1, skyVisibility);
     }
 
     private static int GetIndex(int x, int y, int z)

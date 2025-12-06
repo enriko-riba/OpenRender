@@ -4,6 +4,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using System.Buffers;
 using System.Diagnostics;
+using System.IO.Compression;
 
 namespace SpyroGame.World;
 
@@ -24,6 +25,10 @@ public sealed class ChunkStreamingManager : IDisposable
     private const int RETENTION_PADDING_CHUNKS = 2;
     private const int RETENTION_FRAME_DELAY = 180;
     private const string ConfigFileName = "terrain_config.json";
+    
+    // Background save system
+    private const int AUTO_SAVE_INTERVAL_SECONDS = 30;
+    private const int SAVE_FILE_VERSION = 2;  // v2 = compressed format
     
     /// <summary>
     /// All 8 neighbors (cardinal + diagonal) for marking reprocess
@@ -57,8 +62,17 @@ public sealed class ChunkStreamingManager : IDisposable
     private readonly HashSet<int> currentStreamingBatch = [];
     private readonly HashSet<int> pendingStreamingBatch = [];  // Chunks waiting for next batch
     private readonly HashSet<int> chunksNeedingReprocess = [];
+    private readonly HashSet<int> modifiedChunks = []; // Chunks that have changed since last save
     private readonly HashSet<int> chunksWithLightRecalculated = [];  // Chunks that already had light fully recalculated
+    private readonly HashSet<int> chunksLoadedFromDisk = [];  // Chunks loaded from save file (have complete light data)
+    private readonly HashSet<int> dirtyChunks = [];  // Chunks that need to be saved
     private bool batchProcessingInProgress;  // True when currentStreamingBatch is being processed
+    
+    // Background save system
+    private readonly object saveLock = new();
+    private readonly CancellationTokenSource saveTokenSource = new();
+    private Task? backgroundSaveTask;
+    private DateTime lastAutoSaveTime = DateTime.UtcNow;
     
     // Performance optimization: Reusable lists to avoid LINQ allocations
     private readonly List<int> reusableChunkList = new(256);
@@ -198,6 +212,8 @@ public sealed class ChunkStreamingManager : IDisposable
         batchProcessingInProgress = false;
         chunksNeedingReprocess.Clear();
         chunksWithLightRecalculated.Clear();
+        chunksLoadedFromDisk.Clear();
+        dirtyChunks.Clear();
         cpuMeshingJobs.DrainPendingWorkItems();
         ClearPendingCpuMeshingQueue();
 
@@ -576,6 +592,9 @@ public sealed class ChunkStreamingManager : IDisposable
         ProcessTerrainBatch(); // Process chunks when batch is ready
         DrainCompletedCpuMeshes();
         UnloadDistantChunks(cameraPosition, visibleChunks);
+        
+        // Periodic background save
+        CheckPeriodicSave();
     }
 
     /// <summary>
@@ -701,7 +720,10 @@ public sealed class ChunkStreamingManager : IDisposable
             {
                 desc.State = TerrainChunkState.Processing;
                 activeChunks[chunkIdx] = desc;
-                ScheduleCpuMeshing(chunkIdx, propagateLight: true);
+                
+                // Skip light propagation for chunks loaded from disk - they already have complete light data
+                var skipLightPropagation = chunksLoadedFromDisk.Remove(chunkIdx);
+                ScheduleCpuMeshing(chunkIdx, propagateLight: !skipLightPropagation);
             }
         }
 
@@ -1198,6 +1220,34 @@ public sealed class ChunkStreamingManager : IDisposable
         var submitted = 0;
         foreach (var idx in batchIndices)
         {
+            // Try to load full state from disk first
+            if (TryLoadChunkState(idx))
+            {
+                // Loaded successfully!
+                // Rebuild collision data (needed for physics)
+                if (chunkVoxelCache.TryGetChunkData(idx, out var data) && data != null)
+                {
+                    var chunk = world[idx];
+                    if (chunk != null)
+                    {
+                        chunk.RebuildAllCollisionSpans(data);
+                        // Also update the global CollisionManager for picking
+                        CollisionManager.UpdateChunkData(idx, chunk.ToChunkCollisionData());
+                    }
+                }
+                
+                // Mark as HasTerrain so it proceeds to meshing
+                if (activeChunks.TryGetValue(idx, out var desc))
+                {
+                    desc.State = TerrainChunkState.HasTerrain;
+                    desc.GenerationStartFrame = currentFrame;
+                    activeChunks[idx] = desc;
+                }
+                
+                // Skip generation job
+                continue;
+            }
+
             if (!TryBeginChunkGeneration(idx))
             {
                 RequeueChunk(idx);
@@ -1454,12 +1504,24 @@ public sealed class ChunkStreamingManager : IDisposable
         if (!activeChunks.TryGetValue(chunkIndex, out var desc))
             return;
 
+        // Save dirty chunk before unloading
+        bool needsSave;
+        lock (saveLock)
+        {
+            needsSave = dirtyChunks.Remove(chunkIndex);
+        }
+        if (needsSave)
+        {
+            SaveChunkState(chunkIndex);
+        }
+
         RemoveChunkFromPendingQueues(chunkIndex);
         
         // CRITICAL: Remove from batch tracking to prevent stale batch checks
         currentStreamingBatch.Remove(chunkIndex);
         pendingStreamingBatch.Remove(chunkIndex);
         chunksNeedingReprocess.Remove(chunkIndex);
+        chunksLoadedFromDisk.Remove(chunkIndex);
 
         // Clean up fence if present
         if (desc.Fence != IntPtr.Zero)
@@ -1804,6 +1866,22 @@ public sealed class ChunkStreamingManager : IDisposable
         {
             // Light sources affect all neighbors
             MarkNeighborsForReprocess(chunkIdx);
+            
+            // Also mark neighbors as modified because their light levels might change
+            // This ensures we save the propagated light changes
+            foreach (var (dx, dz) in CardinalNeighborOffsets)
+            {
+                var nx = chunkX + dx;
+                var nz = chunkZ + dz;
+                if (nx >= 0 && nx < VoxelHelper.WorldChunksXZ && nz >= 0 && nz < VoxelHelper.WorldChunksXZ)
+                {
+                    var nIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+                    if (activeChunks.ContainsKey(nIdx))
+                    {
+                        modifiedChunks.Add(nIdx);
+                    }
+                }
+            }
         }
         else
         {
@@ -1820,8 +1898,14 @@ public sealed class ChunkStreamingManager : IDisposable
 
         Log.Debug($"Block edit at world{worldPosition} → chunk{chunkIdx} local({localX},{localY},{localZ}) voxel{voxelIdx} block={blockId} breaking={isBreaking} affectsLight={affectsLight}");
 
-        // Save edits immediately to prevent data loss
-        SaveChunkEdits(chunkIdx);
+        // Mark as modified so it gets saved
+        modifiedChunks.Add(chunkIdx);
+        
+        // Mark chunk as dirty for background save (no immediate save for performance)
+        lock (saveLock)
+        {
+            dirtyChunks.Add(chunkIdx);
+        }
     }
 
     /// <summary>
@@ -2109,13 +2193,289 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Save a chunk's state to disk with GZip compression.
+    /// Thread-safe: can be called from background save thread.
+    /// </summary>
+    public void SaveChunkState(int chunkIdx)
+    {
+        ChunkData? data;
+        ChunkBiomeData? biomeData;
+        
+        // Get data under cache lock
+        if (!chunkVoxelCache.TryGetChunkData(chunkIdx, out data) || data == null) return;
+        chunkVoxelCache.TryGetBiomeData(chunkIdx, out biomeData);
+
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
+
+        var folderName = $"{worldName}_{seed}";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
+        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+
+        var dirName = Path.GetDirectoryName(path);
+        if (dirName is not null) Directory.CreateDirectory(dirName);
+
+        // Write to temp file first, then rename for atomic save
+        var tempPath = path + ".tmp";
+        try
+        {
+            using (var fileStream = File.Create(tempPath))
+            {
+                // Write uncompressed header (magic + version) so we can detect format
+                using var headerWriter = new BinaryWriter(fileStream, System.Text.Encoding.UTF8, leaveOpen: true);
+                headerWriter.Write("CHNK");
+                headerWriter.Write(SAVE_FILE_VERSION); // v2 = compressed
+                
+                // Compress the rest with GZip
+                using var gzipStream = new GZipStream(fileStream, CompressionLevel.Optimal, leaveOpen: true);
+                using var writer = new BinaryWriter(gzipStream, System.Text.Encoding.UTF8, leaveOpen: true);
+                
+                data.Serialize(writer);
+                
+                // Write biome data presence flag
+                writer.Write(biomeData != null);
+                if (biomeData != null)
+                {
+                    biomeData.Serialize(writer);
+                }
+            }
+            
+            // Atomic rename
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to save chunk {chunkIdx}: {ex.Message}");
+            // Clean up temp file if it exists
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Try to load a chunk's state from disk.
+    /// Supports both v1 (uncompressed) and v2 (GZip compressed) formats.
+    /// </summary>
+    public bool TryLoadChunkState(int chunkIdx)
+    {
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
+        var worldName = terrainConfig.WorldName;
+        var seed = generationSeed;
+
+        var folderName = $"{worldName}_{seed}";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
+        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+
+        if (!File.Exists(path)) return false;
+
+        try
+        {
+            using var fileStream = File.OpenRead(path);
+            
+            // Read header (uncompressed)
+            using var headerReader = new BinaryReader(fileStream, System.Text.Encoding.UTF8, leaveOpen: true);
+            var magic = headerReader.ReadString();
+            if (magic != "CHNK") return false;
+            var version = headerReader.ReadInt32();
+
+            ChunkData data;
+            ChunkBiomeData? biomeData = null;
+
+            if (version >= 2)
+            {
+                // v2+: GZip compressed
+                using var gzipStream = new GZipStream(fileStream, CompressionMode.Decompress);
+                using var reader = new BinaryReader(gzipStream);
+                
+                data = ChunkData.Deserialize(reader);
+                
+                if (reader.ReadBoolean())
+                {
+                    biomeData = ChunkBiomeData.Deserialize(reader);
+                }
+            }
+            else
+            {
+                // v1: Uncompressed (legacy format)
+                data = ChunkData.Deserialize(headerReader);
+                
+                if (headerReader.ReadBoolean())
+                {
+                    biomeData = ChunkBiomeData.Deserialize(headerReader);
+                }
+            }
+
+            // Store in cache
+            chunkVoxelCache.Store(data);
+            if (biomeData != null)
+            {
+                chunkVoxelCache.StoreBiomeData(chunkIdx, biomeData);
+            }
+            
+            // Mark as loaded from disk - light data is already complete, skip recalculation
+            chunksLoadedFromDisk.Add(chunkIdx);
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to load chunk state for {chunkIdx}: {ex.Message}");
+            return false;
+        }
+    }
+
     public void SaveEdits()
     {
         foreach (var chunkIdx in chunkEdits.Keys)
         {
             SaveChunkEdits(chunkIdx);
         }
-        Log.Info($"Saved edits for {chunkEdits.Count} chunks");
+        // Only save full state for chunks that have been modified
+        foreach (var chunkIdx in modifiedChunks)
+        {
+            if (activeChunks.ContainsKey(chunkIdx))
+            {
+                SaveChunkState(chunkIdx);
+            }
+        }
+        Log.Info($"Saved edits for {chunkEdits.Count} chunks and state for {modifiedChunks.Count} chunks");
+    }
+    
+    /// <summary>
+    /// Check if periodic save is needed and start background save if so.
+    /// </summary>
+    private void CheckPeriodicSave()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - lastAutoSaveTime).TotalSeconds < AUTO_SAVE_INTERVAL_SECONDS)
+            return;
+            
+        // Check if there are dirty chunks
+        int dirtyCount;
+        lock (saveLock)
+        {
+            dirtyCount = dirtyChunks.Count;
+        }
+        
+        if (dirtyCount == 0)
+            return;
+            
+        // Check if background save is already running
+        if (backgroundSaveTask != null && !backgroundSaveTask.IsCompleted)
+            return;
+            
+        lastAutoSaveTime = now;
+        StartBackgroundSave();
+    }
+    
+    /// <summary>
+    /// Start a background task to save all dirty chunks.
+    /// </summary>
+    private void StartBackgroundSave()
+    {
+        backgroundSaveTask = Task.Run(() => SaveDirtyChunksBackground(), saveTokenSource.Token);
+    }
+    
+    /// <summary>
+    /// Background worker method to save dirty chunks.
+    /// </summary>
+    private void SaveDirtyChunksBackground()
+    {
+        var chunksToSave = new List<int>();
+        
+        lock (saveLock)
+        {
+            chunksToSave.AddRange(dirtyChunks);
+        }
+        
+        if (chunksToSave.Count == 0)
+            return;
+            
+        var saved = 0;
+        foreach (var chunkIdx in chunksToSave)
+        {
+            if (saveTokenSource.Token.IsCancellationRequested)
+                break;
+                
+            try
+            {
+                SaveChunkState(chunkIdx);
+                
+                // Remove from dirty set after successful save
+                lock (saveLock)
+                {
+                    dirtyChunks.Remove(chunkIdx);
+                }
+                saved++;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Background save failed for chunk {chunkIdx}: {ex.Message}");
+            }
+        }
+        
+        if (saved > 0)
+        {
+            Log.Info($"Background save completed: {saved} chunks saved");
+        }
+    }
+    
+    /// <summary>
+    /// Save all dirty chunks synchronously. Used during shutdown.
+    /// </summary>
+    private void SaveAllDirtyChunks()
+    {
+        List<int> chunksToSave;
+        lock (saveLock)
+        {
+            chunksToSave = [.. dirtyChunks];
+            dirtyChunks.Clear();
+        }
+        
+        if (chunksToSave.Count == 0)
+            return;
+            
+        foreach (var chunkIdx in chunksToSave)
+        {
+            try
+            {
+                SaveChunkState(chunkIdx);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Final save failed for chunk {chunkIdx}: {ex.Message}");
+            }
+        }
+        
+        Log.Info($"Final save completed: {chunksToSave.Count} dirty chunks saved");
+    }
+    
+    /// <summary>
+    /// Explicitly save all pending world data and prepare for shutdown.
+    /// Call this method before exiting the game to ensure all block edits are persisted.
+    /// This is the recommended way to save - do not rely on Dispose() for critical saves.
+    /// </summary>
+    public void Shutdown()
+    {
+        Log.Info("ChunkStreamingManager: Shutdown initiated - saving all pending data...");
+        
+        // Cancel background save and wait for completion
+        saveTokenSource.Cancel();
+        try
+        {
+            backgroundSaveTask?.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (AggregateException) { }
+        catch (TaskCanceledException) { }
+        
+        // Save all dirty chunks synchronously
+        SaveAllDirtyChunks();
+        
+        // Save edit data
+        SaveEdits();
+        
+        Log.Info("ChunkStreamingManager: Shutdown save complete");
     }
 
     public void LoadEdits()
@@ -2217,7 +2577,17 @@ public sealed class ChunkStreamingManager : IDisposable
 
     public void Dispose()
     {
-        SaveEdits(); // Save on dispose
+        // Note: Shutdown() should be called explicitly before Dispose() to save pending data.
+        // Dispose() only releases resources - it does NOT save data.
+        
+        // Cancel background save task if still running
+        saveTokenSource.Cancel();
+        try
+        {
+            backgroundSaveTask?.Wait(TimeSpan.FromSeconds(1));
+        }
+        catch (AggregateException) { }
+        catch (TaskCanceledException) { }
 
         // Cleanup all fences
         foreach (var kvp in activeChunks)
@@ -2228,13 +2598,13 @@ public sealed class ChunkStreamingManager : IDisposable
             }
         }
 
-        // Cleanup frustum culling resources
-        // terrainRenderer is now a SceneNode and will be cleaned up by the scene graph
+        // Cleanup resources
         meshBuffers?.Dispose();
         chunkVoxelCache.Dispose();
         ClearPendingCpuMeshingQueue();
         cpuGenerationJobs.Dispose();
         cpuMeshingJobs.Dispose();
+        saveTokenSource.Dispose();
 
         Log.Info("ChunkStreamingManager: Disposed");
     }

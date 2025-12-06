@@ -335,7 +335,7 @@ public sealed class ChunkBiomeData
     /// <summary>
     /// Bilinear interpolation of a value at a block position.
     /// </summary>
-    private float GetInterpolatedValue(float[] values, int localX, int localZ)
+    private static float GetInterpolatedValue(float[] values, int localX, int localZ)
     {
         // Cell coordinates and position within cell
         var cellX = localX / BlocksPerCell;
@@ -358,5 +358,77 @@ public sealed class ChunkBiomeData
         var v0 = v00 + (v10 - v00) * fx;
         var v1 = v01 + (v11 - v01) * fx;
         return v0 + (v1 - v0) * fz;
+    }
+
+    public void Serialize(System.IO.BinaryWriter writer)
+    {
+        // ColumnBiomes
+        writer.Write(ColumnBiomes.Length);
+        for (int i = 0; i < ColumnBiomes.Length; i++) writer.Write((byte)ColumnBiomes[i]);
+
+        // BiomeIds
+        writer.Write(BiomeIds.Length);
+        for (int i = 0; i < BiomeIds.Length; i++) writer.Write((byte)BiomeIds[i]);
+
+        // CaveBiomeIds
+        writer.Write(CaveBiomeIds.Length);
+        for (int i = 0; i < CaveBiomeIds.Length; i++) writer.Write((byte)CaveBiomeIds[i]);
+
+        // Climate arrays
+        writer.Write(Temperature.Length);
+        foreach (var v in Temperature) writer.Write(v);
+        
+        writer.Write(Humidity.Length);
+        foreach (var v in Humidity) writer.Write(v);
+
+        writer.Write(Continentalness.Length);
+        foreach (var v in Continentalness) writer.Write(v);
+
+        writer.Write(Erosion.Length);
+        foreach (var v in Erosion) writer.Write(v);
+
+        writer.Write(PeaksValleys.Length);
+        foreach (var v in PeaksValleys) writer.Write(v);
+
+        writer.Write(Weirdness.Length);
+        foreach (var v in Weirdness) writer.Write(v);
+    }
+
+    public static ChunkBiomeData Deserialize(System.IO.BinaryReader reader)
+    {
+        var data = new ChunkBiomeData();
+        
+        // ColumnBiomes
+        var len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.ColumnBiomes[i] = (BiomeId)reader.ReadByte();
+
+        // BiomeIds
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.BiomeIds[i] = (BiomeId)reader.ReadByte();
+
+        // CaveBiomeIds
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.CaveBiomeIds[i] = (CaveBiomeId)reader.ReadByte();
+
+        // Climate arrays
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.Temperature[i] = reader.ReadSingle();
+
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.Humidity[i] = reader.ReadSingle();
+
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.Continentalness[i] = reader.ReadSingle();
+
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.Erosion[i] = reader.ReadSingle();
+
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.PeaksValleys[i] = reader.ReadSingle();
+
+        len = reader.ReadInt32();
+        for (int i = 0; i < len; i++) data.Weirdness[i] = reader.ReadSingle();
+
+        return data;
     }
 }

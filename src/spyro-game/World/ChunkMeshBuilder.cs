@@ -109,8 +109,9 @@ internal static class ChunkMeshBuilder
                 // We need to go up to the highest opaque block (SurfaceHeight)
                 // OR the water level (for ocean surfaces)
                 // Plus 1 to ensure we check the air block *above* the surface for face culling
+                // Plus extra safety margin to handle potential heightmap desync
                 var surfaceHeight = chunkView.GetSurfaceHeight(x, z);
-                var maxY = Math.Max(surfaceHeight + 1, VoxelHelper.WaterLevel + 1);
+                var maxY = Math.Max(surfaceHeight + 2, VoxelHelper.WaterLevel + 1);
                 
                 // Clamp to chunk bounds
                 maxY = Math.Min(maxY, VoxelHelper.ChunkYSize);

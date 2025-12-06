@@ -1,12 +1,14 @@
 using SpyroGame.World;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.Common;
 
 /// <summary>
-/// Test helpers for creating and manipulating chunk data in lighting tests.
+/// Shared test helpers for creating and manipulating chunk data across all test categories.
 /// </summary>
-public static class LightingTestHelpers
+public static class TestHelpers
 {
+    #region Chunk Creation
+    
     /// <summary>
     /// Creates a chunk filled entirely with air (transparent to light).
     /// </summary>
@@ -72,6 +74,10 @@ public static class LightingTestHelpers
         return chunk;
     }
 
+    #endregion
+
+    #region Block Placement
+    
     /// <summary>
     /// Places a torch at the specified position.
     /// </summary>
@@ -88,6 +94,10 @@ public static class LightingTestHelpers
         chunk.SetBlock(x, y, z, BlockId.Glowstone);
     }
 
+    #endregion
+
+    #region Light Access
+    
     /// <summary>
     /// Gets the sky light value at a position.
     /// </summary>
@@ -124,6 +134,10 @@ public static class LightingTestHelpers
         chunk.LightData[index] = (byte)((chunk.LightData[index] & 0xF0) | (value & 0xF));
     }
 
+    #endregion
+
+    #region Chunk Utilities
+    
     /// <summary>
     /// Converts world coordinates to chunk index (for multi-chunk tests).
     /// </summary>
@@ -139,4 +153,6 @@ public static class LightingTestHelpers
     {
         return chunkIdx => chunks.TryGetValue(chunkIdx, out var chunk) ? chunk : null;
     }
+
+    #endregion
 }

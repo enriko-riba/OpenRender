@@ -139,4 +139,190 @@ public class ChunkData
         Array.Copy(Palette, result, paletteCount);
         return result;
     }
+
+    public void Serialize(System.IO.BinaryWriter writer)
+    {
+        writer.Write(Version);
+        writer.Write(ChunkIndex);
+        
+        // Palette
+        writer.Write(paletteCount);
+        for (int i = 0; i < paletteCount; i++)
+        {
+            writer.Write((ushort)Palette[i]);
+        }
+
+        // VoxelData
+        writer.Write(VoxelData.Length);
+        writer.Write(VoxelData);
+
+        // LightData
+        writer.Write(LightData.Length);
+        writer.Write(LightData);
+
+        // Biomes (ChunkData.Biomes)
+        writer.Write(Biomes.Length);
+        for (int i = 0; i < Biomes.Length; i++)
+        {
+            writer.Write((byte)Biomes[i]);
+        }
+
+        // SurfaceHeights
+        writer.Write(SurfaceHeights.Length);
+        for (int i = 0; i < SurfaceHeights.Length; i++)
+        {
+            writer.Write(SurfaceHeights[i]);
+        }
+    }
+
+    public static ChunkData Deserialize(System.IO.BinaryReader reader)
+    {
+        var data = new ChunkData();
+        data.Version = reader.ReadInt64();
+        data.ChunkIndex = reader.ReadInt32();
+
+        // Palette
+        data.paletteCount = reader.ReadInt32();
+        if (data.Palette.Length < data.paletteCount)
+        {
+            data.Palette = new BlockId[data.paletteCount];
+        }
+        
+        // Clear default palette (Air at 0) before reading
+        data.reversePalette.Clear();
+        
+        for (int i = 0; i < data.paletteCount; i++)
+        {
+            var blockId = (BlockId)reader.ReadUInt16();
+            data.Palette[i] = blockId;
+            data.reversePalette[blockId.GetId()] = (byte)i;
+        }
+
+        // Ensure Palette[0] is Air if the file didn't enforce it (sanity check)
+        // If the file has something else at 0, we are in trouble because VoxelData 0s will map to it.
+        // But we trust the file to be consistent with itself.
+        // If the file was saved with Grass at 0, then VoxelData 0 means Grass.
+        // If the file was saved with Air at 0, then VoxelData 0 means Air.
+        
+        // VoxelData
+        var voxelLen = reader.ReadInt32();
+        // Read into existing buffer if possible to avoid alloc, but here we just read new
+        // Note: ChunkData constructor allocates VoxelData, so we are discarding it here.
+        // Optimization: Read directly into data.VoxelData
+        if (voxelLen == data.VoxelData.Length)
+        {
+            reader.Read(data.VoxelData, 0, voxelLen);
+        }
+        else
+        {
+            data.VoxelData = reader.ReadBytes(voxelLen);
+        }
+
+        // Sanity Check: Ensure Palette[0] is Air
+        // If Palette[0] is NOT Air, it means the file was saved with a non-standard palette layout.
+        // This causes empty space (VoxelData=0) to be interpreted as a block (e.g. Grass),
+        // leading to "invisible pickable blocks" or solid chunks.
+        if (data.paletteCount > 0 && data.Palette[0] != BlockId.Air)
+        {
+            // Find where Air is
+            int airIndex = -1;
+            for (int i = 0; i < data.paletteCount; i++)
+            {
+                if (data.Palette[i] == BlockId.Air)
+                {
+                    airIndex = i;
+                    break;
+                }
+            }
+
+            if (airIndex != -1)
+            {
+                // Swap Palette[0] and Palette[airIndex]
+                var temp = data.Palette[0];
+                data.Palette[0] = data.Palette[airIndex];
+                data.Palette[airIndex] = temp;
+
+                // Update reversePalette
+                data.reversePalette[data.Palette[0].GetId()] = 0;
+                data.reversePalette[data.Palette[airIndex].GetId()] = (byte)airIndex;
+
+                // Update VoxelData: Swap 0 and airIndex
+                // This is expensive but necessary to fix the corrupted chunk
+                for (int i = 0; i < data.VoxelData.Length; i++)
+                {
+                    if (data.VoxelData[i] == 0) data.VoxelData[i] = (byte)airIndex;
+                    else if (data.VoxelData[i] == (byte)airIndex) data.VoxelData[i] = 0;
+                }
+            }
+            else
+            {
+                // Air is missing from palette! This is very bad.
+                // We must insert Air at 0.
+                // If palette is full, we might lose a block type.
+                // For now, just force 0 to Air and hope for the best (better than solid world).
+                data.Palette[0] = BlockId.Air;
+                data.reversePalette[BlockId.Air.GetId()] = 0;
+                // Note: This effectively turns whatever was at 0 into Air.
+                // If 0 was Grass, all Grass becomes Air.
+            }
+        }
+
+        // LightData
+        var lightLen = reader.ReadInt32();
+        if (lightLen == data.LightData.Length)
+        {
+            reader.Read(data.LightData, 0, lightLen);
+        }
+        else
+        {
+            data.LightData = reader.ReadBytes(lightLen);
+        }
+
+        // Biomes
+        var biomesLen = reader.ReadInt32();
+        for (int i = 0; i < biomesLen; i++)
+        {
+            data.Biomes[i] = (BiomeId)reader.ReadByte();
+        }
+
+        // SurfaceHeights
+        var heightsLen = reader.ReadInt32();
+        for (int i = 0; i < heightsLen; i++)
+        {
+            data.SurfaceHeights[i] = reader.ReadInt32();
+        }
+
+        // Recalculate SurfaceHeights to be safe
+        // If the file was saved with incorrect heights (e.g. due to block removal not updating them),
+        // or if the palette mapping changed, we should ensure they are correct.
+        // This is fast enough to do on load and prevents invisible blocks.
+        data.RecalculateSurfaceHeights();
+
+        return data;
+    }
+
+    public void RecalculateSurfaceHeights()
+    {
+        // Initialize to -1 (empty column) instead of 0
+        // This ensures that if the column is truly empty, we don't assume a block at 0.
+        Array.Fill(SurfaceHeights, -1);
+        var size = VoxelHelper.ChunkSideSize;
+        
+        for (var z = 0; z < size; z++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var colIdx = z * size + x;
+                // Scan down from top to find highest non-air block
+                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+                {
+                    if (!GetBlock(x, y, z).IsAir())
+                    {
+                        SurfaceHeights[colIdx] = y;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }

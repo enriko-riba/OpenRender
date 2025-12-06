@@ -153,6 +153,23 @@ public class Chunk(int index)
     }
 
     /// <summary>
+    /// Rebuilds collision spans for the entire chunk from voxel data.
+    /// Used when loading full chunk state from disk.
+    /// </summary>
+    internal void RebuildAllCollisionSpans(ChunkData voxelData)
+    {
+        var size = VoxelHelper.ChunkSideSize;
+        for (var z = 0; z < size; z++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                RebuildColumnSpans(x, z, voxelData);
+            }
+        }
+        HasCollisionData = true;
+    }
+
+    /// <summary>
     /// Try to get the raw span data arrays.
     /// </summary>
     internal bool TryGetSpanData(out int[] spansPairs, out byte[] counts, out BlockId[] types)
@@ -169,6 +186,37 @@ public class Chunk(int index)
         counts = [];
         types = [];
         return false;
+    }
+
+    /// <summary>
+    /// Convert internal span data to ChunkCollisionData for the CollisionManager.
+    /// </summary>
+    public ChunkCollisionData ToChunkCollisionData()
+    {
+        var data = new ChunkCollisionData();
+        if (!HasSpanData || columnSpanPairs == null || columnSpanCounts == null || columnSpanTypes == null)
+            return data;
+
+        Array.Copy(columnSpanCounts, data.SpanCounts, columnSpanCounts.Length);
+
+        // Both arrays are flattened: ColumnsPerChunk * MaxSpansPerColumn
+        // columnSpanPairs has 2 ints per span (StartY is inclusive, EndY is EXCLUSIVE)
+        // columnSpanTypes has 1 BlockId per span
+        // ChunkCollisionData.Spans has 1 struct per span (StartY and EndY are both INCLUSIVE)
+        
+        var totalSpans = columnSpanTypes.Length;
+        for (var i = 0; i < totalSpans; i++)
+        {
+            // Convert exclusive EndY to inclusive by subtracting 1
+            data.Spans[i] = new ColumnSpan
+            {
+                StartY = (short)columnSpanPairs[i * 2],
+                EndY = (short)(columnSpanPairs[i * 2 + 1] - 1),
+                Block = (ushort)columnSpanTypes[i]
+            };
+        }
+        
+        return data;
     }
 
     /// <summary>

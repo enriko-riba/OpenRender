@@ -1,6 +1,6 @@
 using SpyroGame.World;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.AmbientOcclusion;
 
 /// <summary>
 /// Test helpers for creating and manipulating chunk data in AO tests.

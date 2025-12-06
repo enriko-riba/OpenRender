@@ -1,8 +1,8 @@
 using SpyroGame.World;
 using Xunit;
-using static SpyroGame.Tests.LightingTestHelpers;
+using static SpyroGame.Tests.Common.LightingTestHelpers;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.Lighting.SkyLight;
 
 /// <summary>
 /// Tests for sky light initialization and propagation within a single chunk.
@@ -165,19 +165,28 @@ public class SkyLightTests
     }
 
     [Fact]
-    public void SkyLight_Doorway_AllowsLimitedInteriorLight()
+    public void SkyLight_Doorway_AllowsLightToFloodRoom()
     {
         // Arrange - sealed room with a doorway carved into one wall
+        // Room spans x=4-12, z=4-12 (walls at edges, interior is x=5-11, z=5-11)
         var chunk = CreateSealedRoom(4, 195, 4, 12, 205, 12);
+        // Carve doorway at x=4 (the wall), z=8
         chunk.SetBlock(4, 200, 8, BlockId.Air);
         chunk.SetBlock(4, 201, 8, BlockId.Air);
 
         // Act
         LightingCalculator.CalculateLighting(chunk);
 
-        // Assert - Light enters near doorway but decays quickly deeper inside
-        Assert.True(GetSkyLight(chunk, 5, 200, 8) > 0);
-        Assert.Equal(0, GetSkyLight(chunk, 8, 200, 8));
-        Assert.Equal(0, GetSkyLight(chunk, 9, 200, 9));
+        // Assert - Minecraft-style: light floods in through doorway
+        // Outside door at (3, 200, 8) has light 15 (open sky)
+        // Door at (4, 200, 8) gets 14 (decay 1)
+        // (5, 200, 8) gets 13, (6) gets 12, (7) gets 11, (8) gets 10, etc.
+        Assert.True(GetSkyLight(chunk, 5, 200, 8) > 0, "Light should enter through doorway");
+        Assert.True(GetSkyLight(chunk, 8, 200, 8) > 0, "Light should reach center of small room");
+        
+        // Light decays with distance from door (x=4)
+        var lightAtDoor = GetSkyLight(chunk, 5, 200, 8);
+        var lightAtCenter = GetSkyLight(chunk, 8, 200, 8);
+        Assert.True(lightAtCenter < lightAtDoor, "Light should be dimmer at center than near door");
     }
 }

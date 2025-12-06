@@ -25,4 +25,12 @@
     <ProjectReference Include="..\spyro-game\spyro-game.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Lighning\" />
+    <Folder Include="Collision\" />
+    <Folder Include="AmbientOcclusion\" />
+    <Folder Include="Common\" />
+    <Folder Include="Serialization\" />
+  </ItemGroup>
+
 </Project>

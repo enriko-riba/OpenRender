@@ -252,7 +252,7 @@ public class CollisionManager
     private bool IsHittable(int x, int y, int z, out BlockId block, bool forPicking)
     {
         block = BlockId.Air;
-        if (y < 0 || y >= VoxelHelper.ChunkYSize) return false;
+        if (y is < 0 or >= VoxelHelper.ChunkYSize) return false;
 
         var chunkX = (int)Math.Floor((float)x / 16.0f);
         var chunkZ = (int)Math.Floor((float)z / 16.0f);
@@ -284,13 +284,5 @@ public class CollisionManager
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Check if a block at the given world position is solid (for collision detection).
-    /// </summary>
-    private bool IsSolid(int x, int y, int z, out BlockId block)
-    {
-        return IsHittable(x, y, z, out block, forPicking: false);
     }
 }

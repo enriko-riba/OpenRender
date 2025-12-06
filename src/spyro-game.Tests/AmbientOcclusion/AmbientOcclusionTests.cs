@@ -1,8 +1,8 @@
 using SpyroGame.World;
 using Xunit;
-using static SpyroGame.Tests.AOTestHelpers;
+using static SpyroGame.Tests.AmbientOcclusion.AOTestHelpers;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.AmbientOcclusion;
 
 /// <summary>
 /// Tests for ambient occlusion (AO) calculation.

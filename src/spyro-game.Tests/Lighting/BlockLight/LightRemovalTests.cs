@@ -1,8 +1,8 @@
 using SpyroGame.World;
 using Xunit;
-using static SpyroGame.Tests.LightingTestHelpers;
+using static SpyroGame.Tests.Common.LightingTestHelpers;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.Lighting.BlockLight;
 
 /// <summary>
 /// Tests for light removal when light sources are removed.

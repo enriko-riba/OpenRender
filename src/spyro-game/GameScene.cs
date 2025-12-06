@@ -107,7 +107,7 @@ internal class GameScene : Scene
         // Near plane increased to 0.5 to improve depth buffer precision at distance
         // and reduce Z-fighting artifacts on distant horizontal surfaces.
         // Ratio of 1200:1 (far/near) is much better than 6000:1 for 24-bit depth buffers.
-        camera = new CameraFps(startPos, Width / (float)Height, 0.05f, VoxelHelper.FarPlane)
+        camera = new CameraFps(startPos, Width / (float)Height, 0.1f, VoxelHelper.FarPlane)
         {
             MaxFov = 70
         };
@@ -690,6 +690,10 @@ internal class GameScene : Scene
 
     public override void Close()
     {
+        // CRITICAL: Explicitly save all pending world data before closing.
+        // This must be called before any cleanup to ensure block edits are persisted.
+        streamingManager?.Shutdown();
+        
         world?.Close();
         base.Close();
     }

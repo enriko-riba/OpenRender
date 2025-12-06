@@ -1,8 +1,8 @@
 using SpyroGame.World;
 using Xunit;
-using static SpyroGame.Tests.LightingTestHelpers;
+using static SpyroGame.Tests.Common.LightingTestHelpers;
 
-namespace SpyroGame.Tests;
+namespace SpyroGame.Tests.Collision;
 
 /// <summary>
 /// Tests for collision span rebuild after block edits.
