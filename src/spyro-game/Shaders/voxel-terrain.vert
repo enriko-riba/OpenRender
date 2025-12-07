@@ -40,6 +40,7 @@ void main(){
     uint p1=aPackedData.x; uint p2=aPackedData.y;
     uint lx=p1&0x1Fu; uint ly=(p1>>5)&0x1FFu; uint lz=(p1>>14)&0x1Fu; 
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
+    uint offsetSeed=(p1>>27)&0x1Fu;
     
     // Unpack p2: bits 0-9 = blockId, bits 10-17 = light, bits 18-25 = biomeId, bit 26 = emissive
     uint blockId = p2 & 0x3FFu;
@@ -57,6 +58,16 @@ void main(){
     int cz=chunkIdx/int(uWorldChunksXZ);
     
     vec3 localPos=vec3(float(lx),float(ly),float(lz));
+
+    // Apply random offset for billboards (face 6)
+    if (face == 6u) {
+        // Map 5-bit seed to [-0.2, 0.2] range
+        float hash = float(offsetSeed) / 31.0;
+        float ox = (fract(hash * 12.9898) - 0.5) * 0.4;
+        float oz = (fract(hash * 78.233) - 0.5) * 0.4;
+        localPos.x += ox;
+        localPos.z += oz;
+    }
 
     // Fix z-fighting for water: displace top surface downwards
     if (blockId == 1u && face == FACE_POS_Y) {

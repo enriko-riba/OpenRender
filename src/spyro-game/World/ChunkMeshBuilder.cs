@@ -393,18 +393,22 @@ internal static class ChunkMeshBuilder
         const uint billboardFace = 6u;
         const uint defaultAO = 0u; // No AO for billboards - they're transparent
 
+        // Calculate a deterministic seed for the offset based on block position
+        // This ensures all vertices of the billboard move together
+        uint seed = (uint)((x * 3129871) ^ (z * 116129791) ^ y);
+
         // Helper to add a quad (4 vertices, 6 indices) - one "face" in the mesh system
         void AddQuad(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int x3, int y3, int z3)
         {
             var baseVertex = (uint)(vertexScratch.Count / 2);
             
-            vertexScratch.Add(PackVertexPosition(x0, y0, z0, billboardFace, defaultAO, 0));
+            vertexScratch.Add(PackVertexPosition(x0, y0, z0, billboardFace, defaultAO, 0, seed));
             vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
-            vertexScratch.Add(PackVertexPosition(x1, y1, z1, billboardFace, defaultAO, 1));
+            vertexScratch.Add(PackVertexPosition(x1, y1, z1, billboardFace, defaultAO, 1, seed));
             vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
-            vertexScratch.Add(PackVertexPosition(x2, y2, z2, billboardFace, defaultAO, 2));
+            vertexScratch.Add(PackVertexPosition(x2, y2, z2, billboardFace, defaultAO, 2, seed));
             vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
-            vertexScratch.Add(PackVertexPosition(x3, y3, z3, billboardFace, defaultAO, 3));
+            vertexScratch.Add(PackVertexPosition(x3, y3, z3, billboardFace, defaultAO, 3, seed));
             vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
 
             // Two triangles: 0-1-2, 0-2-3
@@ -427,12 +431,12 @@ internal static class ChunkMeshBuilder
         AddQuad(x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, x + 1, y, z);
     }
 
-    private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner)
+    private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner, uint offsetSeed = 0)
     {
         var ux = (uint)x & 0x1Fu;
         var uy = (uint)y & 0x1FFu;
         var uz = (uint)z & 0x1Fu;
-        return ux | (uy << 5) | (uz << 14) | ((face & 0x7u) << 19) | ((ao & 0x7u) << 22) | ((corner & 0x3u) << 25);
+        return ux | (uy << 5) | (uz << 14) | ((face & 0x7u) << 19) | ((ao & 0x7u) << 22) | ((corner & 0x3u) << 25) | ((offsetSeed & 0x1Fu) << 27);
     }
 
     /// <summary>
