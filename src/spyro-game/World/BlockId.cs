@@ -194,6 +194,52 @@ public enum BlockId : ushort
     BlackStainedGlass = 236,
     /// <summary>Tinted glass - solid, translucent, blocks all light (filter 15) but see-through.</summary>
     TintedGlass = 237,
+
+    // --- Vegetation (160-199) ---
+    /// <summary>Tall grass - cross model, replaceable.</summary>
+    TallGrass = 160,
+    /// <summary>Poppy - cross model.</summary>
+    Poppy = 161,
+    /// <summary>Dandelion - cross model.</summary>
+    Dandelion = 162,
+    /// <summary>Blue Orchid - cross model.</summary>
+    BlueOrchid = 163,
+    /// <summary>Allium - cross model.</summary>
+    Allium = 164,
+    /// <summary>Azure Bluet - cross model.</summary>
+    AzureBluet = 165,
+    /// <summary>Red Tulip - cross model.</summary>
+    RedTulip = 166,
+    /// <summary>Orange Tulip - cross model.</summary>
+    OrangeTulip = 167,
+    /// <summary>White Tulip - cross model.</summary>
+    WhiteTulip = 168,
+    /// <summary>Pink Tulip - cross model.</summary>
+    PinkTulip = 169,
+    /// <summary>Oxeye Daisy - cross model.</summary>
+    OxeyeDaisy = 170,
+    /// <summary>Cornflower - cross model.</summary>
+    Cornflower = 171,
+    /// <summary>Lily of the Valley - cross model.</summary>
+    LilyOfTheValley = 172,
+    /// <summary>Wither Rose - cross model.</summary>
+    WitherRose = 173,
+    /// <summary>Sunflower - cross model (top/bottom).</summary>
+    Sunflower = 174,
+    /// <summary>Lilac - cross model (top/bottom).</summary>
+    Lilac = 175,
+    /// <summary>Rose Bush - cross model (top/bottom).</summary>
+    RoseBush = 176,
+    /// <summary>Peony - cross model (top/bottom).</summary>
+    Peony = 177,
+    /// <summary>Dead Bush - cross model.</summary>
+    DeadBush = 178,
+    /// <summary>Cactus - solid, opaque (custom model later).</summary>
+    Cactus = 179,
+    /// <summary>Sugar Cane - cross model.</summary>
+    SugarCane = 180,
+    /// <summary>Bamboo - cross model.</summary>
+    Bamboo = 181,
 }
 
 /// <summary>

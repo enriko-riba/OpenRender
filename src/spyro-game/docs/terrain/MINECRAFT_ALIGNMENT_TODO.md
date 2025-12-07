@@ -197,7 +197,7 @@ This document tracks all items needed to align the current implementation with M
 | Height blending at biome transitions | ⬜ TODO | MEDIUM | Avoid cliff walls at borders |
 | More natural beach generation | ⬜ TODO | LOW | Use erosion parameter |
 | River generation | ⬜ TODO | LOW | Carve river channels |
-| Biome-specific decorations (trees, flowers) | ⬜ TODO | LOW | Post-terrain features |
+| Biome-specific decorations (trees, flowers) | ✅ DONE | LOW | Post-terrain features |
 
 ### 8.3 Debug Tools
 | Item | Status | Notes |
@@ -236,7 +236,7 @@ This document tracks all items needed to align the current implementation with M
 1. ✅ Cave biomes (3D biome grid) - DONE
 2. ⬜ Aquifer caves
 3. ✅ Ore generation - DONE
-4. ⬜ Decorations (trees, flowers, grass)
+4. ✅ Decorations (trees, flowers, grass) - DONE
 5. ⬜ Structures (villages, dungeons)
 
 ---

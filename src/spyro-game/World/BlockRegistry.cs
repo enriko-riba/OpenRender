@@ -240,6 +240,34 @@ public static class BlockRegistry
             BlockFlags.Solid | BlockFlags.Translucent,
             0, 15, true, RenderMethod.Blend));
 
+        // === Vegetation ===
+        RegisterFlower(builder, BlockId.TallGrass);
+        RegisterFlower(builder, BlockId.Poppy);
+        RegisterFlower(builder, BlockId.Dandelion);
+        RegisterFlower(builder, BlockId.BlueOrchid);
+        RegisterFlower(builder, BlockId.Allium);
+        RegisterFlower(builder, BlockId.AzureBluet);
+        RegisterFlower(builder, BlockId.RedTulip);
+        RegisterFlower(builder, BlockId.OrangeTulip);
+        RegisterFlower(builder, BlockId.WhiteTulip);
+        RegisterFlower(builder, BlockId.PinkTulip);
+        RegisterFlower(builder, BlockId.OxeyeDaisy);
+        RegisterFlower(builder, BlockId.Cornflower);
+        RegisterFlower(builder, BlockId.LilyOfTheValley);
+        RegisterFlower(builder, BlockId.WitherRose);
+        RegisterFlower(builder, BlockId.Sunflower);
+        RegisterFlower(builder, BlockId.Lilac);
+        RegisterFlower(builder, BlockId.RoseBush);
+        RegisterFlower(builder, BlockId.Peony);
+        RegisterFlower(builder, BlockId.DeadBush);
+        RegisterFlower(builder, BlockId.SugarCane);
+        RegisterFlower(builder, BlockId.Bamboo);
+
+        // Cactus (Solid but not full cube in MC, treating as full cube opaque for now)
+        Register(builder, BlockId.Cactus, new(
+            BlockFlags.Solid | BlockFlags.Opaque,
+            0, 0, true, RenderMethod.AlphaTest)); // AlphaTest for spines if texture has them
+
         Properties = builder.ToFrozenDictionary();
     }
 
@@ -251,13 +279,18 @@ public static class BlockRegistry
 
     private static void RegisterLeaves(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
+            BlockFlags.Solid, // | BlockFlags.Translucent,
             0, 1, true, RenderMethod.AlphaTest));
 
     private static void RegisterGlass(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
             BlockFlags.Solid | BlockFlags.Translucent,
             0, 0, true, RenderMethod.Blend));
+
+    private static void RegisterFlower(Dictionary<ushort, BlockProperties> builder, BlockId block)
+        => Register(builder, block, new(
+            BlockFlags.Replaceable, // Can be washed away by water
+            0, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
 
     /// <summary>
     /// Gets all properties for a block type.

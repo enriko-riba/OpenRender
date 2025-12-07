@@ -73,6 +73,16 @@ public class ChunkData
     }
 
     /// <summary>
+    /// Checks if the local coordinates are within the chunk bounds.
+    /// </summary>
+    public bool IsWithinBounds(int x, int y, int z)
+    {
+        return x >= 0 && x < VoxelHelper.ChunkSideSize &&
+               y >= 0 && y < VoxelHelper.ChunkYSize &&
+               z >= 0 && z < VoxelHelper.ChunkSideSize;
+    }
+
+    /// <summary>
     /// Set block at position, updating palette if necessary.
     /// </summary>
     public void SetBlock(int x, int y, int z, BlockId block)

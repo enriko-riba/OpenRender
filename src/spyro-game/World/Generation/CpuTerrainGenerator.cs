@@ -130,7 +130,17 @@ internal sealed class CpuTerrainGenerator
         var spanTypes = new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
         var spanCounts = new byte[VoxelHelper.ChunkSideSizeSquare];
 
-        FillChunk(chunkIndex, chunkData, collision, spanPairs, spanTypes, spanCounts, edits);
+        // 1. Generate base terrain voxels
+        FillChunk(chunkIndex, chunkData, edits);
+
+        // 2. Place vegetation (trees, flowers, etc.)
+        profiler.BeginStep(TerrainGenerationProfiler.Step.Vegetation);
+        var vegetationGen = new VegetationGenerator(config);
+        vegetationGen.DecorateChunk(chunkData, currentChunkBiome, chunkX, chunkZ);
+        profiler.EndStep(TerrainGenerationProfiler.Step.Vegetation);
+
+        // 3. Generate collision spans from final voxel data
+        GenerateCollisionData(chunkData, collision, spanPairs, spanTypes, spanCounts);
 
         profiler.EndStep(TerrainGenerationProfiler.Step.Total);
         profiler.FinalizeChunk();
@@ -141,10 +151,6 @@ internal sealed class CpuTerrainGenerator
     private void FillChunk(
         int chunkIndex,
         ChunkData chunkData,
-        ChunkCollisionData collision,
-        int[] spanPairs,
-        BlockId[] spanTypes,
-        byte[] spanCounts,
         IReadOnlyDictionary<int, BlockId>? edits)
     {
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
@@ -173,12 +179,6 @@ internal sealed class CpuTerrainGenerator
                 var cheeseSlice = GetColumnVolumeSpan(cheeseVolume, columnIndex);
                 var spaghettiSlice = GetColumnVolumeSpan(spaghettiVolume, columnIndex);
                 var overhangSlice = GetColumnVolumeSpan(overhangVolume, columnIndex);
-                var spanBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn;
-                var pairBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn * 2;
-                var spanCount = 0;
-                var inSpan = false;
-                var spanStart = 0;
-                var spanBlock = BlockId.Air;
 
                 // Optimization: Pre-calculate biome and slope for the column
                 // This avoids 384 lookups per column
@@ -213,6 +213,43 @@ internal sealed class CpuTerrainGenerator
                     // Palette lookup
                     var paletteIndex = chunkData.GetOrAddPaletteEntry(block);
                     chunkData.VoxelData[localIndex] = paletteIndex;
+                }
+                
+                // Performance optimization: Compute surface height for this column (highest opaque block)
+                // This is used by lighting to quickly skip underground air columns
+                chunkData.SurfaceHeights[columnIndex] = ComputeSurfaceHeight(chunkData, lx, lz);
+            }
+        }
+        
+        profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
+
+        // ChunkCollisionData.Spans populated inside TryCommitSpan
+    }
+
+    private void GenerateCollisionData(
+        ChunkData chunkData,
+        ChunkCollisionData collision,
+        int[] spanPairs,
+        BlockId[] spanTypes,
+        byte[] spanCounts)
+    {
+        profiler.BeginStep(TerrainGenerationProfiler.Step.CollisionGeneration);
+
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+                var spanBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn;
+                var pairBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn * 2;
+                var spanCount = 0;
+                var inSpan = false;
+                var spanStart = 0;
+                var spanBlock = BlockId.Air;
+
+                for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+                {
+                    var block = chunkData.GetBlock(lx, y, lz);
 
                     if (!block.IsAir())
                     {
@@ -253,16 +290,9 @@ internal sealed class CpuTerrainGenerator
                 var recorded = (byte)Math.Min(spanCount, ChunkCollisionData.MaxSpansPerColumn);
                 spanCounts[columnIndex] = recorded;
                 collision.SpanCounts[columnIndex] = recorded;
-                
-                // Performance optimization: Compute surface height for this column (highest opaque block)
-                // This is used by lighting to quickly skip underground air columns
-                chunkData.SurfaceHeights[columnIndex] = ComputeSurfaceHeight(chunkData, lx, lz);
             }
         }
-        
-        profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
-
-        // ChunkCollisionData.Spans populated inside TryCommitSpan
+        profiler.EndStep(TerrainGenerationProfiler.Step.CollisionGeneration);
     }
     
     /// <summary>

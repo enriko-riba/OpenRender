@@ -848,6 +848,14 @@ public sealed class BiomeDefinition
     /// </summary>
     public BlockId UnderwaterSubsurfaceBlock { get; set; } = BlockId.Stone;
 
+    // === VEGETATION ===
+    
+    /// <summary>
+    /// List of vegetation rules for this biome.
+    /// Each rule defines a type of vegetation (tree, flower, etc.) and its density.
+    /// </summary>
+    public List<VegetationRule> Vegetation { get; set; } = new();
+
     /// <summary>
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with default values.
     /// </summary>
@@ -947,7 +955,13 @@ public sealed class BiomeDefinition
                 minElevation: 150f,
                 baseHeight: 140f, heightVariation: 70f, peaksInfluence: 1.0f, erosionSensitivity: 0.2f,
                 surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeSpruce, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Snow, BlockId.SnowDirt] } // Very sparse trees
+                }
+            },
             
             // Taiga: cold, wet - coniferous forests
             new ((int)BiomeId.Taiga, nameof(BiomeId.Taiga), 
@@ -956,7 +970,14 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
                 surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeSpruce, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
+                    new() { Type = VegetationType.Grass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
+                }
+            },
             
             // Highlands: cool, dry - elevated grasslands
             new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands), 
@@ -965,7 +986,15 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.Grass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.Flower, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.TreeOak, Density = 0.002f, AllowedSurfaceBlocks = [BlockId.Grass] } // Very sparse trees
+                }
+            },
             
             // Plains: temperate, moderate humidity - THE MOST COMMON biome
             new (DEFAULT_FALLBACK_BIOME_ID, nameof(BiomeId.Plains), 
@@ -974,7 +1003,15 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.Flower, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.TreeOak, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                }
+            },
             
             // Beach: at water level, completely flat - coastal areas only
             new ((int)BiomeId.Beach, nameof(BiomeId.Beach), 
@@ -983,7 +1020,13 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.CoastOnly,
                 baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
-                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.SugarCane, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
+                }
+            },
             
             // Tundra: very cold, any humidity - frozen plains
             new ((int)BiomeId.Tundra, nameof(BiomeId.Tundra), 
@@ -992,7 +1035,13 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
                 surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeSpruce, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }
+                }
+            },
             
             // Rainforest: hot, very wet - tropical jungle
             new ((int)BiomeId.Rainforest, nameof(BiomeId.Rainforest), 
@@ -1001,7 +1050,15 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeJungle, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.Grass, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.Flower, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                }
+            },
             
             // Savanna: warm, dry - African-style grassland
             new ((int)BiomeId.Savanna, nameof(BiomeId.Savanna), 
@@ -1010,7 +1067,14 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
                 surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeOak, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }, // Acacia placeholder
+                    new() { Type = VegetationType.Grass, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }
+                }
+            },
             
             // Desert: hot, very dry
             new ((int)BiomeId.Desert, nameof(BiomeId.Desert), 
@@ -1019,7 +1083,14 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
-                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.Cactus, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Sand] },
+                    new() { Type = VegetationType.DeadBush, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
+                }
+            },
 
             // Swamp: warm-temperate, very wet
             new ((int)BiomeId.Swamp, nameof(BiomeId.Swamp), 
@@ -1028,7 +1099,15 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt),
+                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt)
+            {
+                Vegetation = 
+                {
+                    new() { Type = VegetationType.TreeOak, Density = 0.08f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                    new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                    new() { Type = VegetationType.BlueOrchid, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] } // Blue orchids in swamp
+                }
+            },
             
             // Lake: inland water body with sand shores (Phase 2)
             // Uses Any terrain type but is selected via lake noise, not climate
@@ -1523,3 +1602,39 @@ public sealed class NoiseLayer
     /// </summary>
     public float RidgeSharpness { get; set; } = 1.0f;
 }
+
+/// <summary>
+/// Defines a rule for placing vegetation in a biome.
+/// </summary>
+public class VegetationRule
+{
+    /// <summary>The type of vegetation to place (Tree, Flower, etc.).</summary>
+    public VegetationType Type { get; set; }
+    
+    /// <summary>Probability per column (0.0 - 1.0) that this vegetation will attempt to spawn.</summary>
+    public float Density { get; set; }
+    
+    /// <summary>Frequency for the noise used to cluster vegetation (0.1 = large patches).</summary>
+    public float NoiseFrequency { get; set; } = 0.1f;
+    
+    /// <summary>List of blocks this vegetation can grow on (e.g., Grass, Sand).</summary>
+    public BlockId[] AllowedSurfaceBlocks { get; set; } = Array.Empty<BlockId>();
+}
+
+/// <summary>
+/// Types of vegetation generators available.
+/// </summary>
+public enum VegetationType
+{
+    Grass,
+    Flower,
+    TreeOak,    // Uses "Balloon" shape algorithm
+    TreeBirch,  // Uses "Balloon" shape algorithm (different texture)
+    TreeSpruce, // Uses "Cone" shape algorithm
+    TreeJungle, // Uses "Tall/Mega" shape algorithm
+    Cactus,
+    DeadBush,
+    SugarCane,
+    BlueOrchid // Specific flower type for swamps
+}
+

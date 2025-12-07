@@ -35,11 +35,17 @@ internal sealed class TerrainGenerationProfiler
         /// <summary>Block generation and collision spans.</summary>
         BlockGeneration,
         
+        /// <summary>Vegetation placement.</summary>
+        Vegetation,
+
+        /// <summary>Collision span generation.</summary>
+        CollisionGeneration,
+
         /// <summary>Total chunk generation time.</summary>
         Total
     }
 
-    private const int StepCount = 6;
+    private const int StepCount = 8;
     private const int SampleBufferSize = 64; // Rolling average over last N chunks
 
     private readonly Stopwatch _stepTimer = new();
