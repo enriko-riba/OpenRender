@@ -18,6 +18,7 @@ public enum BiomeId : byte
     DeepOcean = 10,
     River = 11,
     Swamp = 12,
+    Lake = 13,
     
     // Special marker
     Unknown = 255

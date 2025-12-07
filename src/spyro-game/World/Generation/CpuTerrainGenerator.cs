@@ -38,6 +38,11 @@ internal sealed class CpuTerrainGenerator
     private readonly float[] columnWarpX = new float[ColumnCount];
     private readonly float[] columnWarpZ = new float[ColumnCount];
     private readonly float[] column3DFactor = new float[ColumnCount];  // Phase 4: Weirdness-based 3D strength
+    
+    // SINGLE SOURCE OF TRUTH: Per-column water body info computed ONCE in PrepareChunkCaches
+    // Used by both biome selection AND block generation for consistency
+    private readonly WaterBodyInfo[] columnWaterBody = new WaterBodyInfo[ColumnCount];
+    
     private readonly float[] scratch2DA = new float[ColumnCount];
     private readonly float[] scratch2DB = new float[ColumnCount];
     private readonly float[] scratch2DC = new float[ColumnCount];
@@ -291,13 +296,76 @@ internal sealed class CpuTerrainGenerator
         BuildColumnFieldCaches();
         profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
         
+        // CRITICAL: Compute water body info BEFORE biome selection
+        // This is the SINGLE SOURCE OF TRUTH for water - used by both biome and block generation
+        BuildColumnWaterBodies();
+        
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
-        UpdateBiomeDataFromTerrainValues(); // Fix: Use terrain's continentalness for biomes
+        UpdateBiomeDataFromTerrainValues(); // Now uses columnWaterBody for consistency
         profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
         
         profiler.BeginStep(TerrainGenerationProfiler.Step.Noise3DSampling);
         BuildColumnVolumes();
         profiler.EndStep(TerrainGenerationProfiler.Step.Noise3DSampling);
+    }
+    
+    /// <summary>
+    /// SINGLE SOURCE OF TRUTH: Compute water body info for each column.
+    /// Must be called AFTER BuildColumnFieldCaches() (needs heights) and BEFORE UpdateBiomeDataFromTerrainValues().
+    /// The result is used by both biome selection and block generation to ensure consistency.
+    /// </summary>
+    private void BuildColumnWaterBodies()
+    {
+        var cont01 = climateCache.Continentalness01;
+        var lakeNoise = climateCache.LakeNoise01;
+        
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            var continentalness01 = cont01[i];
+            var terrainHeight = columnHeightInts[i];
+            var baseHeight = columnHeights[i];
+            
+            // Check ocean first - continentalness below threshold
+            if (continentalness01 < terrainParams.OceanThreshold)
+            {
+                // Ocean: only if terrain is actually below water level
+                // This prevents "dry ocean" where spline puts terrain above water
+                if (terrainHeight < VoxelHelper.WaterLevel)
+                {
+                    columnWaterBody[i] = WaterBodyInfo.Ocean();
+                }
+                else
+                {
+                    // Terrain is at/above water level even though continentalness says ocean
+                    // This is a coastal transition - treat as land (no water)
+                    columnWaterBody[i] = WaterBodyInfo.None;
+                }
+                continue;
+            }
+            
+            // Check lake - must be on land and pass noise threshold
+            if (continentalness01 >= config.LakeMinContinentalness && lakeNoise[i] > config.LakeThreshold)
+            {
+                // Lake water level is terrain-relative
+                var depthFactor = (lakeNoise[i] - config.LakeThreshold) / (1f - config.LakeThreshold);
+                var lakeWaterLevel = baseHeight + 1f + depthFactor * config.LakeMaxDepth;
+                
+                // Lake only forms if terrain dips below the lake level
+                if (terrainHeight < lakeWaterLevel)
+                {
+                    columnWaterBody[i] = WaterBodyInfo.Lake(lakeWaterLevel);
+                }
+                else
+                {
+                    // Terrain is above lake level - no lake here
+                    columnWaterBody[i] = WaterBodyInfo.None;
+                }
+                continue;
+            }
+            
+            // No water body at this column
+            columnWaterBody[i] = WaterBodyInfo.None;
+        }
     }
 
     private void BuildColumnCoordinates(int chunkX, int chunkZ)
@@ -461,6 +529,17 @@ internal sealed class CpuTerrainGenerator
                     var smoothTarget = SampleHeightSpline(tC) + VoxelHelper.WaterLevel + shaping.ErosionSmoothingHeightOffset;
                     baseHeight = Lerp(baseHeight, smoothTarget, smoothingFactor);
                 }
+                
+                // === CRITICAL: MINIMUM HEIGHT FOR LAND ===
+                // Land terrain (continentalness >= OceanThreshold) MUST be at or above water level.
+                // Without this, terrain modifiers (peaks, weirdness, valleys) can push land below
+                // water level, creating "floating water" without proper shores.
+                // The minimum height increases slightly inland to ensure natural coastlines.
+                var minLandHeight = VoxelHelper.WaterLevel + 1f + coastDist * 3f;  // Y=36 at coast, rising inland
+                if (baseHeight < minLandHeight)
+                {
+                    baseHeight = minLandHeight;
+                }
             }
             else
             {
@@ -552,8 +631,8 @@ internal sealed class CpuTerrainGenerator
         var pv01 = climateCache.PeaksValleys01;
 
         // === PER-COLUMN BIOME SELECTION (voxel-resolution borders) ===
-        // Select biome for every column based on its actual terrain height.
-        // This eliminates the 4x4 blocky biome borders.
+        // Select biome for every column based on its actual terrain height AND water body type.
+        // This eliminates the 4x4 blocky biome borders and ensures biome matches water presence.
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
@@ -563,14 +642,19 @@ internal sealed class CpuTerrainGenerator
                 // This prevents "dry ocean" bugs where float height < 35 but int height = 35
                 var terrainHeight = (float)columnHeightInts[columnIndex];
                 
-                // Select biome using per-column climate values and actual terrain height
+                // SINGLE SOURCE OF TRUTH: Pass water body type to biome selector
+                // This ensures Beach only appears where there's actual ocean nearby
+                var waterBody = columnWaterBody[columnIndex];
+                
+                // Select biome using per-column climate values, terrain height, AND water body type
                 var biome = biomeSelector.SelectPrimary(
                     cont01[columnIndex],
                     temp01[columnIndex],
                     humid01[columnIndex],
                     erosion01[columnIndex],
                     pv01[columnIndex],
-                    terrainHeight);
+                    terrainHeight,
+                    waterBody.Type);
                 
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
             }
@@ -1058,6 +1142,9 @@ internal sealed class CpuTerrainGenerator
     /// 
     /// FIXED: Surface detection now works with 3D terrain by checking if the block above is air,
     /// rather than comparing y to 2D height. This correctly places grass/snow on overhangs.
+    /// 
+    /// SINGLE SOURCE OF TRUTH: Uses columnWaterBody[] for water body detection instead of
+    /// recalculating isOceanArea/isLakeArea. This ensures consistency with biome selection.
     /// </summary>
     private BlockId GenerateBlock(
         int height,
@@ -1075,34 +1162,55 @@ internal sealed class CpuTerrainGenerator
         BiomeDefinition? biomeDef,
         float slope)
     {
+        // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
+        // This is the same data used by BiomeSelector, ensuring consistency
+        var waterBody = columnWaterBody[columnIndex];
+        var isOceanArea = waterBody.IsOcean;
+        var isLakeArea = waterBody.IsLake;
+        var lakeWaterLevel = waterBody.WaterLevel;
+        
         // Optimization: If we are significantly above the base height + overhang range,
         // the density will definitely be negative (air).
         // This avoids density calculations for the empty sky.
         if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
         {
-            return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
+            // Only place water in ocean areas OR lake areas
+            if (y <= VoxelHelper.WaterLevel && isOceanArea)
+                return BlockId.Water;
+            // Lake water fills where terrain is BELOW the lake level
+            // Water appears where y <= lakeWaterLevel AND y > height (above terrain surface)
+            if (isLakeArea && y <= lakeWaterLevel && y > height)
+                return BlockId.Water;
+            return BlockId.Air;
         }
 
         // 1. Calculate 3D Density for THIS voxel
         var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
 
-        // 2. Density Check - If density is negative, it's air (or water).
+        // 2. Density Check - If density is negative, it's air (or water in ocean/lake).
         if (density < 0f)
         {
-            return y <= VoxelHelper.WaterLevel ? BlockId.Water : BlockId.Air;
+            // Ocean water
+            if (y <= VoxelHelper.WaterLevel && isOceanArea)
+                return BlockId.Water;
+            // Lake water - fills where y is above terrain but below lake level
+            if (isLakeArea && y <= lakeWaterLevel && y > height)
+                return BlockId.Water;
+            return BlockId.Air;
         }
 
-        var tC = continentalness01;
-        var isLand = tC >= terrainParams.OceanThreshold;
+        var isLand = !isOceanArea;
 
         // 3. Cave Systems (Cheese & Spaghetti)
-        // Only apply caves if we have solid terrain
+        // Only apply caves if we have solid terrain on land
         if (isLand && y > 0)
         {
             var depth = height - y;
             if (IsCave(depth, slope, cheeseSlice[y], spaghettiSlice[y]))
             {
-                return y <= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.CaveFloodExtension ? BlockId.Water : BlockId.Air;
+                // Cave flooding only applies near coast (in ocean transition zone)
+                // and only below water level + extension
+                return BlockId.Air;
             }
         }
 
@@ -1137,8 +1245,17 @@ internal sealed class CpuTerrainGenerator
             return isSurface ? BlockId.Grass : BlockId.Stone;
         }
 
-        var isOceanBiome = (BiomeId)biomeDef.Id is BiomeId.Ocean or BiomeId.DeepOcean;
-        var isUnderwater = y <= VoxelHelper.WaterLevel && (isOceanBiome || height < VoxelHelper.WaterLevel);
+        // Underwater detection for surface block selection:
+        // A block is "underwater" if the TERRAIN SURFACE at this column is below water level,
+        // meaning there's water above this solid block. This is NOT based on the current block's Y.
+        // 
+        // - Ocean areas: terrain surface (height) < WaterLevel means water fills above
+        // - Lake areas: terrain surface (height) < lakeWaterLevel means lake water fills above
+        // 
+        // IMPORTANT: Do NOT use (y <= WaterLevel) - that incorrectly marks subsurface blocks
+        // on land at Y=35 as underwater when the terrain surface is actually at Y=36+.
+        var isUnderwater = (isOceanArea && height < VoxelHelper.WaterLevel) || 
+                           (isLakeArea && height < lakeWaterLevel);
 
         // Surface block - now correctly detected even on overhangs
         if (isSurface)
@@ -1342,28 +1459,6 @@ internal sealed class CpuTerrainGenerator
         var dx = Math.Max(Math.Abs(h1 - h0), Math.Abs(h3 - h0));
         var dz = Math.Max(Math.Abs(h2 - h0), Math.Abs(h4 - h0));
         return MathF.Sqrt(dx * dx + dz * dz);
-    }
-
-    private bool IsNearWater(int wx, int wz)
-    {
-        for (var dz = -3; dz <= 3; dz += 3)
-        {
-            for (var dx = -3; dx <= 3; dx += 3)
-            {
-                if (dx == 0 && dz == 0)
-                {
-                    continue;
-                }
-
-                var h = GenerateHeight(wx + dx, wz + dz);
-                if (h <= VoxelHelper.WaterLevel)
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     private bool IsCave(int depth, float slope, float cheeseDensity, float spaghettiDensity)

@@ -571,23 +571,34 @@ internal class GameScene : Scene
                     var config = streamingManager?.Config;
                     string landType;
 
-                    if (config != null)
+                    // FIXED: First check actual biome ID for Lake - it takes priority over terrain classification
+                    var actualBiome = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
+                    if (actualBiome == BiomeId.Lake)
+                    {
+                        landType = "Lake";
+                    }
+                    else if (config != null)
                     {
                         var height = bb.GlobalPosition.Y;
-                        var isUnderwater = height < VoxelHelper.WaterLevel;
                         var altitudeAboveWater = height - VoxelHelper.WaterLevel;
-                        var isCoastal = !isUnderwater && altitudeAboveWater <= config.ShorelineRange;
+                        
+                        // FIXED: Match BiomeSelector.SelectPrimary() logic exactly
+                        // - isUnderwater: actual terrain surface below water
+                        // - isOceanic: continentalness below ocean threshold
+                        // - isCoastal: NOT underwater, NOT oceanic, near ocean by continentalness AND near water by height
+                        var isUnderwater = height < VoxelHelper.WaterLevel;
+                        var isOceanic = cont01 < config.OceanThreshold;
+                        var contDistance = MathF.Abs(cont01 - config.OceanThreshold);
+                        var isNearOceanByContinentalness = contDistance <= config.CoastRange;
+                        var isNearWaterHeight = altitudeAboveWater >= -1 && altitudeAboveWater <= config.ShorelineRange;
+                        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight;
                         var isAlpine = altitudeAboveWater > config.AlpineElevation;
 
                         if (isAlpine) landType = "Alpine";
+                        else if (isOceanic && isUnderwater) landType = "Ocean";
                         else if (isCoastal) landType = "Coast";
-                        else if (isUnderwater) landType = "Ocean";
-                        else
-                        {
-                            // Fallback to continentalness if not height-determined
-                            landType = cont01 < config.OceanThreshold ? "Ocean" : 
-                                      cont01 < config.MountainThreshold ? "Inland" : "Mountain";
-                        }
+                        else if (isUnderwater) landType = "Underwater";
+                        else landType = cont01 < config.MountainThreshold ? "Inland" : "Mountain";
                     }
                     else
                     {

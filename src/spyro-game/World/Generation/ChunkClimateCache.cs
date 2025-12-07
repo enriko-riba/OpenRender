@@ -30,6 +30,7 @@ internal sealed class ChunkClimateCache
     private readonly float[] _temperature = new float[ColumnCount];
     private readonly float[] _humidity = new float[ColumnCount];
     private readonly float[] _weirdness = new float[ColumnCount];
+    private readonly float[] _lakeNoise = new float[ColumnCount];  // Phase 2: Lake placement noise
 
     // Normalized versions [0, 1] for convenience
     private readonly float[] _continentalness01 = new float[ColumnCount];
@@ -38,6 +39,7 @@ internal sealed class ChunkClimateCache
     private readonly float[] _temperature01 = new float[ColumnCount];
     private readonly float[] _humidity01 = new float[ColumnCount];
     private readonly float[] _weirdness01 = new float[ColumnCount];
+    private readonly float[] _lakeNoise01 = new float[ColumnCount];  // Phase 2: Normalized lake noise
 
     // Domain warp values (cached separately as they're used to warp other noise)
     private readonly float[] _warpX = new float[ColumnCount];
@@ -106,6 +108,12 @@ internal sealed class ChunkClimateCache
     /// <summary>Gets normalized weirdness values [0, 1].</summary>
     public ReadOnlySpan<float> Weirdness01 => _weirdness01;
     
+    /// <summary>Gets the raw lake noise values [-1, 1]. Phase 2: Lake placement.</summary>
+    public ReadOnlySpan<float> LakeNoise => _lakeNoise;
+    
+    /// <summary>Gets normalized lake noise values [0, 1]. Phase 2: Lake placement.</summary>
+    public ReadOnlySpan<float> LakeNoise01 => _lakeNoise01;
+    
     /// <summary>Gets the domain warp X offsets.</summary>
     public ReadOnlySpan<float> WarpX => _warpX;
     
@@ -161,6 +169,9 @@ internal sealed class ChunkClimateCache
         SampleTemperature(config.Temperature, seed);
         SampleHumidity(config.Humidity, seed);
         SampleWeirdness(config.Weirdness, seed);
+        
+        // Step 4: Sample lake noise (Phase 2: Local water bodies)
+        SampleLakeNoise(config.LakeNoise, seed);
 
         _isValid = true;
 
@@ -342,6 +353,28 @@ internal sealed class ChunkClimateCache
     }
 
     /// <summary>
+    /// Sample lake noise. Phase 2: Controls where lakes can appear.
+    /// Uses domain-warped coordinates for organic lake shapes.
+    /// </summary>
+    private void SampleLakeNoise(NoiseLayer layer, uint seed)
+    {
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            warpedX[i] = _worldX[i] + _warpX[i] * 0.5f;  // Less warp for lakes
+            warpedZ[i] = _worldZ[i] + _warpZ[i] * 0.5f;
+        }
+        
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 900u, layer.Octaves, layer.Persistence, layer.Lacunarity, _lakeNoise);
+
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            _lakeNoise01[i] = _lakeNoise[i] * 0.5f + 0.5f;
+        }
+    }
+
+    /// <summary>
     /// SIMD-batched 2D FBM noise sampling using NoiseDotNet.
     /// Processes all 256 columns efficiently using Vector256&lt;float&gt; internally.
     /// </summary>
@@ -440,7 +473,9 @@ internal sealed class ChunkClimateCache
             Humidity = _humidity[columnIndex],
             Humidity01 = _humidity01[columnIndex],
             Weirdness = _weirdness[columnIndex],
-            Weirdness01 = _weirdness01[columnIndex]
+            Weirdness01 = _weirdness01[columnIndex],
+            LakeNoise = _lakeNoise[columnIndex],
+            LakeNoise01 = _lakeNoise01[columnIndex]
         };
     }
 }
@@ -462,4 +497,6 @@ public readonly struct ColumnClimate
     public float Humidity01 { get; init; }
     public float Weirdness { get; init; }
     public float Weirdness01 { get; init; }
+    public float LakeNoise { get; init; }
+    public float LakeNoise01 { get; init; }
 }

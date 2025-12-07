@@ -104,16 +104,16 @@ public sealed class TerrainConfig
     /// <summary>
     /// Continentalness noise configuration.
     /// Controls the size of oceans and continents.
-    /// LARGER scale = bigger continents, fewer isolated ponds.
+    /// Scale balances large landmasses with ocean variety.
     /// </summary>
     public NoiseLayer Continentalness { get; set; } = new()
     {
-        BaseScale = 1f / 2500f,  // Was 1/1500 - larger scale = bigger land masses
+        BaseScale = 1f / 1800f,  // Was 1/2500 - reduced for more ocean variety
         Octaves = 3,
-        Persistence = 0.45f,     // Slightly reduced for smoother transitions
+        Persistence = 0.50f,     // Restored for more variation
         Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 1200f,  // Was 1/800 - larger warp scale
-        DomainWarpStrength = 100f      // Was 120 - slightly reduced
+        DomainWarpScale = 1f / 1000f,
+        DomainWarpStrength = 80f
     };
 
     /// <summary>
@@ -187,6 +187,48 @@ public sealed class TerrainConfig
         DomainWarpScale = 1f / 300f,   // Was 1/200
         DomainWarpStrength = 30f       // Was 50 - less distortion
     };
+
+    // === LAKE SYSTEM (Phase 2) ===
+    
+    /// <summary>
+    /// Lake noise configuration.
+    /// Controls the distribution of lakes across the terrain.
+    /// Only areas where noise exceeds LakeThreshold will have lakes.
+    /// </summary>
+    public NoiseLayer LakeNoise { get; set; } = new()
+    {
+        BaseScale = 1f / 600f,    // Large-scale lake distribution (~600 block features)
+        Octaves = 2,
+        Persistence = 0.5f,
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 400f,
+        DomainWarpStrength = 40f
+    };
+    
+    /// <summary>
+    /// Noise threshold for lake placement [0, 1].
+    /// Only areas where lake noise exceeds this threshold will have lakes.
+    /// - 0.75 (default): ~25% of terrain can have lakes (sparse)
+    /// - 0.85: ~15% of terrain (rare lakes)
+    /// - 0.65: ~35% of terrain (frequent lakes)
+    /// </summary>
+    public float LakeThreshold { get; set; } = 0.75f;
+    
+    /// <summary>
+    /// Maximum depth of lakes in blocks.
+    /// Lakes fill depressions from terrain surface up to this depth.
+    /// - 5 (default): Shallow lakes suitable for wading
+    /// - 3: Very shallow ponds
+    /// - 8: Deeper lakes for swimming
+    /// </summary>
+    public float LakeMaxDepth { get; set; } = 5f;
+    
+    /// <summary>
+    /// Minimum continentalness for lake placement.
+    /// Lakes only appear on land (above this threshold).
+    /// Must match OceanThreshold to allow lakes at the land boundary.
+    /// </summary>
+    public float LakeMinContinentalness { get; set; } = 0.40f;
 
     // Legacy properties removed
 
@@ -262,18 +304,19 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Continentalness threshold separating ocean from land (NEW: Biome system).
-    /// Example: 0.35 means C < 0.35 is ocean, C >= 0.35 is land.
+    /// Example: 0.40 means C < 0.40 is ocean, C >= 0.40 is land.
     /// - Lower values (0.30): More ocean, less land
-    /// - Higher values (0.40): Less ocean, more land
+    /// - Higher values (0.50): Less ocean, more land
     /// CRITICAL: Must match the coast transition in your height spline!
+    /// RAISED to 0.40 so more terrain is classified as ocean.
     /// </summary>
-    public float OceanThreshold { get; set; } = 0.35f;
+    public float OceanThreshold { get; set; } = 0.40f;
     
     /// <summary>
     /// Continentalness threshold for deep ocean biome variant.
-    /// Example: 0.20 means C < 0.20 is deep ocean, 0.20-0.35 is regular ocean.
+    /// Example: 0.25 means C < 0.25 is deep ocean, 0.25-0.40 is regular ocean.
     /// </summary>
-    public float DeepOceanThreshold { get; set; } = 0.20f;
+    public float DeepOceanThreshold { get; set; } = 0.25f;
     
     /// <summary>
     /// Elevation threshold (in blocks) where Alpine biome begins.
@@ -292,12 +335,10 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Coast threshold for humidity calculation (continentalness value where coast is detected).
-    /// Example: 0.35 means C=0.35 is considered coast for biome humidity calculations.
-    /// - Lower values (0.30): Coast detection happens earlier, more inland drying
-    /// - Higher values (0.40): Coast detection happens later, wetter interiors
+    /// Example: 0.40 means C=0.40 is considered coast for biome humidity calculations.
     /// Should match the coast region in your height spline (steep transition zone).
     /// </summary>
-    public float CoastThreshold { get; set; } = 0.35f;
+    public float CoastThreshold { get; set; } = 0.40f;
     
     /// <summary>
     /// Continentalness threshold where mountains begin (for cliff/overhang generation).
@@ -908,27 +949,27 @@ public sealed class BiomeDefinition
                 surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Taiga: elevated, gentle rolling hills with moderate variation
+            // Taiga: cold, wet - coniferous forests
             new ((int)BiomeId.Taiga, nameof(BiomeId.Taiga), 
-                new(0.25f, 0.5f), new(0.5f, 1.0f),
+                new(0.15f, 0.35f), new(0.5f, 0.8f),  // Cold + humid
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
                 surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Highlands: elevated terrain with moderate hills
+            // Highlands: cool, dry - elevated grasslands
             new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands), 
-                new(0.25f, 0.5f), new(0.0f, 0.5f),
+                new(0.30f, 0.50f), new(0.25f, 0.50f),  // Cool + moderate humidity
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Plains: slightly above water, very flat
+            // Plains: temperate, moderate humidity - THE MOST COMMON biome
             new (DEFAULT_FALLBACK_BIOME_ID, nameof(BiomeId.Plains), 
-                new(0.5f, 0.75f), new(0.33f, 0.66f),
+                new(0.40f, 0.70f), new(0.30f, 0.70f),  // Wide temperate range
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
@@ -944,50 +985,60 @@ public sealed class BiomeDefinition
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                 underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
             
-            // Tundra: cold, flat-ish with some gentle undulation
+            // Tundra: very cold, any humidity - frozen plains
             new ((int)BiomeId.Tundra, nameof(BiomeId.Tundra), 
-                new(0.5f, 0.75f), new(0.66f, 1.0f),
+                new(0.0f, 0.20f), new(0.0f, 0.6f),  // Very cold, any humidity
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
                 surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Rainforest: tropical, lush, varied terrain with hills
+            // Rainforest: hot, very wet - tropical jungle
             new ((int)BiomeId.Rainforest, nameof(BiomeId.Rainforest), 
-                new(0.75f, 1.0f), new(0.5f, 0.66f),
+                new(0.70f, 1.0f), new(0.70f, 1.0f),  // Hot + very wet
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Savanna: warm, mostly flat with occasional hills
+            // Savanna: warm, dry - African-style grassland
             new ((int)BiomeId.Savanna, nameof(BiomeId.Savanna), 
-                new(0.75f, 1.0f), new(0.25f, 0.5f),
+                new(0.65f, 0.85f), new(0.20f, 0.45f),  // Warm + dry
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
                 surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // Desert: hot, flat with dunes represented by moderate variation
+            // Desert: hot, very dry
             new ((int)BiomeId.Desert, nameof(BiomeId.Desert), 
-                new(0.75f, 1.0f), new(0.0f, 0.25f),
+                new(0.75f, 1.0f), new(0.0f, 0.20f),  // Hot + very dry
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
                 surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                 underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone),
 
-            // Swamp: warm, wet, low-lying
+            // Swamp: warm-temperate, very wet
             new ((int)BiomeId.Swamp, nameof(BiomeId.Swamp), 
-                new(0.5f, 0.8f), new(0.8f, 1.0f),
+                new(0.50f, 0.70f), new(0.75f, 1.0f),  // Temperate + very wet
                 priority: 50, 
                 terrainType: TerrainType.LandOnly,
                 baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
                 surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                 underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt),
+            
+            // Lake: inland water body with sand shores (Phase 2)
+            // Uses Any terrain type but is selected via lake noise, not climate
+            new ((int)BiomeId.Lake, nameof(BiomeId.Lake), 
+                new(0.0f, 1.0f), new(0.0f, 1.0f),  // Any climate where lake noise is high
+                priority: 85,  // Higher than land biomes, checked when lake noise exceeds threshold
+                terrainType: TerrainType.Any,  // Can appear anywhere on land
+                baseHeight: 0f, heightVariation: 2f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
+                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Stone,
+                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Gravel),
         ];
     }
 }
@@ -1379,11 +1430,11 @@ public sealed class Spline1D
     /// <summary>
     /// Creates the default height spline for ocean-to-mountain elevation mapping.
     /// Maps continentalness [0,1] to elevation in blocks:
-    /// - 0.00-0.25: Ocean basin
-    /// - 0.30-0.40: Coastal transition with moderate cliffs
-    /// - 0.40-0.60: Coastal lowlands rising to hills
-    /// - 0.60-0.80: Highlands with significant variation
-    /// - 0.80-1.00: Mountain regions with high peaks
+    /// - 0.00-0.30: Ocean basin
+    /// - 0.35-0.45: Coastal transition
+    /// - 0.45-0.65: Coastal lowlands and plains
+    /// - 0.65-0.80: Highlands
+    /// - 0.80-1.00: Mountain regions
     /// Note: Spline values are relative. GPU adds WATER_LEVEL (35) for absolute Y coordinates.
     /// </summary>
     /// <returns>Configured height spline with terrain transitions.</returns>
@@ -1393,33 +1444,33 @@ public sealed class Spline1D
         
         // Height values are relative to WaterLevel (35).
         // Valid absolute Y range: 0-383. So relative range: -35 to +348.
-        // Normalized between old boring and new extreme values (75% toward new)
+        // Ocean threshold is 0.40, so coast transition should be at ~0.40
         
         // Deep ocean - moderate trenches
         s.Add(0.00f, -30f);   // Deep ocean floor (Y=5)
-        s.Add(0.08f, -27f);   // Ocean basin (Y=8)
-        s.Add(0.18f, -20f);   // Mid ocean (Y=15)
+        s.Add(0.10f, -27f);   // Ocean basin (Y=8)
+        s.Add(0.22f, -18f);   // Mid ocean (Y=17)
         
-        // Coastal cliff transition - moderately steep
-        s.Add(0.28f, -9f);    // Shallow ocean shelf (Y=26)
-        s.Add(0.33f, -1f);    // Approaching shore (Y=34)
-        s.Add(0.35f, 1f);     // Beach level (Y=36) - just above water
-        s.Add(0.38f, 12f);    // Coastal cliff top (Y=47) - moderate rise
+        // Coastal transition - at ocean threshold 0.40
+        s.Add(0.32f, -8f);    // Shallow ocean shelf (Y=27)
+        s.Add(0.38f, -1f);    // Approaching shore (Y=34)
+        s.Add(0.40f, 1f);     // Beach level (Y=36) - AT OCEAN THRESHOLD
+        s.Add(0.44f, 10f);    // Coastal plain (Y=45)
         
         // Coastal lowlands to rolling terrain
-        s.Add(0.45f, 23f);    // Coastal plains (Y=58)
-        s.Add(0.52f, 38f);    // Low hills (Y=73)
+        s.Add(0.50f, 20f);    // Low plains (Y=55)
+        s.Add(0.58f, 35f);    // Plains/hills (Y=70)
         
         // Hill/highland transition
-        s.Add(0.60f, 55f);    // Rolling hills (Y=90)
-        s.Add(0.68f, 82f);    // High hills (Y=117)
-        s.Add(0.75f, 115f);   // Highlands base (Y=150)
+        s.Add(0.66f, 52f);    // Rolling hills (Y=87)
+        s.Add(0.74f, 75f);    // High hills (Y=110)
+        s.Add(0.80f, 100f);   // Highlands base (Y=135)
         
-        // Mountain range - good drama but not extreme
-        s.Add(0.82f, 155f);   // Mountain foothills (Y=190)
-        s.Add(0.88f, 205f);   // Lower mountains (Y=240)
-        s.Add(0.94f, 260f);   // High mountains (Y=295)
-        s.Add(1.00f, 320f);   // High peaks (Y=355)
+        // Mountain range
+        s.Add(0.86f, 140f);   // Mountain foothills (Y=175)
+        s.Add(0.92f, 190f);   // Lower mountains (Y=225)
+        s.Add(0.96f, 250f);   // High mountains (Y=285)
+        s.Add(1.00f, 310f);   // Peaks (Y=345)
         
         s.Sort();
         return s;

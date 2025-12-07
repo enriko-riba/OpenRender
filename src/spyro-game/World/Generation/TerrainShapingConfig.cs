@@ -14,11 +14,11 @@ public sealed class TerrainShapingConfig
     /// <summary>
     /// Width of the coastal transition zone as a fraction of inland distance [0, 1].
     /// At coastDist &lt; CoastalZoneWidth, beach/cliff blending is applied.
-    /// - 0.35 (default): 35% of inland distance is coastal zone (wide beaches/plains)
-    /// - 0.15: Narrow coastal zone, cliffs appear quickly
-    /// - 0.5: Very wide coastal zone, lots of flat coastal land
+    /// - 0.08 (default): Narrow coastal zone, terrain rises quickly from beach
+    /// - 0.15: Wider coastal zone, more gradual rise
+    /// - 0.03: Very narrow beach strip
     /// </summary>
-    public float CoastalZoneWidth { get; set; } = 0.35f;
+    public float CoastalZoneWidth { get; set; } = 0.08f;
     
     /// <summary>
     /// Minimum cliffiness value where cliff behavior begins to appear [−1, 1].
@@ -40,11 +40,11 @@ public sealed class TerrainShapingConfig
     
     /// <summary>
     /// Height offset above water level for beach surfaces in blocks.
-    /// - 2 (default): Beach is 2 blocks above water
-    /// - 1: Beach barely above water (more flooding)
-    /// - 4: Higher beaches, more sand area
+    /// - 1 (default): Beach is 1 block above water (Y=36)
+    /// - 0: Beach at exact water level
+    /// - 2: Higher beaches, more sand area
     /// </summary>
-    public float BeachHeightOffset { get; set; } = 2f;
+    public float BeachHeightOffset { get; set; } = 1f;
     
     /// <summary>
     /// Additional blend factor for beach height interpolation [0, 1].

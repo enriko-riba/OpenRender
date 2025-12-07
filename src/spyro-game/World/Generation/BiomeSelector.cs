@@ -28,6 +28,8 @@ internal sealed class BiomeSelector
     private float _alpineElevation;
     private float _shorelineRange;
     private float _coastRange;
+    private float _lakeThreshold;
+    private float _lakeMinContinentalness;
     
     /// <summary>
     /// Creates a new biome selector with pre-allocated arrays.
@@ -53,6 +55,8 @@ internal sealed class BiomeSelector
         _alpineElevation = config.AlpineElevation;
         _shorelineRange = config.ShorelineRange;
         _coastRange = config.CoastRange;
+        _lakeThreshold = config.LakeThreshold;
+        _lakeMinContinentalness = config.LakeMinContinentalness;
     }
     
     /// <summary>
@@ -66,6 +70,7 @@ internal sealed class BiomeSelector
     /// <param name="erosion01">Erosion [0,1] where low=dramatic terrain, high=flat.</param>
     /// <param name="peaksValleys01">Peaks/Valleys [0,1] from ridge noise.</param>
     /// <param name="actualHeight">Actual terrain height at this column (Y coordinate).</param>
+    /// <param name="waterBodyType">Water body type at this column from single source of truth.</param>
     /// <returns>Selected BiomeId.</returns>
     public BiomeId SelectPrimary(
         float continentalness01,
@@ -73,19 +78,45 @@ internal sealed class BiomeSelector
         float humidity01,
         float erosion01,
         float peaksValleys01,
-        float actualHeight)
+        float actualHeight,
+        WaterBodyType waterBodyType = WaterBodyType.None)
     {
-        // Derive terrain context from actual height
-        var isUnderwater = actualHeight < VoxelHelper.WaterLevel;
-        var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
-        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
-        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
-        var isOceanic = continentalness01 < _oceanThreshold;
+        // SINGLE SOURCE OF TRUTH: Use water body type to determine ocean/lake status
+        // This replaces the old continentalness-based checks that caused mismatches
+        var isOcean = waterBodyType == WaterBodyType.Ocean;
+        var isLake = waterBodyType == WaterBodyType.Lake;
+        var hasWater = waterBodyType != WaterBodyType.None;
         
-        // Coast = near shoreline in elevation.
-        // Note: We ignore continentalness here because it can cause beaches to climb cliffs/mountains
-        // if the continentalness gradient is shallow.
-        var isCoastal = !isUnderwater && isNearWaterHeight;
+        // Derive terrain context from water body and height
+        // A column is "oceanic" if it has ocean water (terrain below sea level in ocean zone)
+        var isOceanic = isOcean;
+        var isUnderwater = hasWater; // If there's water, the terrain surface is underwater
+        var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
+        
+        // Lake biome is handled at block level, not biome level
+        // But we need to know if this is a lake area for terrain type filtering
+        
+        // Coast detection: Beach biome ONLY appears where:
+        // 1. There IS nearby ocean water (continentalness just above threshold)
+        // 2. Terrain is at or just above water level
+        // 3. The column itself is NOT underwater
+        //
+        // CRITICAL FIX: We also need adjacent ocean water to exist.
+        // Without water body info from neighbors, we use continentalness as proxy:
+        // If continentalness is JUST above threshold, ocean is nearby.
+        // But we also require terrain to be LOW (near water level).
+        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
+        var isNearOceanByContinentalness = continentalness01 >= _oceanThreshold && 
+                                            continentalness01 < _oceanThreshold + _coastRange;
+        var isNearWaterHeight = altitudeAboveWater >= 0 && altitudeAboveWater <= _shorelineRange;
+        
+        // Coast is ONLY valid if:
+        // - Not underwater (this column)
+        // - Near ocean by continentalness (ocean exists nearby)
+        // - Terrain is low (at beach height)
+        // - NOT in a lake area (lakes have their own biome handling)
+        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight && !isLake;
+        
         var isMountain = altitudeAboveWater > _alpineElevation;
         
         // Track best climate match among eligible biomes
@@ -97,11 +128,15 @@ internal sealed class BiomeSelector
         {
             var biome = _biomes[i];
             
+            // Skip Lake biome - it's handled at block level in CpuTerrainGenerator, not biome level
+            if (biome.Id == (int)BiomeId.Lake)
+                continue;
+            
             // ========== TERRAIN TYPE FILTER ==========
             // Check if biome's AllowedTerrain matches current terrain context
             var terrainMatch = biome.AllowedTerrain switch
             {
-                TerrainType.OceanOnly => isUnderwater && isOceanic,
+                TerrainType.OceanOnly => isOceanic,  // Uses water body type
                 TerrainType.LandOnly => !isUnderwater && !isOceanic && !isCoastal,
                 TerrainType.CoastOnly => isCoastal,
                 TerrainType.MountainOnly => isMountain,
@@ -185,12 +220,16 @@ internal sealed class BiomeSelector
         // Derive terrain context
         var isUnderwater = actualHeight < VoxelHelper.WaterLevel;
         var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
-        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
-        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
         var isOceanic = continentalness01 < _oceanThreshold;
         
-        // Coast if near shoreline by height OR continentalness proximity
-        var isCoastal = !isUnderwater && (isNearWaterHeight || contDistance <= _coastRange);
+        // Distance from ocean threshold - used for coast detection
+        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
+        
+        // FIXED: Coast requires BOTH proximity to ocean (by continentalness) AND low elevation
+        var isNearOceanByContinentalness = contDistance <= _coastRange;
+        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
+        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight;
+        
         var isMountain = altitudeAboveWater > _alpineElevation;
         
         // Calculate distances for all eligible biomes
@@ -208,7 +247,7 @@ internal sealed class BiomeSelector
             {
                 TerrainType.OceanOnly => isUnderwater && isOceanic,
                 TerrainType.LandOnly => !isUnderwater && !isOceanic && !isCoastal,
-                TerrainType.CoastOnly => !isUnderwater && (isNearWaterHeight || contDistance <= _coastRange),
+                TerrainType.CoastOnly => isCoastal,
                 TerrainType.MountainOnly => isMountain,
                 TerrainType.Any => true,
                 _ => true
