@@ -854,7 +854,7 @@ public sealed class BiomeDefinition
     /// List of vegetation rules for this biome.
     /// Each rule defines a type of vegetation (tree, flower, etc.) and its density.
     /// </summary>
-    public List<VegetationRule> Vegetation { get; set; } = new();
+    public List<VegetationRule> Vegetation { get; set; } = [];
 
     /// <summary>
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with default values.
@@ -1618,7 +1618,7 @@ public class VegetationRule
     public float NoiseFrequency { get; set; } = 0.1f;
     
     /// <summary>List of blocks this vegetation can grow on (e.g., Grass, Sand).</summary>
-    public BlockId[] AllowedSurfaceBlocks { get; set; } = Array.Empty<BlockId>();
+    public BlockId[] AllowedSurfaceBlocks { get; set; } = [];
 }
 
 /// <summary>
