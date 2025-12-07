@@ -180,12 +180,12 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Weirdness { get; set; } = new()
     {
-        BaseScale = 1f / 450f,   // Was 1/300 - larger = more uniform areas
+        BaseScale = 1f / 300f,   // Was 1/300 - larger = more uniform areas
         Octaves = 2,             // Reduced from 3
-        Persistence = 0.5f,      // Was 0.6
+        Persistence = 0.75f,      // Was 0.6
         Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 300f,   // Was 1/200
-        DomainWarpStrength = 30f       // Was 50 - less distortion
+        DomainWarpScale = 1f / 200f,   // Was 1/200
+        DomainWarpStrength = 40f       // Was 50 - less distortion
     };
 
     // === LAKE SYSTEM (Phase 2) ===
@@ -928,7 +928,7 @@ public sealed class BiomeDefinition
                 terrainType: TerrainType.OceanOnly,
                 baseHeight: -25f, heightVariation: 12f, peaksInfluence: 0.2f, erosionSensitivity: 0.7f,
                 surfaceBlock: BlockId.Gravel, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                underwaterSurfaceBlock: BlockId.Bedrock, underwaterSubsurfaceBlock: BlockId.Gravel),
             
             // DeepOcean: deeper underwater regions with gravel/stone floor
             new ((int)BiomeId.DeepOcean, nameof(BiomeId.DeepOcean), 

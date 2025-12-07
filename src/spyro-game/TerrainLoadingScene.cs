@@ -53,11 +53,7 @@ internal class TerrainLoadingScene : Scene
         camera = new Camera2D(Vector3.Zero, Width, Height);
 
         // Calculate starting position (center of world)
-        startPosition = new Vector3(
-            5133,
-            230,
-            4015
-        );
+        startPosition = new Vector3(4850, 50, 3950);    //  TODO: hardcoded position to debug Ocean biome
 
         Log.Info("TerrainLoadingScene: Starting CPU terrain generation with enhanced progress tracking...");
     }

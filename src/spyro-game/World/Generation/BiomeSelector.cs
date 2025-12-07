@@ -79,7 +79,8 @@ internal sealed class BiomeSelector
         float erosion01,
         float peaksValleys01,
         float actualHeight,
-        WaterBodyType waterBodyType = WaterBodyType.None)
+        WaterBodyType waterBodyType = WaterBodyType.None,
+        bool hasAdjacentOcean = false)
     {
         // SINGLE SOURCE OF TRUTH: Use water body type to determine ocean/lake status
         // This replaces the old continentalness-based checks that caused mismatches
@@ -106,16 +107,19 @@ internal sealed class BiomeSelector
         // If continentalness is JUST above threshold, ocean is nearby.
         // But we also require terrain to be LOW (near water level).
         var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
-        var isNearOceanByContinentalness = continentalness01 >= _oceanThreshold && 
-                                            continentalness01 < _oceanThreshold + _coastRange;
+        
+        // Allow beach on both sides of the threshold (land side and "dry ocean" side)
+        // This ensures beaches appear even if the noise puts us slightly in the "ocean" zone but we are dry land
+        var isNearOceanByContinentalness = contDistance < _coastRange;
+        
         var isNearWaterHeight = altitudeAboveWater >= 0 && altitudeAboveWater <= _shorelineRange;
         
         // Coast is ONLY valid if:
         // - Not underwater (this column)
-        // - Near ocean by continentalness (ocean exists nearby)
+        // - Near ocean by continentalness OR adjacent to ocean water
         // - Terrain is low (at beach height)
         // - NOT in a lake area (lakes have their own biome handling)
-        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight && !isLake;
+        var isCoastal = !isUnderwater && !isOceanic && isNearWaterHeight && !isLake && (hasAdjacentOcean || isNearOceanByContinentalness);
         
         var isMountain = altitudeAboveWater > _alpineElevation;
         

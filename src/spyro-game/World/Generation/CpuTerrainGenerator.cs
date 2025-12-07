@@ -42,6 +42,7 @@ internal sealed class CpuTerrainGenerator
     // SINGLE SOURCE OF TRUTH: Per-column water body info computed ONCE in PrepareChunkCaches
     // Used by both biome selection AND block generation for consistency
     private readonly WaterBodyInfo[] columnWaterBody = new WaterBodyInfo[ColumnCount];
+    private readonly bool[] columnHasAdjacentOcean = new bool[ColumnCount];
     
     private readonly float[] scratch2DA = new float[ColumnCount];
     private readonly float[] scratch2DB = new float[ColumnCount];
@@ -302,6 +303,8 @@ internal sealed class CpuTerrainGenerator
         
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
         UpdateBiomeDataFromTerrainValues(); // Now uses columnWaterBody for consistency
+        // Refine ocean assignment using actual biome ids so global water level only applies where biome is Ocean
+        RefineWaterBodiesFromBiomes();
         profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
         
         profiler.BeginStep(TerrainGenerationProfiler.Step.Noise3DSampling);
@@ -330,13 +333,16 @@ internal sealed class CpuTerrainGenerator
             {
                 // Ocean: only if terrain is actually below water level
                 // This prevents "dry ocean" where spline puts terrain above water
-                if (terrainHeight < VoxelHelper.WaterLevel)
+                // FIX: Use baseHeight (float) < WaterLevel to determine if the surface is below water level.
+                // This is more precise than integer height and prevents "dry ocean" gaps where
+                // baseHeight is e.g. 34.9 (Ocean) but rounded height is 35 (Land).
+                if (baseHeight < VoxelHelper.WaterLevel)
                 {
                     columnWaterBody[i] = WaterBodyInfo.Ocean();
                 }
                 else
                 {
-                    // Terrain is at/above water level even though continentalness says ocean
+                    // Terrain is strictly above water level even though continentalness says ocean
                     // This is a coastal transition - treat as land (no water)
                     columnWaterBody[i] = WaterBodyInfo.None;
                 }
@@ -365,6 +371,65 @@ internal sealed class CpuTerrainGenerator
             
             // No water body at this column
             columnWaterBody[i] = WaterBodyInfo.None;
+        }
+        ComputeOceanAdjacency();
+    }
+
+    /// <summary>
+    /// After biome selection, enforce that ocean water only exists where the biome is Ocean/DeepOcean.
+    /// Global sea level is applied only for these biome columns. Lakes remain terrain-relative.
+    /// </summary>
+    private void RefineWaterBodiesFromBiomes()
+    {
+        if (currentChunkBiome == null) return;
+
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var idx = lz * VoxelHelper.ChunkSideSize + lx;
+                var biome = currentChunkBiome.GetBiomeAt(lx, lz);
+                if (biome == BiomeId.Ocean || biome == BiomeId.DeepOcean)
+                {
+                    // Ocean columns use global sea level if terrain height is below it
+                    // FIX: Use baseHeight (float) < WaterLevel to match BuildColumnWaterBodies logic
+                    var baseHeight = columnHeights[idx];
+                    columnWaterBody[idx] = baseHeight < VoxelHelper.WaterLevel
+                        ? WaterBodyInfo.Ocean()
+                        : WaterBodyInfo.None;
+                }
+                else
+                {
+                    // Non-ocean biomes do not get ocean water here; keep existing lake info
+                    if (!columnWaterBody[idx].IsLake)
+                    {
+                        columnWaterBody[idx] = WaterBodyInfo.None;
+                    }
+                }
+            }
+        }
+
+        // Recompute adjacency since oceans may have changed
+        ComputeOceanAdjacency();
+    }
+
+    /// <summary>
+    /// Compute adjacency flags to know if a land column touches ocean.
+    /// </summary>
+    private void ComputeOceanAdjacency()
+    {
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var idx = lz * VoxelHelper.ChunkSideSize + lx;
+                var hasOceanNeighbor = false;
+                if (lz > 0) hasOceanNeighbor |= columnWaterBody[(lz - 1) * VoxelHelper.ChunkSideSize + lx].IsOcean;
+                if (lz < VoxelHelper.ChunkSideSize - 1) hasOceanNeighbor |= columnWaterBody[(lz + 1) * VoxelHelper.ChunkSideSize + lx].IsOcean;
+                if (lx > 0) hasOceanNeighbor |= columnWaterBody[lz * VoxelHelper.ChunkSideSize + (lx - 1)].IsOcean;
+                if (lx < VoxelHelper.ChunkSideSize - 1) hasOceanNeighbor |= columnWaterBody[lz * VoxelHelper.ChunkSideSize + (lx + 1)].IsOcean;
+                columnHasAdjacentOcean[idx] = hasOceanNeighbor;
+            }
         }
     }
 
@@ -553,6 +618,13 @@ internal sealed class CpuTerrainGenerator
 
             columnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
+            // CRITICAL GUARD: Land must be at least one block above sea level.
+            // Prevents underwater land columns near coast causing missing beaches.
+            if (cachedCont01[i] >= terrainParams.OceanThreshold && rounded < (int)VoxelHelper.WaterLevel + 1)
+            {
+                rounded = (int)VoxelHelper.WaterLevel + 1;
+                columnHeights[i] = rounded;
+            }
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
     }
@@ -654,7 +726,8 @@ internal sealed class CpuTerrainGenerator
                     erosion01[columnIndex],
                     pv01[columnIndex],
                     terrainHeight,
-                    waterBody.Type);
+                    waterBody.Type,
+                    columnHasAdjacentOcean[columnIndex]);
                 
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
             }
@@ -1175,7 +1248,8 @@ internal sealed class CpuTerrainGenerator
         if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
         {
             // Only place water in ocean areas OR lake areas
-            if (y <= VoxelHelper.WaterLevel && isOceanArea)
+            // FIX: Allow water filling if adjacent to ocean, even if this column is technically Land.
+            if (y <= VoxelHelper.WaterLevel && (isOceanArea || columnHasAdjacentOcean[columnIndex]))
                 return BlockId.Water;
             // Lake water fills where terrain is BELOW the lake level
             // Water appears where y <= lakeWaterLevel AND y > height (above terrain surface)
@@ -1191,7 +1265,9 @@ internal sealed class CpuTerrainGenerator
         if (density < 0f)
         {
             // Ocean water
-            if (y <= VoxelHelper.WaterLevel && isOceanArea)
+            // FIX: Allow water filling if adjacent to ocean, even if this column is technically Land.
+            // This fills gaps where noise pushes the terrain below water level at the coast.
+            if (y <= VoxelHelper.WaterLevel && (isOceanArea || columnHasAdjacentOcean[columnIndex]))
                 return BlockId.Water;
             // Lake water - fills where y is above terrain but below lake level
             if (isLakeArea && y <= lakeWaterLevel && y > height)
@@ -1260,6 +1336,12 @@ internal sealed class CpuTerrainGenerator
         // Surface block - now correctly detected even on overhangs
         if (isSurface)
         {
+            // Coastal beach override: next to ocean, above water, within shoreline range
+            var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
+            if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
+            {
+                return BlockId.Sand;
+            }
             return isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
         }
 
@@ -1292,6 +1374,11 @@ internal sealed class CpuTerrainGenerator
         
         if (effectiveDepth <= terrainParams.SubsurfaceDepth)
         {
+            var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
+            if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
+            {
+                return BlockId.Sand;
+            }
             return isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
         }
 

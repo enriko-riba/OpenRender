@@ -56,7 +56,7 @@ internal class GameScene : Scene
     /// <summary>
     /// Called by TerrainLoadingScene to pass initialized terrain streaming components.
     /// </summary>
-    public void SetupTerrainSystem(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3? spawnPosition = null)
+    public void SetupTerrainSystem(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3 spawnPosition)
     {
         streamingManager = streamingMgr;
         terrainRenderer = renderer;
@@ -66,17 +66,10 @@ internal class GameScene : Scene
         AddNode(terrainRenderer);
 
         // Ensure camera is initialized before creating player
-        EnsureCameraInitialized();
-
-        // Calculate center of world for spawn if not provided
-        var centerPos = spawnPosition ?? new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
-            230,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
-        );
+        EnsureCameraInitialized(spawnPosition);
 
         // Initialize player with world at center position
-        player = new Player(camera!, centerPos, world, streamingManager);
+        player = new Player(camera!, spawnPosition, world, streamingManager);
 
         // Initialize block picking service
         blockPickingService = new BlockPickingService(streamingManager);
@@ -91,18 +84,18 @@ internal class GameScene : Scene
         Log.Info("GameScene: terrain components configured");
     }
 
-    private void EnsureCameraInitialized()
+    private void EnsureCameraInitialized(Vector3 startPos)
     {
         if (camera != null) return;
 
         // Setup camera - FPS camera
         // CRITICAL: Must match TerrainLoadingScene spawn position!
         // Both must use the same calculation: WorldChunksXZ * ChunkSideSize / 2
-        var startPos = new Vector3(
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // = 16 * 600 / 2 = 4800
-            100,
-            VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
-        );
+        //var startPos = new Vector3(
+        //    VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,  // = 16 * 600 / 2 = 4800
+        //    100,
+        //    VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f   // = 16 * 600 / 2 = 4800
+        //);
 
         // Near plane increased to 0.5 to improve depth buffer precision at distance
         // and reduce Z-fighting artifacts on distant horizontal surfaces.
@@ -138,21 +131,9 @@ internal class GameScene : Scene
         GL.CullFace(TriangleFace.Back);
         GL.FrontFace(FrontFaceDirection.Ccw);
 
-        EnsureCameraInitialized();
+        //EnsureCameraInitialized();
 
-        // Player is initialized in SetupCpuTerrain if coming from loading screen
-        // If not (e.g. direct load), initialize here
-        if (player == null)
-        {
-            // Re-calculate startPos since it's local to EnsureCameraInitialized now
-            var startPos = new Vector3(
-                VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f,
-                100,
-                VoxelHelper.ChunkSideSize * VoxelHelper.WorldChunksXZ / 2f
-            );
-            player = new Player(camera!, startPos, world!, streamingManager);
-        }
-        else if (streamingManager != null)
+        if (streamingManager != null)
         {
             // Ensure existing player has the streaming manager
             player.StreamingManager = streamingManager;
@@ -573,31 +554,29 @@ internal class GameScene : Scene
 
                     // FIXED: First check actual biome ID for Lake - it takes priority over terrain classification
                     var actualBiome = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
+                    
                     if (actualBiome == BiomeId.Lake)
                     {
                         landType = "Lake";
                     }
+                    else if (actualBiome == BiomeId.Ocean || actualBiome == BiomeId.DeepOcean)
+                    {
+                        landType = "Ocean";
+                    }
+                    else if (actualBiome == BiomeId.Beach)
+                    {
+                        landType = "Coast";
+                    }
+                    else if (actualBiome == BiomeId.Alpine)
+                    {
+                        landType = "Alpine";
+                    }
                     else if (config != null)
                     {
                         var height = bb.GlobalPosition.Y;
-                        var altitudeAboveWater = height - VoxelHelper.WaterLevel;
-                        
-                        // FIXED: Match BiomeSelector.SelectPrimary() logic exactly
-                        // - isUnderwater: actual terrain surface below water
-                        // - isOceanic: continentalness below ocean threshold
-                        // - isCoastal: NOT underwater, NOT oceanic, near ocean by continentalness AND near water by height
                         var isUnderwater = height < VoxelHelper.WaterLevel;
-                        var isOceanic = cont01 < config.OceanThreshold;
-                        var contDistance = MathF.Abs(cont01 - config.OceanThreshold);
-                        var isNearOceanByContinentalness = contDistance <= config.CoastRange;
-                        var isNearWaterHeight = altitudeAboveWater >= -1 && altitudeAboveWater <= config.ShorelineRange;
-                        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight;
-                        var isAlpine = altitudeAboveWater > config.AlpineElevation;
-
-                        if (isAlpine) landType = "Alpine";
-                        else if (isOceanic && isUnderwater) landType = "Ocean";
-                        else if (isCoastal) landType = "Coast";
-                        else if (isUnderwater) landType = "Underwater";
+                        
+                        if (isUnderwater) landType = "Underwater";
                         else landType = cont01 < config.MountainThreshold ? "Inland" : "Mountain";
                     }
                     else
