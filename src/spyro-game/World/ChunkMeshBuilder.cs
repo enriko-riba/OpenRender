@@ -19,7 +19,9 @@ internal static class ChunkMeshBuilder
     private const byte PLACEHOLDER_NEG_Z = 1 << 3;
     private const bool MirrorMissingNeighbors = false;
     private const uint DisabledLightValue = 0xFFFFFFFFu; // Use a value outside valid range (0-255)
-    private static bool VerboseBuilderLogging = true;
+    
+    // Set to false in production to avoid debug string allocations in hot paths
+    private static bool VerboseBuilderLogging = false;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
     [ThreadStatic] private static List<uint>? t_opaqueVertices;

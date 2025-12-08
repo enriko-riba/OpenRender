@@ -488,11 +488,11 @@ public sealed class TerrainMeshBufferManager : IDisposable
         // Add to free list
         freeVertexRegions.Add(new BufferRegion { Offset = baseOffset, Size = size });
 
-        // Sort by offset to enable merging
-        freeVertexRegions = [.. freeVertexRegions.OrderBy(r => r.Offset)];
+        // Sort in-place by offset to enable merging (avoids LINQ allocation)
+        freeVertexRegions.Sort((a, b) => a.Offset.CompareTo(b.Offset));
 
         // Try to merge adjacent free regions
-        MergeFreeRegions(ref freeVertexRegions);
+        MergeFreeRegions(freeVertexRegions);
 
         //Log.Debug($"Freed vertex region: offset={baseOffset}, size={size}, freeRegions={freeVertexRegions.Count}");
     }
@@ -508,24 +508,25 @@ public sealed class TerrainMeshBufferManager : IDisposable
         // Add to free list
         freeIndexRegions.Add(new BufferRegion { Offset = baseOffset, Size = size });
 
-        // Sort by offset to enable merging
-        freeIndexRegions = [.. freeIndexRegions.OrderBy(r => r.Offset)];
+        // Sort in-place by offset to enable merging (avoids LINQ allocation)
+        freeIndexRegions.Sort((a, b) => a.Offset.CompareTo(b.Offset));
 
         // Try to merge adjacent free regions
-        MergeFreeRegions(ref freeIndexRegions);
+        MergeFreeRegions(freeIndexRegions);
 
         //Log.Debug($"Freed index region: offset={baseOffset}, size={size}, freeRegions={freeIndexRegions.Count}");
     }
 
     /// <summary>
-    /// Merge adjacent free regions to reduce fragmentation
+    /// Merge adjacent free regions to reduce fragmentation.
+    /// Modifies the list in-place to avoid allocations.
     /// </summary>
-    private static void MergeFreeRegions(ref List<BufferRegion> regions)
+    private static void MergeFreeRegions(List<BufferRegion> regions)
     {
         if (regions.Count < 2)
             return;
 
-        var merged = new List<BufferRegion>();
+        var writeIndex = 0;
         var current = regions[0];
 
         for (var i = 1; i < regions.Count; i++)
@@ -544,16 +545,20 @@ public sealed class TerrainMeshBufferManager : IDisposable
             }
             else
             {
-                // Not adjacent, keep current and move to next
-                merged.Add(current);
+                // Not adjacent, write current and move to next
+                regions[writeIndex++] = current;
                 current = next;
             }
         }
 
-        // Add the last region
-        merged.Add(current);
-
-        regions = merged;
+        // Write the last merged region
+        regions[writeIndex++] = current;
+        
+        // Remove excess elements from the end
+        if (writeIndex < regions.Count)
+        {
+            regions.RemoveRange(writeIndex, regions.Count - writeIndex);
+        }
     }
 
     /// <summary>

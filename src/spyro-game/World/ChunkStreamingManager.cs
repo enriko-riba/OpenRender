@@ -180,10 +180,21 @@ public sealed class ChunkStreamingManager : IDisposable
     public (int total, int pending, int generating, int ready) GetStats()
     {
         var total = activeChunks.Count;
-        var pending = activeChunks.Values.Count(c => c.State == TerrainChunkState.Pending);
-        var generating = activeChunks.Values.Count(c => c.State is TerrainChunkState.Generating 
-            or TerrainChunkState.HasTerrain or TerrainChunkState.Processing);
-        var ready = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
+        var pending = 0;
+        var generating = 0;
+        var ready = 0;
+        
+        foreach (var kvp in activeChunks)
+        {
+            var state = kvp.Value.State;
+            if (state == TerrainChunkState.Pending)
+                pending++;
+            else if (state is TerrainChunkState.Generating or TerrainChunkState.HasTerrain or TerrainChunkState.Processing)
+                generating++;
+            else if (state == TerrainChunkState.Ready)
+                ready++;
+        }
+        
         return (total, pending, generating, ready);
     }
 
@@ -191,11 +202,34 @@ public sealed class ChunkStreamingManager : IDisposable
     public (int total, int pending, int generating, int hasTerrain, int processing, int ready) GetDetailedStats()
     {
         var total = activeChunks.Count;
-        var pending = activeChunks.Values.Count(c => c.State == TerrainChunkState.Pending);
-        var generating = activeChunks.Values.Count(c => c.State == TerrainChunkState.Generating);
-        var hasTerrain = activeChunks.Values.Count(c => c.State == TerrainChunkState.HasTerrain);
-        var processing = activeChunks.Values.Count(c => c.State == TerrainChunkState.Processing);
-        var ready = activeChunks.Values.Count(c => c.State == TerrainChunkState.Ready);
+        var pending = 0;
+        var generating = 0;
+        var hasTerrain = 0;
+        var processing = 0;
+        var ready = 0;
+        
+        foreach (var kvp in activeChunks)
+        {
+            switch (kvp.Value.State)
+            {
+                case TerrainChunkState.Pending:
+                    pending++;
+                    break;
+                case TerrainChunkState.Generating:
+                    generating++;
+                    break;
+                case TerrainChunkState.HasTerrain:
+                    hasTerrain++;
+                    break;
+                case TerrainChunkState.Processing:
+                    processing++;
+                    break;
+                case TerrainChunkState.Ready:
+                    ready++;
+                    break;
+            }
+        }
+        
         return (total, pending, generating, hasTerrain, processing, ready);
     }
 
@@ -1163,13 +1197,23 @@ public sealed class ChunkStreamingManager : IDisposable
             return;
         }
 
-        var readyChunks = activeChunks.Values.Where(c => c.State == TerrainChunkState.Ready).ToList();
-        var totalFaces = (uint)readyChunks.Sum(c => Math.Max(0, c.VisibleVoxelCount));
+        // Performance optimization: Count ready chunks and sum faces without LINQ
+        var readyCount = 0;
+        var totalFaces = 0u;
+        foreach (var kvp in activeChunks)
+        {
+            if (kvp.Value.State == TerrainChunkState.Ready)
+            {
+                readyCount++;
+                totalFaces += (uint)Math.Max(0, kvp.Value.VisibleVoxelCount);
+            }
+        }
+        
         var totalVerticesInBuffer = meshBuffers.CurrentVertexBufferEnd;
         var totalIndicesInBuffer = meshBuffers.CurrentIndexBufferEnd;
 
         terrainRenderer.SetupBuffers(meshBuffers, totalVerticesInBuffer, totalFaces);
-        Log.Debug($"ChunkStreamingManager: Renderer refreshed after {reason} (ready={readyChunks.Count}, faces={totalFaces}, vertices={totalVerticesInBuffer}, indices={totalIndicesInBuffer})");
+        Log.Debug($"ChunkStreamingManager: Renderer refreshed after {reason} (ready={readyCount}, faces={totalFaces}, vertices={totalVerticesInBuffer}, indices={totalIndicesInBuffer})");
     }
 
     private void SubmitPendingBatches()
