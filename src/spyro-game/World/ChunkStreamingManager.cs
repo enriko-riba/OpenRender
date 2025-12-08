@@ -615,6 +615,9 @@ public sealed class ChunkStreamingManager : IDisposable
         currentFrame++;
         lastCameraPosition = cameraPosition;
         
+        // Reset per-frame stats
+        meshBuffers?.ResetFrameStats();
+        
         // Update metrics timing
         Metrics.Update(currentFrame / 60.0); // Approximate seconds
 
@@ -1037,6 +1040,9 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         var processed = false;
+        var deferred = 0;
+        
+        // Process meshes in order, stopping if we hit channel saturation
         foreach (var entry in cpuMeshResults.ToArray())
         {
             if (TryUploadCpuMesh(entry.Value))
@@ -1044,11 +1050,22 @@ public sealed class ChunkStreamingManager : IDisposable
                 cpuMeshResults.Remove(entry.Key);
                 processed = true;
             }
+            else
+            {
+                // Upload deferred - stop processing more this frame
+                deferred++;
+                break; // Don't try more uploads this frame if channels are saturated
+            }
         }
 
         if (processed)
         {
             RefreshRendererBuffers("CPU meshing uploads");
+        }
+        
+        if (deferred > 0 && cpuMeshResults.Count > 0)
+        {
+            Log.Debug($"ChunkStreamingManager: {cpuMeshResults.Count} mesh uploads deferred to next frame");
         }
     }
 
@@ -1086,19 +1103,55 @@ public sealed class ChunkStreamingManager : IDisposable
             Log.Warn($"Chunk {mesh.ChunkIndex} vertex data mismatch: expected {expectedVertexEntries}, got {mesh.VertexData.Length}");
         }
 
-        if (descriptor.VisibleVoxelCount > 0)
+        // Try to upload - if channels are busy, defer to next frame
+        var vertexSpan = ReadOnlySpan<uint>.Empty;
+        if (vertexCount > 0 && mesh.VertexData.Length > 0)
         {
-            meshBuffers.FreeVertexRegion((uint)descriptor.AtlasOffset, (uint)(descriptor.VisibleVoxelCount * 4));
-            if (descriptor.IndexOffset >= 0)
+            var safeLength = Math.Min(expectedVertexEntries, mesh.VertexData.Length);
+            vertexSpan = mesh.VertexData.AsSpan(0, safeLength);
+        }
+
+        var indexSpan = ReadOnlySpan<uint>.Empty;
+        if (indexCount > 0 && mesh.IndexData.Length > 0)
+        {
+            var safeLength = Math.Min(indexCount, mesh.IndexData.Length);
+            indexSpan = mesh.IndexData.AsSpan(0, safeLength);
+        }
+
+        // Allocate buffer regions BEFORE upload so we know offsets
+        // Only allocate if we have data to upload
+        int vertexOffset = -1, indexOffset = -1;
+        
+        if (vertexCount > 0)
+        {
+            // Free old region if exists
+            if (descriptor.VisibleVoxelCount > 0 && descriptor.AtlasOffset >= 0)
+            {
+                meshBuffers.FreeVertexRegion((uint)descriptor.AtlasOffset, (uint)(descriptor.VisibleVoxelCount * 4));
+            }
+            vertexOffset = (int)meshBuffers.AllocateVertexRegion((uint)vertexCount);
+        }
+        
+        if (indexCount > 0)
+        {
+            // Free old region if exists
+            if (descriptor.VisibleVoxelCount > 0 && descriptor.IndexOffset >= 0)
             {
                 meshBuffers.FreeIndexRegion((uint)descriptor.IndexOffset, (uint)(descriptor.VisibleVoxelCount * 6));
             }
+            indexOffset = (int)meshBuffers.AllocateIndexRegion((uint)indexCount);
         }
 
-        var vertexOffset = vertexCount > 0 ? (int)meshBuffers.AllocateVertexRegion((uint)vertexCount) : -1;
-        var indexOffset = indexCount > 0 ? (int)meshBuffers.AllocateIndexRegion((uint)indexCount) : -1;
-
-        UploadCpuMeshData(mesh, vertexOffset, vertexCount, indexOffset, indexCount);
+        // Try non-blocking upload
+        if (!meshBuffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset))
+        {
+            // Upload channels busy - free the regions we just allocated and defer
+            if (vertexOffset >= 0)
+                meshBuffers.FreeVertexRegion((uint)vertexOffset, (uint)vertexCount);
+            if (indexOffset >= 0)
+                meshBuffers.FreeIndexRegion((uint)indexOffset, (uint)indexCount);
+            return false; // Keep in cpuMeshResults for retry
+        }
 
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : meshBuffers.AllocateCommandSlot();
         WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)waterFaceCount, (uint)translucentFaceCount);
@@ -1118,31 +1171,6 @@ public sealed class ChunkStreamingManager : IDisposable
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
 
         return true;
-    }
-
-    private void UploadCpuMeshData(CpuChunkMesh mesh, int vertexOffset, int vertexCount, int indexOffset, int indexCount)
-    {
-        if (meshBuffers == null)
-        {
-            return;
-        }
-
-        var vertexSpan = ReadOnlySpan<uint>.Empty;
-        if (vertexCount > 0 && vertexOffset >= 0 && mesh.VertexData.Length > 0)
-        {
-            var expectedEntries = vertexCount * 2;
-            var safeLength = Math.Min(expectedEntries, mesh.VertexData.Length);
-            vertexSpan = mesh.VertexData.AsSpan(0, safeLength);
-        }
-
-        var indexSpan = ReadOnlySpan<uint>.Empty;
-        if (indexCount > 0 && indexOffset >= 0 && mesh.IndexData.Length > 0)
-        {
-            var safeLength = Math.Min(indexCount, mesh.IndexData.Length);
-            indexSpan = mesh.IndexData.AsSpan(0, safeLength);
-        }
-
-        meshBuffers.UploadMeshData(vertexSpan, vertexOffset, indexSpan, indexOffset);
     }
 
     private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces, uint translucentFaces)

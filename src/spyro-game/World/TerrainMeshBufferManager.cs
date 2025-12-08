@@ -70,6 +70,23 @@ public sealed class TerrainMeshBufferManager : IDisposable
     private int nextUploadChannel;
     private int maxChunkVertexBytes;
     private int maxChunkIndexBytes;
+    
+    // Upload throttling stats
+    private int uploadsThisFrame;
+    private int uploadsDeferredThisFrame;
+    
+    /// <summary>Number of mesh uploads completed this frame.</summary>
+    public int UploadsThisFrame => uploadsThisFrame;
+    
+    /// <summary>Number of mesh uploads deferred due to busy channels.</summary>
+    public int UploadsDeferredThisFrame => uploadsDeferredThisFrame;
+    
+    /// <summary>Reset per-frame upload counters. Call at start of each frame.</summary>
+    public void ResetFrameStats()
+    {
+        uploadsThisFrame = 0;
+        uploadsDeferredThisFrame = 0;
+    }
 
     /// <summary>
     /// Allocate all mesh buffers with explicit initialization.
@@ -283,32 +300,56 @@ public sealed class TerrainMeshBufferManager : IDisposable
         }
     }
 
-    private int AcquireUploadChannel()
+    /// <summary>
+    /// Try to acquire an upload channel without blocking.
+    /// Scans all channels starting from nextUploadChannel to find one that's ready.
+    /// Returns -1 if all channels are busy (caller should defer to next frame).
+    /// </summary>
+    private int TryAcquireUploadChannel()
     {
-        var channelIndex = nextUploadChannel;
-        ref var channel = ref uploadChannels[channelIndex];
-
-        WaitForChannelFence(ref channel);
-
-        nextUploadChannel = (channelIndex + 1) % uploadChannels.Length;
-        return channelIndex;
+        // Scan all channels starting from the next expected one
+        for (var i = 0; i < uploadChannels.Length; i++)
+        {
+            var channelIndex = (nextUploadChannel + i) % uploadChannels.Length;
+            ref var channel = ref uploadChannels[channelIndex];
+            
+            // Check if this channel's fence has completed (non-blocking)
+            if (TryCompleteFence(ref channel))
+            {
+                // Channel is ready - advance for next time and return
+                nextUploadChannel = (channelIndex + 1) % uploadChannels.Length;
+                return channelIndex;
+            }
+        }
+        
+        // All channels are busy - defer to next frame
+        uploadsDeferredThisFrame++;
+        return -1;
     }
-
-    private static void WaitForChannelFence(ref MeshUploadChannel channel)
+    
+    /// <summary>
+    /// Non-blocking fence check. Returns true if fence is complete or not set.
+    /// </summary>
+    private static bool TryCompleteFence(ref MeshUploadChannel channel)
     {
         if (channel.Fence == IntPtr.Zero)
         {
-            return;
+            return true; // No fence = ready
         }
-
+        
+        // Non-blocking check with timeout 0
         var waitResult = GL.ClientWaitSync(channel.Fence, ClientWaitSyncFlags.SyncFlushCommandsBit, 0);
-        while (waitResult == WaitSyncStatus.TimeoutExpired)
+        
+        if (waitResult is WaitSyncStatus.AlreadySignaled or WaitSyncStatus.ConditionSatisfied)
         {
-            waitResult = GL.ClientWaitSync(channel.Fence, ClientWaitSyncFlags.None, 1_000_000);
+            // Fence complete - clean up
+            GL.DeleteSync(channel.Fence);
+            channel.Fence = IntPtr.Zero;
+            return true;
         }
-
-        GL.DeleteSync(channel.Fence);
-        channel.Fence = IntPtr.Zero;
+        
+        // Still pending (TimeoutExpired) or error (WaitFailed)
+        return false;
     }
 
     private static unsafe int CopyToMappedBuffer(IntPtr destination, ReadOnlySpan<uint> source, int capacityBytes, string label)
@@ -330,14 +371,23 @@ public sealed class TerrainMeshBufferManager : IDisposable
         return bytesToCopy;
     }
 
-    public void UploadMeshData(ReadOnlySpan<uint> vertexData, int vertexOffset, ReadOnlySpan<uint> indexData, int indexOffset)
+    /// <summary>
+    /// Upload mesh data to GPU buffers using non-blocking channel acquisition.
+    /// Returns false if all upload channels are busy (caller should retry next frame).
+    /// </summary>
+    public bool UploadMeshData(ReadOnlySpan<uint> vertexData, int vertexOffset, ReadOnlySpan<uint> indexData, int indexOffset)
     {
         if ((vertexData.Length == 0 || vertexOffset < 0) && (indexData.Length == 0 || indexOffset < 0))
         {
-            return;
+            return true; // Nothing to upload = success
         }
 
-        var channelIndex = AcquireUploadChannel();
+        var channelIndex = TryAcquireUploadChannel();
+        if (channelIndex < 0)
+        {
+            return false; // All channels busy - defer to next frame
+        }
+        
         ref var channel = ref uploadChannels[channelIndex];
         var issuedCopy = false;
 
@@ -368,7 +418,10 @@ public sealed class TerrainMeshBufferManager : IDisposable
         if (issuedCopy)
         {
             channel.Fence = GL.FenceSync(SyncCondition.SyncGpuCommandsComplete, WaitSyncFlags.None);
+            uploadsThisFrame++;
         }
+        
+        return true;
     }
 
     // ========================================================================
