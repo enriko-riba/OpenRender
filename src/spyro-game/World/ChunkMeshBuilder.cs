@@ -1,7 +1,3 @@
-using System;
-using System.Buffers;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using OpenRender;
 
 namespace SpyroGame.World;
@@ -21,7 +17,7 @@ internal static class ChunkMeshBuilder
     private const uint DisabledLightValue = 0xFFFFFFFFu; // Use a value outside valid range (0-255)
     
     // Set to false in production to avoid debug string allocations in hot paths
-    private static bool VerboseBuilderLogging = false;
+    private static readonly bool VerboseBuilderLogging = false;
 
     // Performance optimization: Thread-local pooled lists to avoid allocations per mesh
     [ThreadStatic] private static List<uint>? t_opaqueVertices;

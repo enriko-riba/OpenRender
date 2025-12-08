@@ -398,19 +398,22 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Distance in blocks below surface where caves fade to prevent surface breaches.
-    /// Example: 5 means caves attenuate from depth 0 to 5.
+    /// Example: 4 means caves attenuate from depth 0 to 4.
     /// - Lower values (3): Caves reach surface more easily, more cave entrances
     /// - Higher values (8): Caves stay deep, fewer natural entrances
+    /// CHANGED: Reduced from 5 to 4 for more cave entrances near surface.
     /// </summary>
-    public float CaveDepthFade { get; set; } = 5f;
+    public float CaveDepthFade { get; set; } = 4f;
     
     /// <summary>
     /// Slope threshold range for cave breach detection.
-    /// Example: Min=0.5, Max=2.0 means gentle slopes (0.5) to steep cliffs (2.0) allow breaches.
-    /// - Lower min (0.3): Caves breach even on gentle slopes
-    /// - Higher max (3.0): Only very steep cliffs allow breaches
+    /// Example: Min=0.25, Max=0.55 means gentler slopes allow breaches.
+    /// - Lower min (0.2): Caves breach even on gentle slopes
+    /// - Higher max (1.0): Only steeper slopes allow full breaches
+    /// Technical: Applied with smoothstep(Min, Max, slope) for gradual attenuation.
+    /// CHANGED: Reduced thresholds for more cave entrances on hillsides.
     /// </summary>
-    public SlopeRange CaveSlopeFade { get; set; } = new() { Min = 0.5f, Max = 2.0f };
+    public SlopeRange CaveSlopeFade { get; set; } = new() { Min = 0.25f, Max = 0.55f };
     
     /// <summary>
     /// Additional blocks below sea level where cave flooding extends inland.
@@ -1185,44 +1188,49 @@ public sealed class CaveParams
     /// <summary>
     /// Gets or sets the frequency of cheese cave noise (inverse of feature size).
     /// Controls the size of large cavern systems.
-    /// - 1/100 (default): Large chambers (~100 block spacing)
-    /// - 1/150: Very large caverns
-    /// - 1/50: Smaller, more frequent chambers
+    /// - 1/180 (default): Large chambers (~180 block spacing)
+    /// - 1/200: Very large caverns
+    /// - 1/100: Smaller, more frequent chambers
     /// Technical: Applied as fbm3D(position * CheeseFrequency).
+    /// CHANGED: Reduced from 1/140 to 1/180 for larger individual caverns.
     /// </summary>
-    public float CheeseFrequency { get; set; } = 1f / 140f;
+    public float CheeseFrequency { get; set; } = 1f / 180f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for cheese cave density.
     /// Higher values emphasize large hollow pockets, lower values keep caverns tighter.
+    /// CHANGED: Increased from 1.1 to 1.4 for more spacious caverns.
     /// </summary>
-    public float CheeseAmplitude { get; set; } = 1.1f;
+    public float CheeseAmplitude { get; set; } = 1.4f;
 
     /// <summary>
     /// Gets or sets the frequency of spaghetti cave noise (inverse of feature size).
     /// Controls the size and spacing of tunnel systems.
-    /// - 1/80 (default): Long winding tunnels (~80 block wavelength)
-    /// - 1/120: Very long tunnels
-    /// - 1/40: Shorter, tighter tunnels
+    /// - 1/140 (default): Long winding tunnels (~140 block wavelength)
+    /// - 1/160: Very long tunnels
+    /// - 1/80: Shorter, tighter tunnels
     /// Technical: Uses two perpendicular noise fields to create worm-like structures.
+    /// CHANGED: Reduced from 1/110 to 1/140 for wider tunnels.
     /// </summary>
-    public float SpaghettiFrequency { get; set; } = 1f / 110f;
+    public float SpaghettiFrequency { get; set; } = 1f / 140f;
     
     /// <summary>
     /// Gets or sets the amplitude multiplier for spaghetti cave density.
     /// Higher values widen tunnels, lower values keep them tight and winding.
+    /// CHANGED: Increased from 1.2 to 1.5 for wider tunnels (at least 4-6 blocks tall).
     /// </summary>
-    public float SpaghettiAmplitude { get; set; } = 1.2f;
+    public float SpaghettiAmplitude { get; set; } = 1.5f;
 
     /// <summary>
     /// Gets or sets the density threshold for cave carving [0,1].
     /// Higher values create fewer, smaller caves; lower values create more, larger caves.
-    /// - 0.86 (default): Moderate cave frequency (balanced exploration)
+    /// - 0.88 (default): Moderate cave frequency with larger individual caves
     /// - 0.75: Higher cave frequency (more caves, easier underground navigation)
-    /// - 0.92: Lower cave frequency (rare caves, more solid underground)
+    /// - 0.95: Lower cave frequency (rare caves, more solid underground)
     /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
+    /// CHANGED: Reduced from 0.92 to 0.88 for larger cave volumes.
     /// </summary>
-    public float CarveThreshold { get; set; } = 0.92f;
+    public float CarveThreshold { get; set; } = 0.88f;
 
     /// <summary>
     /// Gets or sets the curl noise scale for cave path distortion.
@@ -1241,6 +1249,71 @@ public sealed class CaveParams
     /// Currently unused. Reserved for future ridge-aligned cave systems.
     /// </summary>
     public float RidgeCarve { get; set; } = 0.35f;
+    
+    /// <summary>
+    /// Gets or sets the Y-frequency multiplier for spaghetti caves to favor horizontal tunnels.
+    /// Values GREATER than 1.0 stretch the noise vertically, making caves more horizontal.
+    /// Values LESS than 1.0 compress vertically, making caves more vertical.
+    /// - 2.0 (default): Moderate horizontal bias (~2x more likely to be horizontal)
+    /// - 1.0: Equal horizontal/vertical tendency (no bias)
+    /// - 4.0: Strong horizontal bias (very flat cave systems)
+    /// CHANGED: Reduced from 2.5 to 2.0 for more natural cave shapes.
+    /// </summary>
+    public float SpaghettiYStretch { get; set; } = 2.0f;
+    
+    /// <summary>
+    /// Gets or sets the slope value above which caves can breach the surface on hillsides.
+    /// - 0.5 (default): ~26 degree slopes start allowing cave entrances
+    /// - 0.3: Gentler slopes allow entrances (more entrances)
+    /// - 0.7: Only steep slopes allow entrances (fewer entrances)
+    /// CHANGED: Increased from 0.4 to 0.5 for more natural-looking entrances.
+    /// </summary>
+    public float SurfaceBreachSlopeMin { get; set; } = 0.5f;
+    
+    /// <summary>
+    /// Gets or sets the maximum probability of surface breach on steep terrain.
+    /// - 0.25 (default): Up to 25% chance on very steep slopes
+    /// - 0.15: Conservative breach rate
+    /// - 0.4: Aggressive breach rate (many cave entrances)
+    /// CHANGED: Reduced from 0.35 to 0.25 for fewer but more natural entrances.
+    /// </summary>
+    public float SurfaceBreachMaxChance { get; set; } = 0.25f;
+    
+    /// <summary>
+    /// Gets or sets the depth below surface (in blocks) where cave floor uses stone instead of grass.
+    /// Prevents grass from appearing on cave floors in complete darkness.
+    /// - 6 (default): Cave floors below 6 blocks from surface use stone
+    /// - 4: More aggressive stone replacement
+    /// - 10: Only very deep caves get stone floors
+    /// </summary>
+    public int CaveFloorDepthThreshold { get; set; } = 6;
+    
+    /// <summary>
+    /// Gets or sets the frequency of entrance shape noise.
+    /// This noise clusters cave breaches into coherent roundish openings instead of scattered holes.
+    /// - 1/30 (default): Creates ~30 block entrance features
+    /// - 1/20: Smaller, more frequent entrances
+    /// - 1/50: Larger entrance zones but less frequent
+    /// </summary>
+    public float EntranceNoiseFrequency { get; set; } = 1f / 30f;
+    
+    /// <summary>
+    /// Gets or sets the threshold for entrance noise [0, 1].
+    /// Only areas where entrance noise exceeds this will allow surface breaches.
+    /// - 0.6 (default): ~40% of steep slopes can have entrances (clustered)
+    /// - 0.7: ~30% (fewer, more distinct entrances)
+    /// - 0.5: ~50% (more frequent but still clustered)
+    /// </summary>
+    public float EntranceNoiseThreshold { get; set; } = 0.6f;
+    
+    /// <summary>
+    /// Gets or sets the minimum cave volume required before allowing surface breach.
+    /// Prevents "sieve" effect where tiny cave fragments poke through surface.
+    /// - 3 (default): Requires at least 3 blocks of cave below breach point
+    /// - 2: More permissive (more entrances but risk of sieves)
+    /// - 5: Conservative (only large caves breach)
+    /// </summary>
+    public int MinBreachCaveDepth { get; set; } = 3;
 
     /// <summary>
     /// Creates a CaveParams instance with default values.

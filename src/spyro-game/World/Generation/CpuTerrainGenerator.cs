@@ -859,6 +859,9 @@ internal sealed class CpuTerrainGenerator
 
         var baseX = currentChunkX * VoxelHelper.ChunkSideSize;
         var baseZ = currentChunkZ * VoxelHelper.ChunkSideSize;
+        
+        // Get Y-stretch factor for horizontal cave bias
+        var spaghettiYStretch = config.Caves.SpaghettiYStretch;
 
         // Build sparse sample coordinates (5x5 grid at 4-block intervals)
         var sparseIdx = 0;
@@ -878,8 +881,12 @@ internal sealed class CpuTerrainGenerator
         {
             var worldY = sy * SparseStep;
             var sliceOffset = sy * SparseSampleCount;
+            
+            // HORIZONTAL CAVE BIAS: Stretch Y coordinate for spaghetti caves
+            // This makes caves prefer horizontal tunnels over vertical shafts
+            var stretchedY = worldY * spaghettiYStretch;
 
-            // Cheese caves
+            // Cheese caves (unchanged - large chambers use normal Y)
             SampleValueNoiseSliceSparse(
                 sparseSliceScratch,
                 sparseSampleX.AsSpan(),
@@ -890,11 +897,11 @@ internal sealed class CpuTerrainGenerator
                 octaves: 2, persistence: 0.6f, lacunarity: 1.9f);
             sparseSliceScratch.AsSpan().CopyTo(sparseCheeseGrid.AsSpan(sliceOffset, SparseSampleCount));
 
-            // Spaghetti tunnels (two noise channels)
+            // Spaghetti tunnels with Y-stretch for horizontal bias
             SampleValueNoiseSliceSparse(
                 sparseSliceScratch,
                 sparseSampleX.AsSpan(),
-                worldY,
+                stretchedY,  // Use stretched Y for horizontal tendency
                 sparseSampleZ.AsSpan(),
                 terrainParams.SpaghettiFrequency,
                 terrainParams.Seed + 400u,
@@ -904,14 +911,14 @@ internal sealed class CpuTerrainGenerator
             SampleValueNoiseSliceSparse(
                 sparseSliceScratch,
                 sparseSampleX.AsSpan(),
-                worldY,
+                stretchedY,  // Use stretched Y for horizontal tendency
                 sparseSampleZ.AsSpan(),
                 terrainParams.SpaghettiFrequency,
                 terrainParams.Seed + 500u,
                 octaves: 1, persistence: 1f, lacunarity: 2f);
             sparseSliceScratch.AsSpan().CopyTo(sparseSpaghettiB.AsSpan(sliceOffset, SparseSampleCount));
 
-            // Overhangs
+            // Overhangs (unchanged)
             SampleValueNoiseSliceSparse(
                 sparseSliceScratch,
                 sparseSampleX.AsSpan(),
@@ -1344,7 +1351,7 @@ internal sealed class CpuTerrainGenerator
         if (isLand && y > 0)
         {
             var depth = height - y;
-            if (IsCave(depth, slope, cheeseSlice[y], spaghettiSlice[y]))
+            if (IsCave(depth, slope, cheeseSlice[y], spaghettiSlice[y], wx, wz, y))
             {
                 // Cave flooding only applies near coast (in ocean transition zone)
                 // and only below water level + extension
@@ -1365,7 +1372,7 @@ internal sealed class CpuTerrainGenerator
             if (isLand && y + 1 > 0)
             {
                 var depthAbove = height - (y + 1);
-                isCaveAbove = IsCave(depthAbove, slope, cheeseSlice[y + 1], spaghettiSlice[y + 1]);
+                isCaveAbove = IsCave(depthAbove, slope, cheeseSlice[y + 1], spaghettiSlice[y + 1], wx, wz, y + 1);
             }
             
             isSurface = densityAbove < 0f || isCaveAbove;
@@ -1398,6 +1405,15 @@ internal sealed class CpuTerrainGenerator
         // Surface block - now correctly detected even on overhangs
         if (isSurface)
         {
+            // CAVE FLOOR FIX: Deep cave floors get stone instead of biome grass
+            // This prevents grass from appearing on cave floors in complete darkness
+            var depthBelowSurface = height - y;
+            if (depthBelowSurface > config.Caves.CaveFloorDepthThreshold)
+            {
+                // Deep underground cave floor - use stone instead of biome surface block
+                return BlockId.Stone;
+            }
+            
             // Coastal beach override: next to ocean, above water, within shoreline range
             var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
             if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
@@ -1436,6 +1452,15 @@ internal sealed class CpuTerrainGenerator
         
         if (effectiveDepth <= terrainParams.SubsurfaceDepth)
         {
+            // CAVE SUBSURFACE FIX: Deep cave subsurface layers get stone/dirt instead of biome blocks
+            // This prevents SnowDirt from appearing deep inside caves in Alpine biomes
+            var depthBelowTerrainSurface = height - y;
+            if (depthBelowTerrainSurface > config.Caves.CaveFloorDepthThreshold)
+            {
+                // Deep underground - use generic subsurface (dirt) instead of biome-specific (e.g., SnowDirt)
+                return BlockId.Dirt;
+            }
+            
             var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
             if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
             {
@@ -1610,13 +1635,136 @@ internal sealed class CpuTerrainGenerator
         return MathF.Sqrt(dx * dx + dz * dz);
     }
 
-    private bool IsCave(int depth, float slope, float cheeseDensity, float spaghettiDensity)
+    /// <summary>
+    /// Determines if a voxel should be carved as part of a cave system.
+    /// Uses depth and slope attenuation to control surface breaching.
+    /// 
+    /// IMPROVED v2: 
+    /// 1. Combines cheese and spaghetti using MAX for more spacious caves
+    /// 2. Entrance noise clusters breaches into coherent roundish openings
+    /// 3. Minimum cave depth check prevents sieve-like scattered holes
+    /// 4. Adjusted defaults for larger, fewer caves
+    /// </summary>
+    private bool IsCave(int depth, float slope, float cheeseDensity, float spaghettiDensity, int wx = 0, int wz = 0, int y = 0)
     {
+        var caveParams = config.Caves;
+        
+        // Combine cheese and spaghetti using MAX for unified cave test
+        // This creates larger, more spacious caves instead of two separate narrow systems
+        var combinedDensity = MathF.Max(cheeseDensity, spaghettiDensity);
+        
+        // Base depth attenuation - caves fade near surface
         var depthAtten = Smoothstep(0f, terrainParams.CaveDepthFade, depth);
+        
+        // Slope attenuation - steep terrain allows caves closer to surface
         var slopeAtten = Smoothstep(terrainParams.CaveSlopeFadeMin, terrainParams.CaveSlopeFadeMax, slope);
-        var attenuation = Math.Clamp(Math.Max(depthAtten, slopeAtten * 1.2f), 0f, 1f);
+        
+        // IMPROVEMENT v2: Surface breach with entrance noise clustering
+        // Prevents scattered "sieve" holes by requiring coherent entrance zones
+        if (depth >= 0 && depth < caveParams.MinBreachCaveDepth && slope > caveParams.SurfaceBreachSlopeMin)
+        {
+            // Sample entrance noise to cluster breaches into roundish shapes
+            // Uses 2D position for consistent entrance shapes across Y levels
+            var entranceNoise = GetEntranceNoise(wx, wz);
+            
+            // Only allow breach if entrance noise exceeds threshold (creates clusters)
+            if (entranceNoise > caveParams.EntranceNoiseThreshold)
+            {
+                // Probability increases with slope steepness
+                var slopeRange = 1f - caveParams.SurfaceBreachSlopeMin;
+                var breachChance = slopeRange > 0f 
+                    ? (slope - caveParams.SurfaceBreachSlopeMin) / slopeRange 
+                    : 0f;
+                breachChance = MathF.Min(breachChance, 1f) * caveParams.SurfaceBreachMaxChance;
+                
+                // Scale breach chance by how strongly the entrance noise exceeds threshold
+                // This creates smoother edges on the entrance shape
+                var entranceStrength = (entranceNoise - caveParams.EntranceNoiseThreshold) / 
+                                       (1f - caveParams.EntranceNoiseThreshold);
+                breachChance *= entranceStrength;
+                
+                // Deterministic hash for consistent cave entrances
+                var hash = PositionHash(wx, y, wz);
+                if (hash < breachChance)
+                {
+                    // Force enable cave carving at this surface breach point
+                    depthAtten = 1f;
+                }
+            }
+        }
+        
+        var attenuation = Math.Clamp(MathF.Max(depthAtten, slopeAtten * 1.2f), 0f, 1f);
 
-        return cheeseDensity * attenuation > terrainParams.CaveCarveThreshold || spaghettiDensity * attenuation > terrainParams.CaveCarveThreshold;
+        // Single threshold test using combined cave density
+        return combinedDensity * attenuation > terrainParams.CaveCarveThreshold;
+    }
+    
+    /// <summary>
+    /// Sample entrance noise to create coherent, roundish cave entrance shapes.
+    /// Uses 2D noise so entrance shape is consistent across Y levels (like looking at a hillside).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private float GetEntranceNoise(int wx, int wz)
+    {
+        var caveParams = config.Caves;
+        var freq = caveParams.EntranceNoiseFrequency;
+        
+        // Use simple 2D value noise for entrance clustering
+        // This creates blob-like entrance shapes on hillsides
+        var nx = wx * freq;
+        var nz = wz * freq;
+        var seed = terrainParams.Seed + 7000u;
+        
+        // Simple 2D value noise
+        var xi = (int)MathF.Floor(nx);
+        var zi = (int)MathF.Floor(nz);
+        var fx = nx - xi;
+        var fz = nz - zi;
+        
+        var c00 = Hash2D(xi, zi, seed);
+        var c10 = Hash2D(xi + 1, zi, seed);
+        var c01 = Hash2D(xi, zi + 1, seed);
+        var c11 = Hash2D(xi + 1, zi + 1, seed);
+        
+        var u = Fade(fx);
+        var v = Fade(fz);
+        
+        var x0 = Lerp(c00, c10, u);
+        var x1 = Lerp(c01, c11, u);
+        
+        return Lerp(x0, x1, v);
+    }
+    
+    /// <summary>
+    /// 2D hash function for entrance noise. Returns a value in [0,1).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float Hash2D(int x, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + z * 668265263);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f;
+        }
+    }
+    
+    /// <summary>
+    /// Deterministic hash function for cave breach decisions.
+    /// Returns a value in [0, 1).
+    /// </summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float PositionHash(int x, int y, int z)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 73856093 ^ y * 19349663 ^ z * 83492791);
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f;
+        }
     }
 
     private float GetContinentalness(Vector2 p)
