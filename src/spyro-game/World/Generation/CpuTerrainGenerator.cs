@@ -1639,61 +1639,28 @@ internal sealed class CpuTerrainGenerator
     /// Determines if a voxel should be carved as part of a cave system.
     /// Uses depth and slope attenuation to control surface breaching.
     /// 
-    /// IMPROVED v2: 
+    /// IMPROVED v3: 
     /// 1. Combines cheese and spaghetti using MAX for more spacious caves
-    /// 2. Entrance noise clusters breaches into coherent roundish openings
-    /// 3. Minimum cave depth check prevents sieve-like scattered holes
-    /// 4. Adjusted defaults for larger, fewer caves
+    /// 2. Surface breach DISABLED - was causing sieve patterns
+    /// 3. Caves only form underground, entrances happen naturally where caves intersect slopes
     /// </summary>
     private bool IsCave(int depth, float slope, float cheeseDensity, float spaghettiDensity, int wx = 0, int wz = 0, int y = 0)
     {
-        var caveParams = config.Caves;
-        
         // Combine cheese and spaghetti using MAX for unified cave test
         // This creates larger, more spacious caves instead of two separate narrow systems
         var combinedDensity = MathF.Max(cheeseDensity, spaghettiDensity);
         
         // Base depth attenuation - caves fade near surface
+        // This is the ONLY control for surface breaching - no forced breach logic
         var depthAtten = Smoothstep(0f, terrainParams.CaveDepthFade, depth);
         
-        // Slope attenuation - steep terrain allows caves closer to surface
+        // Slope attenuation - steep terrain allows caves closer to surface naturally
+        // High slope = terrain drops quickly, so caves can naturally breach
         var slopeAtten = Smoothstep(terrainParams.CaveSlopeFadeMin, terrainParams.CaveSlopeFadeMax, slope);
         
-        // IMPROVEMENT v2: Surface breach with entrance noise clustering
-        // Prevents scattered "sieve" holes by requiring coherent entrance zones
-        if (depth >= 0 && depth < caveParams.MinBreachCaveDepth && slope > caveParams.SurfaceBreachSlopeMin)
-        {
-            // Sample entrance noise to cluster breaches into roundish shapes
-            // Uses 2D position for consistent entrance shapes across Y levels
-            var entranceNoise = GetEntranceNoise(wx, wz);
-            
-            // Only allow breach if entrance noise exceeds threshold (creates clusters)
-            if (entranceNoise > caveParams.EntranceNoiseThreshold)
-            {
-                // Probability increases with slope steepness
-                var slopeRange = 1f - caveParams.SurfaceBreachSlopeMin;
-                var breachChance = slopeRange > 0f 
-                    ? (slope - caveParams.SurfaceBreachSlopeMin) / slopeRange 
-                    : 0f;
-                breachChance = MathF.Min(breachChance, 1f) * caveParams.SurfaceBreachMaxChance;
-                
-                // Scale breach chance by how strongly the entrance noise exceeds threshold
-                // This creates smoother edges on the entrance shape
-                var entranceStrength = (entranceNoise - caveParams.EntranceNoiseThreshold) / 
-                                       (1f - caveParams.EntranceNoiseThreshold);
-                breachChance *= entranceStrength;
-                
-                // Deterministic hash for consistent cave entrances
-                var hash = PositionHash(wx, y, wz);
-                if (hash < breachChance)
-                {
-                    // Force enable cave carving at this surface breach point
-                    depthAtten = 1f;
-                }
-            }
-        }
-        
-        var attenuation = Math.Clamp(MathF.Max(depthAtten, slopeAtten * 1.2f), 0f, 1f);
+        // Take max of depth and slope attenuation
+        // On steep slopes, caves can naturally reach closer to surface
+        var attenuation = Math.Clamp(MathF.Max(depthAtten, slopeAtten), 0f, 1f);
 
         // Single threshold test using combined cave density
         return combinedDensity * attenuation > terrainParams.CaveCarveThreshold;
