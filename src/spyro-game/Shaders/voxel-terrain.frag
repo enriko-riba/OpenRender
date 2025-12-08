@@ -43,6 +43,12 @@ uniform int uIsUnderwater;
 uniform float uTime;
 uniform int uShowBiomes;
 
+// Render pass indicator:
+// 0 = Opaque pass (use alpha cutoff for AlphaTest blocks like leaves)
+// 1 = Water pass (blend, no cutoff)
+// 2 = Translucent pass (blend, no cutoff - glass, ice)
+uniform int uRenderPass;
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -204,11 +210,10 @@ void main() {
         baseColor = sampleBlockTexture(blockId, vTexCoord, N, vFaceId);
     }
 
-    // Alpha test: Discard transparent pixels
-    // Threshold increased to 0.5 to prevent "halo" artifacts where semi-transparent edges
-    // write to depth buffer (in Opaque pass) and occlude geometry behind them.
-    // This creates a hard cutout look typical for voxel games.
-    if (baseColor.a < 0.5) discard;
+    // Alpha test: Only discard in OPAQUE pass (pass 0) for AlphaTest materials (leaves, flowers)
+    // Water (pass 1) and Translucent (pass 2) use smooth blending - don't discard!
+    // Threshold 0.5 prevents "halo" artifacts where semi-transparent edges write to depth buffer.
+    if (uRenderPass == 0 && baseColor.a < 0.5) discard;
 
     // Procedural Water Normal
     vec3 waterNormal = N;

@@ -2,6 +2,7 @@ using OpenRender;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using SpyroGame.World.Generation;
 using System.Buffers;
 using System.Diagnostics;
 using System.IO.Compression;

@@ -130,15 +130,11 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         const int stride = VoxelHelper.VERTEX_STRIDE_BYTES;
 
         GL.EnableVertexArrayAttrib(vao, 0);
-        // Compressed format (2 uints)
+        // Compressed format (2 uints) - only attribute 0 is used
         // Use VertexAttribIFormat for integer attributes
         GL.VertexArrayAttribIFormat(vao, 0, 2, VertexAttribIType.UnsignedInt, 0);
         GL.VertexArrayAttribBinding(vao, 0, 0);
-
-        // Disable unused attributes
-        GL.DisableVertexArrayAttrib(vao, 1);
-        GL.DisableVertexArrayAttrib(vao, 2);
-        GL.DisableVertexArrayAttrib(vao, 3);
+        // Note: Attributes 1-3 are disabled by default when VAO is created, no need to explicitly disable
 
         if (buffers.VertexBuffer == 0 || buffers.IndexBuffer == 0)
         {
@@ -348,6 +344,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Offset = 0
         GL.Disable(EnableCap.Blend); // Ensure blending is off for opaque pass
         shader.SetInt("uIsCubeletPass", 0); // Ensure default state
+        shader.SetInt("uRenderPass", 0); // Opaque pass - use alpha cutoff for AlphaTest blocks
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
@@ -366,6 +363,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         GL.DepthFunc(DepthFunction.Lequal);
         GL.Enable(EnableCap.PolygonOffsetFill);
         GL.PolygonOffset(-0.5f, -1.0f);
+        shader.SetInt("uRenderPass", 1); // Water pass - no alpha cutoff
 
         // Stride = 60 bytes
         // Offset = 20 bytes (start of second command)
@@ -379,6 +377,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // 3. Draw Translucent (Command 3)
         // Keep same state as Water (Blend, No Depth Write, No Cull)
+        shader.SetInt("uRenderPass", 2); // Translucent pass - no alpha cutoff (glass, ice)
         // Stride = 60 bytes
         // Offset = 40 bytes (start of third command)
         GL.MultiDrawElementsIndirect(

@@ -1,8 +1,7 @@
 using NoiseDotNet;
-using OpenRender;
 using System.Numerics;
 
-namespace SpyroGame.World;
+namespace SpyroGame.World.Generation;
 
 /// <summary>
 /// Fully CPU-based terrain generator that mirrors the GLSL pipeline.
@@ -147,7 +146,7 @@ internal sealed class CpuTerrainGenerator
     /// Apply vegetation and generate collision data (Phase 2).
     /// Requires neighbors to be present in the cache for cross-chunk vegetation.
     /// </summary>
-    public ChunkGenerationResult DecorateChunk(ChunkData chunkData, ChunkBiomeData biomeData, int chunkIndex, ChunkVoxelDataCache voxelCache)
+    public ChunkGenerationResult DecorateChunk(ChunkData chunkData, ChunkBiomeData biomeData, int chunkIndex)
     {
         profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
 
@@ -452,7 +451,7 @@ internal sealed class CpuTerrainGenerator
             {
                 var idx = lz * VoxelHelper.ChunkSideSize + lx;
                 var biome = currentChunkBiome.GetBiomeAt(lx, lz);
-                if (biome == BiomeId.Ocean || biome == BiomeId.DeepOcean)
+                if (biome is BiomeId.Ocean or BiomeId.DeepOcean)
                 {
                     // Ocean columns use global sea level if terrain height is below it
                     // FIX: Use baseHeight (float) < WaterLevel to match BuildColumnWaterBodies logic
@@ -1355,7 +1354,7 @@ internal sealed class CpuTerrainGenerator
 
         // 4. Determine if this is a SURFACE block by checking if block above is air
         // This works correctly with 3D terrain (overhangs, floating islands, etc.)
-        var isSurface = false;
+        bool isSurface;
         if (y < VoxelHelper.ChunkYSize - 1)
         {
             // Check density of block above - if negative, this is the surface

@@ -1,22 +1,12 @@
-using System;
-using OpenRender;
-
-namespace SpyroGame.World;
+namespace SpyroGame.World.Generation;
 
 /// <summary>
 /// Handles the placement of vegetation (trees, flowers, grass, cacti) in generated chunks.
 /// Runs as a post-processing pass after the base terrain is generated.
 /// </summary>
-internal sealed class VegetationGenerator
+internal sealed class VegetationGenerator(TerrainConfig config)
 {
-    private readonly TerrainConfig config;
-    private readonly int seed;
-
-    public VegetationGenerator(TerrainConfig config)
-    {
-        this.config = config;
-        this.seed = config.Seed;
-    }
+    private readonly int seed = config.Seed;
 
     /// <summary>
     /// Decorates a chunk with vegetation based on biome rules.
@@ -33,14 +23,14 @@ internal sealed class VegetationGenerator
         {
             for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
-                int worldX = chunkX * VoxelHelper.ChunkSideSize + x;
-                int worldZ = chunkZ * VoxelHelper.ChunkSideSize + z;
+                var worldX = chunkX * VoxelHelper.ChunkSideSize + x;
+                var worldZ = chunkZ * VoxelHelper.ChunkSideSize + z;
                 
                 // Get surface height (highest opaque block) from cache
-                int surfaceY = initialSurfaceHeights[z * VoxelHelper.ChunkSideSize + x];
+                var surfaceY = initialSurfaceHeights[z * VoxelHelper.ChunkSideSize + x];
 
                 // Skip if invalid height or too close to top
-                if (surfaceY <= 0 || surfaceY >= VoxelHelper.ChunkYSize - 10) continue;
+                if (surfaceY is <= 0 or >= (VoxelHelper.ChunkYSize - 10)) continue;
 
                 // Get biome at this column
                 var biomeId = biomes.GetBiomeAt(x, z);
@@ -87,7 +77,7 @@ internal sealed class VegetationGenerator
         }
     }
 
-    private void PlaceVegetation(ChunkData chunk, int x, int y, int z, VegetationType type, Random random)
+    private static void PlaceVegetation(ChunkData chunk, int x, int y, int z, VegetationType type, Random random)
     {
         switch (type)
         {
@@ -107,16 +97,16 @@ internal sealed class VegetationGenerator
                 PlacePlant(chunk, x, y, z, BlockId.BlueOrchid);
                 break;
             case VegetationType.TreeOak:
-                PlaceTree(chunk, x, y, z, BlockId.OakLog, BlockId.OakLeaves, 4 + random.Next(3), random);
+                PlaceTree(chunk, x, y, z, BlockId.OakLog, BlockId.OakLeaves, 4 + random.Next(3));
                 break;
             case VegetationType.TreeBirch:
-                PlaceTree(chunk, x, y, z, BlockId.BirchLog, BlockId.BirchLeaves, 4 + random.Next(3), random);
+                PlaceTree(chunk, x, y, z, BlockId.BirchLog, BlockId.BirchLeaves, 4 + random.Next(3));
                 break;
             case VegetationType.TreeSpruce:
-                PlaceSpruceTree(chunk, x, y, z, 6 + random.Next(4), random);
+                PlaceSpruceTree(chunk, x, y, z, 6 + random.Next(4));
                 break;
             case VegetationType.TreeJungle:
-                PlaceTree(chunk, x, y, z, BlockId.JungleLog, BlockId.JungleLeaves, 10 + random.Next(10), random);
+                PlaceTree(chunk, x, y, z, BlockId.JungleLog, BlockId.JungleLeaves, 10 + random.Next(10));
                 break;
             case VegetationType.Cactus:
                 PlaceCactus(chunk, x, y, z, 1 + random.Next(3));
@@ -174,7 +164,7 @@ internal sealed class VegetationGenerator
         return true;
     }
 
-    private void PlaceTree(ChunkData chunk, int x, int y, int z, BlockId log, BlockId leaves, int height, Random random)
+    private static void PlaceTree(ChunkData chunk, int x, int y, int z, BlockId log, BlockId leaves, int height)
     {
         // Simple balloon tree
         // Trunk
@@ -190,7 +180,7 @@ internal sealed class VegetationGenerator
 
         for (var ly = leafStart; ly <= leafEnd; ly++)
         {
-            var yOffset = ly - leafEnd; // 0 at top, -3 at bottom
+            //var yOffset = ly - leafEnd; // 0 at top, -3 at bottom
             var r = radius;
             if (ly == leafEnd) r = 1; // Top is smaller
             else if (ly == leafStart) r = 1; // Bottom is smaller (optional)
@@ -212,7 +202,7 @@ internal sealed class VegetationGenerator
         }
     }
 
-    private void PlaceSpruceTree(ChunkData chunk, int x, int y, int z, int height, Random random)
+    private static void PlaceSpruceTree(ChunkData chunk, int x, int y, int z, int height)
     {
         // Trunk
         for (var i = 0; i < height; i++)

@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using OpenRender;
 
-namespace SpyroGame.World;
+namespace SpyroGame.World.Generation;
 
 /// <summary>
 /// Job system for CPU terrain generation using the ThreadPool.
@@ -195,7 +195,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                         
                         // Decorate
                         var terrainSw = Stopwatch.StartNew();
-                        result = generator.DecorateChunk(writable, biomeData, work.ChunkIndex, voxelCache);
+                        result = generator.DecorateChunk(writable, biomeData, work.ChunkIndex);
                         terrainSw.Stop();
                         // We can record this as terrain generation time or separate metric
                         metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
