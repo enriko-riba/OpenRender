@@ -49,9 +49,15 @@ public struct ChunkDescriptor
     /// Zero when no operation is pending.
     /// </summary>
     public nint Fence;
+    
+    /// <summary>
+    /// Maximum surface height in this chunk (highest non-air block Y + 1).
+    /// Used for tighter frustum culling AABB. Default 0 means use full chunk height.
+    /// </summary>
+    public int MaxSurfaceHeight;
 
     public override readonly string ToString() 
-        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}";
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, MaxY={MaxSurfaceHeight}";
 }
 
 /// <summary>

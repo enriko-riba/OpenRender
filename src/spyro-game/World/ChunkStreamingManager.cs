@@ -1167,6 +1167,7 @@ public sealed class ChunkStreamingManager : IDisposable
             VisibleVoxelCount = faceCount,
             State = TerrainChunkState.Ready,
             GenerationStartFrame = currentFrame,
+            MaxSurfaceHeight = mesh.MaxSurfaceHeight,
         };
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
 
@@ -2200,13 +2201,21 @@ public sealed class ChunkStreamingManager : IDisposable
         return flags;
     }
 
-    private static bool IsChunkVisible(int chunkIndex, Vector4[] frustumPlanes)
+    private bool IsChunkVisible(int chunkIndex, Vector4[] frustumPlanes)
     {
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
 
+        // Get actual chunk height from descriptor if available, otherwise use full height
+        var chunkHeight = VoxelHelper.ChunkYSize;
+        if (activeChunks.TryGetValue(chunkIndex, out var descriptor) && descriptor.MaxSurfaceHeight > 0)
+        {
+            // Add a small margin above the surface for safety
+            chunkHeight = Math.Min(descriptor.MaxSurfaceHeight + 8, VoxelHelper.ChunkYSize);
+        }
+
         var min = new Vector3(chunkX * VoxelHelper.ChunkSideSize, 0f, chunkZ * VoxelHelper.ChunkSideSize);
-        var max = min + new Vector3(VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, VoxelHelper.ChunkSideSize);
+        var max = min + new Vector3(VoxelHelper.ChunkSideSize, chunkHeight, VoxelHelper.ChunkSideSize);
 
         const float margin = 32f; // Matches shader tolerance
 
@@ -2294,12 +2303,9 @@ public sealed class ChunkStreamingManager : IDisposable
     /// </summary>
     public void SaveChunkState(int chunkIdx)
     {
-        ChunkData? data;
-        ChunkBiomeData? biomeData;
-        
         // Get data under cache lock
-        if (!chunkVoxelCache.TryGetChunkData(chunkIdx, out data) || data == null) return;
-        chunkVoxelCache.TryGetBiomeData(chunkIdx, out biomeData);
+        if (!chunkVoxelCache.TryGetChunkData(chunkIdx, out var data) || data == null) return;
+        chunkVoxelCache.TryGetBiomeData(chunkIdx, out var biomeData);
 
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
         var worldName = terrainConfig.WorldName;
@@ -2463,15 +2469,12 @@ public sealed class ChunkStreamingManager : IDisposable
         lastAutoSaveTime = now;
         StartBackgroundSave();
     }
-    
+
     /// <summary>
     /// Start a background task to save all dirty chunks.
     /// </summary>
-    private void StartBackgroundSave()
-    {
-        backgroundSaveTask = Task.Run(() => SaveDirtyChunksBackground(), saveTokenSource.Token);
-    }
-    
+    private void StartBackgroundSave() => backgroundSaveTask = Task.Run(SaveDirtyChunksBackground, saveTokenSource.Token);
+
     /// <summary>
     /// Background worker method to save dirty chunks.
     /// </summary>

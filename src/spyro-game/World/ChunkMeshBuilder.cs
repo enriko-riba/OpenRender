@@ -101,6 +101,9 @@ internal static class ChunkMeshBuilder
         // Performance optimization: Use thread-local pooled lists instead of allocating new ones
         var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, cubeletIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
+        
+        // Track maximum surface height across all columns for tighter frustum culling
+        var maxSurfaceHeight = 0;
 
         // Optimization: Iterate columns (X, Z) first, then Y up to surface height
         // This allows us to skip the vast majority of air blocks above the terrain.
@@ -117,6 +120,12 @@ internal static class ChunkMeshBuilder
                 // Plus extra safety margin to handle potential heightmap desync
                 var surfaceHeight = chunkView.GetSurfaceHeight(x, z);
                 var maxY = Math.Max(surfaceHeight + 2, VoxelHelper.WaterLevel + 1);
+                
+                // Track the maximum surface height for frustum culling optimization
+                if (surfaceHeight > maxSurfaceHeight)
+                {
+                    maxSurfaceHeight = surfaceHeight;
+                }
                 
                 // Clamp to chunk bounds
                 maxY = Math.Min(maxY, VoxelHelper.ChunkYSize);
@@ -249,6 +258,7 @@ internal static class ChunkMeshBuilder
             faceCount,
             translucentFaceCount, // This is now just the non-water translucent faces
             waterFaceCount,       // New parameter
+            Math.Max(maxSurfaceHeight + 1, VoxelHelper.WaterLevel + 1), // +1 for safety margin
             chunkView.Version,
             workItem.EnqueueId,
             workItem.BuildId);
@@ -426,7 +436,7 @@ internal static class ChunkMeshBuilder
         // This ensures all vertices of the billboard move together
         // NOTE: We exclude Y from the seed so that stacked vegetation (Sugar Cane, Tall Grass)
         // shares the same offset and stays connected.
-        uint seed = (uint)((x * 3129871) ^ (z * 116129791));
+        var seed = (uint)((x * 3129871) ^ (z * 116129791));
 
         // Helper to add a quad (4 vertices, 6 indices) - one "face" in the mesh system
         void AddQuad(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int x3, int y3, int z3)

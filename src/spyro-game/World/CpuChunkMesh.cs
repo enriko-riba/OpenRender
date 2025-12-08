@@ -14,6 +14,7 @@ public sealed record CpuChunkMesh(
     int VisibleFaceCount,
     int TranslucentFaceCount,
     int WaterFaceCount,
+    int MaxSurfaceHeight,
     long CacheVersion,
     long EnqueueId,
     long BuildId)
