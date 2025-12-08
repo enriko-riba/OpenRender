@@ -39,8 +39,16 @@ public static class LightingCalculator
         {
             for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
             {
+                var columnIndex = z * VoxelHelper.ChunkSideSize + x;
+                var surfaceHeight = chunk.SurfaceHeights[columnIndex];
+                
+                // Optimization: Start from surface height + light radius instead of top of world
+                var startY = surfaceHeight > 0 
+                    ? Math.Min(surfaceHeight + MaxLight, VoxelHelper.ChunkYSize - 1) 
+                    : VoxelHelper.ChunkYSize - 1;
+                    
                 var currentLight = MaxLight;
-                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+                for (var y = startY; y >= 0; y--)
                 {
                     var index = GetIndex(x, y, z);
                     var block = chunk.GetBlock(x, y, z);
@@ -1093,17 +1101,27 @@ public static class LightingCalculator
     /// <summary>
     /// Scans the chunk for light-emitting blocks (torches, glowstone, lava, etc.)
     /// and initializes their block light values using BlockRegistry.
+    /// Performance optimized: Uses surface heights to only scan columns up to their surface.
     /// </summary>
     private static void InitializeBlockLight(ChunkData chunk)
     {
         var queue = LightQueue;
         queue.Clear();
 
-        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+        // Optimization: Scan column by column using surface heights to limit Y iteration
+        // Light sources (torches, lava) only exist at or below the surface
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
         {
-            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
-                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+                var columnIndex = z * VoxelHelper.ChunkSideSize + x;
+                var surfaceHeight = chunk.SurfaceHeights[columnIndex];
+                
+                // Skip empty columns or scan up to surface + small margin (vegetation may have light sources)
+                if (surfaceHeight < 0) continue;
+                var maxY = Math.Min(surfaceHeight + 2, VoxelHelper.ChunkYSize);
+                
+                for (var y = 0; y < maxY; y++)
                 {
                     var block = chunk.GetBlock(x, y, z);
                     var lightValue = BlockRegistry.GetLightValue(block);
