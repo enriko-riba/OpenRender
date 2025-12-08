@@ -204,8 +204,11 @@ void main() {
         baseColor = sampleBlockTexture(blockId, vTexCoord, N, vFaceId);
     }
 
-    // Alpha test: Discard fully transparent pixels (fixes artifacts for cutout blocks in Opaque queue)
-    if (baseColor.a < 0.05) discard;
+    // Alpha test: Discard transparent pixels
+    // Threshold increased to 0.5 to prevent "halo" artifacts where semi-transparent edges
+    // write to depth buffer (in Opaque pass) and occlude geometry behind them.
+    // This creates a hard cutout look typical for voxel games.
+    if (baseColor.a < 0.5) discard;
 
     // Procedural Water Normal
     vec3 waterNormal = N;
