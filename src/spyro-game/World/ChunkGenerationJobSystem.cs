@@ -55,13 +55,13 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         Interlocked.Increment(ref configVersion);
     }
 
-    public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockId>? blockIdEdits)
+    public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockId>? blockIdEdits, GenerationJobType type = GenerationJobType.BaseTerrain)
     {
         if (disposed)
             throw new ObjectDisposedException(nameof(ChunkGenerationJobSystem));
 
         var enqueueId = Interlocked.Increment(ref enqueueCounter);
-        var work = new GenerationWorkItem(chunkIndex, blockIdEdits, enqueueId);
+        var work = new GenerationWorkItem(chunkIndex, blockIdEdits, enqueueId, type);
         
         try
         {
@@ -141,42 +141,84 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
             }
 
             ChunkData? writable = null;
+            CpuTerrainGenerator.ChunkGenerationResult result = default;
+
             try
             {
-                writable = voxelCache.RentWritable(work.ChunkIndex);
-
-                // Time terrain generation
-                var terrainSw = Stopwatch.StartNew();
-                var result = generator.GenerateChunk(work.ChunkIndex, writable, work.BlockIdEdits);
-                terrainSw.Stop();
-                metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
-                
-                // Record detailed terrain breakdown from profiler
-                var profiler = generator.Profiler;
-                metrics?.RecordTerrainBreakdown(
-                    profiler.GetLastMs(TerrainGenerationProfiler.Step.ClimateSampling),
-                    profiler.GetLastMs(TerrainGenerationProfiler.Step.Noise3DSampling),
-                    profiler.GetLastMs(TerrainGenerationProfiler.Step.BiomeSelection),
-                    profiler.GetLastMs(TerrainGenerationProfiler.Step.BlockGeneration));
-
-                // Store biome data alongside voxels
-                var biomeData = generator.GetLastChunkBiomeData();
-                if (biomeData != null)
+                if (work.Type == GenerationJobType.BaseTerrain)
                 {
-                    voxelCache.StoreBiomeData(work.ChunkIndex, biomeData);
+                    writable = voxelCache.RentWritable(work.ChunkIndex);
+
+                    // Time terrain generation
+                    var terrainSw = Stopwatch.StartNew();
+                    result = generator.GenerateBaseTerrain(work.ChunkIndex, writable, work.BlockIdEdits);
+                    terrainSw.Stop();
+                    metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
+                    
+                    // Record detailed terrain breakdown from profiler
+                    var profiler = generator.Profiler;
+                    metrics?.RecordTerrainBreakdown(
+                        profiler.GetLastMs(TerrainGenerationProfiler.Step.ClimateSampling),
+                        profiler.GetLastMs(TerrainGenerationProfiler.Step.Noise3DSampling),
+                        profiler.GetLastMs(TerrainGenerationProfiler.Step.BiomeSelection),
+                        profiler.GetLastMs(TerrainGenerationProfiler.Step.BlockGeneration));
+
+                    // Store biome data alongside voxels
+                    var biomeData = generator.GetLastChunkBiomeData();
+                    if (biomeData != null)
+                    {
+                        voxelCache.StoreBiomeData(work.ChunkIndex, biomeData);
+                    }
+
+                    // Time lighting calculation
+                    var lightSw = Stopwatch.StartNew();
+                    LightingCalculator.CalculateLighting(writable);
+                    lightSw.Stop();
+                    metrics?.RecordLightCalculation(lightSw.Elapsed.TotalMilliseconds);
+
+                    voxelCache.Store(writable);
+                    writable = null;
+                }
+                else if (work.Type is GenerationJobType.Decoration or GenerationJobType.DecorationRepair)
+                {
+                    // For decoration, we need the base terrain
+                    if (voxelCache.TryGetChunkData(work.ChunkIndex, out var baseData) && baseData != null)
+                    {
+                        // Rent a NEW buffer
+                        writable = voxelCache.RentWritable(work.ChunkIndex);
+                        
+                        // Copy base data to writable
+                        baseData.CloneTo(writable);
+                        
+                        // Get Biome Data
+                        voxelCache.TryGetBiomeData(work.ChunkIndex, out var biomeData);
+                        
+                        // Decorate
+                        var terrainSw = Stopwatch.StartNew();
+                        result = generator.DecorateChunk(writable, biomeData, work.ChunkIndex, voxelCache);
+                        terrainSw.Stop();
+                        // We can record this as terrain generation time or separate metric
+                        metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
+
+                        // Recalculate lighting? Trees cast shadows.
+                        var lightSw = Stopwatch.StartNew();
+                        LightingCalculator.CalculateLighting(writable);
+                        lightSw.Stop();
+                        metrics?.RecordLightCalculation(lightSw.Elapsed.TotalMilliseconds);
+                        
+                        // Store
+                        voxelCache.Store(writable);
+                        writable = null;
+                    }
+                    else
+                    {
+                        Log.Error($"Decoration failed: Base terrain missing for chunk {work.ChunkIndex}");
+                        return; 
+                    }
                 }
 
-                // Time lighting calculation
-                var lightSw = Stopwatch.StartNew();
-                LightingCalculator.CalculateLighting(writable);
-                lightSw.Stop();
-                metrics?.RecordLightCalculation(lightSw.Elapsed.TotalMilliseconds);
-
-                voxelCache.Store(writable);
-                writable = null;
-
                 var buildId = Interlocked.Increment(ref buildCounter);
-                completedResults.Enqueue(new ChunkGenerationJobResult(work.ChunkIndex, result, work.EnqueueId, buildId));
+                completedResults.Enqueue(new ChunkGenerationJobResult(work.ChunkIndex, result, work.EnqueueId, buildId, work.Type));
             }
             finally
             {
@@ -218,7 +260,15 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         cancellationSource.Dispose();
     }
 
-    internal readonly record struct GenerationWorkItem(int ChunkIndex, IReadOnlyDictionary<int, BlockId>? BlockIdEdits, long EnqueueId);
+    internal readonly record struct GenerationWorkItem(int ChunkIndex, IReadOnlyDictionary<int, BlockId>? BlockIdEdits, long EnqueueId, GenerationJobType Type);
 
-    internal readonly record struct ChunkGenerationJobResult(int ChunkIndex, CpuTerrainGenerator.ChunkGenerationResult Generation, long EnqueueId, long BuildId);
+    internal readonly record struct ChunkGenerationJobResult(int ChunkIndex, CpuTerrainGenerator.ChunkGenerationResult Generation, long EnqueueId, long BuildId, GenerationJobType Type);
+
+}
+
+internal enum GenerationJobType
+{
+    BaseTerrain,
+    Decoration,
+    DecorationRepair
 }

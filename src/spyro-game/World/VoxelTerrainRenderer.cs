@@ -346,6 +346,8 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // 1. Draw Opaque (Command 1 of each pair)
         // Stride = 3 * sizeof(DrawElementsIndirectCommand) = 3 * 5 * 4 = 60 bytes
         // Offset = 0
+        GL.Disable(EnableCap.Blend); // Ensure blending is off for opaque pass
+        shader.SetInt("uIsCubeletPass", 0); // Ensure default state
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
@@ -354,7 +356,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             60 // Stride
         );
 
-        // 2. Draw Water (Command 2 of each pair)
+        // 2. Draw Water (Command 2)
         // Enable blending and disable depth write (optional, but good for water)
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -375,7 +377,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             60 // Stride
         );
 
-        // 3. Draw Translucent (Command 3 of each pair)
+        // 3. Draw Translucent (Command 3)
         // Keep same state as Water (Blend, No Depth Write, No Cull)
         // Stride = 60 bytes
         // Offset = 40 bytes (start of third command)

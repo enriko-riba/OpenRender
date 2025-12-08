@@ -364,15 +364,15 @@ public sealed class ChunkBiomeData
     {
         // ColumnBiomes
         writer.Write(ColumnBiomes.Length);
-        for (int i = 0; i < ColumnBiomes.Length; i++) writer.Write((byte)ColumnBiomes[i]);
+        for (var i = 0; i < ColumnBiomes.Length; i++) writer.Write((byte)ColumnBiomes[i]);
 
         // BiomeIds
         writer.Write(BiomeIds.Length);
-        for (int i = 0; i < BiomeIds.Length; i++) writer.Write((byte)BiomeIds[i]);
+        for (var i = 0; i < BiomeIds.Length; i++) writer.Write((byte)BiomeIds[i]);
 
         // CaveBiomeIds
         writer.Write(CaveBiomeIds.Length);
-        for (int i = 0; i < CaveBiomeIds.Length; i++) writer.Write((byte)CaveBiomeIds[i]);
+        for (var i = 0; i < CaveBiomeIds.Length; i++) writer.Write((byte)CaveBiomeIds[i]);
 
         // Climate arrays
         writer.Write(Temperature.Length);
@@ -400,34 +400,34 @@ public sealed class ChunkBiomeData
         
         // ColumnBiomes
         var len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.ColumnBiomes[i] = (BiomeId)reader.ReadByte();
+        for (var i = 0; i < len; i++) data.ColumnBiomes[i] = (BiomeId)reader.ReadByte();
 
         // BiomeIds
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.BiomeIds[i] = (BiomeId)reader.ReadByte();
+        for (var i = 0; i < len; i++) data.BiomeIds[i] = (BiomeId)reader.ReadByte();
 
         // CaveBiomeIds
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.CaveBiomeIds[i] = (CaveBiomeId)reader.ReadByte();
+        for (var i = 0; i < len; i++) data.CaveBiomeIds[i] = (CaveBiomeId)reader.ReadByte();
 
         // Climate arrays
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.Temperature[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.Temperature[i] = reader.ReadSingle();
 
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.Humidity[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.Humidity[i] = reader.ReadSingle();
 
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.Continentalness[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.Continentalness[i] = reader.ReadSingle();
 
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.Erosion[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.Erosion[i] = reader.ReadSingle();
 
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.PeaksValleys[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.PeaksValleys[i] = reader.ReadSingle();
 
         len = reader.ReadInt32();
-        for (int i = 0; i < len; i++) data.Weirdness[i] = reader.ReadSingle();
+        for (var i = 0; i < len; i++) data.Weirdness[i] = reader.ReadSingle();
 
         return data;
     }

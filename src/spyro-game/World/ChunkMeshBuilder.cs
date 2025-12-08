@@ -27,6 +27,7 @@ internal static class ChunkMeshBuilder
     [ThreadStatic] private static List<uint>? t_translucentVertices;
     [ThreadStatic] private static List<uint>? t_translucentIndices;
     [ThreadStatic] private static List<uint>? t_waterIndices;
+    [ThreadStatic] private static List<uint>? t_cubeletIndices;
     
     // Performance optimization: Thread-local pooled dictionary for neighbor chunk cache
     [ThreadStatic] private static Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>? t_neighborCache;
@@ -54,13 +55,14 @@ internal static class ChunkMeshBuilder
     /// <summary>
     /// Get or create thread-local pooled lists for mesh building.
     /// </summary>
-    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx, List<uint> waterIdx) GetPooledLists()
+    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx, List<uint> waterIdx, List<uint> cubeletIdx) GetPooledLists()
     {
         t_opaqueVertices ??= new List<uint>(16384);
         t_opaqueIndices ??= new List<uint>(16384);
         t_translucentVertices ??= new List<uint>(2048);
         t_translucentIndices ??= new List<uint>(2048);
         t_waterIndices ??= new List<uint>(2048);
+        t_cubeletIndices ??= new List<uint>(2048);
 
         // Clear for reuse
         t_opaqueVertices.Clear();
@@ -68,8 +70,9 @@ internal static class ChunkMeshBuilder
         t_translucentVertices.Clear();
         t_translucentIndices.Clear();
         t_waterIndices.Clear();
+        t_cubeletIndices.Clear();
 
-        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices);
+        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices, t_cubeletIndices);
     }
 
     public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out CpuChunkMesh mesh)
@@ -94,7 +97,7 @@ internal static class ChunkMeshBuilder
         }
 
         // Performance optimization: Use thread-local pooled lists instead of allocating new ones
-        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices) = GetPooledLists();
+        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, cubeletIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
 
         // Optimization: Iterate columns (X, Z) first, then Y up to surface height
@@ -144,6 +147,16 @@ internal static class ChunkMeshBuilder
                         sampler.IncrementFaceCount(isTranslucent);
                         sampler.IncrementFaceCount(isTranslucent);
                         sampler.IncrementFaceCount(isTranslucent); // 4 faces total for cross-billboard
+                        continue;
+                    }
+                    else if (renderShape == BlockRenderShape.Cubelet)
+                    {
+                        // Cubelet blocks (small 1/10th size cubes)
+                        // Always render all 6 faces (no culling against neighbors)
+                        // Use opaque vertices but separate index list
+                        AppendCubelet(opaqueVertices, cubeletIndices, sampler, block, x, y, z);
+                        // Increment face count (6 faces)
+                        for (var i = 0; i < 6; i++) sampler.IncrementFaceCount(false);
                         continue;
                     }
 
@@ -209,6 +222,10 @@ internal static class ChunkMeshBuilder
             }
         }
 
+        // Cubelet indices are no longer appended to the mesh
+        // This prevents them from being included in the total face count and rendered incorrectly
+
+
         if (VerboseBuilderLogging)
         {
             Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
@@ -218,6 +235,7 @@ internal static class ChunkMeshBuilder
         // Note: Indices are 6 per face (triangles)
         var waterFaceCount = waterIndices.Count / 6;
         var translucentFaceCount = translucentIndices.Count / 6;
+        var cubeletFaceCount = cubeletIndices.Count / 6;
         // Total translucent faces tracked by sampler includes both water and other translucent
         // But we need to pass them separately to CpuChunkMesh
         
@@ -293,6 +311,15 @@ internal static class ChunkMeshBuilder
 
         if (block == neighborBlock)
         {
+            // If it's leaves (or any AlphaTest block), we want to see internal faces
+            // because they have holes (cutout).
+            // Glass/Water (Blend) should still cull.
+            var props = BlockRegistry.GetProperties(block);
+            if (props.Render == RenderMethod.AlphaTest)
+            {
+                return true;
+            }
+
             return false;
         }
 
@@ -395,7 +422,9 @@ internal static class ChunkMeshBuilder
 
         // Calculate a deterministic seed for the offset based on block position
         // This ensures all vertices of the billboard move together
-        uint seed = (uint)((x * 3129871) ^ (z * 116129791) ^ y);
+        // NOTE: We exclude Y from the seed so that stacked vegetation (Sugar Cane, Tall Grass)
+        // shares the same offset and stays connected.
+        uint seed = (uint)((x * 3129871) ^ (z * 116129791));
 
         // Helper to add a quad (4 vertices, 6 indices) - one "face" in the mesh system
         void AddQuad(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int x3, int y3, int z3)
@@ -429,6 +458,51 @@ internal static class ChunkMeshBuilder
         AddQuad(x + 1, y, z, x + 1, y + 1, z, x, y + 1, z + 1, x, y, z + 1);
         // Quad 2 diagonal - back face (reversed vertices)
         AddQuad(x, y, z + 1, x, y + 1, z + 1, x + 1, y + 1, z, x + 1, y, z);
+    }
+
+    private static void AppendCubelet(List<uint> vertexScratch, List<uint> indexScratch, ChunkVoxelSampler sampler, BlockId block, int x, int y, int z)
+    {
+        var biome = sampler.SampleBiome(x, z);
+        
+        // Sample light at the block's position
+        var light = sampler.SamplePackedLight(x, y, z);
+        if (light == 0xFFFFFFFFu) light = sampler.SamplePackedLight(x, y + 1, z);
+        var packedLight = (light != 0xFFFFFFFFu) ? light : 0xFFu;
+
+        // Use standard face indices (0-5)
+        // No AO for cubelets (too small)
+        const uint defaultAO = 0u;
+
+        // Helper to add a face
+        void AddFace(uint face)
+        {
+            var baseVertex = (uint)(vertexScratch.Count / 2);
+            var offsets = FaceCornerOffsets[(int)face];
+
+            for (uint corner = 0; corner < 4; corner++)
+            {
+                var (ox, oy, oz) = offsets[corner];
+                var vx = x + ox;
+                var vy = y + oy;
+                var vz = z + oz;
+                
+                // Pack vertex with standard face ID
+                // The shader will use the separate draw call to identify it as a cubelet
+                vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, defaultAO, corner));
+                vertexScratch.Add(PackVertexAttributes(block, packedLight, biome));
+            }
+
+            // Standard quad indices
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 1);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex);
+            indexScratch.Add(baseVertex + 2);
+            indexScratch.Add(baseVertex + 3);
+        }
+
+        // Add all 6 faces
+        for (uint f = 0; f < 6; f++) AddFace(f);
     }
 
     private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner, uint offsetSeed = 0)

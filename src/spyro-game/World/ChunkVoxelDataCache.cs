@@ -44,6 +44,14 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     }
 
     /// <summary>
+    /// Retrieve voxel data for a chunk.
+    /// </summary>
+    public bool TryGetChunkData(int chunkIndex, out ChunkData? chunkData)
+    {
+        return chunkBuffers.TryGetValue(chunkIndex, out chunkData);
+    }
+
+    /// <summary>
     /// Get biome at a specific world position by looking up the chunk and local coordinates.
     /// </summary>
     public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ)
@@ -148,14 +156,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         }
     }
 
-    /// <summary>
-    /// Retrieve the raw ChunkData object (mutable).
-    /// Use with caution - only safe when not being read by background threads.
-    /// </summary>
-    public bool TryGetChunkData(int chunkIndex, out ChunkData? data)
-    {
-        return chunkBuffers.TryGetValue(chunkIndex, out data);
-    }
+
 
     /// <summary>
     /// Retrieve a read-only view of the cached voxel data for a chunk.

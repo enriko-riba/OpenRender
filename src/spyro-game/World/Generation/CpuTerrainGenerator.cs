@@ -109,9 +109,10 @@ internal sealed class CpuTerrainGenerator
     public ChunkBiomeData? GetLastChunkBiomeData() => currentChunkBiome;
 
     /// <summary>
-    /// Generate voxel descriptors and collision spans for the specified chunk.
+    /// Generate base terrain voxels (Phase 1).
+    /// Does NOT generate vegetation, collision, or lighting.
     /// </summary>
-    public ChunkGenerationResult GenerateChunk(int chunkIndex, ChunkData chunkData, IReadOnlyDictionary<int, BlockId>? edits = null)
+    public ChunkGenerationResult GenerateBaseTerrain(int chunkIndex, ChunkData chunkData, IReadOnlyDictionary<int, BlockId>? edits = null)
     {
         profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
         
@@ -125,19 +126,51 @@ internal sealed class CpuTerrainGenerator
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
         currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(chunkX, chunkZ) ?? new ChunkBiomeData();
 
+        // 1. Generate base terrain voxels
+        FillChunk(chunkIndex, chunkData, edits);
+
         var collision = new ChunkCollisionData();
         var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
         var spanTypes = new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
         var spanCounts = new byte[VoxelHelper.ChunkSideSizeSquare];
 
-        // 1. Generate base terrain voxels
-        FillChunk(chunkIndex, chunkData, edits);
+        // Generate collision spans from base terrain
+        GenerateCollisionData(chunkData, collision, spanPairs, spanTypes, spanCounts);
+
+        profiler.EndStep(TerrainGenerationProfiler.Step.Total);
+        profiler.FinalizeChunk();
+        
+        return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
+    }
+
+    /// <summary>
+    /// Apply vegetation and generate collision data (Phase 2).
+    /// Requires neighbors to be present in the cache for cross-chunk vegetation.
+    /// </summary>
+    public ChunkGenerationResult DecorateChunk(ChunkData chunkData, ChunkBiomeData biomeData, int chunkIndex, ChunkVoxelDataCache voxelCache)
+    {
+        profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
+
+        var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+        
+        // Use provided biome data
+        currentChunkBiome = biomeData;
+        if (currentChunkBiome == null)
+        {
+             currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(chunkX, chunkZ) ?? new ChunkBiomeData();
+        }
 
         // 2. Place vegetation (trees, flowers, etc.)
         profiler.BeginStep(TerrainGenerationProfiler.Step.Vegetation);
         var vegetationGen = new VegetationGenerator(config);
         vegetationGen.DecorateChunk(chunkData, currentChunkBiome, chunkX, chunkZ);
         profiler.EndStep(TerrainGenerationProfiler.Step.Vegetation);
+
+        var collision = new ChunkCollisionData();
+        var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
+        var spanTypes = new BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
+        var spanCounts = new byte[VoxelHelper.ChunkSideSizeSquare];
 
         // 3. Generate collision spans from final voxel data
         GenerateCollisionData(chunkData, collision, spanPairs, spanTypes, spanCounts);
@@ -1658,5 +1691,8 @@ internal sealed class CpuTerrainGenerator
         ChunkCollisionData Collision,
         int[] SpanPairs,
         byte[] SpanCounts,
-        BlockId[] SpanTypes);
+        BlockId[] SpanTypes)
+    {
+        public bool IsEmpty { get; init; } = false;
+    }
 }

@@ -467,7 +467,7 @@ public sealed class ChunkClimateCache
         SampleFbm2DBatched(xCoords, zCoords, config.Weirdness, seed + 500u, Weirdness);
         
         // Pre-compute normalized versions (avoids repeated * 0.5 + 0.5)
-        for (int i = 0; i < 256; i++)
+        for (var i = 0; i < 256; i++)
         {
             Continentalness01[i] = Continentalness[i] * 0.5f + 0.5f;
             Erosion01[i] = Erosion[i] * 0.5f + 0.5f;
@@ -764,7 +764,7 @@ public sealed class BiomeSelector
         float bestDist = float.MaxValue;
         int bestIdx = 0;
         
-        for (int i = 0; i < biomeCount; i++)
+        for (var i = 0; i < biomeCount; i++)
         {
             float dist = biomes[i].GetClimateDistance(climate);
             if (dist < bestDist)
@@ -789,7 +789,7 @@ public sealed class BiomeSelector
         out float blendWeight)
     {
         // Calculate all distances
-        for (int i = 0; i < biomeCount; i++)
+        for (var i = 0; i < biomeCount; i++)
         {
             distances[i] = biomes[i].GetClimateDistance(climate);
             indices[i] = i;
@@ -799,7 +799,7 @@ public sealed class BiomeSelector
         int best1 = 0, best2 = 1;
         if (distances[1] < distances[0]) { best1 = 1; best2 = 0; }
         
-        for (int i = 2; i < biomeCount; i++)
+        for (var i = 2; i < biomeCount; i++)
         {
             if (distances[i] < distances[best1])
             {
@@ -1642,7 +1642,7 @@ var bestBiome = biomes.OrderBy(b => b.Distance(climate)).First();
 // ✓ GOOD: Simple loop, no allocations
 float bestDist = float.MaxValue;
 int bestIdx = 0;
-for (int i = 0; i < biomeCount; i++)
+for (var i = 0; i < biomeCount; i++)
 {
     var dist = biomes[i].GetDistance(climate);
     if (dist < bestDist) { bestDist = dist; bestIdx = i; }
@@ -1697,7 +1697,7 @@ These are **deferred** due to performance cost:
 if (chunkHasCaves && enableCaveBiomes)
 {
     // Sparse 3D biome grid (16-block Y cells)
-    for (int cy = 0; cy < 24; cy++)
+    for (var cy = 0; cy < 24; cy++)
     {
         // Sample cave biome noise at cell center
         // Much cheaper than per-voxel

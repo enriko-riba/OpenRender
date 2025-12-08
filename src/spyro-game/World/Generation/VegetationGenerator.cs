@@ -29,9 +29,9 @@ internal sealed class VegetationGenerator
         Array.Copy(chunk.SurfaceHeights, initialSurfaceHeights, chunk.SurfaceHeights.Length);
 
         // Iterate over all columns in the chunk
-        for (int z = 0; z < VoxelHelper.ChunkSideSize; z++)
+        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
         {
-            for (int x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
             {
                 int worldX = chunkX * VoxelHelper.ChunkSideSize + x;
                 int worldZ = chunkZ * VoxelHelper.ChunkSideSize + z;
@@ -65,6 +65,17 @@ internal sealed class VegetationGenerator
                     // TODO: Add noise modulation for patchiness if NoiseFrequency > 0
                     if (random.NextSingle() < rule.Density)
                     {
+                        // Prevent placing trees on chunk borders to avoid cut-off leaves
+                        // Trees have a radius of up to 2 blocks
+                        if (IsTree(rule.Type))
+                        {
+                            if (x < 2 || x >= VoxelHelper.ChunkSideSize - 2 ||
+                                z < 2 || z >= VoxelHelper.ChunkSideSize - 2)
+                            {
+                                continue;
+                            }
+                        }
+
                         // Place vegetation one block ABOVE the surface
                         PlaceVegetation(chunk, x, surfaceY + 1, z, rule.Type, random);
                         
@@ -119,26 +130,26 @@ internal sealed class VegetationGenerator
         }
     }
 
-    private void PlacePlant(ChunkData chunk, int x, int y, int z, BlockId plant)
+    private static void PlacePlant(ChunkData chunk, int x, int y, int z, BlockId plant)
     {
-        if (chunk.IsWithinBounds(x, y, z) && chunk.GetBlock(x, y, z) == BlockId.Air)
+        if (ChunkData.IsWithinBounds(x, y, z) && chunk.GetBlock(x, y, z) == BlockId.Air)
         {
             chunk.SetBlock(x, y, z, plant);
         }
     }
 
-    private void PlaceColumn(ChunkData chunk, int x, int y, int z, BlockId block, int height)
+    private static void PlaceColumn(ChunkData chunk, int x, int y, int z, BlockId block, int height)
     {
-        for (int i = 0; i < height; i++)
+        for (var i = 0; i < height; i++)
         {
-            if (chunk.IsWithinBounds(x, y + i, z) && chunk.GetBlock(x, y + i, z) == BlockId.Air)
+            if (ChunkData.IsWithinBounds(x, y + i, z) && chunk.GetBlock(x, y + i, z) == BlockId.Air)
             {
                 chunk.SetBlock(x, y + i, z, block);
             }
         }
     }
 
-    private void PlaceCactus(ChunkData chunk, int x, int y, int z, int height)
+    private static void PlaceCactus(ChunkData chunk, int x, int y, int z, int height)
     {
         // Cactus needs air around it (except bottom)
         // Simplified check: just place it for now, collision/update logic handles the rest in a real game
@@ -148,13 +159,13 @@ internal sealed class VegetationGenerator
         PlaceColumn(chunk, x, y, z, BlockId.Cactus, height);
     }
 
-    private bool CheckNeighborsAir(ChunkData chunk, int x, int y, int z)
+    private static bool CheckNeighborsAir(ChunkData chunk, int x, int y, int z)
     {
         // Check 4 neighbors at base level
         var neighbors = new[] { (1,0), (-1,0), (0,1), (0,-1) };
         foreach (var (dx, dz) in neighbors)
         {
-            if (chunk.IsWithinBounds(x + dx, y, z + dz))
+            if (ChunkData.IsWithinBounds(x + dx, y, z + dz))
             {
                 var block = chunk.GetBlock(x + dx, y, z + dz);
                 if (block.IsSolid()) return false;
@@ -167,33 +178,33 @@ internal sealed class VegetationGenerator
     {
         // Simple balloon tree
         // Trunk
-        for (int i = 0; i < height; i++)
+        for (var i = 0; i < height; i++)
         {
             SafeSetBlock(chunk, x, y + i, z, log);
         }
 
         // Leaves
-        int leafStart = height - 3;
-        int leafEnd = height;
-        int radius = 2;
+        var leafStart = height - 3;
+        var leafEnd = height;
+        var radius = 2;
 
-        for (int ly = leafStart; ly <= leafEnd; ly++)
+        for (var ly = leafStart; ly <= leafEnd; ly++)
         {
-            int yOffset = ly - leafEnd; // 0 at top, -3 at bottom
-            int r = radius;
+            var yOffset = ly - leafEnd; // 0 at top, -3 at bottom
+            var r = radius;
             if (ly == leafEnd) r = 1; // Top is smaller
             else if (ly == leafStart) r = 1; // Bottom is smaller (optional)
 
-            for (int lx = -r; lx <= r; lx++)
+            for (var lx = -r; lx <= r; lx++)
             {
-                for (int lz = -r; lz <= r; lz++)
+                for (var lz = -r; lz <= r; lz++)
                 {
                     // Rounded shape
                     if (Math.Abs(lx) + Math.Abs(lz) <= r + 1) 
                     {
                         // Don't overwrite trunk
                         if (lx == 0 && lz == 0 && ly < height) continue;
-                        
+
                         SafeSetBlock(chunk, x + lx, y + ly, z + lz, leaves);
                     }
                 }
@@ -204,38 +215,65 @@ internal sealed class VegetationGenerator
     private void PlaceSpruceTree(ChunkData chunk, int x, int y, int z, int height, Random random)
     {
         // Trunk
-        for (int i = 0; i < height; i++)
+        for (var i = 0; i < height; i++)
         {
             SafeSetBlock(chunk, x, y + i, z, BlockId.SpruceLog);
         }
 
-        // Cone leaves
-        int leafStart = 2;
-        for (int ly = leafStart; ly < height; ly++)
+        // Top leaf
+        SafeSetBlock(chunk, x, y + height, z, BlockId.SpruceLeaves);
+
+        // Leaves: Pyramidal shape
+        // Start 3 blocks from bottom
+        var leafStart = 3;
+        
+        for (var ly = height - 1; ly >= leafStart; ly--)
         {
-            // Radius decreases as we go up
-            int r = (height - ly) / 2 + 1; 
-            if (r > 2) r = 2;
+            var distFromTop = height - ly;
             
-            for (int lx = -r; lx <= r; lx++)
+            // Radius increases as we go down: 1, 1, 2, 2, 3, 3...
+            var radius = (distFromTop + 1) / 2;
+            
+            // Cap radius to keep it looking like a tree
+            if (radius > 3) radius = 3;
+            if (height < 8 && radius > 2) radius = 2;
+
+            for (var lx = -radius; lx <= radius; lx++)
             {
-                for (int lz = -r; lz <= r; lz++)
+                for (var lz = -radius; lz <= radius; lz++)
                 {
-                    if (Math.Abs(lx) + Math.Abs(lz) <= r + 1)
+                    var dist = Math.Abs(lx) + Math.Abs(lz);
+                    var place = false;
+
+                    if (radius == 1)
                     {
-                         if (lx == 0 && lz == 0) continue;
-                         SafeSetBlock(chunk, x + lx, y + ly, z + lz, BlockId.SpruceLeaves);
+                        // Cross shape
+                        if (dist <= 1) place = true;
+                    }
+                    else if (radius == 2)
+                    {
+                        // Diamond/Square-ish
+                        if (dist <= 3) place = true;
+                    }
+                    else // radius >= 3
+                    {
+                        // Larger Diamond
+                        if (dist <= 5) place = true;
+                    }
+
+                    if (place)
+                    {
+                        if (lx == 0 && lz == 0) continue;
+                        SafeSetBlock(chunk, x + lx, y + ly, z + lz, BlockId.SpruceLeaves);
                     }
                 }
             }
         }
-        // Top
-        SafeSetBlock(chunk, x, y + height, z, BlockId.SpruceLeaves);
     }
 
-    private void SafeSetBlock(ChunkData chunk, int x, int y, int z, BlockId block)
+    private static void SafeSetBlock(ChunkData chunk, int x, int y, int z, BlockId block)
     {
-        if (chunk.IsWithinBounds(x, y, z))
+        if (ChunkData.IsWithinBounds(x, y, z))
         {
             var existing = chunk.GetBlock(x, y, z);
             // Only replace air or replaceable blocks (like grass)
@@ -248,8 +286,10 @@ internal sealed class VegetationGenerator
 
     private static int Hash(int seed, int x, int z)
     {
-        int h = seed + x * 374761393 + z * 668265263;
+        var h = seed + x * 374761393 + z * 668265263;
         h = (h ^ (h >> 13)) * 1274126177;
         return h ^ (h >> 16);
     }
+
+    private static bool IsTree(VegetationType type) => type is VegetationType.TreeOak or VegetationType.TreeBirch or VegetationType.TreeSpruce or VegetationType.TreeJungle;
 }

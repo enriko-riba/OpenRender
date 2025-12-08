@@ -403,7 +403,7 @@ public class ChunkStreamingManager
         var baseOffsets = new uint[visibleCounts.Length];
         uint runningTotal = 0;
         
-        for (int i = 0; i < visibleCounts.Length; i++)
+        for (var i = 0; i < visibleCounts.Length; i++)
         {
             baseOffsets[i] = runningTotal;
             runningTotal += visibleCounts[i] * 4;  // 4 vertices per face

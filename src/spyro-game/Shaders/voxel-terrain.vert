@@ -68,6 +68,11 @@ void main(){
         float oz = (fract(hash * 78.233) - 0.5) * 0.4;
         localPos.x += ox;
         localPos.z += oz;
+
+        // Apply random height variation (0% to 25% reduction)
+        // Apply to all vertices to sink the model into the ground, preserving connections for stacked blocks
+        float oy = fract(hash * 43.719) * 0.25;
+        localPos.y -= oy;
     }
 
     // Shrink vertices for Cubelet pass (1/10th size)

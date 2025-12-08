@@ -1125,19 +1125,19 @@ public sealed class ChunkStreamingManager : IDisposable
         // Total slot size = 60 bytes
         Span<uint> command =
         [
-            // Command 1: Opaque
+            // Command 1: Opaque (Offset 0)
             opaqueFaces * 6u,
             1u,
             firstIndex,
             baseVertex,
             0u,
-            // Command 2: Water
+            // Command 2: Water (Offset 20)
             waterFaces * 6u,
             1u,
             firstIndex + opaqueFaces * 6u,
             baseVertex,
             0u,
-            // Command 3: Translucent (Non-Water)
+            // Command 3: Translucent (Offset 40)
             translucentFaces * 6u,
             1u,
             firstIndex + (opaqueFaces + waterFaces) * 6u,
@@ -1343,22 +1343,47 @@ public sealed class ChunkStreamingManager : IDisposable
                 continue;
             }
 
-            if (descriptor.State != TerrainChunkState.Generating)
+            // 1. Base Terrain Generated -> Schedule Decoration
+            if (result.Type == GenerationJobType.BaseTerrain)
             {
-                chunkVoxelCache.TryRelease(chunkIdx);
-                Log.Debug($"ChunkStreamingManager: Dropping CPU generation result for chunk {chunkIdx} (state={descriptor.State})");
+                if (descriptor.State != TerrainChunkState.Generating)
+                {
+                    chunkVoxelCache.TryRelease(chunkIdx);
+                    Log.Debug($"ChunkStreamingManager: Dropping BaseTerrain result for chunk {chunkIdx} (state={descriptor.State})");
+                    continue;
+                }
+
+                // Transition to Decorating
+                descriptor.State = TerrainChunkState.Decorating;
+                descriptor.GenerationStartFrame = currentFrame;
+                activeChunks[chunkIdx] = descriptor;
+
+                // Enqueue Decoration Job
+                // Note: Edits were already applied during BaseTerrain generation
+                cpuGenerationJobs.Enqueue(chunkIdx, null, GenerationJobType.Decoration);
+                inFlightCpuGenerations++; // Increment because we started a new job
                 continue;
             }
 
-            ApplyCollisionResults(chunkIdx, result.Generation);
+            // 2. Decoration Completed -> Ready for Meshing
+            if (result.Type == GenerationJobType.Decoration)
+            {
+                if (descriptor.State != TerrainChunkState.Decorating)
+                {
+                    chunkVoxelCache.TryRelease(chunkIdx);
+                    Log.Debug($"ChunkStreamingManager: Dropping Decoration result for chunk {chunkIdx} (state={descriptor.State})");
+                    continue;
+                }
 
-            // Mark as HasTerrain - ready for lighting/meshing
-            descriptor.State = TerrainChunkState.HasTerrain;
-            descriptor.GenerationStartFrame = currentFrame;
-            activeChunks[chunkIdx] = descriptor;
-            // Generation timing tracked elsewhere
+                ApplyCollisionResults(chunkIdx, result.Generation);
 
-            processed++;
+                // Mark as HasTerrain - ready for lighting/meshing
+                descriptor.State = TerrainChunkState.HasTerrain;
+                descriptor.GenerationStartFrame = currentFrame;
+                activeChunks[chunkIdx] = descriptor;
+                
+                processed++;
+            }
         }
 
         if (processed > 0)
@@ -1838,10 +1863,7 @@ public sealed class ChunkStreamingManager : IDisposable
             
             // Update Chunk spans (used for player collision via VoxelWorld)
             var chunk = world[chunkIdx];
-            if (chunk != null)
-            {
-                chunk.RebuildColumnSpans(localX, localZ, chunkData);
-            }
+            chunk?.RebuildColumnSpans(localX, localZ, chunkData);
         }
 
         MarkVoxelEdited(chunkIdx, voxelIdx, blockId, isBreaking);

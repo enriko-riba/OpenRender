@@ -56,7 +56,7 @@ public struct ChunkDescriptor
 
 /// <summary>
 /// Simplified lifecycle states for chunk processing.
-/// Linear progression: Pending → Generating → HasTerrain → Processing → Ready
+/// Linear progression: Pending → Generating → HasBaseTerrain → Decorating → HasTerrain → Processing → Ready
 /// </summary>
 public enum TerrainChunkState : byte
 {
@@ -66,12 +66,22 @@ public enum TerrainChunkState : byte
     Pending = 0,
 
     /// <summary>
-    /// Terrain generation in progress (background thread)
+    /// Base terrain generation in progress (background thread)
     /// </summary>
     Generating = 1,
 
     /// <summary>
-    /// Has voxel data, needs mesh/light calculation.
+    /// Base terrain generated (voxels + heightmap), waiting for neighbors to be ready for decoration
+    /// </summary>
+    HasBaseTerrain = 5,
+
+    /// <summary>
+    /// Vegetation and decoration in progress (background thread)
+    /// </summary>
+    Decorating = 6,
+
+    /// <summary>
+    /// Has full voxel data (terrain + vegetation), needs mesh/light calculation.
     /// Also used when Ready chunk needs reprocessing (neighbor loaded).
     /// </summary>
     HasTerrain = 2,

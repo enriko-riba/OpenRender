@@ -26,6 +26,8 @@ public enum BlockRenderShape : byte
     None,
     /// <summary>Standard 1×1×1 cube with 6 faces.</summary>
     FullCube,
+    /// <summary>Small 1/10th size cube (buttons, small vegetation).</summary>
+    Cubelet,
     /// <summary>Two crossed quads (torches, flowers, saplings).</summary>
     CrossBillboard,
 }
@@ -58,26 +60,24 @@ public enum BlockFlags : byte
 /// <param name="Flags">Combined block property flags.</param>
 /// <param name="LightValue">Luminance emitted by the block (0-15).</param>
 /// <param name="LightFilter">How much light is diminished when passing through (0-15).</param>
-/// <param name="IsFullCube">Whether the block fills a full 1m³ cube.</param>
 /// <param name="Render">How the GPU should render this block.</param>
 /// <param name="Shape">The geometric shape used for mesh generation.</param>
 public readonly record struct BlockProperties(
     BlockFlags Flags,
     byte LightValue,
     byte LightFilter,
-    bool IsFullCube,
     RenderMethod Render,
     BlockRenderShape Shape = BlockRenderShape.FullCube)
 {
     /// <summary>Default properties for unknown blocks (opaque solid).</summary>
     public static readonly BlockProperties Default = new(
         BlockFlags.Solid | BlockFlags.Opaque,
-        0, 15, true, RenderMethod.Opaque, BlockRenderShape.FullCube);
+        0, 15, RenderMethod.Opaque, BlockRenderShape.FullCube);
 
     /// <summary>Properties for air (invisible, no collision).</summary>
     public static readonly BlockProperties Air = new(
         BlockFlags.Replaceable,
-        0, 0, false, RenderMethod.None, BlockRenderShape.None);
+        0, 0, RenderMethod.None, BlockRenderShape.None);
 
     // Convenience flag checks
     public bool IsSolid => (Flags & BlockFlags.Solid) != 0;
@@ -104,10 +104,10 @@ public static class BlockRegistry
         Register(builder, BlockId.Air, BlockProperties.Air);
         Register(builder, BlockId.Water, new(
             BlockFlags.Liquid | BlockFlags.Translucent | BlockFlags.Replaceable,
-            0, 2, false, RenderMethod.Blend));
+            0, 2, RenderMethod.Blend));
         Register(builder, BlockId.Lava, new(
             BlockFlags.Liquid | BlockFlags.Emissive | BlockFlags.Replaceable,
-            15, 0, false, RenderMethod.Blend));
+            15, 0, RenderMethod.Blend));
 
         // === Stone Types ===
         RegisterOpaqueSolid(builder, BlockId.Stone);
@@ -136,17 +136,17 @@ public static class BlockRegistry
         // === Snow/Ice ===
         Register(builder, BlockId.Snow, new(
             BlockFlags.Solid | BlockFlags.Opaque,
-            0, 15, false, RenderMethod.Opaque)); // Not full cube
+            0, 15, RenderMethod.Opaque));
         RegisterOpaqueSolid(builder, BlockId.SnowDirt);
         Register(builder, BlockId.Ice, new(
             BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, true, RenderMethod.Blend));
+            0, 1, RenderMethod.Blend));
         Register(builder, BlockId.PackedIce, new(
             BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, true, RenderMethod.Blend));
+            0, 1, RenderMethod.Blend));
         Register(builder, BlockId.BlueIce, new(
             BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, true, RenderMethod.Blend));
+            0, 1, RenderMethod.Blend));
 
         // === Terracotta ===
         RegisterOpaqueSolid(builder, BlockId.Terracotta);
@@ -178,44 +178,44 @@ public static class BlockRegistry
         // === Light Sources ===
         Register(builder, BlockId.Torch, new(
             BlockFlags.Emissive,
-            14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         Register(builder, BlockId.WallTorch, new(
             BlockFlags.Emissive,
-            14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         Register(builder, BlockId.SoulTorch, new(
             BlockFlags.Emissive,
-            10, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            10, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         Register(builder, BlockId.Glowstone, new(
             BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, true, RenderMethod.Opaque));
+            15, 15, RenderMethod.Opaque));
         Register(builder, BlockId.SeaLantern, new(
             BlockFlags.Solid | BlockFlags.Translucent | BlockFlags.Emissive,
-            15, 1, true, RenderMethod.Blend));
+            15, 1, RenderMethod.Blend));
         Register(builder, BlockId.Lantern, new(
             BlockFlags.Emissive,
-            15, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            15, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         Register(builder, BlockId.SoulLantern, new(
             BlockFlags.Emissive,
-            10, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            10, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         RegisterOpaqueSolid(builder, BlockId.RedstoneLamp);
         Register(builder, BlockId.RedstoneLampOn, new(
             BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, true, RenderMethod.Opaque));
+            15, 15, RenderMethod.Opaque));
         Register(builder, BlockId.EndRod, new(
             BlockFlags.Emissive,
-            14, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
         Register(builder, BlockId.Shroomlight, new(
             BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, true, RenderMethod.Opaque));
+            15, 15, RenderMethod.Opaque));
         Register(builder, BlockId.JackOLantern, new(
             BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, true, RenderMethod.Opaque));
+            15, 15, RenderMethod.Opaque));
         Register(builder, BlockId.Campfire, new(
             BlockFlags.Emissive,
-            15, 0, false, RenderMethod.AlphaTest));
+            15, 0, RenderMethod.AlphaTest));
         Register(builder, BlockId.SoulCampfire, new(
             BlockFlags.Emissive,
-            10, 0, false, RenderMethod.AlphaTest));
+            10, 0, RenderMethod.AlphaTest));
 
         // === Glass (translucent, filter=0 for light) ===
         RegisterGlass(builder, BlockId.Glass);
@@ -238,7 +238,7 @@ public static class BlockRegistry
         // Tinted glass: blocks all light (filter=15) but is see-through
         Register(builder, BlockId.TintedGlass, new(
             BlockFlags.Solid | BlockFlags.Translucent,
-            0, 15, true, RenderMethod.Blend));
+            0, 15, RenderMethod.Blend));
 
         // === Vegetation ===
         RegisterFlower(builder, BlockId.TallGrass);
@@ -266,7 +266,7 @@ public static class BlockRegistry
         // Cactus (Solid but not full cube in MC, treating as full cube opaque for now)
         Register(builder, BlockId.Cactus, new(
             BlockFlags.Solid | BlockFlags.Opaque,
-            0, 0, true, RenderMethod.AlphaTest)); // AlphaTest for spines if texture has them
+            0, 0, RenderMethod.AlphaTest)); // AlphaTest for spines if texture has them
 
         Properties = builder.ToFrozenDictionary();
     }
@@ -280,17 +280,17 @@ public static class BlockRegistry
     private static void RegisterLeaves(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
             BlockFlags.Solid, // | BlockFlags.Translucent,
-            0, 1, true, RenderMethod.AlphaTest));
+            0, 1, RenderMethod.AlphaTest));
 
     private static void RegisterGlass(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
             BlockFlags.Solid | BlockFlags.Translucent,
-            0, 0, true, RenderMethod.Blend));
+            0, 0, RenderMethod.Blend));
 
     private static void RegisterFlower(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
             BlockFlags.Replaceable, // Can be washed away by water
-            0, 0, false, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+            0, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
 
     /// <summary>
     /// Gets all properties for a block type.

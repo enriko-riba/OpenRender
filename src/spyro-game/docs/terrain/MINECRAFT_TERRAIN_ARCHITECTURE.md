@@ -61,8 +61,8 @@ Assign biomes using climate parameters. Biomes are stored at **coarse resolution
 // Future: could expand to 4×4×24 for cave biomes (384 cells)
 BiomeId[4, 4] biomeGrid;  // Or BiomeId[16] flattened
 
-for (int cellX = 0; cellX < 4; cellX++)
-for (int cellZ = 0; cellZ < 4; cellZ++)
+for (var cellX = 0; cellX < 4; cellX++)
+for (var cellZ = 0; cellZ < 4; cellZ++)
 {
     // Sample at cell center (surface level)
     int worldX = chunkX * 16 + cellX * 4 + 2;
@@ -197,7 +197,7 @@ for each column (x, z):
     BiomeId biome = GetBiomeAt(x, surfaceY, z);
     var def = BiomeDefinitions[biome];
     
-    for (int y = 0; y < CHUNK_HEIGHT; y++)
+    for (var y = 0; y < CHUNK_HEIGHT; y++)
     {
         if (IsAir(x, y, z)) continue;
         if (IsWater(x, y, z)) continue;
@@ -314,14 +314,14 @@ public class CpuTerrainGenerator
         // Phase 1-3: Generate terrain shape...
         
         // Phase 4: Assign actual blocks
-        for (int x = 0; x < 16; x++)
-        for (int z = 0; z < 16; z++)
+        for (var x = 0; x < 16; x++)
+        for (var z = 0; z < 16; z++)
         {
             int surfaceY = GetSurfaceHeight(x, z);
             var biome = GetBiomeAt(x, surfaceY, z);
             var def = BiomeDefinitions[biome];
             
-            for (int y = 0; y < 384; y++)
+            for (var y = 0; y < 384; y++)
             {
                 BlockId block = DetermineBlock(x, y, z, surfaceY, def);
                 
@@ -350,9 +350,9 @@ public class ChunkMeshBuilder
     {
         var verts = new List<Vertex>();
         
-        for (int x = 0; x < 16; x++)
-        for (int y = 0; y < 384; y++)
-        for (int z = 0; z < 16; z++)
+        for (var x = 0; x < 16; x++)
+        for (var y = 0; y < 384; y++)
+        for (var z = 0; z < 16; z++)
         {
             int idx = y * 256 + z * 16 + x;
             byte paletteIndex = chunk.VoxelData[idx];
@@ -378,9 +378,9 @@ public class ChunkMeshBuilder
         // === WATER MESHING (top faces only) ===
         // Water surfaces are rendered separately in translucent pass.
         // Only top faces (+Y) are meshed where water meets air.
-        for (int x = 0; x < 16; x++)
-        for (int z = 0; z < 16; z++)
-        for (int y = 383; y >= 0; y--)  // Top-down to find surface
+        for (var x = 0; x < 16; x++)
+        for (var z = 0; z < 16; z++)
+        for (var y = 383; y >= 0; y--)  // Top-down to find surface
         {
             int idx = y * 256 + z * 16 + x;
             byte paletteIndex = chunk.VoxelData[idx];
@@ -459,7 +459,7 @@ public class Phase3BufferManager
         
         // Convert palette to ushort array (only actual entries, not padded)
         ushort[] paletteData = new ushort[palette.Length];
-        for (int i = 0; i < palette.Length; i++)
+        for (var i = 0; i < palette.Length; i++)
             paletteData[i] = (ushort)palette[i];
         
         // Upload this chunk's palette

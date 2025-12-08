@@ -67,34 +67,31 @@ public class ChunkData
     /// </summary>
     public BlockId GetBlock(int x, int y, int z)
     {
-        int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
-        byte paletteIndex = VoxelData[idx];
+        var idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
+        var paletteIndex = VoxelData[idx];
         return Palette[paletteIndex];
     }
 
     /// <summary>
     /// Checks if the local coordinates are within the chunk bounds.
     /// </summary>
-    public bool IsWithinBounds(int x, int y, int z)
-    {
-        return x >= 0 && x < VoxelHelper.ChunkSideSize &&
+    public static bool IsWithinBounds(int x, int y, int z) => x >= 0 && x < VoxelHelper.ChunkSideSize &&
                y >= 0 && y < VoxelHelper.ChunkYSize &&
                z >= 0 && z < VoxelHelper.ChunkSideSize;
-    }
 
     /// <summary>
     /// Set block at position, updating palette if necessary.
     /// </summary>
     public void SetBlock(int x, int y, int z, BlockId block)
     {
-        byte paletteIndex = GetOrAddPaletteEntry(block);
-        int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
+        var paletteIndex = GetOrAddPaletteEntry(block);
+        var idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
         VoxelData[idx] = paletteIndex;
 
         // Update surface height if we placed a block above the current surface
         if (!block.IsAir())
         {
-            int colIdx = z * VoxelHelper.ChunkSideSize + x;
+            var colIdx = z * VoxelHelper.ChunkSideSize + x;
             if (y > SurfaceHeights[colIdx])
             {
                 SurfaceHeights[colIdx] = y;
@@ -157,7 +154,7 @@ public class ChunkData
         
         // Palette
         writer.Write(paletteCount);
-        for (int i = 0; i < paletteCount; i++)
+        for (var i = 0; i < paletteCount; i++)
         {
             writer.Write((ushort)Palette[i]);
         }
@@ -172,14 +169,14 @@ public class ChunkData
 
         // Biomes (ChunkData.Biomes)
         writer.Write(Biomes.Length);
-        for (int i = 0; i < Biomes.Length; i++)
+        for (var i = 0; i < Biomes.Length; i++)
         {
             writer.Write((byte)Biomes[i]);
         }
 
         // SurfaceHeights
         writer.Write(SurfaceHeights.Length);
-        for (int i = 0; i < SurfaceHeights.Length; i++)
+        for (var i = 0; i < SurfaceHeights.Length; i++)
         {
             writer.Write(SurfaceHeights[i]);
         }
@@ -201,7 +198,7 @@ public class ChunkData
         // Clear default palette (Air at 0) before reading
         data.reversePalette.Clear();
         
-        for (int i = 0; i < data.paletteCount; i++)
+        for (var i = 0; i < data.paletteCount; i++)
         {
             var blockId = (BlockId)reader.ReadUInt16();
             data.Palette[i] = blockId;
@@ -236,7 +233,7 @@ public class ChunkData
         {
             // Find where Air is
             int airIndex = -1;
-            for (int i = 0; i < data.paletteCount; i++)
+            for (var i = 0; i < data.paletteCount; i++)
             {
                 if (data.Palette[i] == BlockId.Air)
                 {
@@ -258,7 +255,7 @@ public class ChunkData
 
                 // Update VoxelData: Swap 0 and airIndex
                 // This is expensive but necessary to fix the corrupted chunk
-                for (int i = 0; i < data.VoxelData.Length; i++)
+                for (var i = 0; i < data.VoxelData.Length; i++)
                 {
                     if (data.VoxelData[i] == 0) data.VoxelData[i] = (byte)airIndex;
                     else if (data.VoxelData[i] == (byte)airIndex) data.VoxelData[i] = 0;
@@ -290,14 +287,14 @@ public class ChunkData
 
         // Biomes
         var biomesLen = reader.ReadInt32();
-        for (int i = 0; i < biomesLen; i++)
+        for (var i = 0; i < biomesLen; i++)
         {
             data.Biomes[i] = (BiomeId)reader.ReadByte();
         }
 
         // SurfaceHeights
         var heightsLen = reader.ReadInt32();
-        for (int i = 0; i < heightsLen; i++)
+        for (var i = 0; i < heightsLen; i++)
         {
             data.SurfaceHeights[i] = reader.ReadInt32();
         }
@@ -333,6 +330,51 @@ public class ChunkData
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Copies the content of this chunk data to another instance.
+    /// Used when we need to modify a chunk that is already in the cache (e.g. decoration pass).
+    /// </summary>
+    public void CloneTo(ChunkData target)
+    {
+        if (target == null) throw new ArgumentNullException(nameof(target));
+
+        // Copy Palette
+        if (target.Palette.Length < this.Palette.Length)
+            target.Palette = new BlockId[this.Palette.Length];
+        Array.Copy(this.Palette, target.Palette, this.Palette.Length);
+        target.paletteCount = this.paletteCount;
+        
+        // Copy Reverse Palette
+        target.reversePalette.Clear();
+        foreach(var kvp in this.reversePalette)
+        {
+            target.reversePalette[kvp.Key] = kvp.Value;
+        }
+        
+        // Copy VoxelData
+        if (target.VoxelData.Length != this.VoxelData.Length)
+             target.VoxelData = new byte[this.VoxelData.Length];
+        Array.Copy(this.VoxelData, target.VoxelData, this.VoxelData.Length);
+        
+        // Copy SurfaceHeights
+        if (target.SurfaceHeights.Length != this.SurfaceHeights.Length)
+             target.SurfaceHeights = new int[this.SurfaceHeights.Length];
+        Array.Copy(this.SurfaceHeights, target.SurfaceHeights, this.SurfaceHeights.Length);
+        
+        // Copy LightData
+        if (target.LightData.Length != this.LightData.Length)
+             target.LightData = new byte[this.LightData.Length];
+        Array.Copy(this.LightData, target.LightData, this.LightData.Length);
+
+        // Copy Biomes
+        if (this.Biomes != null)
+        {
+            if (target.Biomes == null || target.Biomes.Length != this.Biomes.Length)
+                target.Biomes = new BiomeId[this.Biomes.Length];
+            Array.Copy(this.Biomes, target.Biomes, this.Biomes.Length);
         }
     }
 }

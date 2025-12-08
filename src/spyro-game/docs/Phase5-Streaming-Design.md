@@ -252,7 +252,7 @@ private List<BufferRegion> freeRegions = new();
 public uint AllocateRegion(uint requestedSize)
 {
     // Try to find a free region that fits
-    for (int i = 0; i < freeRegions.Count; i++)
+    for (var i = 0; i < freeRegions.Count; i++)
     {
         var region = freeRegions[i];
         if (region.Size >= requestedSize)
