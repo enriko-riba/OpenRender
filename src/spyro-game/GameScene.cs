@@ -506,7 +506,6 @@ internal class GameScene : Scene
             WriteLine($"  Block Below: n/a", textColor);
         }
 
-        // Removed duplicate player mode line (moved to top of section)
 
         // Climate data for block below player - show RAW CELL values (not interpolated)
         // This matches what biome selection actually uses
@@ -610,11 +609,11 @@ internal class GameScene : Scene
         }
 
         // === RIGHT SIDE: Inventory at center, Controls below ===
-        const int rightMargin = 200;
+        const int rightMargin = 300;
         var rightX = Width - rightMargin;
         const int invSlotHeight = 30;
         var invTotalHeight = Inventory.HotbarSize * invSlotHeight;
-        var invStartY = (Height - invTotalHeight) / 2;
+        var invStartY = (Height - invTotalHeight) - 250;
 
         // Inventory Display - centered vertically on right side
         for (var i = 0; i < Inventory.HotbarSize; i++)

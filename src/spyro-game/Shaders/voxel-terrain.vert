@@ -62,17 +62,27 @@ void main(){
 
     // Apply random offset for billboards (face 6)
     if (face == 6u) {
-        // Map 5-bit seed to [-0.2, 0.2] range
-        float hash = float(offsetSeed) / 31.0;
+        // offsetSeed layout (5 bits):
+        // - Bits 0-3: Random variation seed (0-15)
+        // - Bit 4: "Is top of stack" flag (1 = top, 0 = not top)
+        uint randomBits = offsetSeed & 0xFu;
+        bool isTopOfStack = (offsetSeed & 0x10u) != 0u;
+        
+        // Map 4-bit seed to [-0.2, 0.2] range for X/Z offset
+        float hash = float(randomBits) / 15.0;
         float ox = (fract(hash * 12.9898) - 0.5) * 0.4;
         float oz = (fract(hash * 78.233) - 0.5) * 0.4;
         localPos.x += ox;
         localPos.z += oz;
 
-        // Apply random height variation (0% to 33% reduction)
-        // Apply to all vertices to sink the model into the ground, preserving connections for stacked blocks
-        float oy = fract(hash * 43.719) * 0.33;
-        localPos.y -= oy;
+        // Apply random height variation (0% to 33% reduction) by shrinking top vertices
+        // ONLY apply to the topmost block of a stack to avoid gaps in stacked vegetation
+        // Corners 1 and 2 are at the top (UV.y = 1), corners 0 and 3 are at the bottom
+        if (isTopOfStack && (corner == 1u || corner == 2u)) {
+            float heightReduction = fract(hash * 43.719) * 0.33;
+            // Top vertices: move down by heightReduction (shrinking the billboard)
+            localPos.y -= heightReduction;
+        }
     }
 
     // Shrink vertices for Cubelet pass (1/10th size)

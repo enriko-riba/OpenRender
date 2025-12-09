@@ -995,7 +995,7 @@ public sealed class BiomeDefinition
                 {
                     new() { Type = VegetationType.Grass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] },
                     new() { Type = VegetationType.Flower, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.TreeOak, Density = 0.002f, AllowedSurfaceBlocks = [BlockId.Grass] } // Very sparse trees
+                    new() { Type = VegetationType.TreeOak, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] } // Very sparse trees
                 }
             },
             
@@ -1012,7 +1012,7 @@ public sealed class BiomeDefinition
                 {
                     new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
                     new() { Type = VegetationType.Flower, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.TreeOak, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                    new() { Type = VegetationType.TreeOak, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass] }
                 }
             },
             

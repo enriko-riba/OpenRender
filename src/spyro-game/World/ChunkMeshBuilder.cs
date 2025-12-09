@@ -432,7 +432,21 @@ internal static class ChunkMeshBuilder
         // This ensures all vertices of the billboard move together
         // NOTE: We exclude Y from the seed so that stacked vegetation (Sugar Cane, Tall Grass)
         // shares the same offset and stays connected.
-        var seed = (uint)((x * 3129871) ^ (z * 116129791));
+        // 
+        // Seed layout (5 bits total):
+        // - Bits 0-3: Random variation seed (0-15)
+        // - Bit 4: "Is top of stack" flag (1 = top, 0 = not top)
+        //
+        // Height shrinking should ONLY be applied to the topmost block of a stack
+        // to avoid gaps between stacked vegetation blocks.
+        var baseSeed = (uint)((x * 3129871) ^ (z * 116129791)) & 0xFu; // 4 bits for random
+        
+        // Check if this is the top of a vegetation stack
+        // A block is the top if the block above is NOT the same billboard type
+        var blockAbove = sampler.SampleBlock(x, y + 1, z);
+        var isTopOfStack = blockAbove != block;
+        
+        var seed = baseSeed | (isTopOfStack ? 0x10u : 0u); // Set bit 4 if top of stack
 
         // Helper to add a quad (4 vertices, 6 indices) - one "face" in the mesh system
         void AddQuad(int x0, int y0, int z0, int x1, int y1, int z1, int x2, int y2, int z2, int x3, int y3, int z3)

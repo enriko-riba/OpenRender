@@ -106,7 +106,7 @@ internal sealed class VegetationGenerator(TerrainConfig config)
         switch (type)
         {
             case VegetationType.Grass:
-            var grass = new [] { BlockId.TallGrass, BlockId.GrassPatch };
+                var grass = new [] { BlockId.TallGrass, BlockId.GrassPatch };
                 PlacePlant(chunk, x, y, z, grass[random.Next(grass.Length)]);
                 break;
             case VegetationType.Flower:
