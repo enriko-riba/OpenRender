@@ -39,6 +39,13 @@ uniform float uMaterialShininess = 16.0;
 // Block texture array: layer = BlockId, each layer is 150×50 atlas (Top|Bottom|Side)
 uniform sampler2DArray uBlockTextures;
 
+// IMPORTANT: uIsUnderwater should ONLY be set to 1 when:
+// 1. Camera position Y is below VoxelHelper.WaterLevel (35), AND
+// 2. Camera is in an OCEAN or LAKE biome column
+// 
+// Do NOT set uIsUnderwater=1 just because camera.Y < 35!
+// Non-water biomes (caves, underground) should NOT have underwater effects.
+// The game code must check the biome at camera position before setting this.
 uniform int uIsUnderwater;
 uniform float uTime;
 uniform int uShowBiomes;
@@ -186,9 +193,14 @@ vec3 getBiomeDebugColor(uint biomeId) {
 
 void main() {
     // Underwater State
+    // FIXED: Underwater effects should ONLY apply when uIsUnderwater is set by the game code.
+    // The game code checks if camera is actually in an Ocean/Lake biome with water blocks.
+    // DO NOT use y < WATER_LEVEL alone - that incorrectly applies underwater effects in caves.
     float waterLevel = float(WATER_LEVEL) + 0.85;
     bool isCameraUnderwater = uIsUnderwater == 1;
-    bool isFragmentUnderwater = vWorldPos.y < waterLevel;
+    // Fragment underwater check now ALSO requires camera to be underwater
+    // This prevents underwater fog from appearing when looking at terrain below Y=35 from above ground
+    bool isFragmentUnderwater = isCameraUnderwater && vWorldPos.y < waterLevel;
 
     // Normalize interpolated vectors
     vec3 N = normalize(vNormal);
@@ -377,21 +389,17 @@ void main() {
     vec3 finalColor = baseColor.rgb * (ambient + diffuseColor + localLightTint) + specularColor;
 
     // Fog for terrain seen through water from above
-    if (!isCameraUnderwater && !isWater && isFragmentUnderwater) {
-        float depth = waterLevel - vWorldPos.y;
-        // Calculate path length through water (vViewDir points to camera)
-        float viewCos = max(vViewDir.y, 0.05); 
-        float waterPath = depth / viewCos;
-        
-        // Max visibility ~18 blocks
-        float fogFactor = clamp(waterPath / 18.0, 0.0, 1.0);
-        
-        // Use dark water color for fog (matches water surface base)
-        vec3 deepWaterColor = vec3(0.08, 0.12, 0.2);
-        vec3 waterFogColor = deepWaterColor * dirLight.ambient * 2.5;
-        
-        finalColor = mix(finalColor, waterFogColor, fogFactor);
-    }
+    // REMOVED: This section incorrectly applied underwater fog to ANY terrain below Y=35,
+    // even when there was no actual water above it. This caused water to appear in caves
+    // and holes dug in non-ocean biomes.
+    // 
+    // Water fog should ONLY be rendered when:
+    // 1. There are actual Water blocks (BlockId.Water) between camera and fragment
+    // 2. The fragment is part of an Ocean/Lake biome with water
+    //
+    // Since we can't check for intervening water blocks in the fragment shader,
+    // this effect should be handled by rendering actual Water block faces.
+    // The water surface renders with transparency, allowing you to see terrain below.
 
     // Underwater rendering effects - apply when camera is submerged
     if (isCameraUnderwater && !isWater) {

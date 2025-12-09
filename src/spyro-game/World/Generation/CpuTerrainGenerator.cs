@@ -378,16 +378,25 @@ internal sealed class CpuTerrainGenerator
     /// SINGLE SOURCE OF TRUTH: Compute water body info for each column.
     /// Must be called AFTER BuildColumnFieldCaches() (needs heights) and BEFORE UpdateBiomeDataFromTerrainValues().
     /// The result is used by both biome selection and block generation to ensure consistency.
+    /// 
+    /// FIXED: Lakes are now DISABLED because the previous implementation was broken:
+    /// - Lake noise was evaluated per-column independently, creating random water patches
+    /// - Lake water levels varied per-column based on individual terrain height  
+    /// - No check for actual terrain depression - water appeared on slopes
+    /// 
+    /// Water now ONLY appears in Ocean/DeepOcean biomes. Proper lake implementation would require:
+    /// 1. Find local terrain minima (columns lower than ALL neighbors)
+    /// 2. Flood-fill to determine lake basin extent
+    /// 3. Use uniform water level = max terrain height at basin edge
+    /// 4. Only fill columns where terrain &lt; basin water level
     /// </summary>
     private void BuildColumnWaterBodies()
     {
         var cont01 = climateCache.Continentalness01;
-        var lakeNoise = climateCache.LakeNoise01;
         
         for (var i = 0; i < ColumnCount; i++)
         {
             var continentalness01 = cont01[i];
-            var terrainHeight = columnHeightInts[i];
             var baseHeight = columnHeights[i];
             
             // Check ocean first - continentalness below threshold
@@ -411,27 +420,13 @@ internal sealed class CpuTerrainGenerator
                 continue;
             }
             
-            // Check lake - must be on land and pass noise threshold
-            if (continentalness01 >= config.LakeMinContinentalness && lakeNoise[i] > config.LakeThreshold)
-            {
-                // Lake water level is terrain-relative
-                var depthFactor = (lakeNoise[i] - config.LakeThreshold) / (1f - config.LakeThreshold);
-                var lakeWaterLevel = baseHeight + 1f + depthFactor * config.LakeMaxDepth;
-                
-                // Lake only forms if terrain dips below the lake level
-                if (terrainHeight < lakeWaterLevel)
-                {
-                    columnWaterBody[i] = WaterBodyInfo.Lake(lakeWaterLevel);
-                }
-                else
-                {
-                    // Terrain is above lake level - no lake here
-                    columnWaterBody[i] = WaterBodyInfo.None;
-                }
-                continue;
-            }
+            // LAKES DISABLED: The per-column noise-based lake detection was fundamentally broken.
+            // It created random water patches on hillsides instead of coherent lake basins.
+            // Lakes should be implemented as a separate terrain feature pass using flood-fill
+            // to find actual terrain depressions and fill them with uniform water levels.
+            // For now, water only appears in Ocean biomes.
             
-            // No water body at this column
+            // No water body at this column (lakes disabled)
             columnWaterBody[i] = WaterBodyInfo.None;
         }
         ComputeOceanAdjacency();
@@ -1160,7 +1155,10 @@ internal sealed class CpuTerrainGenerator
     }
 
     /// <summary>
-    /// Carve an ellipsoid shape into the cave mask at the specified position.
+    /// Carve a proper cave entrance tunnel using an expanding ellipsoid.
+    /// The entrance FLOOR starts at the cave floor level and gradually RISES toward the terrain surface.
+    /// This creates a walkable ramp from inside the cave to outside.
+    /// Continue carving until the entrance floor reaches terrain surface level.
     /// </summary>
     private void CarveEllipsoid(float centerX, float centerY, float centerZ, float radiusH, float radiusV)
     {
@@ -1659,6 +1657,12 @@ internal sealed class CpuTerrainGenerator
     /// 
     /// SINGLE SOURCE OF TRUTH: Uses columnWaterBody[] for water body detection instead of
     /// recalculating isOceanArea/isLakeArea. This ensures consistency with biome selection.
+    /// 
+    /// WATER PLACEMENT RULES:
+    /// - Water ONLY appears in columns where waterBody.HasWater is true (Ocean biomes only, lakes disabled)
+    /// - columnHasAdjacentOcean is ONLY used for Beach biome selection, NOT water block placement
+    /// - Caves are always dry - no water fills underground even if below global water level
+    /// - Non-water biomes never get water blocks, even when digging below Y=35
     /// </summary>
     private BlockId GenerateBlock(
         int height,
@@ -1674,49 +1678,46 @@ internal sealed class CpuTerrainGenerator
         BiomeDefinition? biomeDef)
     {
         // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
-        // This is the same data used by BiomeSelector, ensuring consistency
+        // Water ONLY exists where the water body type explicitly says so (Ocean biomes)
         var waterBody = columnWaterBody[columnIndex];
-        var isOceanArea = waterBody.IsOcean;
-        var isLakeArea = waterBody.IsLake;
-        var lakeWaterLevel = waterBody.WaterLevel;
+        var hasWaterHere = waterBody.HasWater;
+        var localWaterLevel = waterBody.WaterLevel;
         
         // Optimization: If we are significantly above the base height + overhang range,
         // the density will definitely be negative (air).
         // This avoids density calculations for the empty sky.
         if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
         {
-            // Only place water in ocean areas OR lake areas
-            // FIX: Allow water filling if adjacent to ocean, even if this column is technically Land.
-            if (y <= VoxelHelper.WaterLevel && (isOceanArea || columnHasAdjacentOcean[columnIndex]))
+            // Water ONLY in columns that have water body (Ocean biomes)
+            if (hasWaterHere && y <= localWaterLevel)
+            {
                 return BlockId.Water;
-            // Lake water fills where terrain is BELOW the lake level
-            // Water appears where y <= lakeWaterLevel AND y > height (above terrain surface)
-            if (isLakeArea && y <= lakeWaterLevel && y > height)
-                return BlockId.Water;
+            }
             return BlockId.Air;
         }
 
         // 1. Calculate 3D Density for THIS voxel
         var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
 
-        // 2. Density Check - If density is negative, it's air (or water in ocean/lake).
+        // 2. Density Check - If density is negative, it's air (or water in water body columns).
         if (density < 0f)
         {
-            if (y <= VoxelHelper.WaterLevel && (isOceanArea || columnHasAdjacentOcean[columnIndex]))
+            // Water fills air space ONLY in columns with water body
+            if (hasWaterHere && y <= localWaterLevel)
+            {
                 return BlockId.Water;
-            if (isLakeArea && y <= lakeWaterLevel && y > height)
-                return BlockId.Water;
+            }
             return BlockId.Air;
         }
 
-        var isLand = !isOceanArea;
+        // Block is solid - check cave carving
+        var isLand = !waterBody.IsOcean;
         var caveMask = GetColumnCaveMask(columnIndex);
         if (isLand && y > 0 && caveMask[y] != 0)
         {
-            if (y <= VoxelHelper.WaterLevel && (isOceanArea || columnHasAdjacentOcean[columnIndex]))
-                return BlockId.Water;
-            if (isLakeArea && y <= lakeWaterLevel && y > height)
-                return BlockId.Water;
+            // Cave carved this voxel - it becomes air
+            // CRITICAL: No water in carved caves, even if below global water level
+            // Caves are dry unless they breach into an ocean biome column
             return BlockId.Air;
         }
 
@@ -1740,17 +1741,9 @@ internal sealed class CpuTerrainGenerator
             return isSurface ? BlockId.Grass : BlockId.Stone;
         }
 
-        // Underwater detection for surface block selection:
-        // A block is "underwater" if the TERRAIN SURFACE at this column is below water level,
-        // meaning there's water above this solid block. This is NOT based on the current block's Y.
-        // 
-        // - Ocean areas: terrain surface (height) < WaterLevel means water fills above
-        // - Lake areas: terrain surface (height) < lakeWaterLevel means lake water fills above
-        // 
-        // IMPORTANT: Do NOT use (y <= WaterLevel) - that incorrectly marks subsurface blocks
-        // on land at Y=35 as underwater when the terrain surface is actually at Y=36+.
-        var isUnderwater = (isOceanArea && height < VoxelHelper.WaterLevel) || 
-                           (isLakeArea && height < lakeWaterLevel);
+        // Underwater detection: A block is "underwater" only if THIS COLUMN has water
+        // AND the terrain surface is below the local water level
+        var isUnderwater = hasWaterHere && height < localWaterLevel;
 
         // Surface block - now correctly detected even on overhangs
         if (isSurface)
@@ -1765,8 +1758,10 @@ internal sealed class CpuTerrainGenerator
             }
             
             // Coastal beach override: next to ocean, above water, within shoreline range
+            // Note: hasAdjacentOcean is ONLY used here for surface block type (Sand), NOT for water placement
             var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
-            if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
+            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
+            if (!isUnderwater && hasAdjacentOcean && atBeachHeight && !hasWaterHere)
             {
                 return BlockId.Sand;
             }
@@ -1811,8 +1806,10 @@ internal sealed class CpuTerrainGenerator
                 return BlockId.Dirt;
             }
             
+            // Beach subsurface: adjacent ocean, at beach height, not underwater
             var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
-            if (!isUnderwater && hasAdjacentOcean && y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange)
+            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
+            if (!isUnderwater && hasAdjacentOcean && atBeachHeight && !hasWaterHere)
             {
                 return BlockId.Sand;
             }
@@ -2004,20 +2001,21 @@ internal sealed class CpuTerrainGenerator
         // Simple 2D value noise
         var xi = (int)MathF.Floor(nx);
         var zi = (int)MathF.Floor(nz);
+
         var fx = nx - xi;
         var fz = nz - zi;
-        
+
         var c00 = Hash2D(xi, zi, seed);
         var c10 = Hash2D(xi + 1, zi, seed);
         var c01 = Hash2D(xi, zi + 1, seed);
         var c11 = Hash2D(xi + 1, zi + 1, seed);
-        
+
         var u = Fade(fx);
         var v = Fade(fz);
         
         var x0 = Lerp(c00, c10, u);
         var x1 = Lerp(c01, c11, u);
-        
+
         return Lerp(x0, x1, v);
     }
     

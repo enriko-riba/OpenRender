@@ -1750,6 +1750,108 @@ public sealed class ChunkStreamingManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Check if any cardinal neighbor (including above/below) of the given block is Water.
+    /// Used to determine if a broken block should be replaced with Water (simulating water flow).
+    /// </summary>
+    /// <param name="chunkIdx">The chunk index containing the block.</param>
+    /// <param name="localX">Local X coordinate within the chunk.</param>
+    /// <param name="localY">Local Y coordinate within the chunk.</param>
+    /// <param name="localZ">Local Z coordinate within the chunk.</param>
+    /// <param name="chunkData">The chunk's voxel data.</param>
+    /// <returns>True if any adjacent block is Water, false otherwise.</returns>
+    private bool HasAdjacentWaterBlock(int chunkIdx, int localX, int localY, int localZ, ChunkData chunkData)
+    {
+        // Check Y neighbors (above and below) - these are always within the same chunk
+        if (localY > 0 && chunkData.GetBlock(localX, localY - 1, localZ) == BlockId.Water)
+            return true;
+        if (localY < VoxelHelper.ChunkYSize - 1 && chunkData.GetBlock(localX, localY + 1, localZ) == BlockId.Water)
+            return true;
+
+        // Check X neighbors
+        if (localX > 0)
+        {
+            if (chunkData.GetBlock(localX - 1, localY, localZ) == BlockId.Water)
+                return true;
+        }
+        else
+        {
+            // Check neighbor chunk -X
+            var neighborIdx = GetNeighborChunkIndex(chunkIdx, -1, 0);
+            if (neighborIdx >= 0 && chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+            {
+                if (neighborData.GetBlock(VoxelHelper.ChunkSideSize - 1, localY, localZ) == BlockId.Water)
+                    return true;
+            }
+        }
+
+        if (localX < VoxelHelper.ChunkSideSize - 1)
+        {
+            if (chunkData.GetBlock(localX + 1, localY, localZ) == BlockId.Water)
+                return true;
+        }
+        else
+        {
+            // Check neighbor chunk +X
+            var neighborIdx = GetNeighborChunkIndex(chunkIdx, 1, 0);
+            if (neighborIdx >= 0 && chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+            {
+                if (neighborData.GetBlock(0, localY, localZ) == BlockId.Water)
+                    return true;
+            }
+        }
+
+        // Check Z neighbors
+        if (localZ > 0)
+        {
+            if (chunkData.GetBlock(localX, localY, localZ - 1) == BlockId.Water)
+                return true;
+        }
+        else
+        {
+            // Check neighbor chunk -Z
+            var neighborIdx = GetNeighborChunkIndex(chunkIdx, 0, -1);
+            if (neighborIdx >= 0 && chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+            {
+                if (neighborData.GetBlock(localX, localY, VoxelHelper.ChunkSideSize - 1) == BlockId.Water)
+                    return true;
+            }
+        }
+
+        if (localZ < VoxelHelper.ChunkSideSize - 1)
+        {
+            if (chunkData.GetBlock(localX, localY, localZ + 1) == BlockId.Water)
+                return true;
+        }
+        else
+        {
+            // Check neighbor chunk +Z
+            var neighborIdx = GetNeighborChunkIndex(chunkIdx, 0, 1);
+            if (neighborIdx >= 0 && chunkVoxelCache.TryGetChunkData(neighborIdx, out var neighborData) && neighborData != null)
+            {
+                if (neighborData.GetBlock(localX, localY, 0) == BlockId.Water)
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Get the chunk index of a neighbor chunk given a delta offset.
+    /// Returns -1 if the neighbor is out of world bounds.
+    /// </summary>
+    private static int GetNeighborChunkIndex(int chunkIdx, int dx, int dz)
+    {
+        var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
+        var nx = chunkX + dx;
+        var nz = chunkZ + dz;
+        if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+            return -1;
+        return nz * VoxelHelper.WorldChunksXZ + nx;
+    }
+
     public void ApplyBlockEdit(Vector3 worldPosition, BlockId blockId, bool isBreaking)
     {
         // Convert world position to chunk coordinates
@@ -1787,14 +1889,21 @@ public sealed class ChunkStreamingManager : IDisposable
                        localZ * VoxelHelper.ChunkSideSize +
                        localX;
 
-        // DEBUG: Verify index calculation
-        // Log.Debug($"ApplyBlockEdit: local({localX},{localY},{localZ}) -> voxelIdx {voxelIdx} (Y*256 + Z*16 + X)");
-
-        // Mark voxel as edited in edit mask
-        // FIX: If breaking a block underwater, replace with Water instead of Air
-        if (isBreaking && (int)worldPosition.Y <= VoxelHelper.WaterLevel)
+        // Water replacement logic for breaking blocks:
+        // Water should fill in when breaking a block ONLY if at least one cardinal neighbor 
+        // (including above/below) is a Water block. This simulates water flowing into the void.
+        // This allows:
+        // - Breaking blocks underwater in ocean -> water fills in
+        // - Breaking blocks on land/caves -> air (no water magically appears)
+        if (isBreaking && blockId == BlockId.Air)
         {
-            blockId = BlockId.Water;
+            if (chunkVoxelCache.TryGetChunkData(chunkIdx, out var checkData) && checkData != null)
+            {
+                if (HasAdjacentWaterBlock(chunkIdx, localX, localY, localZ, checkData))
+                {
+                    blockId = BlockId.Water;
+                }
+            }
         }
 
         // Check if this edit involves a light-emitting block (for proper light propagation to neighbors)

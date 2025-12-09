@@ -240,6 +240,8 @@ public enum BlockId : ushort
     SugarCane = 180,
     /// <summary>Bamboo - cross model.</summary>
     Bamboo = 181,
+    /// <summary>Grass patch - cross model, replaceable.</summary>
+    GrassPatch = 182,
 }
 
 /// <summary>

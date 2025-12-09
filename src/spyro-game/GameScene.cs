@@ -317,15 +317,6 @@ internal class GameScene : Scene
         {
             player.PlaceBlock();
         }
-
-        // Update underwater state
-        if (terrainRenderer != null)
-        {
-            // Hardcoded water level matching terrain-common.glsl (35) + 1 for surface
-            const float waterSurfaceLevel = 36.0f;
-            terrainRenderer.IsCameraUnderwater = camera!.Position.Y < waterSurfaceLevel;
-        }
-
         // Manual vertical movement (Shift=up, Ctrl=down) - resets accumulated Y velocity
         const float verticalSpeed = 25.0f; // blocks per second (increased from 15.0)
         if (SceneManager.KeyboardState.IsKeyDown(Keys.LeftShift) || SceneManager.KeyboardState.IsKeyDown(Keys.RightShift))

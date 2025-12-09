@@ -262,6 +262,7 @@ public static class BlockRegistry
         RegisterFlower(builder, BlockId.DeadBush);
         RegisterFlower(builder, BlockId.SugarCane);
         RegisterFlower(builder, BlockId.Bamboo);
+        RegisterFlower(builder, BlockId.GrassPatch);
 
         // Cactus (Solid but not full cube in MC, treating as full cube opaque for now)
         Register(builder, BlockId.Cactus, new(

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace SpyroGame.World.Generation;
 
 /// <summary>
@@ -104,7 +106,8 @@ internal sealed class VegetationGenerator(TerrainConfig config)
         switch (type)
         {
             case VegetationType.Grass:
-                PlacePlant(chunk, x, y, z, BlockId.TallGrass);
+            var grass = new [] { BlockId.TallGrass, BlockId.GrassPatch };
+                PlacePlant(chunk, x, y, z, grass[random.Next(grass.Length)]);
                 break;
             case VegetationType.Flower:
                 // Pick random flower
