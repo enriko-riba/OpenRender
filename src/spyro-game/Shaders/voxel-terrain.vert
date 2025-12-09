@@ -69,9 +69,9 @@ void main(){
         localPos.x += ox;
         localPos.z += oz;
 
-        // Apply random height variation (0% to 25% reduction)
+        // Apply random height variation (0% to 33% reduction)
         // Apply to all vertices to sink the model into the ground, preserving connections for stacked blocks
-        float oy = fract(hash * 43.719) * 0.25;
+        float oy = fract(hash * 43.719) * 0.33;
         localPos.y -= oy;
     }
 
@@ -144,14 +144,7 @@ void main(){
         else if (face == 3u) { relPos = vec3((corner==2u||corner==3u)?1:0, 0, (corner==0u||corner==3u)?1:0); } // -Y
         else if (face == 4u) { relPos = vec3((corner==0u||corner==1u)?1:0, (corner==1u||corner==2u)?1:0, 1); } // +Z
         else if (face == 5u) { relPos = vec3((corner==2u||corner==3u)?1:0, (corner==1u||corner==2u)?1:0, 0); } // -Z
-        
-        // Wait, the table in C# is:
-        // +X: (1,0,0), (1,1,0), (1,1,1), (1,0,1) -> c0: y0 z0, c1: y1 z0, c2: y1 z1, c3: y0 z1. Matches my logic.
-        // -X: (0,0,1), (0,1,1), (0,1,0), (0,0,0) -> c0: y0 z1, c1: y1 z1, c2: y1 z0, c3: y0 z0.
-        // +Y: (0,1,0), (0,1,1), (1,1,1), (1,1,0) -> c0: x0 z0, c1: x0 z1, c2: x1 z1, c3: x1 z0.
-        // -Y: (0,0,1), (0,0,0), (1,0,0), (1,0,1) -> c0: x0 z1, c1: x0 z0, c2: x1 z0, c3: x1 z1.
-        // +Z: (1,0,1), (1,1,1), (0,1,1), (0,0,1) -> c0: x1 y0, c1: x1 y1, c2: x0 y1, c3: x0 y0.
-        // -Z: (0,0,0), (0,1,0), (1,1,0), (1,0,0) -> c0: x0 y0, c1: x0 y1, c2: x1 y1, c3: x1 y0.
+       
         
         // Correct logic:
         if (face == 0u) relPos = vec3(1, (corner==1u||corner==2u)?1:0, (corner==2u||corner==3u)?1:0);
@@ -165,14 +158,14 @@ void main(){
         // The block origin is localPos - relPos.
         vec3 origin = localPos - relPos;
         
-        // We want to shrink the cube to 1/10th size (0.1).
+        // We want to shrink the cube to 1/5th size (0.2).
         // Center is origin + 0.5.
-        // New pos = Center + (relPos - 0.5) * 0.1.
-        //         = origin + 0.5 + (relPos - 0.5) * 0.1
-        //         = origin + 0.5 + relPos * 0.1 - 0.05
-        //         = origin + 0.45 + relPos * 0.1
+        // New pos = Center + (relPos - 0.5) * 0.2.
+        //         = origin + 0.5 + (relPos - 0.5) * 0.2
+        //         = origin + 0.5 + relPos * 0.2 - 0.05
+        //         = origin + 0.45 + relPos * 0.2
         
-        localPos = origin + vec3(0.45) + relPos * 0.1;
+        localPos = origin + vec3(0.45) + relPos * 0.2;
     }
 
     // Fix z-fighting for water: displace top surface downwards
