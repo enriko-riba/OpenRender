@@ -38,6 +38,8 @@ public enum BlockId : ushort
     Cobblestone = 5,
     /// <summary>Mossy cobblestone - solid, opaque.</summary>
     MossyCobblestone = 6,
+    /// <summary>Granite - solid, opaque.</summary>
+    Granite = 7,
 
     // --- Dirt/Grass (10-19) ---
     /// <summary>Dirt block - solid, opaque.</summary>

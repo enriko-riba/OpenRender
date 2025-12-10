@@ -172,33 +172,29 @@ internal static class ChunkMeshBuilder
                         var (dx, dy, dz) = FaceDirections[(int)face];
                         var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz);
                         
-                        // WATER FACE CULLING:
-                        // - Always render top face (+Y) for water surface
+                        // LIQUID FACE CULLING:
+                        // - Render top face (+Y) for water/lava surface ONLY when exposed to air/transparent
                         // - Render side/bottom faces when neighbor is air OR transparent (glass, ice, etc.)
-                        // - Never render faces between two water blocks
+                        // - Never render faces between two liquid blocks of the same type
                         // - Never render faces against opaque solid blocks (hidden anyway)
                         if (isLiquid)
                         {
                             var isTopFace = face == 2; // +Y
                             
-                            // Skip internal water-water faces
-                            if (neighborBlock.IsWater())
+                            // Skip internal liquid-liquid faces (same liquid type)
+                            if (neighborBlock.IsLiquid() && neighborBlock == block)
                             {
                                 continue;
                             }
                             
-                            // For non-top faces, only render if neighbor is see-through
-                            // This includes: air, glass, ice, leaves, etc.
-                            if (!isTopFace)
+                            // For ALL faces (including top), skip if neighbor is opaque solid
+                            // This prevents lava at Y=0 from rendering faces against bedrock at Y=1
+                            var neighborIsAir = neighborBlock.IsAir();
+                            var neighborIsTransparent = neighborBlock.IsTransparent();
+                            
+                            if (!neighborIsAir && !neighborIsTransparent)
                             {
-                                var neighborIsAir = neighborBlock.IsAir();
-                                var neighborIsTransparent = neighborBlock.IsTransparent();
-                                
-                                // Skip if neighbor is opaque (face would be hidden anyway)
-                                if (!neighborIsAir && !neighborIsTransparent)
-                                {
-                                    continue;
-                                }
+                                continue;
                             }
                         }
                         

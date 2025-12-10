@@ -1533,7 +1533,11 @@ public sealed class ChunkStreamingManager : IDisposable
             var desc = kvp.Value;
 
             // Don't unload chunks that are still in-flight (actively being processed)
+            // Decorating is included to prevent race condition where base terrain is unloaded
+            // before decoration job reads it from voxel cache
             if (desc.State is TerrainChunkState.Generating or
+                TerrainChunkState.Decorating or
+                TerrainChunkState.HasBaseTerrain or
                 TerrainChunkState.Pending or
                 TerrainChunkState.Processing)
                 continue;

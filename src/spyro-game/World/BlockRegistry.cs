@@ -114,6 +114,7 @@ public static class BlockRegistry
         RegisterOpaqueSolid(builder, BlockId.Bedrock);
         RegisterOpaqueSolid(builder, BlockId.Cobblestone);
         RegisterOpaqueSolid(builder, BlockId.MossyCobblestone);
+        RegisterOpaqueSolid(builder, BlockId.Granite);
 
         // === Dirt Types ===
         RegisterOpaqueSolid(builder, BlockId.Dirt);

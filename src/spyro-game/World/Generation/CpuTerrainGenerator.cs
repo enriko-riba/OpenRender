@@ -1703,13 +1703,13 @@ internal sealed class CpuTerrainGenerator
         var v = Fade(fy);
         var w = Fade(fz);
 
-        var x00 = Lerp(c000, c100, u);
-        var x10 = Lerp(c010, c110, u);
-        var x01 = Lerp(c001, c101, u);
-        var x11 = Lerp(c011, c111, u);
+        var x0 = Lerp(c000, c100, u);
+        var x1 = Lerp(c010, c110, u);
+        var x2 = Lerp(c001, c101, u);
+        var x3 = Lerp(c011, c111, u);
 
-        var y0 = Lerp(x00, x10, v);
-        var y1 = Lerp(x01, x11, v);
+        var y0 = Lerp(x0, x1, v);
+        var y1 = Lerp(x2, x3, v);
 
         return Lerp(y0, y1, w);
     }
@@ -1817,6 +1817,20 @@ internal sealed class CpuTerrainGenerator
         Span<float> overhangSlice,
         BiomeDefinition? biomeDef)
     {
+        // === HARDCODED BOTTOM LAYERS ===
+        // Y=0: Always lava (magma layer at the bottom of the world)
+        // Y=1: Always bedrock (impenetrable foundation layer)
+        // These layers are ONLY visible when there's air above them (e.g., in deep caves).
+        // The mesh builder will cull faces between adjacent solid blocks automatically.
+        if (y == 0)
+        {
+            return BlockId.Lava;
+        }
+        if (y == 1)
+        {
+            return BlockId.Bedrock;
+        }
+
         // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
         // Water ONLY exists where the water body type explicitly says so (Ocean biomes)
         var waterBody = columnWaterBody[columnIndex];

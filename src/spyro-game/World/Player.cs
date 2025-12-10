@@ -416,6 +416,17 @@ public class Player
         // Move Y
         position += deltaY;
         ResolveCollisionY();
+        
+        // === WORLD FLOOR LIMIT ===
+        // Prevent falling below Y=0 (the lava layer at the bottom of the world).
+        // Even though lava is non-solid, the player should stand on top of it.
+        const float WorldFloorY = 1.0f; // Stand on top of the lava layer (Y=0 is lava, Y=1 is bedrock)
+        if (position.Y < WorldFloorY)
+        {
+            position.Y = WorldFloorY;
+            velocity.Y = 0;
+            isGrounded = true;
+        }
     }
 
     private void ResolveCollisionXZ()
