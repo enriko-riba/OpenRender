@@ -285,9 +285,26 @@ public static class BlockIdExtensions
     public static bool IsEmissive(this BlockId block) => BlockRegistry.IsEmissive(block);
 
     /// <summary>
-    /// Returns true if this block is transparent (air or liquid - not solid and replaceable).
+    /// Returns true if this block is transparent (can be seen through).
+    /// Includes: air, liquids (water/lava), translucent solids (glass/ice), and alpha-test blocks (leaves).
+    /// Used for determining if faces should be rendered against this block.
     /// </summary>
-    public static bool IsTransparent(this BlockId block) => !block.IsSolid() || block.IsLiquid();
+    public static bool IsTransparent(this BlockId block)
+    {
+        // Air is always transparent
+        if (block == BlockId.Air) return true;
+        
+        // Liquids are transparent
+        if (block.IsLiquid()) return true;
+        
+        // Translucent blocks (glass, ice, water) are transparent
+        if (block.IsTranslucent()) return true;
+        
+        // Non-solid blocks (flowers, torches) are transparent
+        if (!block.IsSolid()) return true;
+        
+        return false;
+    }
 
     /// <summary>
     /// Returns true if this block is water.

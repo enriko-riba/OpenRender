@@ -388,6 +388,36 @@ public sealed class TerrainConfig
     /// </summary>
     public float ShorelineRange { get; set; } = 2f;
     
+    // === BEACH SYSTEM (Variable Width) ===
+    
+    /// <summary>
+    /// Maximum beach width in blocks around ocean edges.
+    /// Beach width varies between 1 block (minimum) and this value based on noise.
+    /// - 12 (default): Wide beaches with natural variation
+    /// - 4: Narrow beaches
+    /// - 16: Very wide beaches
+    /// Only applies to ocean coastlines; rivers/lakes use 1-block adjacency.
+    /// </summary>
+    public float BeachMaxWidth { get; set; } = 12f;
+    
+    /// <summary>
+    /// Frequency of beach width noise (inverse of feature size in blocks).
+    /// Controls the scale of beach width variation along coastlines.
+    /// - 1/60 (default): ~60 block features (blobby coastline variations)
+    /// - 1/100: Larger, smoother beach width zones
+    /// - 1/30: Smaller, more frequent width changes
+    /// </summary>
+    public float BeachNoiseScale { get; set; } = 1f / 60f;
+    
+    /// <summary>
+    /// Strength of noise influence on beach width [0, 1].
+    /// Controls how much the beach width varies from the mean.
+    /// - 0.8 (default): Strong variation (beaches range from narrow to wide)
+    /// - 0.5: Moderate variation
+    /// - 1.0: Maximum variation
+    /// </summary>
+    public float BeachNoiseStrength { get; set; } = 0.8f;
+    
     /// <summary>
     /// Depth in blocks of the subsurface layer below surface (e.g., dirt under grass).
     /// Example: 4 means 4 blocks of subsurface material below the surface before deep stone.
@@ -464,11 +494,11 @@ public sealed class TerrainConfig
         }
     }
 
+    private readonly System.Text.Json.JsonSerializerOptions options = new() { WriteIndented = true };
     public void Save(string path)
     {
         try
         {
-            var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
             var json = System.Text.Json.JsonSerializer.Serialize(this, options);
             File.WriteAllText(path, json);
         }
@@ -567,57 +597,54 @@ public sealed class TerrainConfig
         public float OverhangFalloffRange;
     }
 
-    public TerrainGenerationParams GetGenerationParams()
+    public TerrainGenerationParams GetGenerationParams() => new()
     {
-        return new TerrainGenerationParams
-        {
-            Seed = (uint)Seed,
-            WorldScale = WorldScale,
-            MacroScale = 1.0f,
-            ContinentalnessScale = Continentalness.BaseScale,
-            ErosionScale = Erosion.BaseScale,
-            PeaksValleysScale = PeaksValleys.BaseScale,
-            WarpScale = WarpScale,
-            WarpStrength = WarpStrength,
-            BaseTemperature = BaseTemperature,
-            TemperatureLapseRate = LapseRate,
-            BaseHumidity = BaseHumidity,
-            CoastDrying = CoastDrying,
-            TemperatureScale = Temperature.BaseScale,
-            HumidityScale = Humidity.BaseScale,
-            WeirdnessScale = Weirdness.BaseScale,
-            RegionCellSize = BiomeRegions.CellSizeChunks,
-            RegionJitter = BiomeRegions.JitterStrength,
-            RegionFeatherWidth = BiomeRegions.FeatherWidth,
-            MaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
-            CheeseFrequency = Caves.CheeseFrequency,
-            CheeseAmplitude = Caves.CheeseAmplitude,
-            SpaghettiFrequency = Caves.SpaghettiFrequency,
-            SpaghettiAmplitude = Caves.SpaghettiAmplitude,
-            CaveCarveThreshold = Caves.CarveThreshold,
-            CurlScale = Caves.CurlScale,
-            CurlStrength = Caves.CurlStrength,
-            CoastThreshold = CoastThreshold,
-            MountainThreshold = MountainThreshold,
-            CliffFrequency = CliffFrequency,
-            CliffAmplitude = CliffAmplitude,
-            OverhangFrequency = OverhangFrequency,
-            OverhangAmplitude = OverhangAmplitude,
-            ShorelineRange = ShorelineRange,
-            SubsurfaceDepth = SubsurfaceDepth,
-            CaveDepthFade = CaveDepthFade,
-            CaveSlopeFadeMin = CaveSlopeFade.Min,
-            CaveSlopeFadeMax = CaveSlopeFade.Max,
-            CaveFloodExtension = CaveFloodingExtension,
-            OceanThreshold = OceanThreshold,
-            DeepOceanThreshold = DeepOceanThreshold,
-            AlpineElevation = AlpineElevation,
-            CoastRange = CoastRange,
-            OverhangDepthRange = OverhangDepthRange,
-            OverhangHeightRange = OverhangHeightRange,
-            OverhangFalloffRange = OverhangFalloffRange,
-        };
-    }
+        Seed = (uint)Seed,
+        WorldScale = WorldScale,
+        MacroScale = 1.0f,
+        ContinentalnessScale = Continentalness.BaseScale,
+        ErosionScale = Erosion.BaseScale,
+        PeaksValleysScale = PeaksValleys.BaseScale,
+        WarpScale = WarpScale,
+        WarpStrength = WarpStrength,
+        BaseTemperature = BaseTemperature,
+        TemperatureLapseRate = LapseRate,
+        BaseHumidity = BaseHumidity,
+        CoastDrying = CoastDrying,
+        TemperatureScale = Temperature.BaseScale,
+        HumidityScale = Humidity.BaseScale,
+        WeirdnessScale = Weirdness.BaseScale,
+        RegionCellSize = BiomeRegions.CellSizeChunks,
+        RegionJitter = BiomeRegions.JitterStrength,
+        RegionFeatherWidth = BiomeRegions.FeatherWidth,
+        MaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
+        CheeseFrequency = Caves.CheeseFrequency,
+        CheeseAmplitude = Caves.CheeseAmplitude,
+        SpaghettiFrequency = Caves.SpaghettiFrequency,
+        SpaghettiAmplitude = Caves.SpaghettiAmplitude,
+        CaveCarveThreshold = Caves.CarveThreshold,
+        CurlScale = Caves.CurlScale,
+        CurlStrength = Caves.CurlStrength,
+        CoastThreshold = CoastThreshold,
+        MountainThreshold = MountainThreshold,
+        CliffFrequency = CliffFrequency,
+        CliffAmplitude = CliffAmplitude,
+        OverhangFrequency = OverhangFrequency,
+        OverhangAmplitude = OverhangAmplitude,
+        ShorelineRange = ShorelineRange,
+        SubsurfaceDepth = SubsurfaceDepth,
+        CaveDepthFade = CaveDepthFade,
+        CaveSlopeFadeMin = CaveSlopeFade.Min,
+        CaveSlopeFadeMax = CaveSlopeFade.Max,
+        CaveFloodExtension = CaveFloodingExtension,
+        OceanThreshold = OceanThreshold,
+        DeepOceanThreshold = DeepOceanThreshold,
+        AlpineElevation = AlpineElevation,
+        CoastRange = CoastRange,
+        OverhangDepthRange = OverhangDepthRange,
+        OverhangHeightRange = OverhangHeightRange,
+        OverhangFalloffRange = OverhangFalloffRange,
+    };
 }
 
 /// <summary>

@@ -97,29 +97,24 @@ internal sealed class BiomeSelector
         // Lake biome is handled at block level, not biome level
         // But we need to know if this is a lake area for terrain type filtering
         
-        // Coast detection: Beach biome ONLY appears where:
-        // 1. There IS nearby ocean water (continentalness just above threshold)
-        // 2. Terrain is at or just above water level
-        // 3. The column itself is NOT underwater
+        // Coast detection: Beach biome appears where:
+        // 1. There IS actually adjacent ocean water (hasAdjacentOcean == true)
+        // 2. The column itself is NOT underwater
+        // 3. The column is NOT a cliff (not too high above water level)
         //
-        // CRITICAL FIX: We also need adjacent ocean water to exist.
-        // Without water body info from neighbors, we use continentalness as proxy:
-        // If continentalness is JUST above threshold, ocean is nearby.
-        // But we also require terrain to be LOW (near water level).
-        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
+        // CRITICAL FIX: Beach requires ACTUAL adjacent ocean, not just continentalness proximity.
+        // Cliffs (terrain high above water) should NOT become beach even if adjacent to ocean.
+        // Use a cliff threshold: if terrain is more than ~10 blocks above water, it's a cliff.
+        var cliffThreshold = 10f;  // Blocks above water level where terrain is considered a cliff
+        var isOnCliff = altitudeAboveWater > cliffThreshold;
         
-        // Allow beach on both sides of the threshold (land side and "dry ocean" side)
-        // This ensures beaches appear even if the noise puts us slightly in the "ocean" zone but we are dry land
-        var isNearOceanByContinentalness = contDistance < _coastRange;
-        
-        var isNearWaterHeight = altitudeAboveWater >= 0 && altitudeAboveWater <= _shorelineRange;
-        
-        // Coast is ONLY valid if:
+        // Coast is valid if:
         // - Not underwater (this column)
-        // - Near ocean by continentalness OR adjacent to ocean water
-        // - Terrain is low (at beach height)
+        // - Not in an ocean column itself
+        // - Adjacent to ACTUAL ocean water
+        // - NOT on a cliff (too high above water)
         // - NOT in a lake area (lakes have their own biome handling)
-        var isCoastal = !isUnderwater && !isOceanic && isNearWaterHeight && !isLake && (hasAdjacentOcean || isNearOceanByContinentalness);
+        var isCoastal = !isUnderwater && !isOceanic && !isOnCliff && !isLake && hasAdjacentOcean;
         
         var isMountain = altitudeAboveWater > _alpineElevation;
         
@@ -226,13 +221,10 @@ internal sealed class BiomeSelector
         var altitudeAboveWater = actualHeight - VoxelHelper.WaterLevel;
         var isOceanic = continentalness01 < _oceanThreshold;
         
-        // Distance from ocean threshold - used for coast detection
-        var contDistance = MathF.Abs(continentalness01 - _oceanThreshold);
-        
-        // FIXED: Coast requires BOTH proximity to ocean (by continentalness) AND low elevation
-        var isNearOceanByContinentalness = contDistance <= _coastRange;
-        var isNearWaterHeight = altitudeAboveWater <= _shorelineRange;
-        var isCoastal = !isUnderwater && !isOceanic && isNearOceanByContinentalness && isNearWaterHeight;
+        // NOTE: This method lacks hasAdjacentOcean parameter (from water body info),
+        // so coastal detection is DISABLED here. Use SelectPrimary for accurate biome selection.
+        // Blending will treat coast areas as regular land for fallback biome calculation.
+        var isCoastal = false;  // Cannot reliably detect coast without water body adjacency info
         
         var isMountain = altitudeAboveWater > _alpineElevation;
         

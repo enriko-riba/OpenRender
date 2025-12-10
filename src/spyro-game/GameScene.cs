@@ -539,7 +539,7 @@ internal class GameScene : Scene
                     var tempZone = T < 0.3f ? "Cold" : T > 0.7f ? "Hot" : "Temperate";
                     var moistZone = H < 0.3f ? "Dry" : H > 0.7f ? "Humid" : "Moderate";
                     // Use actual terrain config thresholds for consistency
-                    var config = streamingManager?.Config;
+                    var config = streamingManager!.Config;
                     string landType;
 
                     // FIXED: First check actual biome ID for Lake - it takes priority over terrain classification
@@ -549,7 +549,7 @@ internal class GameScene : Scene
                     {
                         landType = "Lake";
                     }
-                    else if (actualBiome == BiomeId.Ocean || actualBiome == BiomeId.DeepOcean)
+                    else if (actualBiome is BiomeId.Ocean or BiomeId.DeepOcean)
                     {
                         landType = "Ocean";
                     }

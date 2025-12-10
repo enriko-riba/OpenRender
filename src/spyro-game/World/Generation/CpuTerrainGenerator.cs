@@ -39,15 +39,19 @@ internal sealed class CpuTerrainGenerator
     private readonly float[] column3DFactor = new float[ColumnCount];  // Phase 4: Weirdness-based 3D strength
     private readonly float[] columnSlope = new float[ColumnCount];
     private static readonly (int dx, int dz)[] EntranceNeighborOffsets =
-    {
+    [
         (1, 0), (-1, 0), (0, 1), (0, -1),
         (1, 1), (1, -1), (-1, 1), (-1, -1)
-    };
+    ];
     
     // SINGLE SOURCE OF TRUTH: Per-column water body info computed ONCE in PrepareChunkCaches
     // Used by both biome selection AND block generation for consistency
     private readonly WaterBodyInfo[] columnWaterBody = new WaterBodyInfo[ColumnCount];
-    private readonly bool[] columnHasAdjacentOcean = new bool[ColumnCount];
+    
+    // Beach system: distance to nearest ocean (in blocks) and noise-modulated beach threshold
+    // For varying beach widths around oceans. Rivers/lakes use simple 1-block adjacency.
+    private readonly float[] columnOceanDistance = new float[ColumnCount];
+    private readonly float[] columnBeachThreshold = new float[ColumnCount];
     
     private readonly float[] scratch2DA = new float[ColumnCount];
     private readonly float[] scratch2DB = new float[ColumnCount];
@@ -481,23 +485,159 @@ internal sealed class CpuTerrainGenerator
     }
 
     /// <summary>
-    /// Compute adjacency flags to know if a land column touches ocean.
+    /// Compute distance to nearest ocean column for beach width calculation.
+    /// Uses a flood-fill approach to find minimum Manhattan distance to any ocean column.
+    /// Also computes per-column beach threshold using noise for natural variation.
+    /// 
+    /// Beach width varies based on:
+    /// - Base beach width from config (BeachMaxWidth)
+    /// - Noise modulation for organic, irregular coastlines
+    /// - Only ocean water creates wide beaches (rivers/lakes remain 1-block)
     /// </summary>
     private void ComputeOceanAdjacency()
     {
+        // Initialize distances: 0 for ocean, MaxValue for land
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            columnOceanDistance[i] = columnWaterBody[i].IsOcean ? 0f : float.MaxValue;
+        }
+        
+        // Multi-pass flood fill to compute minimum distance to ocean
+        // Each pass propagates distance from ocean outward
+        const int maxBeachSearchRadius = 12; // Maximum beach width to consider
+        for (var pass = 0; pass < maxBeachSearchRadius; pass++)
+        {
+            var changed = false;
+            for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+            {
+                for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+                {
+                    var idx = lz * VoxelHelper.ChunkSideSize + lx;
+                    var currentDist = columnOceanDistance[idx];
+                    
+                    // Check 4 neighbors and update if shorter path found
+                    if (lz > 0)
+                    {
+                        var neighborDist = columnOceanDistance[(lz - 1) * VoxelHelper.ChunkSideSize + lx];
+                        if (neighborDist + 1f < currentDist)
+                        {
+                            columnOceanDistance[idx] = neighborDist + 1f;
+                            changed = true;
+                        }
+                    }
+                    if (lz < VoxelHelper.ChunkSideSize - 1)
+                    {
+                        var neighborDist = columnOceanDistance[(lz + 1) * VoxelHelper.ChunkSideSize + lx];
+                        if (neighborDist + 1f < currentDist)
+                        {
+                            columnOceanDistance[idx] = neighborDist + 1f;
+                            changed = true;
+                        }
+                    }
+                    if (lx > 0)
+                    {
+                        var neighborDist = columnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx - 1)];
+                        if (neighborDist + 1f < currentDist)
+                        {
+                            columnOceanDistance[idx] = neighborDist + 1f;
+                            changed = true;
+                        }
+                    }
+                    if (lx < VoxelHelper.ChunkSideSize - 1)
+                    {
+                        var neighborDist = columnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx + 1)];
+                        if (neighborDist + 1f < currentDist)
+                        {
+                            columnOceanDistance[idx] = neighborDist + 1f;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if (!changed) break; // Converged early
+        }
+        
+        // Compute per-column beach threshold using noise for organic coastlines
+        // Beach appears where oceanDistance <= beachThreshold
+        var baseBeachWidth = config.BeachMaxWidth;
+        var beachNoiseScale = config.BeachNoiseScale;
+        var beachNoiseStrength = config.BeachNoiseStrength;
+        
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
             {
                 var idx = lz * VoxelHelper.ChunkSideSize + lx;
-                var hasOceanNeighbor = false;
-                if (lz > 0) hasOceanNeighbor |= columnWaterBody[(lz - 1) * VoxelHelper.ChunkSideSize + lx].IsOcean;
-                if (lz < VoxelHelper.ChunkSideSize - 1) hasOceanNeighbor |= columnWaterBody[(lz + 1) * VoxelHelper.ChunkSideSize + lx].IsOcean;
-                if (lx > 0) hasOceanNeighbor |= columnWaterBody[lz * VoxelHelper.ChunkSideSize + (lx - 1)].IsOcean;
-                if (lx < VoxelHelper.ChunkSideSize - 1) hasOceanNeighbor |= columnWaterBody[lz * VoxelHelper.ChunkSideSize + (lx + 1)].IsOcean;
-                columnHasAdjacentOcean[idx] = hasOceanNeighbor;
+                var wx = columnWorldX[idx];
+                var wz = columnWorldZ[idx];
+                
+                // Sample noise for beach width variation
+                // Use domain-warped noise for more organic shapes
+                var beachNoise = GetBeachNoise(wx, wz);
+                
+                // Beach threshold varies from ~1 block (minimum) to baseBeachWidth
+                // Noise modulates the width: high noise = wider beach, low noise = narrower
+                var threshold = 1f + (baseBeachWidth - 1f) * (0.5f + beachNoise * beachNoiseStrength);
+                columnBeachThreshold[idx] = Math.Max(1f, threshold);
             }
         }
+    }
+    
+    /// <summary>
+    /// Sample beach width noise at a world position.
+    /// Returns a value roughly in [-0.5, 0.5] range for modulating beach width.
+    /// Uses low-frequency noise with domain warp for organic, blobby coastline shapes.
+    /// </summary>
+    private float GetBeachNoise(float wx, float wz)
+    {
+        var scale = config.BeachNoiseScale;
+        var seed = terrainParams.Seed + 8500u;
+        
+        // Apply domain warp for more organic shapes
+        var warpX = ValueNoise2D(wx * scale * 0.7f, wz * scale * 0.7f, seed + 100u) * 20f;
+        var warpZ = ValueNoise2D(wx * scale * 0.7f + 100f, wz * scale * 0.7f, seed + 200u) * 20f;
+        
+        // Sample main beach noise with warped coordinates
+        var noise = ValueNoise2D((wx + warpX) * scale, (wz + warpZ) * scale, seed);
+        
+        // Return centered value
+        return noise - 0.5f;
+    }
+    
+    /// <summary>
+    /// Simple 2D value noise for beach width variation.
+    /// </summary>
+    private static float ValueNoise2D(float x, float z, uint seed)
+    {
+        var xi = (int)MathF.Floor(x);
+        var zi = (int)MathF.Floor(z);
+        
+        var fx = x - xi;
+        var fz = z - zi;
+        
+        var c00 = Hash2D(xi, zi, seed);
+        var c10 = Hash2D(xi + 1, zi, seed);
+        var c01 = Hash2D(xi, zi + 1, seed);
+        var c11 = Hash2D(xi + 1, zi + 1, seed);
+        
+        var u = Fade(fx);
+        var v = Fade(fz);
+        
+        var x0 = Lerp(c00, c10, u);
+        var x1 = Lerp(c01, c11, u);
+        
+        return Lerp(x0, x1, v);
+    }
+    
+    /// <summary>
+    /// Check if a column is within beach distance of ocean.
+    /// Returns true if the column should be considered coastal (for Beach biome).
+    /// </summary>
+    private bool IsWithinBeachDistance(int columnIndex)
+    {
+        var distance = columnOceanDistance[columnIndex];
+        var threshold = columnBeachThreshold[columnIndex];
+        return distance > 0f && distance <= threshold; // distance > 0 excludes ocean itself
     }
 
     private void BuildColumnCoordinates(int chunkX, int chunkZ)
@@ -794,7 +934,7 @@ internal sealed class CpuTerrainGenerator
                     pv01[columnIndex],
                     terrainHeight,
                     waterBody.Type,
-                    columnHasAdjacentOcean[columnIndex]);
+                    IsWithinBeachDistance(columnIndex));
                 
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
             }
@@ -1045,7 +1185,7 @@ internal sealed class CpuTerrainGenerator
                 
                 // Check roof thickness
                 var roofThickness = surfaceHeight - highestCaveY;
-                if (roofThickness < 3 || roofThickness > 20)
+                if (roofThickness is < 3 or > 20)
                 {
                     continue;
                 }
@@ -1757,11 +1897,11 @@ internal sealed class CpuTerrainGenerator
                 return BlockId.Stone;
             }
             
-            // Coastal beach override: next to ocean, above water, within shoreline range
-            // Note: hasAdjacentOcean is ONLY used here for surface block type (Sand), NOT for water placement
-            var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
+            // Coastal beach override: within variable beach width of ocean, above water, within shoreline range
+            // Note: Beach detection is distance-based for natural variation in beach width
+            var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            if (!isUnderwater && hasAdjacentOcean && atBeachHeight && !hasWaterHere)
+            if (!isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere)
             {
                 return BlockId.Sand;
             }
@@ -1806,10 +1946,10 @@ internal sealed class CpuTerrainGenerator
                 return BlockId.Dirt;
             }
             
-            // Beach subsurface: adjacent ocean, at beach height, not underwater
-            var hasAdjacentOcean = columnHasAdjacentOcean[columnIndex];
+            // Beach subsurface: within beach distance of ocean, at beach height, not underwater
+            var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            if (!isUnderwater && hasAdjacentOcean && atBeachHeight && !hasWaterHere)
+            if (!isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere)
             {
                 return BlockId.Sand;
             }

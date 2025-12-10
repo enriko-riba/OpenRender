@@ -178,9 +178,55 @@ void main(){
         localPos = origin + vec3(0.45) + relPos * 0.2;
     }
 
-    // Fix z-fighting for water: displace top surface downwards
-    if (blockId == 1u && face == FACE_POS_Y) {
-        localPos.y -= 0.15;
+    // ==================== WATER SURFACE DISPLACEMENT ====================
+    // Water blocks need special handling to avoid z-fighting and visual artifacts.
+    //
+    // PROBLEM: Water top faces at Y=N would z-fight with blocks placed at Y=N.
+    // SOLUTION: Lower the water surface by 0.15 blocks.
+    //
+    // COMPLICATION: If we lower the top face, the side faces need adjustment too,
+    // otherwise they would stick above the lowered surface.
+    //
+    // ADDITIONAL COMPLICATION: For stacked water (multiple water blocks vertically),
+    // we can't just lower ALL side face top vertices - that would create gaps/overlaps
+    // at each water block boundary when viewed through glass.
+    //
+    // SOLUTION: The mesh builder sets a "topmost water" flag (bit 0 of offsetSeed)
+    // for water blocks that have no water above them. Only these blocks get the
+    // side face vertex adjustment.
+    //
+    // offsetSeed bit layout for WATER blocks (blockId == 1):
+    //   - Bit 0: "Is topmost water" flag (1 = no water above this block)
+    //   - Bits 1-4: Reserved
+    //
+    // See ChunkMeshBuilder.PackVertexPosition() for full bit layout documentation.
+    // =====================================================================
+    if (blockId == 1u) {
+        bool isTopmostWater = (offsetSeed & 1u) != 0u;
+        
+        if (face == FACE_POS_Y) {
+            // Top face (+Y): Always lower all vertices by 0.15
+            // This prevents z-fighting with blocks placed at the same Y level
+            localPos.y -= 0.15;
+        } else if (face != FACE_NEG_Y && isTopmostWater) {
+            // Side faces (+X, -X, +Z, -Z) of TOPMOST water only:
+            // Lower the top vertices (corners 1 and 2) to match the lowered surface.
+            // 
+            // Why only topmost? Stacked water blocks would have overlapping/gapped
+            // side faces at each boundary if we lowered all of them. The mesh builder
+            // only emits side faces for water touching air anyway, so only the topmost
+            // water's side faces are visible at the water column edge.
+            //
+            // Corner mapping for side faces (from FaceCornerOffsets):
+            //   Face 0 (+X): corners 1,2 have y=1 (top)
+            //   Face 1 (-X): corners 1,2 have y=1 (top)
+            //   Face 4 (+Z): corners 1,2 have y=1 (top)
+            //   Face 5 (-Z): corners 1,2 have y=1 (top)
+            if (corner == 1u || corner == 2u) {
+                localPos.y -= 0.15;
+            }
+        }
+        // Bottom face (-Y): No adjustment needed
     }
 
     vec3 worldPos=vec3(float(cx*16),0.0,float(cz*16))+localPos;

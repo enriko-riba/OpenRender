@@ -169,16 +169,39 @@ internal static class ChunkMeshBuilder
 
                     for (uint face = 0; face < FaceDirections.Length; face++)
                     {
-                        // WATER OPTIMIZATION: Only render top face (+Y, face index 2) for liquids
-                        // This creates a flat water surface without "water curtain" artifacts
-                        // Skip side faces (0,1,4,5) and bottom face (3) for water
-                        if (isLiquid && face != 2) // 2 = +Y (top face)
-                        {
-                            continue;
-                        }
-
                         var (dx, dy, dz) = FaceDirections[(int)face];
                         var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz);
+                        
+                        // WATER FACE CULLING:
+                        // - Always render top face (+Y) for water surface
+                        // - Render side/bottom faces when neighbor is air OR transparent (glass, ice, etc.)
+                        // - Never render faces between two water blocks
+                        // - Never render faces against opaque solid blocks (hidden anyway)
+                        if (isLiquid)
+                        {
+                            var isTopFace = face == 2; // +Y
+                            
+                            // Skip internal water-water faces
+                            if (neighborBlock.IsWater())
+                            {
+                                continue;
+                            }
+                            
+                            // For non-top faces, only render if neighbor is see-through
+                            // This includes: air, glass, ice, leaves, etc.
+                            if (!isTopFace)
+                            {
+                                var neighborIsAir = neighborBlock.IsAir();
+                                var neighborIsTransparent = neighborBlock.IsTransparent();
+                                
+                                // Skip if neighbor is opaque (face would be hidden anyway)
+                                if (!neighborIsAir && !neighborIsTransparent)
+                                {
+                                    continue;
+                                }
+                            }
+                        }
+                        
                         if (!ShouldEmitFace(block, neighborBlock))
                         {
                             continue;
@@ -361,6 +384,30 @@ internal static class ChunkMeshBuilder
             Log.Debug($"AppendFace: chunk={sampler.GetChunkIndex()} block=({x},{y},{z}) face={face} light=[0x{light[0]:X2},0x{light[1]:X2},0x{light[2]:X2},0x{light[3]:X2}] avgBlock={avgBlock}");
         }
 
+        // WATER TOPMOST FLAG:
+        // For water blocks, we need to tell the shader if this is the topmost water block
+        // in a column. The shader uses this to lower the top vertices of side faces by 0.15
+        // to match the lowered water surface (which prevents z-fighting).
+        // 
+        // Why only topmost? If we lowered ALL water side faces, stacked water blocks would
+        // have gaps/overlaps at each boundary. By only lowering the topmost, the water
+        // column renders correctly:
+        // - Topmost water: side faces have lowered top vertices matching the surface
+        // - Lower water: side faces are full height (but not visible - occluded by water above)
+        //
+        // Edge case: Glass wall next to water column - only the topmost water's side face
+        // is visible through glass, and it correctly matches the lowered surface.
+        uint offsetSeed = 0;
+        if (block.IsWater())
+        {
+            var blockAbove = sampler.SampleBlock(x, y + 1, z);
+            var isTopmostWater = !blockAbove.IsWater();
+            if (isTopmostWater)
+            {
+                offsetSeed = 1u; // Bit 0 = "is topmost water" flag
+            }
+        }
+
         for (uint corner = 0; corner < 4; corner++)
         {
             var (ox, oy, oz) = offsets[corner];
@@ -368,7 +415,7 @@ internal static class ChunkMeshBuilder
             var vy = y + oy;
             var vz = z + oz;
             
-            vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner));
+            vertexScratch.Add(PackVertexPosition(vx, vy, vz, face, ao[(int)corner], corner, offsetSeed));
             vertexScratch.Add(PackVertexAttributes(block, light[(int)corner], biome));
         }
 
@@ -527,6 +574,31 @@ internal static class ChunkMeshBuilder
         for (uint f = 0; f < 6; f++) AddFace(f);
     }
 
+    /// <summary>
+    /// Pack vertex position and metadata into a single uint.
+    /// 
+    /// Bit layout (32 bits total):
+    /// - Bits 0-4:   X position within chunk (5 bits, 0-31)
+    /// - Bits 5-13:  Y position (9 bits, 0-511)
+    /// - Bits 14-18: Z position within chunk (5 bits, 0-31)
+    /// - Bits 19-21: Face index (3 bits, 0-6 where 6=billboard)
+    /// - Bits 22-24: Ambient occlusion (3 bits, 0-7)
+    /// - Bits 25-26: Corner index (2 bits, 0-3)
+    /// - Bits 27-31: Offset seed (5 bits, usage depends on block type):
+    ///   
+    ///   For BILLBOARDS (face == 6):
+    ///     - Bits 0-3: Random variation seed for X/Z offset (0-15)
+    ///     - Bit 4: "Is top of stack" flag for height shrinking
+    ///   
+    ///   For WATER blocks (blockId == 1):
+    ///     - Bit 0: "Is topmost water" flag (1 = this water block has no water above)
+    ///              Used by shader to determine if side face top vertices should be lowered
+    ///              to match the lowered water surface. Only topmost water blocks need this
+    ///              adjustment to avoid visual artifacts when viewed through glass or at edges.
+    ///     - Bits 1-4: Reserved for future use
+    ///   
+    ///   For OTHER blocks: Currently unused (always 0)
+    /// </summary>
     private static uint PackVertexPosition(int x, int y, int z, uint face, uint ao, uint corner, uint offsetSeed = 0)
     {
         var ux = (uint)x & 0x1Fu;

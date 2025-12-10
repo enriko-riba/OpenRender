@@ -307,10 +307,48 @@ void main() {
                 baseColor.a = max(baseColor.a, opacityBoost);
             }
         } else {
-            // Side faces (underwater walls) - should not be generated but handle just in case
-            baseColor.rgb = mix(waterBaseColor, baseColor.rgb, 0.3);
-            float sideAlpha = clamp((dist - 2.0) / 15.0, 0.5, 0.95);
-            baseColor.a = sideAlpha;
+            // ==================== WATER SIDE FACES ====================
+            // Side faces are visible when water touches air or transparent blocks
+            // (caves, broken blocks, glass walls, edges).
+            // They should look consistent with the top surface to avoid visual discontinuity.
+            //
+            // Unlike top faces which have animated waves and fresnel effects,
+            // side faces use a simpler but matching visual style:
+            // - Same base water color and fog behavior
+            // - Matching alpha/transparency progression with distance
+            // - Same distance fog to limit visibility (CRITICAL for realism)
+            // - No wave animation (sides are vertical, waves would look wrong)
+            // ============================================================
+            
+            // Start with the same base water color as top faces
+            baseColor.rgb = mix(baseColor.rgb, waterBaseColor, 0.5);
+            baseColor.a = clamp(baseColor.a + nightOpacityBoost * 0.3, 0.0, 1.0);
+            
+            // Apply similar surface tint (no fresnel since we're looking at it from the side)
+            // Use a moderate tint that matches the average appearance of top faces
+            vec3 sideTint = vec3(0.12, 0.22, 0.35); // Slightly darker than top fresnel average
+            baseColor.rgb = mix(baseColor.rgb, sideTint, 0.5);
+            
+            // CRITICAL: Apply distance-based fog/absorption to limit visibility through side faces
+            // This is what creates the "wall of water" effect that prevents seeing to infinity
+            // Using same coefficient as top faces (0.10) for consistency
+            float absorption = exp(-dist * 0.10);
+            
+            // Blend color towards fog color based on absorption
+            // At distance 0: absorption=1.0, sees mostly baseColor
+            // At distance 30: absorption~0.05, sees mostly waterFogColor
+            baseColor.rgb = mix(waterFogColor, baseColor.rgb, absorption);
+            
+            // Alpha increases with distance to make water more opaque far away
+            // Close up: can see through somewhat (alpha ~0.75)
+            // Far away: nearly opaque (alpha ~0.98)
+            float alphaFade = clamp((dist - 2.0) / 20.0, 0.0, 1.0);
+            float minAlpha = 0.75; // Match the lower end of top face fresnel alpha
+            baseColor.a = mix(minAlpha, 0.98, alphaFade);
+            
+            // Additional opacity boost based on absorption (same as top face)
+            float opacityBoost = mix(0.60, 0.98, 1.0 - absorption);
+            baseColor.a = max(baseColor.a, opacityBoost);
         }
     }
 
