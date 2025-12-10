@@ -35,6 +35,9 @@ internal sealed class TerrainGenerationProfiler
         /// <summary>Block generation and collision spans.</summary>
         BlockGeneration,
         
+        /// <summary>Aquifer water level determination (Stage 3).</summary>
+        AquiferLookup,
+        
         /// <summary>Vegetation placement.</summary>
         Vegetation,
 
@@ -45,7 +48,7 @@ internal sealed class TerrainGenerationProfiler
         Total
     }
 
-    private const int StepCount = 8;
+    private const int StepCount = 9;
     private const int SampleBufferSize = 64; // Rolling average over last N chunks
 
     private readonly Stopwatch _stepTimer = new();

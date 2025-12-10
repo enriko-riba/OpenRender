@@ -85,6 +85,15 @@ internal sealed class CpuTerrainGenerator
     // Phase 0 Infrastructure: Climate cache and performance profiling
     private readonly ChunkClimateCache climateCache = new();
     private readonly TerrainGenerationProfiler profiler = new();
+    
+    // Stage 2: Biome-driven terrain density evaluation
+    private TerrainDensityEvaluator? densityEvaluator;
+    
+    // Stage 3: Deterministic aquifer system for water level lookup
+    private AquiferSystem? aquiferSystem;
+    
+    // Per-column biome definitions cache (avoids repeated lookups)
+    private readonly BiomeDefinition?[] columnBiomes = new BiomeDefinition?[ColumnCount];
 
     /// <summary>Gets the performance profiler for terrain generation.</summary>
     public TerrainGenerationProfiler Profiler => profiler;
@@ -108,6 +117,12 @@ internal sealed class CpuTerrainGenerator
         // Phase 3: Initialize allocation-free BiomeSelector
         biomeSelector = new BiomeSelector(config.Biomes);
         biomeSelector.UpdateConfig(config);
+        
+        // Stage 2: Initialize biome-driven density evaluator
+        densityEvaluator = new TerrainDensityEvaluator(config);
+        
+        // Stage 3: Initialize aquifer system for deterministic water levels
+        aquiferSystem = new AquiferSystem(config);
         
         climateCache.Invalidate();
     }
@@ -348,30 +363,45 @@ internal sealed class CpuTerrainGenerator
 
     private void PrepareChunkCaches(int chunkX, int chunkZ)
     {
-        // Phase 1: Sample climate cache - SINGLE POINT for all 2D climate noise
-        // The climate cache samples: Continentalness, Erosion, PeaksValleys, Temperature, Humidity, Weirdness
-        // using SIMD-batched operations. All subsequent code reads from this cache.
+        // ============================================================
+        // STAGE 1: Climate Sampling (Biome Assignment First)
+        // ============================================================
+        // Sample all climate noise ONCE using SIMD batching.
+        // These cached values are used by BOTH biome selection AND height calculation.
         profiler.BeginStep(TerrainGenerationProfiler.Step.ClimateSampling);
         climateCache.SampleForChunk(chunkX, chunkZ, config);
         BuildColumnCoordinates(chunkX, chunkZ);
-        BuildColumnSlopes();
         profiler.EndStep(TerrainGenerationProfiler.Step.ClimateSampling);
         
-        // Phase 1: Height calculation - uses cached climate values, samples additional detail noise
-        profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
-        BuildColumnFieldCaches();
-        profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
-        
-        // CRITICAL: Compute water body info BEFORE biome selection
-        // This is the SINGLE SOURCE OF TRUTH for water - used by both biome and block generation
-        BuildColumnWaterBodies();
-        
+        // ============================================================
+        // STAGE 1 (continued): Biome Selection BEFORE Height
+        // ============================================================
+        // Select biome for each column using climate values.
+        // This is the CORRECT Minecraft order: biomes drive terrain shape.
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
-        UpdateBiomeDataFromTerrainValues(); // Now uses columnWaterBody for consistency
-        // Refine ocean assignment using actual biome ids so global water level only applies where biome is Ocean
-        RefineWaterBodiesFromBiomes();
+        SelectBiomesFromClimate();
         profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
         
+        // ============================================================
+        // STAGE 2: Biome-Driven Height Calculation
+        // ============================================================
+        // Calculate terrain height using biome properties (BaseHeight, HeightVariation, etc.)
+        // Uses cached climate values (PV, Erosion) - NO re-sampling.
+        profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
+        BuildColumnHeightsFromBiomes();
+        BuildColumnSlopes();
+        profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
+        
+        // ============================================================
+        // Water Body Detection
+        // ============================================================
+        // Compute water body info using heights and biomes
+        BuildColumnWaterBodies();
+        RefineWaterBodiesFromBiomes();
+        
+        // ============================================================
+        // STAGE 5: 3D Noise for Caves/Overhangs
+        // ============================================================
         profiler.BeginStep(TerrainGenerationProfiler.Step.Noise3DSampling);
         BuildColumnVolumes();
         BuildCaveMaskVolume();
@@ -379,60 +409,257 @@ internal sealed class CpuTerrainGenerator
     }
     
     /// <summary>
-    /// SINGLE SOURCE OF TRUTH: Compute water body info for each column.
-    /// Must be called AFTER BuildColumnFieldCaches() (needs heights) and BEFORE UpdateBiomeDataFromTerrainValues().
-    /// The result is used by both biome selection and block generation to ensure consistency.
+    /// STAGE 1: Select biomes for each column using climate values.
+    /// This happens BEFORE height calculation - biomes drive terrain shape.
     /// 
-    /// FIXED: Lakes are now DISABLED because the previous implementation was broken:
-    /// - Lake noise was evaluated per-column independently, creating random water patches
-    /// - Lake water levels varied per-column based on individual terrain height  
-    /// - No check for actual terrain depression - water appeared on slopes
-    /// 
-    /// Water now ONLY appears in Ocean/DeepOcean biomes. Proper lake implementation would require:
-    /// 1. Find local terrain minima (columns lower than ALL neighbors)
-    /// 2. Flood-fill to determine lake basin extent
-    /// 3. Use uniform water level = max terrain height at basin edge
-    /// 4. Only fill columns where terrain &lt; basin water level
+    /// Uses cached climate values from ChunkClimateCache (no re-sampling).
     /// </summary>
-    private void BuildColumnWaterBodies()
+    private void SelectBiomesFromClimate()
     {
+        if (biomeSelector == null) return;
+        
+        // Initialize biome data structure
+        currentChunkBiome ??= new ChunkBiomeData();
+        
         var cont01 = climateCache.Continentalness01;
+        var temp01 = climateCache.Temperature01;
+        var humid01 = climateCache.Humidity01;
+        var erosion01 = climateCache.Erosion01;
+        var pv01 = climateCache.PeaksValleys01;
+        
+        // Copy climate values to local arrays for compatibility
+        var cachedCont01 = climateCache.Continentalness01;
+        var cachedErosion = climateCache.Erosion;
+        var cachedPeaks = climateCache.PeaksValleys;
+        var cachedWarpX = climateCache.WarpX;
+        var cachedWarpZ = climateCache.WarpZ;
         
         for (var i = 0; i < ColumnCount; i++)
         {
-            var continentalness01 = cont01[i];
-            var baseHeight = columnHeights[i];
-            
-            // Check ocean first - continentalness below threshold
-            if (continentalness01 < terrainParams.OceanThreshold)
+            columnContinentalness01[i] = cachedCont01[i];
+            columnContinentalness[i] = climateCache.Continentalness[i];
+            columnErosion[i] = cachedErosion[i];
+            columnPeaks[i] = cachedPeaks[i];
+            columnWarpX[i] = cachedWarpX[i];
+            columnWarpZ[i] = cachedWarpZ[i];
+        }
+        
+        // Select biome for each column based on climate values ONLY
+        // Note: We don't have height yet - biomes are selected from climate parameters
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
             {
-                // Ocean: only if terrain is actually below water level
-                // This prevents "dry ocean" where spline puts terrain above water
-                // FIX: Use baseHeight (float) < WaterLevel to determine if the surface is below water level.
-                // This is more precise than integer height and prevents "dry ocean" gaps where
-                // baseHeight is e.g. 34.9 (Ocean) but rounded height is 35 (Land).
-                if (baseHeight < VoxelHelper.WaterLevel)
+                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+                
+                // Select biome using ONLY climate parameters (Minecraft-style)
+                // Biome selection happens BEFORE height calculation - biomes DRIVE terrain shape
+                var biome = biomeSelector.Select(
+                    cont01[columnIndex],
+                    temp01[columnIndex],
+                    humid01[columnIndex],
+                    erosion01[columnIndex],
+                    pv01[columnIndex]);
+                
+                currentChunkBiome.SetBiomeAt(lx, lz, biome);
+                
+                // Cache biome definition for height calculation
+                columnBiomes[columnIndex] = GetBiomeDefinition((int)biome);
+            }
+        }
+        
+        // Update legacy 4x4 cell data for climate interpolation
+        UpdateLegacyBiomeCellData();
+    }
+    
+    /// <summary>
+    /// Estimate initial height from continentalness for biome selection.
+    /// This is used before biome-driven height calculation is complete.
+    /// </summary>
+    private float EstimateInitialHeight(float continentalness01)
+    {
+        // Use height spline as initial estimate
+        return SampleHeightSpline(continentalness01) + VoxelHelper.WaterLevel;
+    }
+    
+    /// <summary>
+    /// Update legacy 4x4 cell data for backward compatibility with climate interpolation systems.
+    /// </summary>
+    private void UpdateLegacyBiomeCellData()
+    {
+        if (currentChunkBiome == null) return;
+        
+        var temp01 = climateCache.Temperature01;
+        var humid01 = climateCache.Humidity01;
+        
+        for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
+        {
+            for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
+            {
+                var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
+
+                var centerLocalX = cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                var centerLocalZ = cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
+                var centerColumnIndex = centerLocalZ * VoxelHelper.ChunkSideSize + centerLocalX;
+
+                currentChunkBiome.Continentalness[cellIndex] = climateCache.Continentalness[centerColumnIndex];
+                currentChunkBiome.Erosion[cellIndex] = climateCache.Erosion[centerColumnIndex];
+                currentChunkBiome.PeaksValleys[cellIndex] = climateCache.PeaksValleys[centerColumnIndex];
+                currentChunkBiome.Temperature[cellIndex] = temp01[centerColumnIndex];
+                currentChunkBiome.Humidity[cellIndex] = humid01[centerColumnIndex];
+                
+                currentChunkBiome.BiomeIds[cellIndex] = currentChunkBiome.GetBiomeAt(centerLocalX, centerLocalZ);
+            }
+        }
+    }
+    
+    /// <summary>
+    /// STAGE 2: Calculate terrain heights using biome properties.
+    /// This is the core of the Minecraft-style pipeline - biomes DRIVE terrain shape.
+    /// 
+    /// Uses cached climate values (PV, Erosion) from Stage 1 - NO re-sampling.
+    /// </summary>
+    private void BuildColumnHeightsFromBiomes()
+    {
+        var shaping = config.TerrainShaping;
+        var cachedErosion01 = climateCache.Erosion01;
+        var cachedWeirdness = climateCache.Weirdness;
+        
+        // Sample additional detail noise for cliffs (still needed for mountain detail)
+        var xSpan = columnWorldX.AsSpan();
+        var zSpan = columnWorldZ.AsSpan();
+        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
+        
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            var biome = columnBiomes[i];
+            var cont01 = columnContinentalness01[i];
+            var pv = columnPeaks[i];
+            var erosion01 = cachedErosion01[i];
+            var weirdness = cachedWeirdness[i];
+            var absWeirdness = MathF.Abs(weirdness);
+            
+            float baseHeight;
+            
+            if (biome != null && densityEvaluator != null)
+            {
+                // STAGE 2: Use biome properties to calculate height
+                baseHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
+                
+                // Calculate 3D factor from weirdness + erosion
+                column3DFactor[i] = densityEvaluator.Calculate3DFactor(absWeirdness, erosion01);
+            }
+            else
+            {
+                // Fallback to spline-based calculation
+                baseHeight = SampleHeightSpline(cont01) + VoxelHelper.WaterLevel;
+                column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
+            }
+            
+            // Apply additional terrain detail for land areas
+            if (cont01 >= terrainParams.OceanThreshold)
+            {
+                var roughness = 1f - erosion01;
+                var coastDist = (cont01 - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
+                var effectiveCoastDist = 0.3f + coastDist * 0.7f;
+                
+                // Weirdness terrain variety
+                var weirdnessInfluence = weirdness * shaping.WeirdnessAmplitude * 
+                    (shaping.WeirdnessInfluenceBase + roughness * shaping.WeirdnessInfluenceRoughness) * effectiveCoastDist;
+                
+                if (absWeirdness > shaping.ExtremeWeirdnessThreshold)
                 {
-                    columnWaterBody[i] = WaterBodyInfo.Ocean();
+                    var extremeBoost = (absWeirdness - shaping.ExtremeWeirdnessThreshold) / (1f - shaping.ExtremeWeirdnessThreshold);
+                    weirdnessInfluence += MathF.Sign(weirdness) * extremeBoost * shaping.ExtremeWeirdnessBoost * (0.5f + roughness * 0.5f);
+                }
+                baseHeight += weirdnessInfluence;
+                
+                // Mountain/cliff features
+                if (cont01 > shaping.MountainStartThreshold)
+                {
+                    var mountainFactor = Smoothstep(shaping.MountainStartThreshold, 0.75f, cont01);
+                    var cliffAmplitude = terrainParams.CliffAmplitude * shaping.CliffAmplitudeMultiplier;
+                    var cliffStrength = MathF.Abs(columnCliff[i]) * (0.3f + roughness * 0.7f) * mountainFactor;
+                    baseHeight += cliffStrength * cliffAmplitude;
+                }
+                
+                // Ensure minimum land height
+                var minLandHeight = VoxelHelper.WaterLevel + 1f + coastDist * 3f;
+                if (baseHeight < minLandHeight)
+                {
+                    baseHeight = minLandHeight;
+                }
+            }
+            
+            columnHeights[i] = baseHeight;
+            var rounded = (int)MathF.Round(baseHeight);
+            
+            // Guard: land must be above sea level
+            if (cont01 >= terrainParams.OceanThreshold && rounded < (int)VoxelHelper.WaterLevel + 1)
+            {
+                rounded = (int)VoxelHelper.WaterLevel + 1;
+                columnHeights[i] = rounded;
+            }
+            columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
+        }
+    }
+    
+    /// <summary>
+    /// STAGE 3: Compute water body info for each column using the aquifer system.
+    /// This is the SINGLE SOURCE OF TRUTH for water - used by both biome selection AND block generation.
+    /// 
+    /// The aquifer system uses deterministic coordinate-based noise lookup:
+    /// - Ocean biomes: Use global sea level (VoxelHelper.WaterLevel)
+    /// - Inland water bodies: Use local aquifer noise for varied water levels
+    /// - Water is automatically "contained" by solid terrain (density > 0)
+    /// 
+    /// CRITICAL: This replaces the old terrain-based lake detection which was broken:
+    /// - Old system evaluated noise per-column creating random water patches
+    /// - New aquifer system uses coherent noise regions for natural water bodies
+    /// </summary>
+    private void BuildColumnWaterBodies()
+    {
+        // Initialize aquifer system from climate cache
+        if (aquiferSystem != null && climateCache.IsValid)
+        {
+            aquiferSystem.InitializeFromClimateCache(climateCache);
+        }
+        
+        var cont01 = climateCache.Continentalness01;
+        
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+                var continentalness01 = cont01[columnIndex];
+                var terrainHeight = columnHeights[columnIndex];
+                var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
+                
+                if (aquiferSystem != null && aquiferSystem.IsValid)
+                {
+                    // STAGE 3: Use aquifer system for deterministic water level lookup
+                    columnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
+                        columnIndex,
+                        biomeId,
+                        terrainHeight,
+                        continentalness01);
                 }
                 else
                 {
-                    // Terrain is strictly above water level even though continentalness says ocean
-                    // This is a coastal transition - treat as land (no water)
-                    columnWaterBody[i] = WaterBodyInfo.None;
+                    // Fallback: Simple ocean detection based on continentalness
+                    if (continentalness01 < terrainParams.OceanThreshold && terrainHeight < VoxelHelper.WaterLevel)
+                    {
+                        columnWaterBody[columnIndex] = WaterBodyInfo.Ocean();
+                    }
+                    else
+                    {
+                        columnWaterBody[columnIndex] = WaterBodyInfo.None;
+                    }
                 }
-                continue;
             }
-            
-            // LAKES DISABLED: The per-column noise-based lake detection was fundamentally broken.
-            // It created random water patches on hillsides instead of coherent lake basins.
-            // Lakes should be implemented as a separate terrain feature pass using flood-fill
-            // to find actual terrain depressions and fill them with uniform water levels.
-            // For now, water only appears in Ocean biomes.
-            
-            // No water body at this column (lakes disabled)
-            columnWaterBody[i] = WaterBodyInfo.None;
         }
+        
         ComputeOceanAdjacency();
     }
 
@@ -453,7 +680,6 @@ internal sealed class CpuTerrainGenerator
                 if (biome is BiomeId.Ocean or BiomeId.DeepOcean)
                 {
                     // Ocean columns use global sea level if terrain height is below it
-                    // FIX: Use baseHeight (float) < WaterLevel to match BuildColumnWaterBodies logic
                     var baseHeight = columnHeights[idx];
                     columnWaterBody[idx] = baseHeight < VoxelHelper.WaterLevel
                         ? WaterBodyInfo.Ocean()
@@ -461,11 +687,8 @@ internal sealed class CpuTerrainGenerator
                 }
                 else
                 {
-                    // Non-ocean biomes do not get ocean water here; keep existing lake info
-                    if (!columnWaterBody[idx].IsLake)
-                    {
-                        columnWaterBody[idx] = WaterBodyInfo.None;
-                    }
+                    // Non-ocean biomes have no ocean water
+                    columnWaterBody[idx] = WaterBodyInfo.None;
                 }
             }
         }
@@ -917,24 +1140,13 @@ internal sealed class CpuTerrainGenerator
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
             {
                 var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                // Use integer height for biome selection to match block placement logic
-                // This prevents "dry ocean" bugs where float height < 35 but int height = 35
-                var terrainHeight = (float)columnHeightInts[columnIndex];
-                
-                // SINGLE SOURCE OF TRUTH: Pass water body type to biome selector
-                // This ensures Beach only appears where there's actual ocean nearby
-                var waterBody = columnWaterBody[columnIndex];
-                
-                // Select biome using per-column climate values, terrain height, AND water body type
-                var biome = biomeSelector.SelectPrimary(
+                // Select biome using ONLY climate parameters (Minecraft-style)
+                var biome = biomeSelector.Select(
                     cont01[columnIndex],
                     temp01[columnIndex],
                     humid01[columnIndex],
                     erosion01[columnIndex],
-                    pv01[columnIndex],
-                    terrainHeight,
-                    waterBody.Type,
-                    IsWithinBeachDistance(columnIndex));
+                    pv01[columnIndex]);
                 
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
             }

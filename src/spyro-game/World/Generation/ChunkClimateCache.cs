@@ -31,6 +31,7 @@ internal sealed class ChunkClimateCache
     private readonly float[] _humidity = new float[ColumnCount];
     private readonly float[] _weirdness = new float[ColumnCount];
     private readonly float[] _lakeNoise = new float[ColumnCount];  // Phase 2: Lake placement noise
+    private readonly float[] _aquiferNoise = new float[ColumnCount];  // Phase 3: Aquifer water level noise
 
     // Normalized versions [0, 1] for convenience
     private readonly float[] _continentalness01 = new float[ColumnCount];
@@ -40,6 +41,7 @@ internal sealed class ChunkClimateCache
     private readonly float[] _humidity01 = new float[ColumnCount];
     private readonly float[] _weirdness01 = new float[ColumnCount];
     private readonly float[] _lakeNoise01 = new float[ColumnCount];  // Phase 2: Normalized lake noise
+    private readonly float[] _aquiferNoise01 = new float[ColumnCount];  // Phase 3: Normalized aquifer noise
 
     // Domain warp values (cached separately as they're used to warp other noise)
     private readonly float[] _warpX = new float[ColumnCount];
@@ -114,6 +116,12 @@ internal sealed class ChunkClimateCache
     /// <summary>Gets normalized lake noise values [0, 1]. Phase 2: Lake placement.</summary>
     public ReadOnlySpan<float> LakeNoise01 => _lakeNoise01;
     
+    /// <summary>Gets the raw aquifer noise values [-1, 1]. Phase 3: Aquifer water levels.</summary>
+    public ReadOnlySpan<float> AquiferNoise => _aquiferNoise;
+    
+    /// <summary>Gets normalized aquifer noise values [0, 1]. Phase 3: Aquifer water levels.</summary>
+    public ReadOnlySpan<float> AquiferNoise01 => _aquiferNoise01;
+    
     /// <summary>Gets the domain warp X offsets.</summary>
     public ReadOnlySpan<float> WarpX => _warpX;
     
@@ -172,6 +180,9 @@ internal sealed class ChunkClimateCache
         
         // Step 4: Sample lake noise (Phase 2: Local water bodies)
         SampleLakeNoise(config.LakeNoise, seed);
+        
+        // Step 5: Sample aquifer noise (Phase 3: Deterministic water levels)
+        SampleAquiferNoise(config.AquiferNoise, seed);
 
         _isValid = true;
 
@@ -375,6 +386,29 @@ internal sealed class ChunkClimateCache
     }
 
     /// <summary>
+    /// Sample aquifer noise. Phase 3: Controls water level variation for inland water bodies.
+    /// Uses low-frequency noise for coherent water level regions.
+    /// </summary>
+    private void SampleAquiferNoise(NoiseLayer layer, uint seed)
+    {
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            // Moderate warp for aquifer - creates organic water body shapes
+            warpedX[i] = _worldX[i] + _warpX[i] * 0.7f;
+            warpedZ[i] = _worldZ[i] + _warpZ[i] * 0.7f;
+        }
+        
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 1000u, layer.Octaves, layer.Persistence, layer.Lacunarity, _aquiferNoise);
+
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            _aquiferNoise01[i] = _aquiferNoise[i] * 0.5f + 0.5f;
+        }
+    }
+
+    /// <summary>
     /// SIMD-batched 2D FBM noise sampling using NoiseDotNet.
     /// Processes all 256 columns efficiently using Vector256&lt;float&gt; internally.
     /// </summary>
@@ -451,34 +485,36 @@ internal sealed class ChunkClimateCache
     }
 
     /// <summary>
-    /// Get a single column's climate values by index.
-    /// </summary>
-    /// <param name="columnIndex">Column index (0-255).</param>
-    /// <returns>Climate values for the column.</returns>
-    public ColumnClimate GetColumnClimate(int columnIndex)
-    {
-        if ((uint)columnIndex >= ColumnCount)
-            throw new ArgumentOutOfRangeException(nameof(columnIndex));
-
-        return new ColumnClimate
+        /// Get a single column's climate values by index.
+        /// </summary>
+        /// <param name="columnIndex">Column index (0-255).</param>
+        /// <returns>Climate values for the column.</returns>
+        public ColumnClimate GetColumnClimate(int columnIndex)
         {
-            Continentalness = _continentalness[columnIndex],
-            Continentalness01 = _continentalness01[columnIndex],
-            Erosion = _erosion[columnIndex],
-            Erosion01 = _erosion01[columnIndex],
-            PeaksValleys = _peaksValleys[columnIndex],
-            PeaksValleys01 = _peaksValleys01[columnIndex],
-            Temperature = _temperature[columnIndex],
-            Temperature01 = _temperature01[columnIndex],
-            Humidity = _humidity[columnIndex],
-            Humidity01 = _humidity01[columnIndex],
-            Weirdness = _weirdness[columnIndex],
-            Weirdness01 = _weirdness01[columnIndex],
-            LakeNoise = _lakeNoise[columnIndex],
-            LakeNoise01 = _lakeNoise01[columnIndex]
-        };
+            if ((uint)columnIndex >= ColumnCount)
+                throw new ArgumentOutOfRangeException(nameof(columnIndex));
+
+            return new ColumnClimate
+            {
+                Continentalness = _continentalness[columnIndex],
+                Continentalness01 = _continentalness01[columnIndex],
+                Erosion = _erosion[columnIndex],
+                Erosion01 = _erosion01[columnIndex],
+                PeaksValleys = _peaksValleys[columnIndex],
+                PeaksValleys01 = _peaksValleys01[columnIndex],
+                Temperature = _temperature[columnIndex],
+                Temperature01 = _temperature01[columnIndex],
+                Humidity = _humidity[columnIndex],
+                Humidity01 = _humidity01[columnIndex],
+                Weirdness = _weirdness[columnIndex],
+                Weirdness01 = _weirdness01[columnIndex],
+                LakeNoise = _lakeNoise[columnIndex],
+                LakeNoise01 = _lakeNoise01[columnIndex],
+                AquiferNoise = _aquiferNoise[columnIndex],
+                AquiferNoise01 = _aquiferNoise01[columnIndex]
+            };
+        }
     }
-}
 
 /// <summary>
 /// Climate values for a single column. Used for debugging and single-point queries.
@@ -499,4 +535,6 @@ public readonly struct ColumnClimate
     public float Weirdness01 { get; init; }
     public float LakeNoise { get; init; }
     public float LakeNoise01 { get; init; }
+    public float AquiferNoise { get; init; }
+    public float AquiferNoise01 { get; init; }
 }

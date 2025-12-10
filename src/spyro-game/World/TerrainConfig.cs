@@ -230,7 +230,58 @@ public sealed class TerrainConfig
     /// </summary>
     public float LakeMinContinentalness { get; set; } = 0.40f;
 
-    // Legacy properties removed
+    // === AQUIFER SYSTEM (Phase 3) ===
+    
+    /// <summary>
+    /// Aquifer noise configuration.
+    /// Controls the distribution and variation of inland water bodies.
+    /// Low frequency creates coherent water level regions.
+    /// </summary>
+    public NoiseLayer AquiferNoise { get; set; } = new()
+    {
+        BaseScale = 1f / 800f,    // Large-scale water level distribution (~800 block features)
+        Octaves = 2,
+        Persistence = 0.5f,
+        Lacunarity = 2.0f,
+        DomainWarpScale = 1f / 500f,
+        DomainWarpStrength = 50f
+    };
+    
+    /// <summary>
+    /// Noise threshold for aquifer water body placement [0, 1].
+    /// Only areas where aquifer noise exceeds this threshold will have water.
+    /// - 0.65 (default): ~35% of land can have water bodies
+    /// - 0.75: ~25% of land (sparser water)
+    /// - 0.55: ~45% of land (more frequent water)
+    /// </summary>
+    public float AquiferThreshold { get; set; } = 0.65f;
+    
+    /// <summary>
+    /// Variation in water level for inland water bodies (in blocks).
+    /// Controls how much the water surface varies based on aquifer noise.
+    /// - 3 (default): ±3 blocks of water level variation
+    /// - 1: Minimal variation (flat water surfaces)
+    /// - 5: More varied water levels
+    /// </summary>
+    public float AquiferVariation { get; set; } = 3f;
+    
+    /// <summary>
+    /// Minimum depth of water for aquifer-based water bodies (in blocks).
+    /// Prevents very shallow puddles - water must be at least this deep.
+    /// - 2 (default): At least 2 blocks deep
+    /// - 1: Allow very shallow water
+    /// - 4: Only deeper water bodies
+    /// </summary>
+    public float AquiferMinDepth { get; set; } = 2f;
+    
+    /// <summary>
+    /// Maximum height above sea level for inland water bodies (in blocks).
+    /// Prevents inland water from being unrealistically higher than the ocean.
+    /// - 30 (default): Inland water can be up to 30 blocks above sea level
+    /// - 10: Restrict to near-sea-level elevations
+    /// - 50: Allow high-altitude lakes
+    /// </summary>
+    public float AquiferMaxAboveSeaLevel { get; set; } = 30f;
 
 
     // Height mapping
@@ -522,9 +573,8 @@ public sealed class TerrainConfig
     /// <summary>
     /// Builds a 2D lookup table mapping (temperature, humidity) to biome IDs for GPU sampling.
     /// Returns a row-major byte array where each pixel represents a biome ID.
-    /// IMPORTANT: This LUT only contains LAND biomes (AllowedTerrain == LandOnly).
-    /// Ocean and Alpine biomes are handled via hardcoded checks in the shader (Phase 1 and Phase 2).
-    /// The shader only samples this LUT for land areas after ocean/alpine checks.
+    /// NOTE: This LUT is used for land biomes only. Ocean biomes are filtered by continentalness
+    /// in the BiomeSelector, not by this LUT.
     /// </summary>
     /// <param name="resolution">Resolution of the LUT (both width and height). Default: 256x256.</param>
     /// <returns>Byte array of size resolution² containing biome IDs (0-255).</returns>
@@ -533,7 +583,8 @@ public sealed class TerrainConfig
         if (resolution <= 1) resolution = 2;
         var data = new byte[resolution * resolution];
 
-        var landBiomes = Biomes.Where(b => b.AllowedTerrain == TerrainType.LandOnly).ToList();
+        // Filter to land biomes (continentalness > 0.45)
+        var landBiomes = Biomes.Where(b => b.Continentalness.Min >= 0.40f).ToList();
         
         if (landBiomes.Count == 0)
         {
@@ -705,46 +756,9 @@ public struct SlopeRange
     }
 }
 
-/// <summary>
-/// Defines terrain type constraints that determine where a biome can appear.
-/// Used to ensure ocean biomes stay in water, alpine on mountains, etc.
-/// </summary>
-public enum TerrainType
-{
-    /// <summary>
-    /// No terrain restriction. Biome can appear anywhere if climate conditions match.
-    /// Used for flexible biomes that adapt to any elevation.
-    /// </summary>
-    Any = 0,
-    
-    /// <summary>
-    /// Only appears in ocean areas where continentalness is below OceanThreshold.
-    /// Used for underwater biomes like Ocean and Deep Ocean.
-    /// Technical: Checked via hardcoded logic before LUT sampling.
-    /// </summary>
-    OceanOnly = 1,
-    
-    /// <summary>
-    /// Only appears on land areas where continentalness is above OceanThreshold.
-    /// Used for all terrestrial biomes (Plains, Desert, Forest, etc.).
-    /// Technical: These biomes populate the climate LUT for land-only sampling.
-    /// </summary>
-    LandOnly = 2,
-    
-    /// <summary>
-    /// Only appears near coast transition zones (continentalness near OceanThreshold).
-    /// Used for shoreline biomes like Beach that require proximity to water.
-    /// Technical: Checked via |C - OceanThreshold| < CoastRange.
-    /// </summary>
-    CoastOnly = 3,
-    
-    /// <summary>
-    /// Only appears at high elevations above AlpineElevation threshold.
-    /// Used for mountain peak biomes like Alpine that require altitude.
-    /// Technical: Checked via hardcoded elevation override before LUT sampling.
-    /// </summary>
-    MountainOnly = 4
-}
+// TerrainType enum removed - biomes are now selected purely by climate parameter ranges
+// (Continentalness, Temperature, Humidity, Erosion, PeaksValleys)
+// See TERRAIN_ARCHITECTURE.md for the Minecraft-style pipeline design.
 
 /// <summary>
 /// Defines a biome with its climate requirements, elevation constraints, texture mappings, and placement priority.
@@ -789,30 +803,29 @@ public sealed class BiomeDefinition
     /// <summary>
     /// Gets or sets the humidity comfort range [0,1] where this biome naturally occurs.
     /// 0=arid, 0.33=dry, 0.5=moderate, 0.66=humid, 1.0=very wet.
-    /// Used during LUT generation to map temperature/humidity coordinates to biome IDs.
+    /// Used during biome selection to filter candidates.
     /// </summary>
     public Range Humidity { get; set; } = new(0.4f, 0.6f);
     
     /// <summary>
+    /// Gets or sets the continentalness comfort range [0,1] where this biome naturally occurs.
+    /// 0=deep ocean, 0.25=ocean, 0.40=coast, 0.5=plains, 0.8=highlands, 1.0=mountain peaks.
+    /// This is the PRIMARY filter for ocean vs land biomes - replaces TerrainType.
+    /// </summary>
+    public Range Continentalness { get; set; } = new(0.4f, 1.0f);
+    
+    /// <summary>
     /// Gets or sets the minimum elevation in blocks where this biome can appear.
     /// Set to float.MinValue for no minimum constraint.
-    /// Currently not actively enforced in shaders (reserved for future use).
+    /// Used for elevation-specific biomes like Alpine.
     /// </summary>
     public float MinElevation { get; set; } = float.MinValue;
     
     /// <summary>
     /// Gets or sets the maximum elevation in blocks where this biome can appear.
     /// Set to float.MaxValue for no maximum constraint.
-    /// Currently not actively enforced in shaders (reserved for future use).
     /// </summary>
     public float MaxElevation { get; set; } = float.MaxValue;
-    
-    /// <summary>
-    /// Gets or sets the terrain type constraint determining where this biome can physically appear.
-    /// Controls whether the biome is restricted to ocean, land, mountains, coasts, or has no restriction.
-    /// See <see cref="TerrainType"/> for available options.
-    /// </summary>
-    public TerrainType AllowedTerrain { get; set; } = TerrainType.Any;
     
     /// <summary>
     /// Gets or sets the selection priority for this biome during shader evaluation.
@@ -894,18 +907,18 @@ public sealed class BiomeDefinition
     /// <summary>
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with specified parameters.
     /// </summary>
-    public BiomeDefinition(int id, string name, Range temperature, Range humidity,
-        int priority = 0, TerrainType terrainType = TerrainType.Any, float minElevation = float.MinValue, float maxElevation = float.MaxValue,
+    public BiomeDefinition(int id, string name, Range continentalness, Range temperature, Range humidity,
+        int priority = 0, float minElevation = float.MinValue, float maxElevation = float.MaxValue,
         float baseHeight = 10f, float heightVariation = 15f, float peaksInfluence = 0.5f, float erosionSensitivity = 0.5f,
         BlockId surfaceBlock = BlockId.Grass, BlockId subsurfaceBlock = BlockId.Dirt, BlockId deepBlock = BlockId.Stone,
         BlockId underwaterSurfaceBlock = BlockId.Gravel, BlockId underwaterSubsurfaceBlock = BlockId.Stone)
     {
         Id = id;
         Name = name;
+        Continentalness = continentalness;
         Temperature = temperature;
         Humidity = humidity;
         Priority = priority;
-        AllowedTerrain = terrainType;
         MinElevation = minElevation;
         MaxElevation = maxElevation;
         BaseHeight = baseHeight;
@@ -950,207 +963,214 @@ public sealed class BiomeDefinition
     }
 
     /// <summary>
-    /// Creates the default set of 10 biomes with standard configurations.
-    /// Includes: Ocean (0), Beach (1), Plains (2), Savanna (3), Desert (4), Rainforest (5),
-    /// Taiga (6), Tundra (7), Highlands (8), Alpine (9).
-    /// </summary>
-    /// <returns>List of configured biome definitions.</returns>
-    public static List<BiomeDefinition> DefaultSet()
-    {
-        return
-        [
-            // Ocean: below water, relatively flat but with some variation for underwater hills
-            new (OCEAN_BIOME_ID, nameof(BiomeId.Ocean), 
-                new(0.0f, 1.0f), new(0.0f, 1.0f),
-                priority: 100, 
-                terrainType: TerrainType.OceanOnly,
-                baseHeight: -25f, heightVariation: 12f, peaksInfluence: 0.2f, erosionSensitivity: 0.7f,
-                surfaceBlock: BlockId.Gravel, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Bedrock, underwaterSubsurfaceBlock: BlockId.Gravel),
+        /// Creates the default set of biomes with Minecraft-style climate ranges.
+        /// Each biome has a Continentalness range that determines where it can appear:
+        /// - C < 0.25: Deep Ocean
+        /// - C 0.25-0.40: Ocean  
+        /// - C 0.40-0.45: Beach/Coast
+        /// - C 0.45-1.0: Land biomes (filtered by T/H)
+        /// - C > 0.80 + high elevation: Alpine
+        /// </summary>
+        /// <returns>List of configured biome definitions.</returns>
+        public static List<BiomeDefinition> DefaultSet()
+        {
+            return
+            [
+                // DeepOcean: C < 0.25 - deepest underwater regions
+                new ((int)BiomeId.DeepOcean, nameof(BiomeId.DeepOcean),
+                    continentalness: new(0.0f, 0.25f),    // Deep ocean zone
+                    temperature: new(0.0f, 1.0f),         // Any temperature
+                    humidity: new(0.0f, 1.0f),            // Any humidity
+                    priority: 100,
+                    baseHeight: -30f, heightVariation: 8f, peaksInfluence: 0.1f, erosionSensitivity: 0.8f,
+                    surfaceBlock: BlockId.Gravel, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
-            // DeepOcean: deeper underwater regions with gravel/stone floor
-            new ((int)BiomeId.DeepOcean, nameof(BiomeId.DeepOcean), 
-                new(0.0f, 1.0f), new(0.0f, 1.0f),
-                priority: 100, 
-                terrainType: TerrainType.OceanOnly,
-                baseHeight: -30f, heightVariation: 8f, peaksInfluence: 0.1f, erosionSensitivity: 0.8f,
-                surfaceBlock: BlockId.Gravel, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
+                // Ocean: C 0.25-0.40 - regular ocean
+                new (OCEAN_BIOME_ID, nameof(BiomeId.Ocean),
+                    continentalness: new(0.25f, 0.40f),   // Ocean zone
+                    temperature: new(0.0f, 1.0f),         // Any temperature
+                    humidity: new(0.0f, 1.0f),            // Any humidity
+                    priority: 100,
+                    baseHeight: -25f, heightVariation: 12f, peaksInfluence: 0.2f, erosionSensitivity: 0.7f,
+                    surfaceBlock: BlockId.Gravel, subsurfaceBlock: BlockId.Gravel, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Bedrock, underwaterSubsurfaceBlock: BlockId.Gravel),
             
-            // Alpine: very high, dramatic peaks and valleys
-            new (ALPINE_BIOME_ID, nameof(BiomeId.Alpine), 
-                new(0.0f, 1.0f), new(0.0f, 1.0f),
-                priority: 90, 
-                terrainType: TerrainType.MountainOnly,
-                minElevation: 150f,
-                baseHeight: 140f, heightVariation: 70f, peaksInfluence: 1.0f, erosionSensitivity: 0.2f,
-                surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Beach: C 0.40-0.45 - coastal transition zone
+                new ((int)BiomeId.Beach, nameof(BiomeId.Beach),
+                    continentalness: new(0.40f, 0.45f),   // Narrow coast zone
+                    temperature: new(0.0f, 1.0f),         // Any temperature
+                    humidity: new(0.0f, 1.0f),            // Any humidity
+                    priority: 80,
+                    baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
+                    surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                    underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
                 {
-                    new() { Type = VegetationType.TreeSpruce, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Snow, BlockId.SnowDirt] } // Very sparse trees
-                }
-            },
+                    Vegetation = [new() { Type = VegetationType.SugarCane, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }]
+                },
             
-            // Taiga: cold, wet - coniferous forests
-            new ((int)BiomeId.Taiga, nameof(BiomeId.Taiga), 
-                new(0.15f, 0.35f), new(0.5f, 0.8f),  // Cold + humid
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
-                surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Alpine: C > 0.80 + high elevation - mountain peaks
+                new (ALPINE_BIOME_ID, nameof(BiomeId.Alpine),
+                    continentalness: new(0.80f, 1.0f),    // High continentalness (mountains)
+                    temperature: new(0.0f, 1.0f),         // Any temperature (elevation makes it cold)
+                    humidity: new(0.0f, 1.0f),            // Any humidity
+                    priority: 90,
+                    minElevation: 150f,                   // Only at high elevations
+                    baseHeight: 140f, heightVariation: 70f, peaksInfluence: 1.0f, erosionSensitivity: 0.2f,
+                    surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.TreeSpruce, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
-                    new() { Type = VegetationType.Grass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
-                }
-            },
+                    Vegetation = [new() { Type = VegetationType.TreeSpruce, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Snow, BlockId.SnowDirt] }]
+                },
             
-            // Highlands: cool, dry - elevated grasslands
-            new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands), 
-                new(0.30f, 0.50f), new(0.25f, 0.50f),  // Cool + moderate humidity
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
-                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Tundra: cold land biome
+                new ((int)BiomeId.Tundra, nameof(BiomeId.Tundra),
+                    continentalness: new(0.45f, 1.0f),    // All land
+                    temperature: new(0.0f, 0.20f),        // Very cold
+                    humidity: new(0.0f, 0.6f),            // Any humidity
+                    priority: 50,
+                    baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
+                    surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.Grass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.Flower, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.TreeOak, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] } // Very sparse trees
-                }
-            },
+                    Vegetation = [new() { Type = VegetationType.TreeSpruce, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }]
+                },
             
-            // Plains: temperate, moderate humidity - THE MOST COMMON biome
-            new (DEFAULT_FALLBACK_BIOME_ID, nameof(BiomeId.Plains), 
-                new(0.40f, 0.70f), new(0.30f, 0.70f),  // Wide temperate range
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
-                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Taiga: cold + humid land biome
+                new ((int)BiomeId.Taiga, nameof(BiomeId.Taiga),
+                    continentalness: new(0.45f, 1.0f),    // All land
+                    temperature: new(0.15f, 0.35f),       // Cold
+                    humidity: new(0.5f, 0.8f),            // Humid
+                    priority: 50,
+                    baseHeight: 35f, heightVariation: 25f, peaksInfluence: 0.6f, erosionSensitivity: 0.5f,
+                    surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.Flower, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.TreeOak, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass] }
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.TreeSpruce, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
+                        new() { Type = VegetationType.Grass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
+                    ]
+                },
             
-            // Beach: at water level, completely flat - coastal areas only
-            new ((int)BiomeId.Beach, nameof(BiomeId.Beach), 
-                new(0.0f, 1.0f), new(0.0f, 1.0f),  // Any climate near shore
-                priority: 80,  // Higher than regular land biomes but below ocean
-                terrainType: TerrainType.CoastOnly,
-                baseHeight: 2f, heightVariation: 3f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
-                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
-                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
-            {
-                Vegetation = 
+                // Highlands: cool + moderate humidity
+                new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands),
+                    continentalness: new(0.60f, 0.85f),   // Higher continentalness (elevated)
+                    temperature: new(0.30f, 0.50f),       // Cool
+                    humidity: new(0.25f, 0.50f),          // Moderate humidity
+                    priority: 50,
+                    baseHeight: 55f, heightVariation: 35f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
+                    surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.SugarCane, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.Grass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.Flower, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.TreeOak, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                    ]
+                },
             
-            // Tundra: very cold, any humidity - frozen plains
-            new ((int)BiomeId.Tundra, nameof(BiomeId.Tundra), 
-                new(0.0f, 0.20f), new(0.0f, 0.6f),  // Very cold, any humidity
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 18f, heightVariation: 12f, peaksInfluence: 0.3f, erosionSensitivity: 0.6f,
-                surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Plains: temperate, moderate - THE MOST COMMON biome (wide ranges)
+                new (DEFAULT_FALLBACK_BIOME_ID, nameof(BiomeId.Plains),
+                    continentalness: new(0.45f, 0.70f),   // Low to mid land
+                    temperature: new(0.35f, 0.70f),       // Wide temperate range
+                    humidity: new(0.25f, 0.70f),          // Wide humidity range
+                    priority: 40,                          // Lower priority so specific biomes win
+                    baseHeight: 12f, heightVariation: 8f, peaksInfluence: 0.2f, erosionSensitivity: 0.8f,
+                    surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.TreeSpruce, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.Flower, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.TreeOak, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                    ]
+                },
             
-            // Rainforest: hot, very wet - tropical jungle
-            new ((int)BiomeId.Rainforest, nameof(BiomeId.Rainforest), 
-                new(0.70f, 1.0f), new(0.70f, 1.0f),  // Hot + very wet
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
-                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Rainforest: hot + very wet
+                new ((int)BiomeId.Rainforest, nameof(BiomeId.Rainforest),
+                    continentalness: new(0.45f, 0.75f),   // Land, not mountains
+                    temperature: new(0.70f, 1.0f),        // Hot
+                    humidity: new(0.70f, 1.0f),           // Very wet
+                    priority: 50,
+                    baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
+                    surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.TreeJungle, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.Grass, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.Flower, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.TreeJungle, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.Grass, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.Flower, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                    ]
+                },
             
-            // Savanna: warm, dry - African-style grassland
-            new ((int)BiomeId.Savanna, nameof(BiomeId.Savanna), 
-                new(0.65f, 0.85f), new(0.20f, 0.45f),  // Warm + dry
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
-                surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
-            {
-                Vegetation = 
+                // Swamp: temperate + very wet
+                new ((int)BiomeId.Swamp, nameof(BiomeId.Swamp),
+                    continentalness: new(0.45f, 0.60f),   // Low-lying land
+                    temperature: new(0.50f, 0.70f),       // Temperate
+                    humidity: new(0.75f, 1.0f),           // Very wet
+                    priority: 55,                          // Higher than plains when conditions match
+                    baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
+                    surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt)
                 {
-                    new() { Type = VegetationType.TreeOak, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }, // Acacia placeholder
-                    new() { Type = VegetationType.Grass, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.TreeOak, Density = 0.08f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Type = VegetationType.BlueOrchid, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                    ]
+                },
             
-            // Desert: hot, very dry
-            new ((int)BiomeId.Desert, nameof(BiomeId.Desert), 
-                new(0.75f, 1.0f), new(0.0f, 0.20f),  // Hot + very dry
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
-                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
-                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
-            {
-                Vegetation = 
+                // Savanna: warm + dry
+                new ((int)BiomeId.Savanna, nameof(BiomeId.Savanna),
+                    continentalness: new(0.45f, 0.75f),   // Land
+                    temperature: new(0.65f, 0.85f),       // Warm
+                    humidity: new(0.15f, 0.40f),          // Dry
+                    priority: 50,
+                    baseHeight: 20f, heightVariation: 15f, peaksInfluence: 0.4f, erosionSensitivity: 0.6f,
+                    surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    new() { Type = VegetationType.Cactus, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Sand] },
-                    new() { Type = VegetationType.DeadBush, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
-                }
-            },
-
-            // Swamp: warm-temperate, very wet
-            new ((int)BiomeId.Swamp, nameof(BiomeId.Swamp), 
-                new(0.50f, 0.70f), new(0.75f, 1.0f),  // Temperate + very wet
-                priority: 50, 
-                terrainType: TerrainType.LandOnly,
-                baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
-                surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt)
-            {
-                Vegetation = 
-                {
-                    new() { Type = VegetationType.TreeOak, Density = 0.08f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                    new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                    new() { Type = VegetationType.BlueOrchid, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] } // Blue orchids in swamp
-                }
-            },
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.TreeOak, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] },
+                        new() { Type = VegetationType.Grass, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }
+                    ]
+                },
             
-            // Lake: inland water body with sand shores (Phase 2)
-            // Uses Any terrain type but is selected via lake noise, not climate
-            new ((int)BiomeId.Lake, nameof(BiomeId.Lake), 
-                new(0.0f, 1.0f), new(0.0f, 1.0f),  // Any climate where lake noise is high
-                priority: 85,  // Higher than land biomes, checked when lake noise exceeds threshold
-                terrainType: TerrainType.Any,  // Can appear anywhere on land
-                baseHeight: 0f, heightVariation: 2f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
-                surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Stone,
-                underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Gravel),
-        ];
+                // Desert: hot + very dry
+                new ((int)BiomeId.Desert, nameof(BiomeId.Desert),
+                    continentalness: new(0.45f, 0.80f),   // Land
+                    temperature: new(0.75f, 1.0f),        // Hot
+                    humidity: new(0.0f, 0.20f),           // Very dry
+                    priority: 50,
+                    baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
+                    surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
+                    underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
+                {
+                    Vegetation = 
+                    [
+                        new() { Type = VegetationType.Cactus, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Sand] },
+                        new() { Type = VegetationType.DeadBush, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
+                    ]
+                },
+            
+                // Lake: placeholder for future lake system (not used in climate selection)
+                new ((int)BiomeId.Lake, nameof(BiomeId.Lake),
+                    continentalness: new(0.45f, 1.0f),    // Land (lakes are detected separately)
+                    temperature: new(0.0f, 1.0f),
+                    humidity: new(0.0f, 1.0f),
+                    priority: 0,                           // Never selected by climate - handled separately
+                    baseHeight: 0f, heightVariation: 2f, peaksInfluence: 0.05f, erosionSensitivity: 0.95f,
+                    surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Stone,
+                    underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Gravel),
+            ];
+        }
     }
-}
 
 /// <summary>
 /// Defines parameters for biome region grouping using Voronoi/Worley noise.

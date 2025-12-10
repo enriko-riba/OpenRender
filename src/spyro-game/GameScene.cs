@@ -12,6 +12,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.World;
+using SpyroGame.World.Generation;
 
 namespace SpyroGame;
 
@@ -246,6 +247,12 @@ internal class GameScene : Scene
                 terrainRenderer.DebugWireframe = !terrainRenderer.DebugWireframe;
                 Log.Info($"Debug Wireframe: {(terrainRenderer.DebugWireframe ? "ENABLED" : "DISABLED")}");
             }
+        }
+
+        // Generate Biome Debug Map (F4)
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F4))
+        {
+            GenerateBiomeDebugMap();
         }
 
         // Update day/night cycle
@@ -645,6 +652,7 @@ internal class GameScene : Scene
         WriteControlLine("  Mouse - Look", textColor);
         WriteControlLine("  F - Toggle Ghost/Physics", textColor);
         WriteControlLine("  F3 - Toggle Biome Debug", textColor);
+        WriteControlLine("  F4 - Generate Biome Map", textColor);
         WriteControlLine("  F5 - Toggle Wireframe", textColor);
         WriteControlLine("  Left Click - Break Block", textColor);
         WriteControlLine("  Esc - Exit", textColor);
@@ -666,6 +674,46 @@ internal class GameScene : Scene
         var biomeId = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
 
         return biomeId.ToString();
+    }
+
+    /// <summary>
+    /// Generate a biome debug map centered on the player's current position.
+    /// Creates a BMP file in the saves directory showing biome distribution.
+    /// </summary>
+    private void GenerateBiomeDebugMap()
+    {
+        if (streamingManager?.Config == null || camera == null)
+        {
+            Log.Warn("Cannot generate biome map: streaming manager or camera not initialized");
+            return;
+        }
+
+        Log.Info("Generating biome debug map...");
+
+        var config = streamingManager.Config;
+        var centerX = (int)camera.Position.X;
+        var centerZ = (int)camera.Position.Z;
+
+        // Generate 2048x2048 pixel map (each pixel = 1 block)
+        const int radiusBlocks = 1024;
+
+        // Create output directory based on world name
+        var savesDir = Path.Combine(Environment.CurrentDirectory, "Saves", config.WorldName);
+        if (!Directory.Exists(savesDir))
+        {
+            Directory.CreateDirectory(savesDir);
+        }
+
+        // Generate all debug maps
+        try
+        {
+            BiomeMapGenerator.GenerateAllMaps(config, centerX, centerZ, radiusBlocks, savesDir);
+            Log.Info($"Biome maps saved to: {savesDir}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to generate biome map: {ex.Message}");
+        }
     }
 
     public override void Close()
