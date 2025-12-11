@@ -92,6 +92,9 @@ internal sealed class CpuTerrainGenerator
     // Stage 3: Deterministic aquifer system for water level lookup
     private AquiferSystem? aquiferSystem;
     
+    // Stage 5: Cave carving system with volume-based entrances
+    private CaveCarver? caveCarver;
+    
     // Per-column biome definitions cache (avoids repeated lookups)
     private readonly BiomeDefinition?[] columnBiomes = new BiomeDefinition?[ColumnCount];
 
@@ -123,6 +126,9 @@ internal sealed class CpuTerrainGenerator
         
         // Stage 3: Initialize aquifer system for deterministic water levels
         aquiferSystem = new AquiferSystem(config);
+        
+        // Stage 5: Initialize cave carving system
+        caveCarver = new CaveCarver(config);
         
         climateCache.Invalidate();
     }
@@ -397,7 +403,6 @@ internal sealed class CpuTerrainGenerator
         // ============================================================
         // Compute water body info using heights and biomes
         BuildColumnWaterBodies();
-        RefineWaterBodiesFromBiomes();
         
         // ============================================================
         // STAGE 5: 3D Noise for Caves/Overhangs
@@ -465,50 +470,6 @@ internal sealed class CpuTerrainGenerator
                 
                 // Cache biome definition for height calculation
                 columnBiomes[columnIndex] = GetBiomeDefinition((int)biome);
-            }
-        }
-        
-        // Update legacy 4x4 cell data for climate interpolation
-        UpdateLegacyBiomeCellData();
-    }
-    
-    /// <summary>
-    /// Estimate initial height from continentalness for biome selection.
-    /// This is used before biome-driven height calculation is complete.
-    /// </summary>
-    private float EstimateInitialHeight(float continentalness01)
-    {
-        // Use height spline as initial estimate
-        return SampleHeightSpline(continentalness01) + VoxelHelper.WaterLevel;
-    }
-    
-    /// <summary>
-    /// Update legacy 4x4 cell data for backward compatibility with climate interpolation systems.
-    /// </summary>
-    private void UpdateLegacyBiomeCellData()
-    {
-        if (currentChunkBiome == null) return;
-        
-        var temp01 = climateCache.Temperature01;
-        var humid01 = climateCache.Humidity01;
-        
-        for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
-        {
-            for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
-            {
-                var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
-
-                var centerLocalX = cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
-                var centerLocalZ = cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
-                var centerColumnIndex = centerLocalZ * VoxelHelper.ChunkSideSize + centerLocalX;
-
-                currentChunkBiome.Continentalness[cellIndex] = climateCache.Continentalness[centerColumnIndex];
-                currentChunkBiome.Erosion[cellIndex] = climateCache.Erosion[centerColumnIndex];
-                currentChunkBiome.PeaksValleys[cellIndex] = climateCache.PeaksValleys[centerColumnIndex];
-                currentChunkBiome.Temperature[cellIndex] = temp01[centerColumnIndex];
-                currentChunkBiome.Humidity[cellIndex] = humid01[centerColumnIndex];
-                
-                currentChunkBiome.BiomeIds[cellIndex] = currentChunkBiome.GetBiomeAt(centerLocalX, centerLocalZ);
             }
         }
     }
@@ -619,12 +580,6 @@ internal sealed class CpuTerrainGenerator
     /// </summary>
     private void BuildColumnWaterBodies()
     {
-        // Initialize aquifer system from climate cache
-        if (aquiferSystem != null && climateCache.IsValid)
-        {
-            aquiferSystem.InitializeFromClimateCache(climateCache);
-        }
-        
         var cont01 = climateCache.Continentalness01;
         
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
@@ -636,64 +591,15 @@ internal sealed class CpuTerrainGenerator
                 var terrainHeight = columnHeights[columnIndex];
                 var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
                 
-                if (aquiferSystem != null && aquiferSystem.IsValid)
-                {
-                    // STAGE 3: Use aquifer system for deterministic water level lookup
-                    columnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
-                        columnIndex,
-                        biomeId,
-                        terrainHeight,
-                        continentalness01);
-                }
-                else
-                {
-                    // Fallback: Simple ocean detection based on continentalness
-                    if (continentalness01 < terrainParams.OceanThreshold && terrainHeight < VoxelHelper.WaterLevel)
-                    {
-                        columnWaterBody[columnIndex] = WaterBodyInfo.Ocean();
-                    }
-                    else
-                    {
-                        columnWaterBody[columnIndex] = WaterBodyInfo.None;
-                    }
-                }
+                // STAGE 3: Use aquifer system for deterministic water level lookup
+                columnWaterBody[columnIndex] = AquiferSystem.GetWaterBodyInfo(
+                    columnIndex,
+                    biomeId,
+                    terrainHeight,
+                    continentalness01);
             }
         }
         
-        ComputeOceanAdjacency();
-    }
-
-    /// <summary>
-    /// After biome selection, enforce that ocean water only exists where the biome is Ocean/DeepOcean.
-    /// Global sea level is applied only for these biome columns. Lakes remain terrain-relative.
-    /// </summary>
-    private void RefineWaterBodiesFromBiomes()
-    {
-        if (currentChunkBiome == null) return;
-
-        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
-        {
-            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
-            {
-                var idx = lz * VoxelHelper.ChunkSideSize + lx;
-                var biome = currentChunkBiome.GetBiomeAt(lx, lz);
-                if (biome is BiomeId.Ocean or BiomeId.DeepOcean)
-                {
-                    // Ocean columns use global sea level if terrain height is below it
-                    var baseHeight = columnHeights[idx];
-                    columnWaterBody[idx] = baseHeight < VoxelHelper.WaterLevel
-                        ? WaterBodyInfo.Ocean()
-                        : WaterBodyInfo.None;
-                }
-                else
-                {
-                    // Non-ocean biomes have no ocean water
-                    columnWaterBody[idx] = WaterBodyInfo.None;
-                }
-            }
-        }
-
-        // Recompute adjacency since oceans may have changed
         ComputeOceanAdjacency();
     }
 
@@ -880,208 +786,6 @@ internal sealed class CpuTerrainGenerator
         }
     }
 
-    private void BuildColumnFieldCaches()
-    {
-        // Phase 2: Configurable terrain shaping using TerrainShapingConfig
-        // All magic numbers replaced with documented config values
-        // If-else chains replaced with continuous spline-based blending
-        
-        var xSpan = columnWorldX.AsSpan();
-        var zSpan = columnWorldZ.AsSpan();
-        var shaping = config.TerrainShaping;
-
-        // Copy climate values from cache to local arrays for compatibility with existing code
-        var cachedCont = climateCache.Continentalness;
-        var cachedCont01 = climateCache.Continentalness01;
-        var cachedErosion = climateCache.Erosion;
-        var cachedErosion01 = climateCache.Erosion01;
-        var cachedPeaks = climateCache.PeaksValleys;
-        var cachedWarpX = climateCache.WarpX;
-        var cachedWarpZ = climateCache.WarpZ;
-        var cachedWeirdness = climateCache.Weirdness;
-        
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            columnContinentalness[i] = cachedCont[i];
-            columnContinentalness01[i] = cachedCont01[i];
-            columnErosion[i] = cachedErosion[i];
-            columnPeaks[i] = cachedPeaks[i];
-            columnWarpX[i] = cachedWarpX[i];
-            columnWarpZ[i] = cachedWarpZ[i];
-        }
-
-        // Sample detail noise using config-driven scales
-        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
-
-        var terrainType = scratch2DA.AsSpan();
-        var cliffiness = scratch2DB.AsSpan();
-        SampleFbm2D(xSpan, zSpan, shaping.TerrainTypeNoiseScale, terrainParams.Seed + 3000u, 2, 0.5f, 2f, terrainType);
-        SampleFbm2D(xSpan, zSpan, shaping.CliffNoiseScale, terrainParams.Seed + 3100u, 3, 0.6f, 2.2f, cliffiness);
-
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            var tC = columnContinentalness01[i];
-            var baseHeight = SampleHeightSpline(tC) + VoxelHelper.WaterLevel;
-
-            if (tC >= terrainParams.OceanThreshold)
-            {
-                var erosion01 = cachedErosion01[i];
-                var weirdness = cachedWeirdness[i];
-                var absWeirdness = MathF.Abs(weirdness);
-                var peaks = columnPeaks[i];
-                var cliff = columnCliff[i];
-
-                // === PHASE 4: Calculate 3D Factor from Weirdness + Erosion ===
-                column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
-
-                // Distance from coast (0 = at coast, 1 = deep inland)
-                var coastDist = (tC - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
-                
-                // Minimum distance factor to prevent complete flattening near coast
-                // This ensures SOME terrain variation even close to water
-                var effectiveCoastDist = 0.3f + coastDist * 0.7f;  // Range [0.3, 1.0]
-
-                // === COASTAL ZONE - Beach flattening only (very narrow) ===
-                if (coastDist < shaping.CoastalZoneWidth)
-                {
-                    // Very narrow beach zone for quick transition to varied terrain
-                    var beachFactor = coastDist / shaping.CoastalZoneWidth;
-                    var beachLevel = VoxelHelper.WaterLevel + shaping.BeachHeightOffset;
-                    baseHeight = Lerp(beachLevel, baseHeight, beachFactor * beachFactor);
-                }
-
-                // === TERRAIN VARIATION - Controlled by erosion ===
-                // Low erosion = rough terrain with peaks and variation
-                // High erosion = smooth, worn terrain
-                var roughness = 1f - erosion01;  // 1.0 = rough, 0.0 = smooth
-                
-                // Peaks/valleys contribution - DRAMATICALLY INCREASED amplitude
-                // Uses effectiveCoastDist to maintain variation near coast
-                var peakAmplitude = shaping.PeakAmplitudeHills * 1.5f;  // 50% boost
-                var peakContribution = (peaks - 0.5f) * 2f * peakAmplitude * (0.4f + roughness * 0.6f) * effectiveCoastDist;
-                baseHeight += peakContribution;
-                
-                // === WEIRDNESS TERRAIN VARIETY (DRAMATICALLY ENHANCED) ===
-                // Weirdness creates unusual terrain variations:
-                // - Positive weirdness: unexpected elevated terrain (plateaus, mesas)
-                // - Negative weirdness: unexpected lowlands (basins, depressions)
-                var weirdnessAmplitude = shaping.WeirdnessAmplitude;
-                var weirdnessInfluence = weirdness * weirdnessAmplitude * (shaping.WeirdnessInfluenceBase + roughness * shaping.WeirdnessInfluenceRoughness) * effectiveCoastDist;
-                
-                // Extra boost for extreme weirdness values - creates DRAMATIC terrain
-                if (absWeirdness > shaping.ExtremeWeirdnessThreshold)
-                {
-                    var extremeBoost = (absWeirdness - shaping.ExtremeWeirdnessThreshold) / (1f - shaping.ExtremeWeirdnessThreshold);
-                    weirdnessInfluence += MathF.Sign(weirdness) * extremeBoost * shaping.ExtremeWeirdnessBoost * (0.5f + roughness * 0.5f);
-                }
-                baseHeight += weirdnessInfluence;
-
-                // === MOUNTAIN/CLIFF FEATURES - LOWER threshold, HIGHER amplitudes ===
-                // Mountains start at lower continentalness for more terrain variety
-                if (tC > shaping.MountainStartThreshold)
-                {
-                    var mountainFactor = Smoothstep(shaping.MountainStartThreshold, 0.75f, tC);  // Full effect at 0.75
-                    
-                    // Mountain height boost - INCREASED
-                    var mountainBoost = shaping.MountainHeightBoost * shaping.MountainHeightBoostMultiplier;
-                    baseHeight += mountainBoost * mountainFactor;
-                    
-                    // Cliff features - varies with roughness AND weirdness
-                    var cliffAmplitude = terrainParams.CliffAmplitude * shaping.CliffAmplitudeMultiplier;
-                    var cliffStrength = MathF.Abs(cliff) * (0.3f + roughness * 0.7f) * mountainFactor * (0.5f + absWeirdness * 0.5f);
-                    baseHeight += cliffStrength * cliffAmplitude;
-                    
-                    // Valley carving - DEEPER valleys
-                    if (peaks < 0.35f && roughness > 0.5f)
-                    {
-                        var valleyDepth = (0.35f - peaks) * shaping.ValleyDepthMultiplier * roughness * mountainFactor;
-                        baseHeight -= valleyDepth;
-                    }
-                    
-                    // Ridgeline peaks for high peaks + low erosion
-                    if (peaks > 0.7f && roughness > 0.6f)
-                    {
-                        var ridgeBoost = (peaks - 0.7f) * shaping.RidgeBoostMultiplier * roughness * mountainFactor;
-                        baseHeight += ridgeBoost;
-                    }
-                }
-                
-                // === ROLLING TERRAIN in coastal/lowland areas ===
-                if (tC < shaping.MountainStartThreshold && tC > terrainParams.OceanThreshold + 0.03f)
-                {
-                    // More aggressive variation in plains
-                    var plainsFactor = 1f - Smoothstep(0.40f, shaping.MountainStartThreshold, tC);
-                    var plainsAmplitude = shaping.PeakAmplitudePlains * shaping.PlainsAmplitudeMultiplier;
-                    var plainsVariation = (peaks - 0.5f) * plainsAmplitude * plainsFactor * (0.4f + roughness * 0.6f);
-                    baseHeight += plainsVariation;
-                }
-
-                // === EROSION SMOOTHING - MINIMAL for maximum drama ===
-                // Only apply light smoothing in very high erosion areas
-                if (erosion01 > shaping.ErosionSmoothingThreshold)
-                {
-                    var smoothingFactor = (erosion01 - shaping.ErosionSmoothingThreshold) / (1f - shaping.ErosionSmoothingThreshold) * shaping.ErosionSmoothingFactor;
-                    var smoothTarget = SampleHeightSpline(tC) + VoxelHelper.WaterLevel + shaping.ErosionSmoothingHeightOffset;
-                    baseHeight = Lerp(baseHeight, smoothTarget, smoothingFactor);
-                }
-                
-                // === CRITICAL: MINIMUM HEIGHT FOR LAND ===
-                // Land terrain (continentalness >= OceanThreshold) MUST be at or above water level.
-                // Without this, terrain modifiers (peaks, weirdness, valleys) can push land below
-                // water level, creating "floating water" without proper shores.
-                // The minimum height increases slightly inland to ensure natural coastlines.
-                var minLandHeight = VoxelHelper.WaterLevel + 1f + coastDist * 3f;  // Y=36 at coast, rising inland
-                if (baseHeight < minLandHeight)
-                {
-                    baseHeight = minLandHeight;
-                }
-            }
-            else
-            {
-                // === OCEAN ZONE ===
-                // Add significant underwater variation for interesting sea floor
-                var oceanVariation = (columnPeaks[i] - 0.5f) * shaping.OceanVariationAmplitude;
-                baseHeight += oceanVariation;
-                
-                column3DFactor[i] = shaping.Min3DFactor;
-            }
-
-            columnHeights[i] = baseHeight;
-            var rounded = (int)MathF.Round(baseHeight);
-            // CRITICAL GUARD: Land must be at least one block above sea level.
-            // Prevents underwater land columns near coast causing missing beaches.
-            if (cachedCont01[i] >= terrainParams.OceanThreshold && rounded < (int)VoxelHelper.WaterLevel + 1)
-            {
-                rounded = (int)VoxelHelper.WaterLevel + 1;
-                columnHeights[i] = rounded;
-            }
-            columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
-        }
-    }
-
-    /// <summary>
-    /// Phase 2 (Properly Unified): Single-pass height calculation.
-    /// 
-    /// The height spline is the PRIMARY and ONLY driver of base terrain height.
-    /// All other factors (erosion, peaks, cliffs) are MODIFIERS that add detail.
-    /// 
-    /// This eliminates the layered Apply* methods that caused conflicting height calculations.
-    /// </summary>
-    /// <remarks>
-    /// Height formula:
-    ///   finalHeight = HeightSpline(continentalness) + WaterLevel
-    ///               + peakVariation × roughness × inlandFactor
-    ///               + mountainBoost × mountainFactor
-    ///               + cliffDetail × mountainFactor × roughness
-    ///               - erosionSmoothing
-    /// 
-    /// Key principles:
-    /// - Continentalness ALONE determines base height via spline
-    /// - Roughness (1 - erosion) controls terrain drama
-    /// - Cliffs ONLY appear in mountains, not near coast
-    /// - No competing height calculation systems
-    /// </remarks>
-
     /// <summary>
     /// Phase 4: Calculate the 3D factor from weirdness and erosion.
     /// This determines how much 3D features (overhangs, arches, floating islands) affect terrain.
@@ -1110,84 +814,6 @@ internal sealed class CpuTerrainGenerator
         // Map to configured range [Min3DFactor, Max3DFactor]
         return Lerp(shaping.Min3DFactor, shaping.Max3DFactor, rawFactor);
     }
-
-    /// <summary>
-    /// Phase 3: Select biomes using BiomeSelector with climate cache values.
-    /// This uses SIMD-sampled climate values from ChunkClimateCache directly,
-    /// eliminating the need for BiomeGenerator's separate noise sampling.
-    /// Biome selection happens AFTER terrain height is computed so ocean/land
-    /// classification matches actual terrain surface.
-    /// 
-    /// FIXED: Now computes per-column biome IDs for voxel-resolution borders
-    /// instead of 4x4 cell sampling which caused blocky biome boundaries.
-    /// </summary>
-    private void UpdateBiomeDataFromTerrainValues()
-    {
-        if (currentChunkBiome == null || biomeSelector == null) return;
-
-        // Get climate cache spans for direct access (no allocations)
-        var cont01 = climateCache.Continentalness01;
-        var temp01 = climateCache.Temperature01;
-        var humid01 = climateCache.Humidity01;
-        var erosion01 = climateCache.Erosion01;
-        var pv01 = climateCache.PeaksValleys01;
-
-        // === PER-COLUMN BIOME SELECTION (voxel-resolution borders) ===
-        // Select biome for every column based on its actual terrain height AND water body type.
-        // This eliminates the 4x4 blocky biome borders and ensures biome matches water presence.
-        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
-        {
-            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
-            {
-                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                // Select biome using ONLY climate parameters (Minecraft-style)
-                var biome = biomeSelector.Select(
-                    cont01[columnIndex],
-                    temp01[columnIndex],
-                    humid01[columnIndex],
-                    erosion01[columnIndex],
-                    pv01[columnIndex]);
-                
-                currentChunkBiome.SetBiomeAt(lx, lz, biome);
-            }
-        }
-
-        // === LEGACY 4x4 CELL DATA (for climate interpolation) ===
-        // Keep the 4x4 grid for backward compatibility with climate interpolation systems.
-        for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
-        {
-            for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
-            {
-                var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
-
-                // Sample at cell center for climate values
-                var centerLocalX = cellX * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
-                var centerLocalZ = cellZ * ChunkBiomeData.BlocksPerCell + ChunkBiomeData.BlocksPerCell / 2;
-                var centerColumnIndex = centerLocalZ * VoxelHelper.ChunkSideSize + centerLocalX;
-
-                // Update climate data (used for interpolation by other systems)
-                currentChunkBiome.Continentalness[cellIndex] = climateCache.Continentalness[centerColumnIndex];
-                currentChunkBiome.Erosion[cellIndex] = climateCache.Erosion[centerColumnIndex];
-                currentChunkBiome.PeaksValleys[cellIndex] = climateCache.PeaksValleys[centerColumnIndex];
-                currentChunkBiome.Temperature[cellIndex] = temp01[centerColumnIndex];
-                currentChunkBiome.Humidity[cellIndex] = humid01[centerColumnIndex];
-                
-                // Cell biome is the most common biome in the cell (use center as representative)
-                currentChunkBiome.BiomeIds[cellIndex] = currentChunkBiome.GetBiomeAt(centerLocalX, centerLocalZ);
-            }
-        }
-    }
-
-    // NOTE: Phase 2 Cleanup - The following methods were REMOVED because they created
-    // competing height calculation systems that caused atoll patterns and cliff rings:
-    // - ApplyBiomeHeightModulation() - had its own ocean/land height logic
-    // - CalculateBiomeWeight() - attempted biome-based height blending
-    // - CalculateRangeMatch() - helper for biome weight calculation
-    //
-    // Height is now calculated ONCE in BuildColumnFieldCaches() using:
-    //   HeightSpline(continentalness) + erosion/peaks modifiers
-    //
-    // Biome selection (BiomeSelector) is separate and uses terrain HEIGHT to classify.
 
     /// <summary>
     /// Gets a biome definition by its ID from the config.
@@ -1293,355 +919,32 @@ internal sealed class CpuTerrainGenerator
 
     private void BuildCaveMaskVolume()
     {
-        Array.Clear(caveMaskVolume);
-
-        // === PASS 1: Generate base cave mask ===
-        for (var columnIndex = 0; columnIndex < ColumnCount; columnIndex++)
+        // Stage 5: Delegate cave carving to CaveCarver
+        // This replaces the inline implementation with the improved volume-based entrance carving
+        if (caveCarver == null)
         {
-            var isLandColumn = !columnWaterBody[columnIndex].IsOcean;
-            var cheeseSlice = GetColumnVolumeSpan(cheeseVolume, columnIndex);
-            var spaghettiSlice = GetColumnVolumeSpan(spaghettiVolume, columnIndex);
-            BuildBaseCaveMask(columnIndex, cheeseSlice, spaghettiSlice, isLandColumn);
-        }
-
-        // === PASS 2: Find and carve cave entrances ===
-        // Scan the entire chunk to find the BEST entrance candidate, then carve it.
-        // This prevents sieve effects by ensuring only ONE entrance per chunk region.
-        CarveCaveEntrances();
-    }
-
-    /// <summary>
-    /// Scan the chunk for cave entrance candidates and carve proper tunnel entrances.
-    /// Uses a region-based approach: divide chunk into regions, find best candidate per region,
-    /// then carve a proper ellipsoid tunnel for each selected entrance.
-    /// </summary>
-    private void CarveCaveEntrances()
-    {
-        // Divide chunk into regions (e.g., 8x8 blocks each = 4 regions in a 16x16 chunk)
-        const int regionSize = 8;
-        const int regionsPerSide = VoxelHelper.ChunkSideSize / regionSize;
-        
-        for (var rz = 0; rz < regionsPerSide; rz++)
-        {
-            for (var rx = 0; rx < regionsPerSide; rx++)
-            {
-                // Deterministic check if this region should have an entrance
-                var regionWx = currentChunkX * VoxelHelper.ChunkSideSize + rx * regionSize;
-                var regionWz = currentChunkZ * VoxelHelper.ChunkSideSize + rz * regionSize;
-                var regionHash = Hash2D(regionWx / regionSize, regionWz / regionSize, terrainParams.Seed + 9000u);
-                
-                // ~15% of regions with qualifying caves get entrances
-                if (regionHash > 0.15f)
-                {
-                    continue;
-                }
-                
-                // Find the best entrance candidate in this region
-                var bestCandidate = FindBestEntranceCandidate(rx * regionSize, rz * regionSize, regionSize);
-                
-                if (bestCandidate.HasValue)
-                {
-                    var (lx, lz, caveY, surfaceY, dirX, dirZ, slope) = bestCandidate.Value;
-                    CarveEntranceTunnel(lx, lz, caveY, surfaceY, dirX, dirZ, slope);
-                }
-            }
-        }
-    }
-
-    /// <summary>
-    /// Find the best cave entrance candidate within a region.
-    /// Returns the candidate with the best combination of slope, cave proximity, and position.
-    /// </summary>
-    private (int lx, int lz, int caveY, int surfaceY, int dirX, int dirZ, float slope)? FindBestEntranceCandidate(
-        int startLx, int startLz, int size)
-    {
-        float bestScore = 0;
-        (int lx, int lz, int caveY, int surfaceY, int dirX, int dirZ, float slope)? best = null;
-        
-        for (var dz = 0; dz < size; dz++)
-        {
-            var lz = startLz + dz;
-            if (lz >= VoxelHelper.ChunkSideSize) continue;
-            
-            for (var dx = 0; dx < size; dx++)
-            {
-                var lx = startLx + dx;
-                if (lx >= VoxelHelper.ChunkSideSize) continue;
-                
-                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                
-                // Skip ocean columns
-                if (columnWaterBody[columnIndex].IsOcean)
-                {
-                    continue;
-                }
-                
-                var mask = GetColumnCaveMask(columnIndex);
-                var surfaceHeight = columnHeightInts[columnIndex];
-                
-                // Find highest cave voxel
-                var highestCaveY = -1;
-                for (var y = Math.Min(surfaceHeight - 3, VoxelHelper.ChunkYSize - 1); y >= 0; y--)
-                {
-                    if (mask[y] != 0)
-                    {
-                        highestCaveY = y;
-                        break;
-                    }
-                }
-                
-                if (highestCaveY < 0)
-                {
-                    continue;
-                }
-                
-                // Check roof thickness
-                var roofThickness = surfaceHeight - highestCaveY;
-                if (roofThickness is < 3 or > 20)
-                {
-                    continue;
-                }
-                
-                // Compute slope and direction
-                var (slope, dirX, dirZ) = ComputeSlopeAndDirection(lx, lz);
-                
-                // Need sufficient slope and a valid direction
-                if (slope < 0.8f || (dirX == 0 && dirZ == 0))
-                {
-                    continue;
-                }
-                
-                // Score this candidate: prefer steeper slopes and thinner roofs
-                var slopeScore = Math.Min(slope / 3f, 1f); // Max score at slope 3+
-                var roofScore = 1f - (roofThickness - 3f) / 17f; // Thinner = better
-                var score = slopeScore * 0.6f + roofScore * 0.4f;
-                
-                if (score > bestScore)
-                {
-                    bestScore = score;
-                    best = (lx, lz, highestCaveY, surfaceHeight, dirX, dirZ, slope);
-                }
-            }
-        }
-        
-        return best;
-    }
-
-    /// <summary>
-    /// Carve a proper cave entrance tunnel using an expanding ellipsoid.
-    /// The entrance FLOOR starts at the cave floor level and gradually RISES toward the terrain surface.
-    /// This creates a walkable ramp from inside the cave to outside.
-    /// Continue carving until the entrance floor reaches terrain surface level.
-    /// </summary>
-    private void CarveEntranceTunnel(int startLx, int startLz, int caveY, int surfaceY, int dirX, int dirZ, float slope)
-    {
-        // Ellipsoid dimensions - wide enough to walk through
-        var radiusH = 2.0f;   // Horizontal radius (width)
-        var radiusV = 2.5f;   // Vertical radius (height above floor)
-        
-        // Growth per step - entrance gets wider as it approaches the outside
-        const float radiusGrowthH = 0.2f;
-        const float radiusGrowthV = 0.15f;
-        
-        // Normalize direction for consistent step size
-        var dirLength = MathF.Sqrt(dirX * dirX + dirZ * dirZ);
-        if (dirLength < 0.001f) return;
-        var normDirX = dirX / dirLength;
-        var normDirZ = dirZ / dirLength;
-        
-        // CRITICAL: Start at the CAVE FLOOR level
-        // The entrance floor must connect seamlessly to the cave floor
-        var floorY = (float)caveY;
-        var currentX = startLx + 0.5f;
-        var currentZ = startLz + 0.5f;
-        
-        // Calculate how much we need to rise per step to reach the surface
-        // We want a gentle walkable slope (roughly 0.3-0.5 blocks rise per horizontal block)
-        var horizontalDistanceToSurface = MathF.Max(5f, (surfaceY - caveY) / slope);
-        var risePerStep = (surfaceY - caveY) / horizontalDistanceToSurface;
-        risePerStep = Math.Clamp(risePerStep, 0.25f, 0.6f); // Keep it walkable
-        
-        // Carve until the FLOOR reaches terrain surface level
-        const int maxSteps = 30;
-        for (var step = 0; step < maxSteps; step++)
-        {
-            // Get the surface height at current XZ position
-            var centerLx = (int)currentX;
-            var centerLz = (int)currentZ;
-            
-            // Bounds check
-            if (centerLx < 0 || centerLx >= VoxelHelper.ChunkSideSize ||
-                centerLz < 0 || centerLz >= VoxelHelper.ChunkSideSize)
-            {
-                break;
-            }
-            
-            var colIdx = centerLz * VoxelHelper.ChunkSideSize + centerLx;
-            var localSurface = columnHeightInts[colIdx];
-            
-            // Carve ellipsoid centered vertically above the floor
-            // The ellipsoid center is at floorY + radiusV (so the bottom touches the floor)
-            var centerY = floorY + radiusV;
-            CarveEllipsoid(currentX, centerY, currentZ, radiusH, radiusV);
-            
-            // Check if the FLOOR has reached or exceeded the terrain surface
-            // This means we've created a complete walkable path from cave to surface
-            if (floorY >= localSurface)
-            {
-                // Carve one more larger ellipsoid to create a nice cave mouth opening
-                CarveEllipsoid(currentX, centerY, currentZ, radiusH + 1f, radiusV + 0.5f);
-                break;
-            }
-            
-            // Move HORIZONTALLY in the downhill direction (toward the hillside)
-            currentX += normDirX * 1.0f;
-            currentZ += normDirZ * 1.0f;
-            
-            // RISE the floor gradually - this creates the walkable ramp
-            floorY += risePerStep;
-            
-            // Grow the ellipsoid for expanding cave mouth
-            radiusH += radiusGrowthH;
-            radiusV += radiusGrowthV;
-        }
-    }
-
-    /// <summary>
-    /// Carve a proper cave entrance tunnel using an expanding ellipsoid.
-    /// The entrance FLOOR starts at the cave floor level and gradually RISES toward the terrain surface.
-    /// This creates a walkable ramp from inside the cave to outside.
-    /// Continue carving until the entrance floor reaches terrain surface level.
-    /// </summary>
-    private void CarveEllipsoid(float centerX, float centerY, float centerZ, float radiusH, float radiusV)
-    {
-        var minX = Math.Max(0, (int)(centerX - radiusH - 1));
-        var maxX = Math.Min(VoxelHelper.ChunkSideSize - 1, (int)(centerX + radiusH + 1));
-        var minZ = Math.Max(0, (int)(centerZ - radiusH - 1));
-        var maxZ = Math.Min(VoxelHelper.ChunkSideSize - 1, (int)(centerZ + radiusH + 1));
-        var minY = Math.Max(0, (int)(centerY - radiusV - 1));
-        var maxY = Math.Min(VoxelHelper.ChunkYSize - 1, (int)(centerY + radiusV + 1));
-        
-        var radiusHSq = radiusH * radiusH;
-        var radiusVSq = radiusV * radiusV;
-        
-        for (var lz = minZ; lz <= maxZ; lz++)
-        {
-            var dz = lz + 0.5f - centerZ;
-            var dzNormSq = (dz * dz) / radiusHSq;
-            
-            for (var lx = minX; lx <= maxX; lx++)
-            {
-                var dx = lx + 0.5f - centerX;
-                var dxNormSq = (dx * dx) / radiusHSq;
-                
-                // Early exit if outside in XZ plane
-                if (dxNormSq + dzNormSq > 1f)
-                {
-                    continue;
-                }
-                
-                var colIdx = lz * VoxelHelper.ChunkSideSize + lx;
-                var localSurface = columnHeightInts[colIdx];
-                var mask = GetColumnCaveMask(colIdx);
-                
-                for (var y = minY; y <= maxY; y++)
-                {
-                    // Don't carve above terrain surface
-                    if (y > localSurface)
-                    {
-                        continue;
-                    }
-                    
-                    var dy = y + 0.5f - centerY;
-                    var dyNormSq = (dy * dy) / radiusVSq;
-                    
-                    // Ellipsoid equation
-                    if (dxNormSq + dyNormSq + dzNormSq <= 1f)
-                    {
-                        mask[y] = 1;
-                    }
-                }
-            }
-        }
-    }
-
-    private void BuildBaseCaveMask(int columnIndex, Span<float> cheeseSlice, Span<float> spaghettiSlice, bool isLand)
-    {
-        var mask = GetColumnCaveMask(columnIndex);
-        if (!isLand)
-        {
-            mask.Clear();
+            Array.Clear(caveMaskVolume);
             return;
         }
-
-        var surfaceHeight = columnHeightInts[columnIndex];
-        var minCaveDepth = Math.Max(4, config.Caves.MinBreachCaveDepth);
-
-        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+        
+        // Build isLandColumn array for CaveCarver
+        Span<bool> isLandColumn = stackalloc bool[ColumnCount];
+        for (var i = 0; i < ColumnCount; i++)
         {
-            var depth = surfaceHeight - y;
-            if (depth < minCaveDepth)
-            {
-                continue;
-            }
-
-            var combinedDensity = MathF.Max(cheeseSlice[y], spaghettiSlice[y]);
-            var depthAtten = Smoothstep(minCaveDepth, minCaveDepth + terrainParams.CaveDepthFade, depth);
-            if (combinedDensity * depthAtten > terrainParams.CaveCarveThreshold)
-            {
-                mask[y] = 1;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Compute slope magnitude and downhill direction from cached terrain heights.
-    /// Returns (slope, dx, dz) where dx/dz is the direction of steepest descent.
-    /// </summary>
-    private (float slope, int dx, int dz) ComputeSlopeAndDirection(int lx, int lz)
-    {
-        var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-        var h0 = columnHeightInts[columnIndex];
-        
-        var bestDrop = 0f;
-        var bestDx = 0;
-        var bestDz = 0;
-        
-        // Check all 8 neighbors to find steepest descent
-        ReadOnlySpan<(int dx, int dz)> offsets = [
-            (-1, 0), (1, 0), (0, -1), (0, 1),
-            (-1, -1), (-1, 1), (1, -1), (1, 1)
-        ];
-        
-        foreach (var (dx, dz) in offsets)
-        {
-            var nlx = lx + dx;
-            var nlz = lz + dz;
-            
-            if (nlx < 0 || nlx >= VoxelHelper.ChunkSideSize || 
-                nlz < 0 || nlz >= VoxelHelper.ChunkSideSize)
-            {
-                continue;
-            }
-            
-            var neighborIdx = nlz * VoxelHelper.ChunkSideSize + nlx;
-            var drop = h0 - columnHeightInts[neighborIdx];
-            
-            // Normalize diagonal distances
-            var dist = (dx != 0 && dz != 0) ? 1.414f : 1f;
-            var normalizedDrop = drop / dist;
-            
-            if (normalizedDrop > bestDrop)
-            {
-                bestDrop = normalizedDrop;
-                bestDx = dx;
-                bestDz = dz;
-            }
+            isLandColumn[i] = !columnWaterBody[i].IsOcean;
         }
         
-        return (bestDrop, bestDx, bestDz);
+        // Carve caves using the new improved system
+        caveCarver.CarveChunk(
+            currentChunkX, 
+            currentChunkZ, 
+            columnHeightInts, 
+            isLandColumn,
+            (x, z) => GetSurfaceHeightFloat(x, z));
+        
+        // Copy cave mask from CaveCarver to local buffer
+        caveCarver.CaveMask.CopyTo(caveMaskVolume);
     }
-
 
     /// <summary>
     /// Interpolate sparse 3D noise samples into full-resolution volumes using optimized linear interpolation.

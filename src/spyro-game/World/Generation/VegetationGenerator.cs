@@ -77,7 +77,7 @@ internal sealed class VegetationGenerator(TerrainConfig config)
                     {
                         // Prevent placing trees on chunk borders to avoid cut-off leaves
                         // Trees have a radius of up to 2 blocks
-                        if (IsTree(rule.Type))
+                        if (IsTree(rule.Generator))
                         {
                             if (x < 2 || x >= VoxelHelper.ChunkSideSize - 2 ||
                                 z < 2 || z >= VoxelHelper.ChunkSideSize - 2)
@@ -91,7 +91,7 @@ internal sealed class VegetationGenerator(TerrainConfig config)
                         random = new Random((int)rngState);
                         
                         // Place vegetation one block ABOVE the surface
-                        PlaceVegetation(chunk, x, surfaceY + 1, z, rule.Type, random);
+                        PlaceVegetation(chunk, x, surfaceY + 1, z, rule, random);
                         
                         // Only one vegetation item per column
                         break; 
@@ -101,46 +101,42 @@ internal sealed class VegetationGenerator(TerrainConfig config)
         }
     }
 
-    private static void PlaceVegetation(ChunkData chunk, int x, int y, int z, VegetationType type, Random random)
+    private static void PlaceVegetation(ChunkData chunk, int x, int y, int z, VegetationRule rule, Random random)
     {
-        switch (type)
+        switch (rule.Generator)
         {
-            case VegetationType.Grass:
-                var grass = new [] { BlockId.TallGrass, BlockId.GrassPatch };
-                PlacePlant(chunk, x, y, z, grass[random.Next(grass.Length)]);
+            case VegetationGeneratorType.Simple:
+                PlacePlant(chunk, x, y, z, rule.MainBlock);
                 break;
-            case VegetationType.Flower:
-                // Pick random flower
-                var flowers = new[] { 
-                    BlockId.Poppy, BlockId.Dandelion, BlockId.BlueOrchid, BlockId.Allium, 
-                    BlockId.AzureBluet, BlockId.RedTulip, BlockId.OrangeTulip, BlockId.WhiteTulip, 
-                    BlockId.PinkTulip, BlockId.OxeyeDaisy, BlockId.Cornflower, BlockId.LilyOfTheValley 
-                };
-                PlacePlant(chunk, x, y, z, flowers[random.Next(flowers.Length)]);
+                
+            case VegetationGeneratorType.Column:
+                // For cactus/sugar cane, height is random 2-4 blocks
+                var colHeight = 2 + random.Next(3);
+                
+                // Special handling for Cactus: needs air around it
+                if (rule.MainBlock == BlockId.Cactus)
+                {
+                    PlaceCactus(chunk, x, y, z, colHeight);
+                }
+                else
+                {
+                    PlaceColumn(chunk, x, y, z, rule.MainBlock, colHeight);
+                }
                 break;
-            case VegetationType.BlueOrchid:
-                PlacePlant(chunk, x, y, z, BlockId.BlueOrchid);
+                
+            case VegetationGeneratorType.TreeBalloon:
+                // Oak/Birch style tree
+                PlaceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 4 + random.Next(3));
                 break;
-            case VegetationType.TreeOak:
-                PlaceTree(chunk, x, y, z, BlockId.OakLog, BlockId.OakLeaves, 4 + random.Next(3));
+                
+            case VegetationGeneratorType.TreeCone:
+                // Spruce style tree
+                PlaceSpruceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 6 + random.Next(4));
                 break;
-            case VegetationType.TreeBirch:
-                PlaceTree(chunk, x, y, z, BlockId.BirchLog, BlockId.BirchLeaves, 4 + random.Next(3));
-                break;
-            case VegetationType.TreeSpruce:
-                PlaceSpruceTree(chunk, x, y, z, 6 + random.Next(4));
-                break;
-            case VegetationType.TreeJungle:
-                PlaceTree(chunk, x, y, z, BlockId.JungleLog, BlockId.JungleLeaves, 10 + random.Next(10));
-                break;
-            case VegetationType.Cactus:
-                PlaceCactus(chunk, x, y, z, 1 + random.Next(3));
-                break;
-            case VegetationType.DeadBush:
-                PlacePlant(chunk, x, y, z, BlockId.DeadBush);
-                break;
-            case VegetationType.SugarCane:
-                PlaceColumn(chunk, x, y, z, BlockId.SugarCane, 2 + random.Next(2));
+                
+            case VegetationGeneratorType.TreeJungle:
+                // Jungle style tree
+                PlaceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 10 + random.Next(10));
                 break;
         }
     }
@@ -227,16 +223,16 @@ internal sealed class VegetationGenerator(TerrainConfig config)
         }
     }
 
-    private static void PlaceSpruceTree(ChunkData chunk, int x, int y, int z, int height)
+    private static void PlaceSpruceTree(ChunkData chunk, int x, int y, int z, BlockId log, BlockId leaves, int height)
     {
         // Trunk
         for (var i = 0; i < height; i++)
         {
-            SafeSetBlock(chunk, x, y + i, z, BlockId.SpruceLog);
+            SafeSetBlock(chunk, x, y + i, z, log);
         }
 
         // Top leaf
-        SafeSetBlock(chunk, x, y + height, z, BlockId.SpruceLeaves);
+        SafeSetBlock(chunk, x, y + height, z, leaves);
 
         // Leaves: Pyramidal shape
         // Start 3 blocks from bottom
@@ -279,7 +275,7 @@ internal sealed class VegetationGenerator(TerrainConfig config)
                     if (place)
                     {
                         if (lx == 0 && lz == 0) continue;
-                        SafeSetBlock(chunk, x + lx, y + ly, z + lz, BlockId.SpruceLeaves);
+                        SafeSetBlock(chunk, x + lx, y + ly, z + lz, leaves);
                     }
                 }
             }
@@ -306,5 +302,6 @@ internal sealed class VegetationGenerator(TerrainConfig config)
         return h ^ (h >> 16);
     }
 
-    private static bool IsTree(VegetationType type) => type is VegetationType.TreeOak or VegetationType.TreeBirch or VegetationType.TreeSpruce or VegetationType.TreeJungle;
+    private static bool IsTree(VegetationGeneratorType type) => 
+        type is VegetationGeneratorType.TreeBalloon or VegetationGeneratorType.TreeCone or VegetationGeneratorType.TreeJungle;
 }

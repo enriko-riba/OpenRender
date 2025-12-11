@@ -479,12 +479,12 @@ public sealed class TerrainConfig
     
     /// <summary>
     /// Distance in blocks below surface where caves fade to prevent surface breaches.
-    /// Example: 4 means caves attenuate from depth 0 to 4.
-    /// - Lower values (3): Caves reach surface more easily, more cave entrances
-    /// - Higher values (8): Caves stay deep, fewer natural entrances
-    /// CHANGED: Reduced from 5 to 4 for more cave entrances near surface.
+    /// Example: 8 means caves attenuate from depth 5 to 13.
+    /// - Lower values (5): Caves can exist closer to surface
+    /// - Higher values (12): Caves stay deep, very clean surface
+    /// Technical: Applied with smoothstep(MinBreachCaveDepth, MinBreachCaveDepth + CaveDepthFade, depth).
     /// </summary>
-    public float CaveDepthFade { get; set; } = 4f;
+    public float CaveDepthFade { get; set; } = 8f;
     
     /// <summary>
     /// Slope threshold range for cave breach detection.
@@ -963,21 +963,18 @@ public sealed class BiomeDefinition
     }
 
     /// <summary>
-        /// Creates the default set of biomes with Minecraft-style climate ranges.
-        /// Each biome has a Continentalness range that determines where it can appear:
-        /// - C < 0.25: Deep Ocean
-        /// - C 0.25-0.40: Ocean  
-        /// - C 0.40-0.45: Beach/Coast
-        /// - C 0.45-1.0: Land biomes (filtered by T/H)
-        /// - C > 0.80 + high elevation: Alpine
-        /// </summary>
-        /// <returns>List of configured biome definitions.</returns>
-        public static List<BiomeDefinition> DefaultSet()
-        {
-            return
-            [
-                // DeepOcean: C < 0.25 - deepest underwater regions
-                new ((int)BiomeId.DeepOcean, nameof(BiomeId.DeepOcean),
+    /// Creates the default set of biomes with Minecraft-style climate ranges.
+    /// Each biome has a Continentalness range that determines where it can appear:
+    /// - C < 0.25: Deep Ocean
+    /// - C 0.25-0.40: Ocean  
+    /// - C 0.40-0.45: Beach/Coast
+    /// - C 0.45-1.0: Land biomes (filtered by T/H)
+    /// - C > 0.80 + high elevation: Alpine
+    /// </summary>
+    /// <returns>List of configured biome definitions.</returns>
+    public static List<BiomeDefinition> DefaultSet() => [
+            // DeepOcean: C < 0.25 - deepest underwater regions
+            new ((int)BiomeId.DeepOcean, nameof(BiomeId.DeepOcean),
                     continentalness: new(0.0f, 0.25f),    // Deep ocean zone
                     temperature: new(0.0f, 1.0f),         // Any temperature
                     humidity: new(0.0f, 1.0f),            // Any humidity
@@ -1006,7 +1003,7 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                     underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
                 {
-                    Vegetation = [new() { Type = VegetationType.SugarCane, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }]
+                    Vegetation = [new() { Generator = VegetationGeneratorType.Column, MainBlock = BlockId.SugarCane, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }]
                 },
             
                 // Alpine: C > 0.80 + high elevation - mountain peaks
@@ -1020,7 +1017,7 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = [new() { Type = VegetationType.TreeSpruce, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Snow, BlockId.SnowDirt] }]
+                    Vegetation = [new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Snow, BlockId.SnowDirt] }]
                 },
             
                 // Tundra: cold land biome
@@ -1033,7 +1030,7 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = [new() { Type = VegetationType.TreeSpruce, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }]
+                    Vegetation = [new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }]
                 },
             
                 // Taiga: cold + humid land biome
@@ -1046,10 +1043,10 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Podzol, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.TreeSpruce, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
-                        new() { Type = VegetationType.Grass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
                     ]
                 },
             
@@ -1063,11 +1060,12 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.Grass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.Flower, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.TreeOak, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.25f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Poppy, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] }
                     ]
                 },
             
@@ -1081,11 +1079,12 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.Flower, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.TreeOak, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Dandelion, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] }
                     ]
                 },
             
@@ -1099,11 +1098,12 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.TreeJungle, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.Grass, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.Flower, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.TreeJungle, MainBlock = BlockId.JungleLog, SecondaryBlock = BlockId.JungleLeaves, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.BlueOrchid, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
                     ]
                 },
             
@@ -1117,11 +1117,11 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Dirt)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.TreeOak, Density = 0.08f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Type = VegetationType.Grass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
-                        new() { Type = VegetationType.BlueOrchid, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.08f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.BlueOrchid, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] }
                     ]
                 },
             
@@ -1135,10 +1135,10 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.CoarseDirt, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Clay, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.TreeOak, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] },
-                        new() { Type = VegetationType.Grass, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.CoarseDirt, BlockId.Grass] }
                     ]
                 },
             
@@ -1152,10 +1152,10 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
                     underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Sandstone)
                 {
-                    Vegetation = 
+                    Vegetation =
                     [
-                        new() { Type = VegetationType.Cactus, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Sand] },
-                        new() { Type = VegetationType.DeadBush, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
+                        new() { Generator = VegetationGeneratorType.Column, MainBlock = BlockId.Cactus, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Sand] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.DeadBush, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Sand] }
                     ]
                 },
             
@@ -1169,8 +1169,7 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Sand, underwaterSubsurfaceBlock: BlockId.Gravel),
             ];
-        }
-    }
+}
 
 /// <summary>
 /// Defines parameters for biome region grouping using Voronoi/Worley noise.
@@ -1271,13 +1270,12 @@ public sealed class CaveParams
     /// <summary>
     /// Gets or sets the density threshold for cave carving [0,1].
     /// Higher values create fewer, smaller caves; lower values create more, larger caves.
-    /// - 0.88 (default): Moderate cave frequency with larger individual caves
-    /// - 0.75: Higher cave frequency (more caves, easier underground navigation)
-    /// - 0.95: Lower cave frequency (rare caves, more solid underground)
+    /// - 0.90 (default): Balanced cave frequency
+    /// - 0.85: Higher cave frequency (more caves)
+    /// - 0.95: Lower cave frequency (rare caves)
     /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
-    /// CHANGED: Reduced from 0.92 to 0.88 for larger cave volumes.
     /// </summary>
-    public float CarveThreshold { get; set; } = 0.88f;
+    public float CarveThreshold { get; set; } = 0.90f;
 
     /// <summary>
     /// Gets or sets the curl noise scale for cave path distortion.
@@ -1356,11 +1354,11 @@ public sealed class CaveParams
     /// <summary>
     /// Gets or sets the minimum cave volume required before allowing surface breach.
     /// Prevents "sieve" effect where tiny cave fragments poke through surface.
-    /// - 3 (default): Requires at least 3 blocks of cave below breach point
-    /// - 2: More permissive (more entrances but risk of sieves)
-    /// - 5: Conservative (only large caves breach)
+    /// - 5 (default): Requires at least 5 blocks of depth before caves can form
+    /// - 3: More permissive (more entrances but risk of sieves)
+    /// - 8: Conservative (only deep caves, very clean surface)
     /// </summary>
-    public int MinBreachCaveDepth { get; set; } = 3;
+    public int MinBreachCaveDepth { get; set; } = 5;
 
     /// <summary>
     /// Creates a CaveParams instance with default values.
@@ -1728,8 +1726,14 @@ public sealed class NoiseLayer
 /// </summary>
 public class VegetationRule
 {
-    /// <summary>The type of vegetation to place (Tree, Flower, etc.).</summary>
-    public VegetationType Type { get; set; }
+    /// <summary>The generator algorithm to use (Simple, Tree, etc.).</summary>
+    public VegetationGeneratorType Generator { get; set; } = VegetationGeneratorType.Simple;
+
+    /// <summary>The main block to place (e.g., Flower, Log, Cactus).</summary>
+    public BlockId MainBlock { get; set; } = BlockId.Air;
+
+    /// <summary>The secondary block to place (e.g., Leaves). Optional.</summary>
+    public BlockId SecondaryBlock { get; set; } = BlockId.Air;
     
     /// <summary>Probability per column (0.0 - 1.0) that this vegetation will attempt to spawn.</summary>
     public float Density { get; set; }
@@ -1744,17 +1748,21 @@ public class VegetationRule
 /// <summary>
 /// Types of vegetation generators available.
 /// </summary>
-public enum VegetationType
+public enum VegetationGeneratorType
 {
-    Grass,
-    Flower,
-    TreeOak,    // Uses "Balloon" shape algorithm
-    TreeBirch,  // Uses "Balloon" shape algorithm (different texture)
-    TreeSpruce, // Uses "Cone" shape algorithm
-    TreeJungle, // Uses "Tall/Mega" shape algorithm
-    Cactus,
-    DeadBush,
-    SugarCane,
-    BlueOrchid // Specific flower type for swamps
+    /// <summary>Places a single block (flowers, grass, dead bush).</summary>
+    Simple,
+    
+    /// <summary>Places a column of blocks (sugar cane, cactus).</summary>
+    Column,
+    
+    /// <summary>Standard balloon-shaped tree (Oak, Birch).</summary>
+    TreeBalloon,
+    
+    /// <summary>Cone-shaped tree (Spruce).</summary>
+    TreeCone,
+    
+    /// <summary>Large jungle tree.</summary>
+    TreeJungle
 }
 

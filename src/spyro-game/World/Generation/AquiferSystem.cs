@@ -11,32 +11,14 @@ namespace SpyroGame.World.Generation;
 /// This system simply answers: "Should this air block be water?"
 /// based on the biome already being Ocean/DeepOcean.
 /// </summary>
-internal sealed class AquiferSystem
-{
-    private readonly TerrainConfig _config;
-    
-    /// <summary>Gets whether the aquifer is ready for queries.</summary>
-    public bool IsValid { get; private set; }
-
-    /// <summary>Initializes the aquifer system.</summary>
-    public AquiferSystem(TerrainConfig config)
-    {
-        _config = config ?? throw new ArgumentNullException(nameof(config));
-    }
-
-    /// <summary>
-    /// Initialize from climate cache (for compatibility, but we don't need aquifer noise anymore).
-    /// </summary>
-    public void InitializeFromClimateCache(ChunkClimateCache climateCache)
-    {
-        IsValid = climateCache.IsValid;
-    }
-
+/// <remarks>Initializes the aquifer system.</remarks>
+internal sealed class AquiferSystem(TerrainConfig config)
+{    
     /// <summary>
     /// Get water body info for a column.
     /// Simple logic: Ocean biomes with terrain below water level = ocean water.
     /// </summary>
-    public WaterBodyInfo GetWaterBodyInfo(
+    public static WaterBodyInfo GetWaterBodyInfo(
         int columnIndex, 
         BiomeId biomeId, 
         float terrainHeight,
@@ -55,14 +37,6 @@ internal sealed class AquiferSystem
     }
 
     /// <summary>Check if a specific voxel should be water.</summary>
-    public static bool ShouldBeWater(WaterBodyInfo waterBody, int y)
-    {
-        return waterBody.HasWater && y <= waterBody.WaterLevel;
-    }
-
-    /// <summary>Invalidate the cache.</summary>
-    public void Invalidate()
-    {
-        IsValid = false;
-    }
+    public static bool ShouldBeWater(WaterBodyInfo waterBody, int y) => waterBody.HasWater && y <= waterBody.WaterLevel;
 }
+
