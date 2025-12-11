@@ -405,7 +405,7 @@ public sealed class TerrainConfig
     /// - Lower values (1/60 = 0.0167): Larger, smoother cliff faces
     /// - Higher values (1/25 = 0.04): More jagged, frequent cliff details
     /// </summary>
-    public float CliffFrequency { get; set; } = 1f / 100f;
+    public float CliffFrequency { get; set; } = 1f / 200f;
     
     /// <summary>
     /// Height amplitude of cliff variations in blocks.
@@ -413,7 +413,7 @@ public sealed class TerrainConfig
     /// - Lower values (15): Gentler, less dramatic cliffs
     /// - Higher values (40): Very dramatic, towering cliff faces
     /// </summary>
-    public float CliffAmplitude { get; set; } = 25f;
+    public float CliffAmplitude { get; set; } = 15f;
     
     /// <summary>
     /// Frequency of 3D overhang noise (inverse of feature size).
@@ -1045,7 +1045,7 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.009f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
                         new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
                     ]
                 },

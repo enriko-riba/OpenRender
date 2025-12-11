@@ -489,7 +489,7 @@ internal sealed class CpuTerrainGenerator
         // Sample additional detail noise for cliffs (still needed for mountain detail)
         var xSpan = columnWorldX.AsSpan();
         var zSpan = columnWorldZ.AsSpan();
-        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, columnCliff);
+        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, columnCliff);
         
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -522,7 +522,7 @@ internal sealed class CpuTerrainGenerator
             {
                 var roughness = 1f - erosion01;
                 var coastDist = (cont01 - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
-                var effectiveCoastDist = 0.3f + coastDist * 0.7f;
+                var effectiveCoastDist = shaping.CoastDistanceBase + coastDist * shaping.CoastDistanceMultiplier;
                 
                 // Weirdness terrain variety
                 var weirdnessInfluence = weirdness * shaping.WeirdnessAmplitude * 
@@ -531,21 +531,21 @@ internal sealed class CpuTerrainGenerator
                 if (absWeirdness > shaping.ExtremeWeirdnessThreshold)
                 {
                     var extremeBoost = (absWeirdness - shaping.ExtremeWeirdnessThreshold) / (1f - shaping.ExtremeWeirdnessThreshold);
-                    weirdnessInfluence += MathF.Sign(weirdness) * extremeBoost * shaping.ExtremeWeirdnessBoost * (0.5f + roughness * 0.5f);
+                    weirdnessInfluence += MathF.Sign(weirdness) * extremeBoost * shaping.ExtremeWeirdnessBoost * (shaping.WeirdnessRoughnessBase + roughness * shaping.WeirdnessRoughnessMultiplier);
                 }
                 baseHeight += weirdnessInfluence;
                 
                 // Mountain/cliff features
                 if (cont01 > shaping.MountainStartThreshold)
                 {
-                    var mountainFactor = Smoothstep(shaping.MountainStartThreshold, 0.75f, cont01);
+                    var mountainFactor = Smoothstep(shaping.MountainStartThreshold, shaping.MountainFullThreshold, cont01);
                     var cliffAmplitude = terrainParams.CliffAmplitude * shaping.CliffAmplitudeMultiplier;
-                    var cliffStrength = MathF.Abs(columnCliff[i]) * (0.3f + roughness * 0.7f) * mountainFactor;
+                    var cliffStrength = MathF.Abs(columnCliff[i]) * (shaping.CliffStrengthBase + roughness * shaping.CliffStrengthRoughness) * mountainFactor;
                     baseHeight += cliffStrength * cliffAmplitude;
                 }
                 
                 // Ensure minimum land height
-                var minLandHeight = VoxelHelper.WaterLevel + 1f + coastDist * 3f;
+                var minLandHeight = VoxelHelper.WaterLevel + shaping.MinLandHeightOffset + coastDist * shaping.MinLandHeightCoastMultiplier;
                 if (baseHeight < minLandHeight)
                 {
                     baseHeight = minLandHeight;

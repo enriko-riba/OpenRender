@@ -160,7 +160,7 @@ public sealed class TerrainShapingConfig
     /// - 0.85: Faster mountain ramp-up
     /// - 0.98: Gradual mountain development
     /// </summary>
-    public float MountainFullThreshold { get; set; } = 0.92f;
+    public float MountainFullThreshold { get; set; } = 0.95f;
     
     /// <summary>
     /// Base height boost for mountain zones in blocks.
@@ -296,7 +296,7 @@ public sealed class TerrainShapingConfig
     /// - 30: Very normal terrain
     /// - 90: Dramatic unexpected terrain
     /// </summary>
-    public float WeirdnessAmplitude { get; set; } = 55f;
+    public float WeirdnessAmplitude { get; set; } = 15f;
 
     /// <summary>
     /// Base influence of weirdness on terrain height.
@@ -323,7 +323,7 @@ public sealed class TerrainShapingConfig
     /// - 30: Very gradual transitions
     /// - 100: Dramatic terrain shifts
     /// </summary>
-    public float ExtremeWeirdnessBoost { get; set; } = 50f;
+    public float ExtremeWeirdnessBoost { get; set; } = 10f;
 
     /// <summary>
     /// Continentalness threshold where mountains begin.
@@ -332,7 +332,7 @@ public sealed class TerrainShapingConfig
     /// - 0.50: Mountains appear closer to coast
     /// - 0.70: Mountains only in deep interior
     /// </summary>
-    public float MountainStartThreshold { get; set; } = 0.60f;
+    public float MountainStartThreshold { get; set; } = 0.80f;
 
     /// <summary>
     /// Multiplier for mountain height boost.
@@ -344,7 +344,7 @@ public sealed class TerrainShapingConfig
     /// Multiplier for cliff amplitude.
     /// Replaces hardcoded 1.5f.
     /// </summary>
-    public float CliffAmplitudeMultiplier { get; set; } = 1.5f;
+    public float CliffAmplitudeMultiplier { get; set; } = 1.0f;
 
     /// <summary>
     /// Multiplier for valley depth carving.
@@ -411,6 +411,30 @@ public sealed class TerrainShapingConfig
     /// - 0.75 (default): Full overhangs in mountain regions
     /// </summary>
     public float OverhangFullThreshold { get; set; } = 0.75f;
+
+    // === NOISE PARAMETERS ===
+
+    public int CliffNoiseOctaves { get; set; } = 4;
+    public float CliffNoisePersistence { get; set; } = 0.6f;
+    public float CliffNoiseLacunarity { get; set; } = 2.5f;
+    public uint CliffNoiseSeedOffset { get; set; } = 1500u;
+
+    // === COASTAL PARAMETERS ===
+
+    public float CoastDistanceBase { get; set; } = 0.3f;
+    public float CoastDistanceMultiplier { get; set; } = 0.7f;
+    public float MinLandHeightOffset { get; set; } = 1f;
+    public float MinLandHeightCoastMultiplier { get; set; } = 3f;
+    public float CoastalSmoothingDistance { get; set; } = 0.1f;
+    public float UnderwaterCoastalSmoothingDistance { get; set; } = 0.15f;
+    public float MaxOceanHeightOffset { get; set; } = 2f;
+
+    // === WEIRDNESS & CLIFF STRENGTH ===
+
+    public float WeirdnessRoughnessBase { get; set; } = 0.5f;
+    public float WeirdnessRoughnessMultiplier { get; set; } = 0.5f;
+    public float CliffStrengthBase { get; set; } = 0.3f;
+    public float CliffStrengthRoughness { get; set; } = 0.7f;
     
     /// <summary>
     /// Creates default terrain shaping configuration.

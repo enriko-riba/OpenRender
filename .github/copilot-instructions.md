@@ -14,9 +14,9 @@
 - New shaders or resources are copied automatically because the csproj includes `Resources\**\*.*` and `Shaders\**\*.*`, but add explicit `<Content>` entries when linking shared assets (see the consola.ttf link example).
 - Validation is manual: launch into `TerrainLoadingScene`, wait for progress to reach 100%, then ensure `GameScene` streams chunks smoothly (target 60 FPS, ≤4 pending chunks at transition).
 
-## Terrain Pipeline (CPU+GPU)
-- `TerrainLoadingScene` queues initialization steps (Streaming Manager → GPU generation → Phase 3 buffers → Terrain renderer → Frustum culling → Streaming) before activating `GameScene`.
-- `ChunkStreamingManager` (`src/spyro-game/World/ChunkStreamingManager.cs`) seeds `TerrainConfig`, starts `ChunkGenerationJobSystem`, handles GPU readback, and `Update(cameraPosition)` must be called every frame.
+## Terrain Pipeline
+- `TerrainLoadingScene` queues initialization steps before activating `GameScene`.
+- `ChunkStreamingManager` (`src/spyro-game/World/ChunkStreamingManager.cs`) seeds `TerrainConfig`, starts `ChunkGenerationJobSystem`, and `Update(cameraPosition)` must be called every frame.
 - `ChunkVoxelDataCache` + `ChunkMeshingJobSystem` → `ChunkMeshBuilder` produce CPU meshes that `Phase3BufferManager` (`World/Phase3BufferManager.cs`) uploads via persistent-mapped staging buffers and multi-draw command slots.
 - `VoxelTerrainRenderer` (`World/VoxelTerrainRenderer.cs`) binds `TerrainParamsSSBO` + biome LUTs, draws via a single multi-draw-indirect call, and exposes visibility stats consumed by HUD/debug overlays.
 - `GameScene.SetupCpuTerrain` wires the renderer into the scene graph, reinstates `LoadDistance = VoxelHelper.MaxDistanceInChunks`, and throttles GPU frustum culling by calling `ChunkStreamingManager.ExecuteFrustumCulling` every ~166 ms.
@@ -30,7 +30,6 @@
 
 ## Conventions & Docs
 - Follow `src/spyro-game/docs/coding_conventions.md`: .NET 10, C# 14, file-scoped namespaces, modern language features, and XML doc comments on every public/internal method touched.
-- `docs/GPU_TO_CPU_MIGRATION_PLAN.md` now serves as historical context only; it captured the one-time migration plan and should not drive current implementation decisions.
 - Terrain-specific planning lives in `src/spyro-game/docs/terrain/` (`PLAN_TERRAIN_AND_BIOMES.md`, `PROGRESS.md`); keep them in sync when altering streaming budgets or KPIs.
 - Shader code must honor the attribute/uniform layout documented in README.md (locations 0–3, `camera` UBO binding 0, etc.); document any new bindings directly in the shader header.
 - Keep new textures/fonts under each project’s `Resources/` tree so the existing `<Content CopyToOutputDirectory>` rules pick them up automatically.
@@ -39,7 +38,6 @@
 ## Workflow Tips
 - Before tackling any larger code implementation or refactor, ensure the current worktree is committed so new changes apply on top of a clean state.
 - Always call `ChunkStreamingManager.Update(camera.Position)` and use `GetStats`, `GetMemoryStats`, plus `FlushVoxelCache("reason")` when diagnosing stalls or invalid meshes.
-- Watch `Phase3BufferManager.CommandSlotCapacity`, `VoxelTerrainRenderer.VisibleDraws`, and the face explosion warning inside `ChunkMeshBuilder` (>5× voxel count) to validate mesh health.
 - New background work should reuse the job system pattern (`BlockingCollection` + long-running tasks) so the GL thread never blocks on CPU generation/meshing.
 - UI overlays (loading bars, HUD text) go through `TextRenderer` with atlases built via `FontAtlasGenerator`; follow the measure-before-render pattern used in `TerrainLoadingScene.RenderUI` for centering.
 - Treat everything under `tmp/` (e.g., `ChunkStreamingManager.corrupted.cs`) as read-only reference files; do not reintroduce them into any csproj without aligning with the migration docs.
