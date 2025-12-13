@@ -302,11 +302,15 @@ internal sealed class CpuTerrainGenerator
 
     private static bool IsTerrainStatsEnabled()
     {
+    #if !DEBUG
+        return false;
+    #else
         var v = Environment.GetEnvironmentVariable("SPYRO_TERRAIN_STATS");
         if (string.IsNullOrWhiteSpace(v)) return false;
         return v.Equals("1", StringComparison.OrdinalIgnoreCase)
             || v.Equals("true", StringComparison.OrdinalIgnoreCase)
             || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    #endif
     }
 
     private void RecordTerrainStatsIfEnabled(int chunkIndex, ChunkData chunkData)
@@ -377,11 +381,32 @@ internal sealed class CpuTerrainGenerator
 
             var topText = string.Join(", ", top.Select(x => $"{x.biome}:{x.count}"));
 
+            long totalBiomeColumns = 0;
+            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
+            {
+                totalBiomeColumns += terrainStatsBiomeColumnCounts[i];
+            }
+
+            var histogram = new List<(BiomeId biome, int count)>(16);
+            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
+            {
+                var count = terrainStatsBiomeColumnCounts[i];
+                if (count <= 0) continue;
+                histogram.Add(((BiomeId)i, count));
+            }
+
+            histogram.Sort(static (a, b) => b.count.CompareTo(a.count));
+            var histText = string.Join(", ", histogram.Select(x =>
+            {
+                var pct = totalBiomeColumns > 0 ? (100.0 * x.count / totalBiomeColumns) : 0.0;
+                return $"{x.biome}:{x.count}({pct:F1}%)";
+            }));
+
             OpenRender.Log.Info(
                 $"TerrainStats: chunks={terrainStatsChunks} water={VoxelHelper.WaterLevel} " +
                 $"surface[min,max]=[{terrainStatsGlobalMinSurface},{terrainStatsGlobalMaxSurface}] " +
                 $"baseHeight[min,max]=[{terrainStatsGlobalMinBaseHeight:F1},{terrainStatsGlobalMaxBaseHeight:F1}] " +
-                $"topBiomes=[{topText}] (lastChunk={chunkIndex})");
+                $"topBiomes=[{topText}] hist=[{histText}] (lastChunk={chunkIndex})");
         }
     }
 #endif

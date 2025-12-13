@@ -72,7 +72,8 @@ public static class BiomeMapGenerator
         int radiusBlocks,
         string outputPath,
         int cellSize = 4,
-        bool includeClimateOverlay = false)
+        bool includeClimateOverlay = false,
+        bool mirrorX = false)
     {
         var sizeInBlocks = radiusBlocks * 2;
         var imageSize = sizeInBlocks / cellSize;
@@ -179,7 +180,8 @@ public static class BiomeMapGenerator
                                 (byte)Math.Min(255, color.B + (30 - tempTint)));
                         }
 
-                        image[imageX, imageSize - 1 - imageZ] = color;
+                        var writeX = mirrorX ? (imageSize - 1 - imageX) : imageX;
+                        image[writeX, imageSize - 1 - imageZ] = color;
                         biomeStats[dominantBiome]++;
                     }
                 }
@@ -329,19 +331,22 @@ public static class BiomeMapGenerator
         int centerZ,
         int radiusBlocks,
         string outputPath,
-        ClimateParameter parameter)
+        ClimateParameter parameter,
+        int cellSize = 1,
+        bool mirrorX = false)
     {
-        var size = radiusBlocks * 2;
+        var sizeInBlocks = radiusBlocks * 2;
+        var imageSize = sizeInBlocks / cellSize;
         var startX = centerX - radiusBlocks;
         var startZ = centerZ - radiusBlocks;
 
         var climateCache = new ChunkClimateCache();
 
-        using var image = new Image<Rgba32>(size, size);
+        using var image = new Image<Rgba32>(imageSize, imageSize);
 
-        OpenRender.Log.Info($"Generating {parameter} climate map: {size}x{size}...");
+        OpenRender.Log.Info($"Generating {parameter} climate map: {imageSize}x{imageSize} ({cellSize}x{cellSize} blocks/pixel)...");
 
-        var chunksPerSide = (size + VoxelHelper.ChunkSideSize - 1) / VoxelHelper.ChunkSideSize + 1;
+        var chunksPerSide = (sizeInBlocks + VoxelHelper.ChunkSideSize - 1) / VoxelHelper.ChunkSideSize + 1;
         var startChunkX = startX / VoxelHelper.ChunkSideSize;
         var startChunkZ = startZ / VoxelHelper.ChunkSideSize;
 
@@ -368,19 +373,22 @@ public static class BiomeMapGenerator
                     _ => climateCache.Continentalness01
                 };
 
-                for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+                for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz += cellSize)
                 {
                     var worldZ = chunkWorldZ + lz;
-                    var imageZ = worldZ - startZ;
-                    if (imageZ < 0 || imageZ >= size) continue;
+                    var imageZ = (worldZ - startZ) / cellSize;
+                    if (imageZ < 0 || imageZ >= imageSize) continue;
 
-                    for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+                    for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx += cellSize)
                     {
                         var worldX = chunkWorldX + lx;
-                        var imageX = worldX - startX;
-                        if (imageX < 0 || imageX >= size) continue;
+                        var imageX = (worldX - startX) / cellSize;
+                        if (imageX < 0 || imageX >= imageSize) continue;
 
-                        var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+                        // Sample the center column for this cell to reduce cost.
+                        var sampleLx = Math.Min(lx + cellSize / 2, VoxelHelper.ChunkSideSize - 1);
+                        var sampleLz = Math.Min(lz + cellSize / 2, VoxelHelper.ChunkSideSize - 1);
+                        var columnIndex = sampleLz * VoxelHelper.ChunkSideSize + sampleLx;
                         var value = values[columnIndex];
 
                         // Convert to color based on parameter type
@@ -392,7 +400,8 @@ public static class BiomeMapGenerator
                             _ => GrayscaleToColor(value)
                         };
 
-                        image[imageX, size - 1 - imageZ] = color;
+                        var writeX = mirrorX ? (imageSize - 1 - imageX) : imageX;
+                        image[writeX, imageSize - 1 - imageZ] = color;
                     }
                 }
             }
@@ -406,6 +415,152 @@ public static class BiomeMapGenerator
 
         image.SaveAsBmp(outputPath);
         OpenRender.Log.Info($"Climate map saved to: {outputPath}");
+    }
+
+    /// <summary>
+    /// Generate a height map for debugging. Uses the same biome-driven height formula as terrain generation
+    /// (biome BaseHeight + PV variation + WaterLevel), then color-codes height.
+    /// </summary>
+    public static void GenerateHeightMapDownsampled(
+        TerrainConfig config,
+        int centerX,
+        int centerZ,
+        int radiusBlocks,
+        string outputPath,
+        int cellSize = 2,
+        bool mirrorX = false)
+    {
+        var sizeInBlocks = radiusBlocks * 2;
+        var imageSize = sizeInBlocks / cellSize;
+        var startX = centerX - radiusBlocks;
+        var startZ = centerZ - radiusBlocks;
+
+        var biomeSelector = new BiomeSelector(config.Biomes);
+        var evaluator = new TerrainDensityEvaluator(config);
+
+        var biomesById = config.Biomes.ToDictionary(b => (int)b.Id, b => b);
+        var climateCache = new ChunkClimateCache();
+
+        OpenRender.Log.Info($"Generating height map: {imageSize}x{imageSize} ({cellSize}x{cellSize} blocks/pixel) centered at ({centerX}, {centerZ})...");
+
+        var heights = new float[imageSize * imageSize];
+        var minHeight = float.MaxValue;
+        var maxHeight = float.MinValue;
+
+        var chunksPerSide = (sizeInBlocks + VoxelHelper.ChunkSideSize - 1) / VoxelHelper.ChunkSideSize + 1;
+        var startChunkX = startX / VoxelHelper.ChunkSideSize;
+        var startChunkZ = startZ / VoxelHelper.ChunkSideSize;
+
+        for (var cz = 0; cz < chunksPerSide; cz++)
+        {
+            for (var cx = 0; cx < chunksPerSide; cx++)
+            {
+                var chunkX = startChunkX + cx;
+                var chunkZ = startChunkZ + cz;
+
+                climateCache.SampleForChunk(chunkX, chunkZ, config);
+
+                var chunkWorldX = chunkX * VoxelHelper.ChunkSideSize;
+                var chunkWorldZ = chunkZ * VoxelHelper.ChunkSideSize;
+
+                var cont01 = climateCache.Continentalness01;
+                var temp01 = climateCache.Temperature01;
+                var humid01 = climateCache.Humidity01;
+                var erosion01 = climateCache.Erosion01;
+                var pv01 = climateCache.PeaksValleys01;
+
+                for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz += cellSize)
+                {
+                    var worldZ = chunkWorldZ + lz;
+                    var imageZ = (worldZ - startZ) / cellSize;
+                    if (imageZ < 0 || imageZ >= imageSize) continue;
+
+                    for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx += cellSize)
+                    {
+                        var worldX = chunkWorldX + lx;
+                        var imageX = (worldX - startX) / cellSize;
+                        if (imageX < 0 || imageX >= imageSize) continue;
+
+                        // Use the center column for this cell.
+                        var sampleLx = Math.Min(lx + cellSize / 2, VoxelHelper.ChunkSideSize - 1);
+                        var sampleLz = Math.Min(lz + cellSize / 2, VoxelHelper.ChunkSideSize - 1);
+                        var columnIndex = sampleLz * VoxelHelper.ChunkSideSize + sampleLx;
+
+                        var biomeId = biomeSelector.Select(
+                            cont01[columnIndex],
+                            temp01[columnIndex],
+                            humid01[columnIndex],
+                            erosion01[columnIndex],
+                            pv01[columnIndex]);
+
+                        if (!biomesById.TryGetValue((int)biomeId, out var biome))
+                        {
+                            biome = config.Biomes.First();
+                        }
+
+                        var height = evaluator.CalculateBiomeHeight(biome, pv01[columnIndex], erosion01[columnIndex], cont01[columnIndex]);
+
+                        var idx = imageZ * imageSize + imageX;
+                        heights[idx] = height;
+                        if (height < minHeight) minHeight = height;
+                        if (height > maxHeight) maxHeight = height;
+                    }
+                }
+            }
+        }
+
+        using var image = new Image<Rgba32>(imageSize, imageSize);
+
+        for (var imageZ = 0; imageZ < imageSize; imageZ++)
+        {
+            for (var imageX = 0; imageX < imageSize; imageX++)
+            {
+                var h = heights[imageZ * imageSize + imageX];
+                var color = HeightToColor(h, VoxelHelper.WaterLevel);
+                var writeX = mirrorX ? (imageSize - 1 - imageX) : imageX;
+                image[writeX, imageSize - 1 - imageZ] = color;
+            }
+        }
+
+        var directory = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        image.SaveAsBmp(outputPath);
+        OpenRender.Log.Info($"Height map saved to: {outputPath} (height[min,max]=[{minHeight:F1},{maxHeight:F1}] water={VoxelHelper.WaterLevel} yMax={VoxelHelper.ChunkYSize - 1})");
+    }
+
+    private static Rgba32 HeightToColor(float height, float waterLevel)
+    {
+        // Underwater: blue -> dark blue (deeper = darker)
+        if (height < waterLevel)
+        {
+            var depth = Math.Clamp((waterLevel - height) / Math.Max(1f, waterLevel), 0f, 1f);
+            // near water: brighter blue, deep: dark blue
+            return LerpColor(new Rgba32(0, 0, 160), new Rgba32(0, 0, 20), depth);
+        }
+
+        // Above water: low = blue, then yellow, green, cyan, white at peaks
+        var denom = Math.Max(1f, (VoxelHelper.ChunkYSize - 1) - waterLevel);
+        var t = Math.Clamp((height - waterLevel) / denom, 0f, 1f);
+
+        // Color stops: 0=Blue, 0.35=Yellow, 0.65=Green, 0.85=Cyan, 1=White
+        if (t <= 0.35f) return LerpColor(new Rgba32(0, 0, 255), new Rgba32(255, 255, 0), t / 0.35f);
+        if (t <= 0.65f) return LerpColor(new Rgba32(255, 255, 0), new Rgba32(0, 255, 0), (t - 0.35f) / 0.30f);
+        if (t <= 0.85f) return LerpColor(new Rgba32(0, 255, 0), new Rgba32(0, 255, 255), (t - 0.65f) / 0.20f);
+        return LerpColor(new Rgba32(0, 255, 255), new Rgba32(255, 255, 255), (t - 0.85f) / 0.15f);
+    }
+
+    private static Rgba32 LerpColor(Rgba32 a, Rgba32 b, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        return new Rgba32(
+            (byte)(a.R + (b.R - a.R) * t),
+            (byte)(a.G + (b.G - a.G) * t),
+            (byte)(a.B + (b.B - a.B) * t),
+            255);
     }
 
     /// <summary>

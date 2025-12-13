@@ -130,7 +130,7 @@ public sealed class ChunkStreamingManager : IDisposable
     /// <summary>
     /// Get raw cell climate data (NOT interpolated) - this is what biome selection uses.
     /// </summary>
-    public (float C, float T, float H, float E, float PV)? GetCellClimateAtWorldPos(int worldX, int worldZ)
+    public (float C, float T, float H, float E, float PV, float W)? GetCellClimateAtWorldPos(int worldX, int worldZ)
         => chunkVoxelCache.GetCellClimateAtWorldPos(worldX, worldZ);
 
     /// <summary>

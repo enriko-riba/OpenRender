@@ -249,10 +249,30 @@ internal class GameScene : Scene
             }
         }
 
-        // Generate Biome Debug Map (F4)
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F4))
+        // Debug map hotkeys
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F6))
+        {
+            GenerateHeightDebugMap();
+        }
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F7))
         {
             GenerateBiomeDebugMap();
+        }
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F8))
+        {
+            GenerateClimateDebugMap(ClimateParameter.Continentalness);
+        }
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F9))
+        {
+            GenerateClimateDebugMap(ClimateParameter.Temperature);
+        }
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F10))
+        {
+            GenerateClimateDebugMap(ClimateParameter.Humidity);
+        }
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F11))
+        {
+            GenerateClimateDebugMap(ClimateParameter.Erosion);
         }
 
         // Update day/night cycle
@@ -524,7 +544,7 @@ internal class GameScene : Scene
             var climate = streamingManager.GetCellClimateAtWorldPos(worldX, worldZ);
             if (climate.HasValue)
             {
-                var (C, T, H, E, PV) = climate.Value;
+            var (C, T, H, E, PV, W) = climate.Value;
                 // Show cell coordinates (4x4 grid per chunk)
                 var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
                 var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
@@ -532,7 +552,7 @@ internal class GameScene : Scene
                 var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
                 
                 // Compact format for normal display
-                WriteLine($"  C:{C:F3} T:{T:F3} H:{H:F2} E:{E:F2} PV:{PV:F2} Cell:({cellX},{cellZ})", textColor);
+            WriteLine($"  C:{C:F3} T:{T:F3} H:{H:F2} E:{E:F2} PV:{PV:F2} W:{W:F2} Cell:({cellX},{cellZ})", textColor);
                 
                 // Extended climate info when F3 biome debug is active
                 if (terrainRenderer?.ShowBiomes == true)
@@ -586,6 +606,15 @@ internal class GameScene : Scene
             }
         }
         WriteLine("", textColor);
+
+        // Terrain config (selected knobs)
+        if (streamingManager?.Config is TerrainConfig configForUi)
+        {
+            WriteLine("Terrain Config:", highlightColor);
+            WriteLine($"  WaterLevel: {VoxelHelper.WaterLevel} | OceanTh: {configForUi.OceanThreshold:F2} | CoastTh: {configForUi.CoastThreshold:F2}", textColor);
+            WriteLine($"  BaseTemp: {configForUi.BaseTemperature:F2} | Lapse: {configForUi.LapseRate:F4} | BaseHum: {configForUi.BaseHumidity:F2} | CoastDry: {configForUi.CoastDrying:F2}", textColor);
+            WriteLine("", textColor);
+        }
 
         // Picked Block (highlighted section)
         {
@@ -652,8 +681,13 @@ internal class GameScene : Scene
         WriteControlLine("  Mouse - Look", textColor);
         WriteControlLine("  F - Toggle Ghost/Physics", textColor);
         WriteControlLine("  F3 - Toggle Biome Debug", textColor);
-        WriteControlLine("  F4 - Generate Biome Map", textColor);
         WriteControlLine("  F5 - Toggle Wireframe", textColor);
+        WriteControlLine("  F6 - Generate Heightmap", textColor);
+        WriteControlLine("  F7 - Generate Biome Map", textColor);
+        WriteControlLine("  F8 - Generate Continentalness Map", textColor);
+        WriteControlLine("  F9 - Generate Temperature Map", textColor);
+        WriteControlLine("  F10 - Generate Humidity Map", textColor);
+        WriteControlLine("  F11 - Generate Erosion Map", textColor);
         WriteControlLine("  Left Click - Break Block", textColor);
         WriteControlLine("  Esc - Exit", textColor);
     }
@@ -680,6 +714,10 @@ internal class GameScene : Scene
     /// Generate a biome debug map centered on the player's current position.
     /// Creates a BMP file in the saves directory showing biome distribution.
     /// </summary>
+    private const int DebugMapRadiusBlocks = 1536;
+    private const int DebugMapCellSizeBlocks = 2;
+    private const bool DebugMapMirrorX = true;
+
     private void GenerateBiomeDebugMap()
     {
         if (streamingManager?.Config == null || camera == null)
@@ -694,25 +732,105 @@ internal class GameScene : Scene
         var centerX = (int)camera.Position.X;
         var centerZ = (int)camera.Position.Z;
 
-        // Generate 2048x2048 pixel map (each pixel = 1 block)
-        const int radiusBlocks = 1024;
-
-        // Create output directory based on world name
         var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
-        if (!Directory.Exists(savesDir))
-        {
-            Directory.CreateDirectory(savesDir);
-        }
+        Directory.CreateDirectory(savesDir);
 
-        // Generate all debug maps
         try
         {
-            BiomeMapGenerator.GenerateAllMaps(config, centerX, centerZ, radiusBlocks, savesDir);
-            Log.Info($"Biome maps saved to: {savesDir}");
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
+            var outPath = Path.Combine(savesDir, $"{prefix}_biomes.bmp");
+            BiomeMapGenerator.GenerateBiomeMapDownsampled(
+                config,
+                centerX,
+                centerZ,
+                DebugMapRadiusBlocks,
+                outPath,
+                DebugMapCellSizeBlocks,
+                includeClimateOverlay: false,
+                mirrorX: DebugMapMirrorX);
+            Log.Info($"Biome map saved to: {outPath}");
         }
         catch (Exception ex)
         {
             Log.Error($"Failed to generate biome map: {ex.Message}");
+        }
+    }
+
+    private void GenerateClimateDebugMap(ClimateParameter parameter)
+    {
+        if (streamingManager?.Config == null || camera == null)
+        {
+            Log.Warn("Cannot generate climate map: streaming manager or camera not initialized");
+            return;
+        }
+
+        Log.Info($"Generating {parameter} debug map...");
+
+        var config = streamingManager.Config;
+        var centerX = (int)camera.Position.X;
+        var centerZ = (int)camera.Position.Z;
+
+        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
+        Directory.CreateDirectory(savesDir);
+
+        try
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
+            var outPath = Path.Combine(savesDir, $"{prefix}_{parameter.ToString().ToLowerInvariant()}.bmp");
+            BiomeMapGenerator.GenerateClimateMap(
+                config,
+                centerX,
+                centerZ,
+                DebugMapRadiusBlocks,
+                outPath,
+                parameter,
+                DebugMapCellSizeBlocks,
+                mirrorX: DebugMapMirrorX);
+            Log.Info($"{parameter} map saved to: {outPath}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to generate climate map: {ex.Message}");
+        }
+    }
+
+    private void GenerateHeightDebugMap()
+    {
+        if (streamingManager?.Config == null || camera == null)
+        {
+            Log.Warn("Cannot generate height map: streaming manager or camera not initialized");
+            return;
+        }
+
+        Log.Info("Generating height debug map...");
+
+        var config = streamingManager.Config;
+        var centerX = (int)camera.Position.X;
+        var centerZ = (int)camera.Position.Z;
+
+        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
+        Directory.CreateDirectory(savesDir);
+
+        try
+        {
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
+            var outPath = Path.Combine(savesDir, $"{prefix}_height.bmp");
+            BiomeMapGenerator.GenerateHeightMapDownsampled(
+                config,
+                centerX,
+                centerZ,
+                DebugMapRadiusBlocks,
+                outPath,
+                DebugMapCellSizeBlocks,
+                mirrorX: DebugMapMirrorX);
+            Log.Info($"Height map saved to: {outPath}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"Failed to generate height map: {ex.Message}");
         }
     }
 
