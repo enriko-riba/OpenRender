@@ -426,7 +426,7 @@ public sealed class TerrainShapingConfig
 
     public float CoastDistanceBase { get; set; } = 0.3f;
     public float CoastDistanceMultiplier { get; set; } = 0.7f;
-    public float MinLandHeightOffset { get; set; } = 1f;
+    public float MinLandHeightOffset { get; set; } = 0f;
     public float MinLandHeightCoastMultiplier { get; set; } = 3f;
     public float CoastalSmoothingDistance { get; set; } = 0.1f;
     public float UnderwaterCoastalSmoothingDistance { get; set; } = 0.15f;

@@ -78,9 +78,8 @@ internal sealed class CpuTerrainGenerator
     private int currentChunkX;
     private int currentChunkZ;
 
-    // Biome generation
-    private BiomeGenerator? biomeGenerator;
-    private BiomeSelector? biomeSelector;  // Phase 3: Allocation-free biome selection
+    // Biome selection (Stage 1)
+    private BiomeSelector biomeSelector = null!;  // Set in UpdateConfig
     private ChunkBiomeData? currentChunkBiome;
 
     // Phase 0 Infrastructure: Climate cache and performance profiling
@@ -88,13 +87,19 @@ internal sealed class CpuTerrainGenerator
     private readonly TerrainGenerationProfiler profiler = new();
     
     // Stage 2: Biome-driven terrain density evaluation
-    private TerrainDensityEvaluator? densityEvaluator;
+    private TerrainDensityEvaluator densityEvaluator = null!;  // Set in UpdateConfig
     
     // Stage 3: Deterministic aquifer system for water level lookup
-    private AquiferSystem? aquiferSystem;
+    private AquiferSystem aquiferSystem = null!;  // Set in UpdateConfig
     
     // Stage 5: Cave carving system with volume-based entrances
-    private CaveCarver? caveCarver;
+    private CaveCarver caveCarver = null!;  // Set in UpdateConfig
+
+    // Cached biome definitions for fast lookups
+    private readonly Dictionary<int, BiomeDefinition> biomeById = new(32);
+
+    // Reused working set for weighted biome blending (avoid per-chunk allocations)
+    private readonly List<(BiomeDefinition Biome, float Weight)> weightedBiomes = new(8);
     
     // Per-column biome definitions cache (avoids repeated lookups)
     private readonly BiomeDefinition?[] columnBiomes = new BiomeDefinition?[ColumnCount];
@@ -105,10 +110,7 @@ internal sealed class CpuTerrainGenerator
     /// <summary>Gets the climate cache for the current chunk.</summary>
     public ChunkClimateCache ClimateCache => climateCache;
 
-    public CpuTerrainGenerator(TerrainConfig config)
-    {
-        UpdateConfig(config);
-    }
+    public CpuTerrainGenerator(TerrainConfig config) => UpdateConfig(config);
 
     public void UpdateConfig(TerrainConfig newConfig)
     {
@@ -116,20 +118,18 @@ internal sealed class CpuTerrainGenerator
         terrainParams = config.GetGenerationParams();
         var baked = config.BakeHeightSplineLut(HeightSplineResolution);
         Array.Copy(baked, heightSpline, HeightSplineResolution);
-        biomeGenerator = new BiomeGenerator(config);
-        
-        // Phase 3: Initialize allocation-free BiomeSelector
+
         biomeSelector = new BiomeSelector(config.Biomes);
-        //biomeSelector.UpdateConfig(config);
-        
-        // Stage 2: Initialize biome-driven density evaluator
         densityEvaluator = new TerrainDensityEvaluator(config);
-        
-        // Stage 3: Initialize aquifer system for deterministic water levels
         aquiferSystem = new AquiferSystem(config);
-        
-        // Stage 5: Initialize cave carving system
         caveCarver = new CaveCarver(config);
+
+        biomeById.Clear();
+        biomeById.EnsureCapacity(config.Biomes.Count);
+        foreach (var biome in config.Biomes)
+        {
+            biomeById[biome.Id] = biome;
+        }
         
         climateCache.Invalidate();
     }
@@ -153,10 +153,9 @@ internal sealed class CpuTerrainGenerator
             throw new ArgumentException($"Destination buffer must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(chunkData));
         }
 
-        // Generate biome data for this chunk
-        var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
-        var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        currentChunkBiome = biomeGenerator?.GenerateChunkBiomes(chunkX, chunkZ) ?? new ChunkBiomeData();
+        // Prepare a biome data container for this chunk.
+        // Stage 1 will populate both per-column biomes and the coarse climate grid.
+        currentChunkBiome = new ChunkBiomeData();
 
         // 1. Generate base terrain voxels
         FillChunk(chunkIndex, chunkData, edits);
@@ -179,16 +178,20 @@ internal sealed class CpuTerrainGenerator
     /// Apply vegetation and generate collision data (Phase 2).
     /// Requires neighbors to be present in the cache for cross-chunk vegetation.
     /// </summary>
-    public ChunkGenerationResult DecorateChunk(ChunkData chunkData, ChunkBiomeData biomeData, int chunkIndex)
+    public ChunkGenerationResult DecorateChunk(ChunkData chunkData, ChunkBiomeData? biomeData, int chunkIndex)
     {
         profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
 
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
         
-        // Use provided biome data
-        currentChunkBiome = biomeData;
-        currentChunkBiome ??= biomeGenerator?.GenerateChunkBiomes(chunkX, chunkZ) ?? new ChunkBiomeData();
+        // Use provided biome data, otherwise regenerate it from the climate cache
+        currentChunkBiome = biomeData ?? new ChunkBiomeData();
+        if (biomeData is null)
+        {
+            PrepareChunkCaches(chunkX, chunkZ);
+            SelectBiomesFromClimate();
+        }
 
         // 2. Place vegetation (trees, flowers, etc.)
         profiler.BeginStep(TerrainGenerationProfiler.Step.Vegetation);
@@ -243,7 +246,7 @@ internal sealed class CpuTerrainGenerator
                 // Optimization: Pre-calculate biome and slope for the column
                 // This avoids 384 lookups per column
                 var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
-                var biomeDef = GetBiomeDefinition((int)biomeId);
+                biomeById.TryGetValue((int)biomeId, out var biomeDef);
 
                 for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
                 {
@@ -279,8 +282,109 @@ internal sealed class CpuTerrainGenerator
 
         profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
 
+#if DEBUG
+        RecordTerrainStatsIfEnabled(chunkIndex, chunkData);
+#endif
+
         // ChunkCollisionData.Spans populated inside TryCommitSpan
     }
+
+#if DEBUG
+    private static readonly object TerrainStatsLock = new();
+    private static readonly bool TerrainStatsEnabled = IsTerrainStatsEnabled();
+    private static int terrainStatsChunks;
+    private static int terrainStatsLastLoggedAt;
+    private static int terrainStatsGlobalMinSurface = int.MaxValue;
+    private static int terrainStatsGlobalMaxSurface = int.MinValue;
+    private static float terrainStatsGlobalMinBaseHeight = float.MaxValue;
+    private static float terrainStatsGlobalMaxBaseHeight = float.MinValue;
+    private static readonly int[] terrainStatsBiomeColumnCounts = new int[256];
+
+    private static bool IsTerrainStatsEnabled()
+    {
+        var v = Environment.GetEnvironmentVariable("SPYRO_TERRAIN_STATS");
+        if (string.IsNullOrWhiteSpace(v)) return false;
+        return v.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || v.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RecordTerrainStatsIfEnabled(int chunkIndex, ChunkData chunkData)
+    {
+        if (!TerrainStatsEnabled) return;
+
+        var localMinSurface = int.MaxValue;
+        var localMaxSurface = int.MinValue;
+        for (var i = 0; i < chunkData.SurfaceHeights.Length; i++)
+        {
+            var h = chunkData.SurfaceHeights[i];
+            if (h < 0) continue;
+            if (h < localMinSurface) localMinSurface = h;
+            if (h > localMaxSurface) localMaxSurface = h;
+        }
+
+        if (localMinSurface == int.MaxValue)
+        {
+            // No solid blocks in this chunk (?)
+            return;
+        }
+
+        var localMinBaseHeight = float.MaxValue;
+        var localMaxBaseHeight = float.MinValue;
+        for (var i = 0; i < columnHeights.Length; i++)
+        {
+            var h = columnHeights[i];
+            if (h < localMinBaseHeight) localMinBaseHeight = h;
+            if (h > localMaxBaseHeight) localMaxBaseHeight = h;
+        }
+
+        lock (TerrainStatsLock)
+        {
+            terrainStatsChunks++;
+
+            if (localMinSurface < terrainStatsGlobalMinSurface) terrainStatsGlobalMinSurface = localMinSurface;
+            if (localMaxSurface > terrainStatsGlobalMaxSurface) terrainStatsGlobalMaxSurface = localMaxSurface;
+            if (localMinBaseHeight < terrainStatsGlobalMinBaseHeight) terrainStatsGlobalMinBaseHeight = localMinBaseHeight;
+            if (localMaxBaseHeight > terrainStatsGlobalMaxBaseHeight) terrainStatsGlobalMaxBaseHeight = localMaxBaseHeight;
+
+            if (currentChunkBiome is not null)
+            {
+                for (var i = 0; i < currentChunkBiome.ColumnBiomes.Length; i++)
+                {
+                    var biome = (int)currentChunkBiome.ColumnBiomes[i];
+                    if ((uint)biome < (uint)terrainStatsBiomeColumnCounts.Length)
+                    {
+                        terrainStatsBiomeColumnCounts[biome]++;
+                    }
+                }
+            }
+
+            // Log periodically to avoid spam.
+            // 128 chunks ~= a few frames of streaming at startup.
+            if (terrainStatsChunks - terrainStatsLastLoggedAt < 128) return;
+            terrainStatsLastLoggedAt = terrainStatsChunks;
+
+            var top = new List<(BiomeId biome, int count)>(16);
+            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
+            {
+                var count = terrainStatsBiomeColumnCounts[i];
+                if (count <= 0) continue;
+                top.Add(((BiomeId)i, count));
+            }
+
+            top.Sort(static (a, b) => b.count.CompareTo(a.count));
+            if (top.Count > 8) top.RemoveRange(8, top.Count - 8);
+
+            var topText = string.Join(", ", top.Select(x => $"{x.biome}:{x.count}"));
+
+            OpenRender.Log.Info(
+                $"TerrainStats: chunks={terrainStatsChunks} water={VoxelHelper.WaterLevel} " +
+                $"surface[min,max]=[{terrainStatsGlobalMinSurface},{terrainStatsGlobalMaxSurface}] " +
+                $"baseHeight[min,max]=[{terrainStatsGlobalMinBaseHeight:F1},{terrainStatsGlobalMaxBaseHeight:F1}] " +
+                $"topBiomes=[{topText}] (lastChunk={chunkIndex})");
+        }
+    }
+#endif
 
     private void GenerateCollisionData(
         ChunkData chunkData,
@@ -421,8 +525,6 @@ internal sealed class CpuTerrainGenerator
     /// </summary>
     private void SelectBiomesFromClimate()
     {
-        if (biomeSelector == null) return;
-        
         // Initialize biome data structure
         currentChunkBiome ??= new ChunkBiomeData();
         
@@ -469,7 +571,53 @@ internal sealed class CpuTerrainGenerator
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
                 
                 // Cache biome definition for height calculation
-                columnBiomes[columnIndex] = GetBiomeDefinition((int)biome);
+                biomeById.TryGetValue((int)biome, out var biomeDef);
+                columnBiomes[columnIndex] = biomeDef;
+            }
+        }
+
+        PopulateLegacyCellClimateFromCache();
+    }
+
+    /// <summary>
+    /// Populate the 4x4 climate grid in <see cref="ChunkBiomeData"/> directly from the per-column
+    /// <see cref="ChunkClimateCache"/>.
+    ///
+    /// This keeps debug queries (interpolated climate) consistent with the actual generation
+    /// pipeline, and avoids redundant noise sampling.
+    /// </summary>
+    private void PopulateLegacyCellClimateFromCache()
+    {
+        if (currentChunkBiome == null)
+        {
+            return;
+        }
+
+        var temp01 = climateCache.Temperature01;
+        var humid01 = climateCache.Humidity01;
+        var cont = climateCache.Continentalness;
+        var erosion = climateCache.Erosion;
+        var pv = climateCache.PeaksValleys;
+        var weird = climateCache.Weirdness;
+
+        for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
+        {
+            for (var cellX = 0; cellX < ChunkBiomeData.GridSize; cellX++)
+            {
+                var cellIndex = cellZ * ChunkBiomeData.GridSize + cellX;
+
+                // Sample at cell center (4x4 cells, center at +2,+2)
+                var lx = cellX * ChunkBiomeData.BlocksPerCell + (ChunkBiomeData.BlocksPerCell / 2);
+                var lz = cellZ * ChunkBiomeData.BlocksPerCell + (ChunkBiomeData.BlocksPerCell / 2);
+                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+
+                currentChunkBiome.Temperature[cellIndex] = temp01[columnIndex];
+                currentChunkBiome.Humidity[cellIndex] = humid01[columnIndex];
+                currentChunkBiome.Continentalness[cellIndex] = cont[columnIndex];
+                currentChunkBiome.Erosion[cellIndex] = erosion[columnIndex];
+                currentChunkBiome.PeaksValleys[cellIndex] = pv[columnIndex];
+                currentChunkBiome.Weirdness[cellIndex] = weird[columnIndex];
+                currentChunkBiome.BiomeIds[cellIndex] = currentChunkBiome.GetBiomeAt(lx, lz);
             }
         }
     }
@@ -492,8 +640,6 @@ internal sealed class CpuTerrainGenerator
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, columnCliff);
         
        
-        // Reusable list for weighted biome selection
-        var weightedBiomes = new List<(BiomeDefinition Biome, float Weight)>(8);
         var temp01 = climateCache.Temperature01;
         var humid01 = climateCache.Humidity01;
         var pv01 = climateCache.PeaksValleys01;
@@ -512,7 +658,7 @@ internal sealed class CpuTerrainGenerator
             
             float baseHeight;
             
-            if (biome != null && densityEvaluator != null && biomeSelector != null)
+            if (biome != null)
             {
                 // Calculate 3D factor from weirdness + erosion
                 column3DFactor[i] = densityEvaluator.Calculate3DFactor(absWeirdness, erosion01);
@@ -591,10 +737,10 @@ internal sealed class CpuTerrainGenerator
             columnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
             
-            // Guard: land must be above sea level
-            if (isLandColumn && rounded < (int)VoxelHelper.WaterLevel + 1)
+            // Guard: land should not be BELOW sea level (but allow sea-level beaches).
+            if (isLandColumn && rounded < (int)VoxelHelper.WaterLevel)
             {
-                rounded = (int)VoxelHelper.WaterLevel + 1;
+                rounded = (int)VoxelHelper.WaterLevel;
                 columnHeights[i] = rounded;
             }
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
@@ -646,6 +792,7 @@ internal sealed class CpuTerrainGenerator
     private void BuildColumnWaterBodies()
     {
         var cont01 = climateCache.Continentalness01;
+        var aquifer01 = climateCache.AquiferNoise01;
         
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
@@ -657,15 +804,18 @@ internal sealed class CpuTerrainGenerator
                 var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
                 
                 // STAGE 3: Use aquifer system for deterministic water level lookup
-                columnWaterBody[columnIndex] = AquiferSystem.GetWaterBodyInfo(
-                    columnIndex,
+                columnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
                     biomeId,
                     terrainHeight,
-                    continentalness01);
+                    continentalness01,
+                    aquifer01[columnIndex]);
             }
         }
         
         ComputeOceanAdjacency();
+
+        // Beach is a derived biome based on proximity to ocean water (not climate).
+        ApplyBeachBiomeOverride();
     }
 
     private void BuildColumnSlopes()
@@ -698,7 +848,7 @@ internal sealed class CpuTerrainGenerator
         
         // Multi-pass flood fill to compute minimum distance to ocean
         // Each pass propagates distance from ocean outward
-        const int maxBeachSearchRadius = 12; // Maximum beach width to consider
+        var maxBeachSearchRadius = Math.Clamp((int)MathF.Ceiling(config.BeachMaxWidth), 1, VoxelHelper.ChunkSideSize - 1);
         for (var pass = 0; pass < maxBeachSearchRadius; pass++)
         {
             var changed = false;
@@ -771,8 +921,57 @@ internal sealed class CpuTerrainGenerator
                 
                 // Beach threshold varies from ~1 block (minimum) to baseBeachWidth
                 // Noise modulates the width: high noise = wider beach, low noise = narrower
-                var threshold = 1f + (baseBeachWidth - 1f) * (0.5f + beachNoise * beachNoiseStrength);
-                columnBeachThreshold[idx] = Math.Max(1f, threshold);
+                var t = Math.Clamp(0.5f + beachNoise * beachNoiseStrength, 0f, 1f);
+                var threshold = 1f + (baseBeachWidth - 1f) * t;
+                columnBeachThreshold[idx] = Math.Clamp(threshold, 1f, baseBeachWidth);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Apply Beach biome to columns that are close to ocean water.
+    /// This prevents climate-only beach selection (which creates huge inland sand bands)
+    /// and ensures beaches only appear near actual ocean columns.
+    /// </summary>
+    private void ApplyBeachBiomeOverride()
+    {
+        if (currentChunkBiome is null)
+        {
+            return;
+        }
+
+        if (!biomeById.TryGetValue((int)BiomeId.Beach, out var beachDef))
+        {
+            return;
+        }
+
+        // Restrict beach biome to near sea level; sand placement already checks shoreline,
+        // but biome-level sand should not climb far up inland slopes.
+        var maxBeachSurfaceY = (int)VoxelHelper.WaterLevel + (int)terrainParams.ShorelineRange + 4;
+
+        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        {
+            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            {
+                var idx = lz * VoxelHelper.ChunkSideSize + lx;
+
+                if (columnWaterBody[idx].IsOcean)
+                {
+                    continue;
+                }
+
+                if (!IsWithinBeachDistance(idx))
+                {
+                    continue;
+                }
+
+                if (columnHeightInts[idx] > maxBeachSurfaceY)
+                {
+                    continue;
+                }
+
+                currentChunkBiome.SetBiomeAt(lx, lz, BiomeId.Beach);
+                columnBiomes[idx] = beachDef;
             }
         }
     }
@@ -878,21 +1077,6 @@ internal sealed class CpuTerrainGenerator
         
         // Map to configured range [Min3DFactor, Max3DFactor]
         return Lerp(shaping.Min3DFactor, shaping.Max3DFactor, rawFactor);
-    }
-
-    /// <summary>
-    /// Gets a biome definition by its ID from the config.
-    /// </summary>
-    private BiomeDefinition? GetBiomeDefinition(int biomeId)
-    {
-        foreach (var biome in config.Biomes)
-        {
-            if (biome.Id == biomeId)
-            {
-                return biome;
-            }
-        }
-        return null;
     }
 
     /// <summary>

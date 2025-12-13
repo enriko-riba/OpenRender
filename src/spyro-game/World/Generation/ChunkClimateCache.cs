@@ -30,7 +30,6 @@ internal sealed class ChunkClimateCache
     private readonly float[] _temperature = new float[ColumnCount];
     private readonly float[] _humidity = new float[ColumnCount];
     private readonly float[] _weirdness = new float[ColumnCount];
-    private readonly float[] _lakeNoise = new float[ColumnCount];  // Phase 2: Lake placement noise
     private readonly float[] _aquiferNoise = new float[ColumnCount];  // Phase 3: Aquifer water level noise
 
     // Normalized versions [0, 1] for convenience
@@ -40,7 +39,6 @@ internal sealed class ChunkClimateCache
     private readonly float[] _temperature01 = new float[ColumnCount];
     private readonly float[] _humidity01 = new float[ColumnCount];
     private readonly float[] _weirdness01 = new float[ColumnCount];
-    private readonly float[] _lakeNoise01 = new float[ColumnCount];  // Phase 2: Normalized lake noise
     private readonly float[] _aquiferNoise01 = new float[ColumnCount];  // Phase 3: Normalized aquifer noise
 
     // Domain warp values (cached separately as they're used to warp other noise)
@@ -110,12 +108,6 @@ internal sealed class ChunkClimateCache
     /// <summary>Gets normalized weirdness values [0, 1].</summary>
     public ReadOnlySpan<float> Weirdness01 => _weirdness01;
     
-    /// <summary>Gets the raw lake noise values [-1, 1]. Phase 2: Lake placement.</summary>
-    public ReadOnlySpan<float> LakeNoise => _lakeNoise;
-    
-    /// <summary>Gets normalized lake noise values [0, 1]. Phase 2: Lake placement.</summary>
-    public ReadOnlySpan<float> LakeNoise01 => _lakeNoise01;
-    
     /// <summary>Gets the raw aquifer noise values [-1, 1]. Phase 3: Aquifer water levels.</summary>
     public ReadOnlySpan<float> AquiferNoise => _aquiferNoise;
     
@@ -174,14 +166,11 @@ internal sealed class ChunkClimateCache
         SampleContinentalness(config.Continentalness, seed);
         SampleErosion(config.Erosion, seed);
         SamplePeaksValleys(config.PeaksValleys, seed);
-        SampleTemperature(config.Temperature, seed);
-        SampleHumidity(config.Humidity, seed);
+        SampleTemperature(config, config.Temperature, seed);
+        SampleHumidity(config, config.Humidity, seed);
         SampleWeirdness(config.Weirdness, seed);
         
-        // Step 4: Sample lake noise (Phase 2: Local water bodies)
-        SampleLakeNoise(config.LakeNoise, seed);
-        
-        // Step 5: Sample aquifer noise (Phase 3: Deterministic water levels)
+        // Step 4: Sample aquifer noise (Phase 3: Deterministic water levels)
         SampleAquiferNoise(config.AquiferNoise, seed);
 
         _isValid = true;
@@ -282,7 +271,15 @@ internal sealed class ChunkClimateCache
     /// </summary>
     private void SampleErosion(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), layer.BaseScale, seed + 100u, layer.Octaves, layer.Persistence, layer.Lacunarity, _erosion);
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            warpedX[i] = _worldX[i] + _warpX[i];
+            warpedZ[i] = _worldZ[i] + _warpZ[i];
+        }
+
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 200u, layer.Octaves, layer.Persistence, layer.Lacunarity, _erosion);
 
         for (var i = 0; i < ColumnCount; i++)
         {
@@ -291,18 +288,41 @@ internal sealed class ChunkClimateCache
     }
 
     /// <summary>
-    /// Sample peaks/valleys noise using ridge transformation.
-    /// Controls mountain peaks and valley depth.
+    /// Sample peaks/valleys noise. Controls terrain ridges and valleys.
     /// </summary>
     private void SamplePeaksValleys(NoiseLayer layer, uint seed)
     {
-        SampleFbm2DBatched(_worldX.AsSpan(), _worldZ.AsSpan(), layer.BaseScale, seed + 200u, layer.Octaves, layer.Persistence, layer.Lacunarity, _scratch3);
-
-        // Ridge transform: 1 - |noise| creates ridges/peaks
+        var warpedX = _scratch1.AsSpan();
+        var warpedZ = _scratch2.AsSpan();
         for (var i = 0; i < ColumnCount; i++)
         {
-            _peaksValleys[i] = 1f - MathF.Abs(_scratch3[i]);
-            _peaksValleys01[i] = _peaksValleys[i];
+            warpedX[i] = _worldX[i] + _warpX[i];
+            warpedZ[i] = _worldZ[i] + _warpZ[i];
+        }
+
+        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 400u, layer.Octaves, layer.Persistence, layer.Lacunarity, _scratch3);
+
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            var n = _scratch3[i];
+
+            if (layer.UseRidged)
+            {
+                // Ridged variant: strong peaks, few valleys (useful for ridge networks).
+                var ridge = 1f - MathF.Abs(n);
+                ridge = Math.Clamp(ridge, 0f, 1f);
+                ridge = MathF.Pow(ridge, Math.Max(0.01f, layer.RidgeSharpness));
+                _peaksValleys[i] = ridge;
+                _peaksValleys01[i] = ridge;
+            }
+            else
+            {
+                // Signed variant mapped to [0,1]: supports both peaks and valleys.
+                var pv01 = n * 0.5f + 0.5f;
+                pv01 = Math.Clamp(pv01, 0f, 1f);
+                _peaksValleys[i] = pv01;
+                _peaksValleys01[i] = pv01;
+            }
         }
     }
 
@@ -310,7 +330,7 @@ internal sealed class ChunkClimateCache
     /// Sample temperature noise. Affects biome climate zones.
     /// Uses domain-warped coordinates for organic biome borders.
     /// </summary>
-    private void SampleTemperature(NoiseLayer layer, uint seed)
+    private void SampleTemperature(TerrainConfig config, NoiseLayer layer, uint seed)
     {
         var warpedX = _scratch1.AsSpan();
         var warpedZ = _scratch2.AsSpan();
@@ -324,7 +344,10 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            _temperature01[i] = _temperature[i] * 0.5f + 0.5f;
+            // Convert raw noise [-1,1] into a climate value centered around BaseTemperature.
+            // Using a ±0.5 amplitude gives full-range potential without introducing new knobs.
+            var t = config.BaseTemperature + _temperature[i] * 0.5f;
+            _temperature01[i] = Math.Clamp(t, 0f, 1f);
         }
     }
 
@@ -332,7 +355,7 @@ internal sealed class ChunkClimateCache
     /// Sample humidity noise. Affects wet vs dry biomes.
     /// Uses domain-warped coordinates for organic biome borders.
     /// </summary>
-    private void SampleHumidity(NoiseLayer layer, uint seed)
+    private void SampleHumidity(TerrainConfig config, NoiseLayer layer, uint seed)
     {
         var warpedX = _scratch1.AsSpan();
         var warpedZ = _scratch2.AsSpan();
@@ -346,7 +369,14 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            _humidity01[i] = _humidity[i] * 0.5f + 0.5f;
+            // Base humidity plus noise, then apply continental drying beyond CoastThreshold.
+            var hum = config.BaseHumidity + _humidity[i] * 0.5f;
+
+            var cont01 = _continentalness01[i];
+            var inland = MathF.Max(0f, cont01 - config.CoastThreshold);
+            hum -= inland * config.CoastDrying;
+
+            _humidity01[i] = Math.Clamp(hum, 0f, 1f);
         }
     }
 
@@ -360,28 +390,6 @@ internal sealed class ChunkClimateCache
         for (var i = 0; i < ColumnCount; i++)
         {
             _weirdness01[i] = _weirdness[i] * 0.5f + 0.5f;
-        }
-    }
-
-    /// <summary>
-    /// Sample lake noise. Phase 2: Controls where lakes can appear.
-    /// Uses domain-warped coordinates for organic lake shapes.
-    /// </summary>
-    private void SampleLakeNoise(NoiseLayer layer, uint seed)
-    {
-        var warpedX = _scratch1.AsSpan();
-        var warpedZ = _scratch2.AsSpan();
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            warpedX[i] = _worldX[i] + _warpX[i] * 0.5f;  // Less warp for lakes
-            warpedZ[i] = _worldZ[i] + _warpZ[i] * 0.5f;
-        }
-        
-        SampleFbm2DBatched(warpedX, warpedZ, layer.BaseScale, seed + 900u, layer.Octaves, layer.Persistence, layer.Lacunarity, _lakeNoise);
-
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            _lakeNoise01[i] = _lakeNoise[i] * 0.5f + 0.5f;
         }
     }
 
@@ -485,41 +493,39 @@ internal sealed class ChunkClimateCache
     }
 
     /// <summary>
-        /// Get a single column's climate values by index.
-        /// </summary>
-        /// <param name="columnIndex">Column index (0-255).</param>
-        /// <returns>Climate values for the column.</returns>
-        public ColumnClimate GetColumnClimate(int columnIndex)
-        {
-            if ((uint)columnIndex >= ColumnCount)
-                throw new ArgumentOutOfRangeException(nameof(columnIndex));
+    /// Get a single column's climate values by index.
+    /// </summary>
+    /// <param name="columnIndex">Column index (0-255).</param>
+    /// <returns>Climate values for the column.</returns>
+    public ColumnClimate GetColumnClimate(int columnIndex)
+    {
+        if ((uint)columnIndex >= ColumnCount)
+            throw new ArgumentOutOfRangeException(nameof(columnIndex));
 
-            return new ColumnClimate
-            {
-                Continentalness = _continentalness[columnIndex],
-                Continentalness01 = _continentalness01[columnIndex],
-                Erosion = _erosion[columnIndex],
-                Erosion01 = _erosion01[columnIndex],
-                PeaksValleys = _peaksValleys[columnIndex],
-                PeaksValleys01 = _peaksValleys01[columnIndex],
-                Temperature = _temperature[columnIndex],
-                Temperature01 = _temperature01[columnIndex],
-                Humidity = _humidity[columnIndex],
-                Humidity01 = _humidity01[columnIndex],
-                Weirdness = _weirdness[columnIndex],
-                Weirdness01 = _weirdness01[columnIndex],
-                LakeNoise = _lakeNoise[columnIndex],
-                LakeNoise01 = _lakeNoise01[columnIndex],
-                AquiferNoise = _aquiferNoise[columnIndex],
-                AquiferNoise01 = _aquiferNoise01[columnIndex]
-            };
-        }
+        return new ColumnClimate
+        {
+            Continentalness = _continentalness[columnIndex],
+            Continentalness01 = _continentalness01[columnIndex],
+            Erosion = _erosion[columnIndex],
+            Erosion01 = _erosion01[columnIndex],
+            PeaksValleys = _peaksValleys[columnIndex],
+            PeaksValleys01 = _peaksValleys01[columnIndex],
+            Temperature = _temperature[columnIndex],
+            Temperature01 = _temperature01[columnIndex],
+            Humidity = _humidity[columnIndex],
+            Humidity01 = _humidity01[columnIndex],
+            Weirdness = _weirdness[columnIndex],
+            Weirdness01 = _weirdness01[columnIndex],
+            AquiferNoise = _aquiferNoise[columnIndex],
+            AquiferNoise01 = _aquiferNoise01[columnIndex]
+        };
     }
+}
 
 /// <summary>
 /// Climate values for a single column. Used for debugging and single-point queries.
 /// </summary>
-public readonly struct ColumnClimate
+internal readonly struct ColumnClimate
 {
     public float Continentalness { get; init; }
     public float Continentalness01 { get; init; }
@@ -533,8 +539,6 @@ public readonly struct ColumnClimate
     public float Humidity01 { get; init; }
     public float Weirdness { get; init; }
     public float Weirdness01 { get; init; }
-    public float LakeNoise { get; init; }
-    public float LakeNoise01 { get; init; }
     public float AquiferNoise { get; init; }
     public float AquiferNoise01 { get; init; }
 }

@@ -62,6 +62,11 @@ internal sealed class BiomeSelector
             // Skip Lake/River - they're handled separately (not by climate)
             if (biome.Id is (int)BiomeId.Lake or (int)BiomeId.River)
                 continue;
+
+            // Beach is derived from ocean proximity, not climate.
+            // Allowing it in climate selection creates huge inland sand bands.
+            if (biome.Id is (int)BiomeId.Beach)
+                continue;
             
             // PRIMARY FILTER: Continentalness range
             // This replaces all the old TerrainType checks
@@ -119,6 +124,10 @@ internal sealed class BiomeSelector
             
             // Skip Lake/River - they're handled separately
             if (biome.Id is (int)BiomeId.Lake or (int)BiomeId.River)
+                continue;
+
+            // Beach is derived from ocean proximity, not climate.
+            if (biome.Id is (int)BiomeId.Beach)
                 continue;
             
             // Calculate distance to Continentalness range

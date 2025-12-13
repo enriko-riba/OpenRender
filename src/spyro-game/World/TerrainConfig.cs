@@ -21,13 +21,6 @@ public sealed class TerrainConfig
     /// </summary>
     public int Seed { get; set; } = 1337;
 
-    /// <summary>
-    /// Gets or sets the global world scale multiplier.
-    /// Currently unused but reserved for future multi-scale world systems.
-    /// Default: 1.0
-    /// </summary>
-    public float WorldScale { get; set; } = 1.0f;
-
     // Macro field scales (world-space → noise frequencies)
     // NOTE: These are now handled by NoiseLayer objects below, but kept here for reference if needed
     // or removed if fully replaced. The errors indicate they are duplicates of the Obsolete properties
@@ -141,8 +134,8 @@ public sealed class TerrainConfig
         Octaves = 3,             // Reduced from 4
         Persistence = 0.5f,      // Was 0.55
         Lacunarity = 2.0f,
-        UseRidged = true,
-        RidgeSharpness = 1.5f    // Was 2.0 - softer ridges
+        UseRidged = false,
+        RidgeSharpness = 1.5f
     };
 
     /// <summary>
@@ -151,12 +144,12 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Temperature { get; set; } = new()
     {
-        BaseScale = 1f / 8000f,
-        Octaves = 2,
-        Persistence = 0.4f,
+        BaseScale = 1f / 2500f,
+        Octaves = 3,
+        Persistence = 0.45f,
         Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 5000f,
-        DomainWarpStrength = 200f
+        DomainWarpScale = 1f / 3000f,
+        DomainWarpStrength = 120f
     };
 
     /// <summary>
@@ -165,12 +158,12 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Humidity { get; set; } = new()
     {
-        BaseScale = 1f / 5000f,
-        Octaves = 2,
+        BaseScale = 1f / 2000f,
+        Octaves = 3,
         Persistence = 0.45f,
         Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 3000f,
-        DomainWarpStrength = 150f
+        DomainWarpScale = 1f / 2500f,
+        DomainWarpStrength = 120f
     };
 
     /// <summary>
@@ -187,48 +180,6 @@ public sealed class TerrainConfig
         DomainWarpScale = 1f / 200f,   // Was 1/200
         DomainWarpStrength = 40f       // Was 50 - less distortion
     };
-
-    // === LAKE SYSTEM (Phase 2) ===
-
-    /// <summary>
-    /// Lake noise configuration.
-    /// Controls the distribution of lakes across the terrain.
-    /// Only areas where noise exceeds LakeThreshold will have lakes.
-    /// </summary>
-    public NoiseLayer LakeNoise { get; set; } = new()
-    {
-        BaseScale = 1f / 600f,    // Large-scale lake distribution (~600 block features)
-        Octaves = 2,
-        Persistence = 0.5f,
-        Lacunarity = 2.0f,
-        DomainWarpScale = 1f / 400f,
-        DomainWarpStrength = 40f
-    };
-
-    /// <summary>
-    /// Noise threshold for lake placement [0, 1].
-    /// Only areas where lake noise exceeds this threshold will have lakes.
-    /// - 0.75 (default): ~25% of terrain can have lakes (sparse)
-    /// - 0.85: ~15% of terrain (rare lakes)
-    /// - 0.65: ~35% of terrain (frequent lakes)
-    /// </summary>
-    public float LakeThreshold { get; set; } = 0.75f;
-
-    /// <summary>
-    /// Maximum depth of lakes in blocks.
-    /// Lakes fill depressions from terrain surface up to this depth.
-    /// - 5 (default): Shallow lakes suitable for wading
-    /// - 3: Very shallow ponds
-    /// - 8: Deeper lakes for swimming
-    /// </summary>
-    public float LakeMaxDepth { get; set; } = 5f;
-
-    /// <summary>
-    /// Minimum continentalness for lake placement.
-    /// Lakes only appear on land (above this threshold).
-    /// Must match OceanThreshold to allow lakes at the land boundary.
-    /// </summary>
-    public float LakeMinContinentalness { get; set; } = 0.40f;
 
     // === AQUIFER SYSTEM (Phase 3) ===
 
@@ -294,12 +245,6 @@ public sealed class TerrainConfig
     /// </summary>
     public Spline1D HeightSpline { get; set; } = Spline1D.DefaultHeightSpline();
 
-    /// <summary>
-    /// Gets or sets the optional erosion-to-slope spline for advanced terrain shaping.
-    /// Currently unused. Reserved for future erosion-dependent slope modulation.
-    /// </summary>
-    public Spline1D? ErosionToSlopeSpline { get; set; } = null;
-
     // Biomes
 
     /// <summary>
@@ -311,13 +256,6 @@ public sealed class TerrainConfig
     public List<BiomeDefinition> Biomes { get; set; } = BiomeDefinition.DefaultSet();
 
     // Regions and caves
-
-    /// <summary>
-    /// Gets or sets the biome region parameters controlling how biomes are distributed and blended across chunks.
-    /// Implements a Voronoi-based region system where each region has a dominant biome with feathered boundaries.
-    /// See <see cref="BiomeRegionParams"/> for detailed parameters.
-    /// </summary>
-    public BiomeRegionParams BiomeRegions { get; set; } = BiomeRegionParams.Default();
 
     /// <summary>
     /// Gets or sets the cave generation parameters controlling cave frequency, size, and distribution.
@@ -340,16 +278,6 @@ public sealed class TerrainConfig
     /// See <see cref="TerrainShapingConfig"/> for detailed parameters.
     /// </summary>
     public TerrainShapingConfig TerrainShaping { get; set; } = TerrainShapingConfig.Default();
-
-    /// <summary>
-    /// Gets or sets the Y-coordinate of the water level in blocks.
-    /// Water blocks are placed at all Y positions <= SeaLevel where terrain surface is below this level.
-    /// - 35 (default): Creates ~115-block deep oceans with current height spline
-    /// - 50: Shallower oceans, more land exposed
-    /// - 20: Deeper oceans, less land visible
-    /// Technical: This is the absolute Y coordinate, not relative to terrain. Ocean floor can be much lower.
-    /// </summary>
-    public float SeaLevel { get; set; } = 35f;
 
     // --- Terrain Shaping Parameters ---
 
@@ -613,17 +541,14 @@ public sealed class TerrainConfig
     public struct TerrainGenerationParams
     {
         public uint Seed;
-        public float WorldScale;
-        public float MacroScale;
         public float ContinentalnessScale; public float ErosionScale; public float PeaksValleysScale;
         public float WarpScale; public float WarpStrength;
         public float BaseTemperature; public float TemperatureLapseRate; public float BaseHumidity; public float CoastDrying;
 
         // Phase 1: Climate caching parameters
         public float TemperatureScale; public float HumidityScale; public float WeirdnessScale;
-        public float RegionCellSize; public float RegionJitter; public float RegionFeatherWidth; public uint MaxRegionMix;
         public float CheeseFrequency; public float CheeseAmplitude; public float SpaghettiFrequency; public float SpaghettiAmplitude;
-        public float CaveCarveThreshold; public float CurlScale; public float CurlStrength;
+        public float CaveCarveThreshold;
 
         public float CoastThreshold;
         public float MountainThreshold;
@@ -651,8 +576,6 @@ public sealed class TerrainConfig
     public TerrainGenerationParams GetGenerationParams() => new()
     {
         Seed = (uint)Seed,
-        WorldScale = WorldScale,
-        MacroScale = 1.0f,
         ContinentalnessScale = Continentalness.BaseScale,
         ErosionScale = Erosion.BaseScale,
         PeaksValleysScale = PeaksValleys.BaseScale,
@@ -665,17 +588,11 @@ public sealed class TerrainConfig
         TemperatureScale = Temperature.BaseScale,
         HumidityScale = Humidity.BaseScale,
         WeirdnessScale = Weirdness.BaseScale,
-        RegionCellSize = BiomeRegions.CellSizeChunks,
-        RegionJitter = BiomeRegions.JitterStrength,
-        RegionFeatherWidth = BiomeRegions.FeatherWidth,
-        MaxRegionMix = (uint)BiomeRegions.MaxRegionMix,
         CheeseFrequency = Caves.CheeseFrequency,
         CheeseAmplitude = Caves.CheeseAmplitude,
         SpaghettiFrequency = Caves.SpaghettiFrequency,
         SpaghettiAmplitude = Caves.SpaghettiAmplitude,
         CaveCarveThreshold = Caves.CarveThreshold,
-        CurlScale = Caves.CurlScale,
-        CurlStrength = Caves.CurlStrength,
         CoastThreshold = CoastThreshold,
         MountainThreshold = MountainThreshold,
         CliffFrequency = CliffFrequency,
@@ -985,7 +902,7 @@ public sealed class BiomeDefinition
             
                 // Ocean: C 0.25-0.40 - regular ocean
                 new (OCEAN_BIOME_ID, nameof(BiomeId.Ocean),
-                    continentalness: new(0.25f, 0.45f),   // Extended to overlap with Beach/Plains
+                    continentalness: new(0.25f, 0.40f),
                     temperature: new(0.0f, 1.0f),         // Any temperature
                     humidity: new(0.0f, 1.0f),            // Any humidity
                     priority: 100,
@@ -995,7 +912,7 @@ public sealed class BiomeDefinition
             
                 // Beach: C 0.40-0.45 - coastal transition zone
                 new ((int)BiomeId.Beach, nameof(BiomeId.Beach),
-                    continentalness: new(0.35f, 0.50f),   // Widened to overlap with Ocean and Plains
+                    continentalness: new(0.40f, 0.45f),
                     temperature: new(0.0f, 1.0f),         // Any temperature
                     humidity: new(0.0f, 1.0f),            // Any humidity
                     priority: 80,
@@ -1016,7 +933,7 @@ public sealed class BiomeDefinition
                     temperature: new(0.0f, 1.0f),         // Any temperature (elevation makes it cold)
                     humidity: new(0.0f, 1.0f),            // Any humidity
                     priority: 90,
-                    minElevation: 150f,                   // Only at high elevations
+                    minElevation: 120f,                   // Reachable with current height budget
                     baseHeight: 100f, heightVariation: 40f, peaksInfluence: 0.8f, erosionSensitivity: 0.3f,
                     surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
@@ -1056,11 +973,11 @@ public sealed class BiomeDefinition
             
                 // Highlands: cool + moderate humidity
                 new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands),
-                    continentalness: new(0.60f, 0.90f),   // Extended to overlap more with Alpine
+                    continentalness: new(0.75f, 0.95f),   // Push highlands upward so plains dominate midlands
                     temperature: new(0.30f, 0.50f),       // Cool
                     humidity: new(0.25f, 0.50f),          // Moderate humidity
                     priority: 50,
-                    baseHeight: 60f, heightVariation: 30f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
+                    baseHeight: 45f, heightVariation: 28f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
@@ -1176,59 +1093,6 @@ public sealed class BiomeDefinition
 }
 
 /// <summary>
-/// Defines parameters for biome region grouping using Voronoi/Worley noise.
-/// Regions are large areas (multiple chunks) with a dominant biome and feathered boundaries.
-/// This system creates natural biome clustering and prevents rapid biome transitions.
-/// </summary>
-public sealed class BiomeRegionParams
-{
-    /// <summary>
-    /// Gets or sets the desired region cell size in chunks (both X and Z dimensions).
-    /// Each region is centered on a Voronoi cell and extends across multiple chunks.
-    /// - 4 (default): Regions are 4×4 chunks (64×64 blocks)
-    /// - 8: Larger regions (128×128 blocks), less biome variety per area
-    /// - 2: Smaller regions (32×32 blocks), more frequent biome changes
-    /// Technical: Used in shader as: cellSize = CellSizeChunks * CHUNK_SIDE_SIZE (16).
-    /// </summary>
-    public float CellSizeChunks { get; set; } = 4f;
-
-    /// <summary>
-    /// Gets or sets the jitter strength [0,1] applied to Voronoi cell centers.
-    /// Randomizes region center positions to prevent grid-like patterns.
-    /// - 0.35 (default): Moderate jitter (natural looking distribution)
-    /// - 0.0: No jitter (perfect grid, very artificial)
-    /// - 0.7: Strong jitter (highly irregular regions, can create very small regions)
-    /// Technical: Applied as: center += (random2D() - 0.5) * JitterStrength.
-    /// </summary>
-    public float JitterStrength { get; set; } = 0.35f;
-
-    /// <summary>
-    /// Gets or sets the feather width in world units (blocks) for blending between neighboring regions.
-    /// Controls the softness of biome boundaries.
-    /// - 3 (default): Clean transitions (recommended)
-    /// - 1-2: Sharp transitions (may show visible seams)
-    /// - 6+: Very soft transitions (can create "spray paint" mixing effect)
-    /// Technical: Applied with smoothstep(d0, d0 + feather, distance) where d0 is nearest region distance.
-    /// </summary>
-    public float FeatherWidth { get; set; } = 3f;
-
-    /// <summary>
-    /// Gets or sets the maximum number of neighboring regions to blend together.
-    /// Higher values create smoother transitions but increase GPU cost.
-    /// - 3 (default): Blend 3 nearest regions
-    /// - 4: Smoother transitions (slightly more expensive)
-    /// - 2: Faster but sharper transitions
-    /// Technical: Worley noise finds K nearest cell centers and weights them by distance.
-    /// </summary>
-    public int MaxRegionMix { get; set; } = 3;
-
-    /// <summary>
-    /// Creates a BiomeRegionParams instance with default values.
-    /// </summary>
-    public static BiomeRegionParams Default() => new();
-}
-
-/// <summary>
 /// Defines parameters for procedural cave generation using dual-system approach.
 /// Combines "cheese" caves (large chambers) with "spaghetti" caves (winding tunnels).
 /// Both systems use 3D noise with depth/slope attenuation to prevent surface breaches.
@@ -1280,24 +1144,6 @@ public sealed class CaveParams
     /// Technical: If caveDensity * attenuation > CarveThreshold, carve air block.
     /// </summary>
     public float CarveThreshold { get; set; } = 0.90f;
-
-    /// <summary>
-    /// Gets or sets the curl noise scale for cave path distortion.
-    /// Currently unused. Reserved for future cave curvature control.
-    /// </summary>
-    public float CurlScale { get; set; } = 1f / 120f;
-
-    /// <summary>
-    /// Gets or sets the curl noise strength for cave path distortion.
-    /// Currently unused. Reserved for future cave curvature intensity.
-    /// </summary>
-    public float CurlStrength { get; set; } = 12f;
-
-    /// <summary>
-    /// Gets or sets the ridge carving threshold for mountain caves.
-    /// Currently unused. Reserved for future ridge-aligned cave systems.
-    /// </summary>
-    public float RidgeCarve { get; set; } = 0.35f;
 
     /// <summary>
     /// Gets or sets the Y-frequency multiplier for spaghetti caves to favor horizontal tunnels.

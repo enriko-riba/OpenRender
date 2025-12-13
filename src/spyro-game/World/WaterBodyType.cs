@@ -20,7 +20,13 @@ public enum WaterBodyType
     /// Ocean water. Biome is Ocean/DeepOcean and terrain is below sea level.
     /// Water level is always VoxelHelper.WaterLevel (global sea level).
     /// </summary>
-    Ocean = 1
+    Ocean = 1,
+
+    /// <summary>
+    /// Inland water body (aquifer-driven). Water level can vary per-column.
+    /// This is still deterministic and coordinate-driven; it is NOT runtime simulation.
+    /// </summary>
+    Inland = 2
 }
 
 /// <summary>
@@ -39,6 +45,9 @@ public readonly struct WaterBodyInfo
     
     /// <summary>Whether this column is ocean water.</summary>
     public bool IsOcean => Type == WaterBodyType.Ocean;
+
+    /// <summary>Whether this column is inland water.</summary>
+    public bool IsInland => Type == WaterBodyType.Inland;
     
     /// <summary>No water body.</summary>
     public static WaterBodyInfo None => new() { Type = WaterBodyType.None, WaterLevel = -1f };
@@ -48,5 +57,12 @@ public readonly struct WaterBodyInfo
     { 
         Type = WaterBodyType.Ocean, 
         WaterLevel = VoxelHelper.WaterLevel 
+    };
+
+    /// <summary>Inland water with a local water level.</summary>
+    public static WaterBodyInfo Inland(float waterLevel) => new()
+    {
+        Type = WaterBodyType.Inland,
+        WaterLevel = waterLevel
     };
 }
