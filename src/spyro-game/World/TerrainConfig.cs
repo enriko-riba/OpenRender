@@ -101,12 +101,15 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Continentalness { get; set; } = new()
     {
-        BaseScale = 1f / 1800f,  // Was 1/2500 - reduced for more ocean variety
+        // Slightly higher frequency so typical play areas hit a wider
+        // continentalness span (enables both deep oceans and high mountains).
+        BaseScale = 1f / 900f,
         Octaves = 3,
         Persistence = 0.50f,     // Restored for more variation
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 1000f,
-        DomainWarpStrength = 80f
+        DomainWarpStrength = 80f,
+        OutputScale = 2.0f
     };
 
     /// <summary>
@@ -144,12 +147,13 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Temperature { get; set; } = new()
     {
-        BaseScale = 1f / 2500f,
+        BaseScale = 1f / 1500f,
         Octaves = 3,
         Persistence = 0.45f,
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 3000f,
-        DomainWarpStrength = 120f
+        DomainWarpStrength = 120f,
+        OutputScale = 1.35f
     };
 
     /// <summary>
@@ -158,12 +162,13 @@ public sealed class TerrainConfig
     /// </summary>
     public NoiseLayer Humidity { get; set; } = new()
     {
-        BaseScale = 1f / 2000f,
+        BaseScale = 1f / 1400f,
         Octaves = 3,
         Persistence = 0.45f,
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 2500f,
-        DomainWarpStrength = 120f
+        DomainWarpStrength = 120f,
+        OutputScale = 1.35f
     };
 
     /// <summary>
@@ -1560,6 +1565,15 @@ public sealed class NoiseLayer
     /// Strength of domain warp applied before sampling this noise.
     /// </summary>
     public float DomainWarpStrength { get; set; }
+
+    /// <summary>
+    /// Output scale applied to the sampled noise before normalization.
+    /// Use this to widen or narrow the effective range of a climate factor.
+    /// - 1.0 (default): No scaling
+    /// - 1.5-2.5: Stronger extremes (more pronounced continents/biomes)
+    /// - 0.5: Flatter distribution near 0.5
+    /// </summary>
+    public float OutputScale { get; set; } = 1.0f;
 
     /// <summary>
     /// Whether to use ridged noise (1 - |noise|) instead of standard noise.

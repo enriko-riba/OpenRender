@@ -19,6 +19,12 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
     private readonly TerrainConfig _config = config ?? throw new ArgumentNullException(nameof(config));
     private TerrainConfig.TerrainGenerationParams _params = config.GetGenerationParams();
 
+    // Biomes should define local shape (flat/jagged) more than absolute elevation.
+    // Macro elevation comes from continentalness spline ("continents") + erosion/weirdness shaping.
+    private const float LandBiomeHeightInfluence = 0.30f;
+    private const float BeachBiomeHeightInfluence = 0.55f;
+    private const float OceanBiomeHeightInfluence = 0.85f;
+
     /// <summary>
     /// Updates the configuration. Call when terrain config changes.
     /// </summary>
@@ -79,6 +85,25 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
     }
 
     /// <summary>
+    /// Blend macro elevation (from height spline / continentalness) with biome-defined height.
+    /// This allows e.g. Plains to exist at multiple absolute altitudes while remaining flat.
+    /// </summary>
+    public float BlendMacroAndBiomeHeight(float macroHeight, BiomeDefinition biome, float biomeHeight)
+    {
+        var t = LandBiomeHeightInfluence;
+        if (biome.Id == BiomeDefinition.OCEAN_BIOME_ID || biome.Id == (int)BiomeId.DeepOcean)
+        {
+            t = OceanBiomeHeightInfluence;
+        }
+        else if (biome.Id == (int)BiomeId.Beach)
+        {
+            t = BeachBiomeHeightInfluence;
+        }
+
+        return macroHeight + (biomeHeight - macroHeight) * t;
+    }
+
+    /// <summary>
     /// Calculate terrain height using legacy spline-based approach.
     /// Used as fallback when biome is null or for compatibility.
     /// </summary>
@@ -93,17 +118,45 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
         float erosion01,
         ReadOnlySpan<float> heightSpline)
     {
-        // Sample height spline using continentalness
+        // Sample height spline using continentalness (macro continents)
         var baseHeight = SampleSpline(heightSpline, continentalness01) + VoxelHelper.WaterLevel;
-        
-        // Add basic PV variation for land areas
-        if (continentalness01 >= _params.OceanThreshold)
+
+        // Ocean: keep the spline shape (depths/shore handled by later smoothing).
+        if (continentalness01 < _params.OceanThreshold)
         {
-            var roughness = 1f - erosion01;
-            var pvContribution = (peaksValleys - 0.5f) * 20f * roughness;
-            baseHeight += pvContribution;
+            return baseHeight;
         }
-        
+
+        // Land: add macro PV/mountain shaping (Minecraft-style: global fields influence absolute elevation).
+        var shaping = _config.TerrainShaping;
+
+        // Treat low erosion as "rough" terrain; use it as a proxy for terrain type.
+        var terrainType01 = 1f - Math.Clamp(erosion01, 0f, 1f);
+
+        var pvSigned = (peaksValleys - 0.5f) * 2f; // [-1, 1]
+
+        var peakAmp = shaping.PeakAmplitudeDramatic;
+        if (terrainType01 < shaping.FlatPlainsThreshold)
+        {
+            peakAmp = shaping.PeakAmplitudePlains;
+        }
+        else if (terrainType01 < shaping.RollingHillsThreshold)
+        {
+            peakAmp = shaping.PeakAmplitudeHills;
+        }
+
+        // Erosion reduces PV influence.
+        var erosionAtten = 1f - Math.Clamp(erosion01 * erosion01 * shaping.ErosionSmoothingMax, 0f, 1f);
+        baseHeight += pvSigned * peakAmp * erosionAtten;
+
+        // Mountain zones: lift the whole column + add extra alpine peaks.
+        var mountainness = Smoothstep(_params.MountainThreshold, shaping.MountainFullThreshold, continentalness01);
+        baseHeight += mountainness * shaping.MountainHeightBoost;
+
+        var alpineTerrain = Smoothstep(shaping.AlpinePeakTerrainThreshold, 1f, terrainType01);
+        var pvPeaksOnly = MathF.Max(0f, pvSigned);
+        baseHeight += pvPeaksOnly * shaping.AlpinePeakAmplitude * mountainness * alpineTerrain * erosionAtten;
+
         return baseHeight;
     }
 

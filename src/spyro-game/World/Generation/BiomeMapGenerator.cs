@@ -438,6 +438,8 @@ public static class BiomeMapGenerator
         var biomeSelector = new BiomeSelector(config.Biomes);
         var evaluator = new TerrainDensityEvaluator(config);
 
+        var heightLut = config.BakeHeightSplineLut(256);
+
         var biomesById = config.Biomes.ToDictionary(b => (int)b.Id, b => b);
         var climateCache = new ChunkClimateCache();
 
@@ -498,7 +500,10 @@ public static class BiomeMapGenerator
                             biome = config.Biomes.First();
                         }
 
-                        var height = evaluator.CalculateBiomeHeight(biome, pv01[columnIndex], erosion01[columnIndex], cont01[columnIndex]);
+                        var c01 = cont01[columnIndex];
+                        var macroHeight = evaluator.CalculateSplineHeight(c01, pv01[columnIndex], erosion01[columnIndex], heightLut);
+                        var biomeHeight = evaluator.CalculateBiomeHeight(biome, pv01[columnIndex], erosion01[columnIndex], c01);
+                        var height = evaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
 
                         var idx = imageZ * imageSize + imageX;
                         heights[idx] = height;
@@ -530,6 +535,17 @@ public static class BiomeMapGenerator
 
         image.SaveAsBmp(outputPath);
         OpenRender.Log.Info($"Height map saved to: {outputPath} (height[min,max]=[{minHeight:F1},{maxHeight:F1}] water={VoxelHelper.WaterLevel} yMax={VoxelHelper.ChunkYSize - 1})");
+    }
+
+    private static float SampleHeightSpline(float[] heightLut, float t)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        var scaled = t * (heightLut.Length - 1);
+        var i = (int)MathF.Floor(scaled);
+        var frac = scaled - i;
+        var a = heightLut[i];
+        var b = heightLut[Math.Min(i + 1, heightLut.Length - 1)];
+        return a + (b - a) * frac;
     }
 
     private static Rgba32 HeightToColor(float height, float waterLevel)

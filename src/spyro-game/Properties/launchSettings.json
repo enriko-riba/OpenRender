@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "spyro-game": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "SPYRO_TERRAIN_STATS": "1"
+      }
+    }
+  }
+}

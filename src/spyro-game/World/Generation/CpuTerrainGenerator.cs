@@ -298,15 +298,33 @@ internal sealed class CpuTerrainGenerator
     private static int terrainStatsGlobalMaxSurface = int.MinValue;
     private static float terrainStatsGlobalMinBaseHeight = float.MaxValue;
     private static float terrainStatsGlobalMaxBaseHeight = float.MinValue;
+    private static float terrainStatsGlobalMinContinentalness = float.MaxValue;
+    private static float terrainStatsGlobalMaxContinentalness = float.MinValue;
+    private static float terrainStatsGlobalMinContinentalness01 = float.MaxValue;
+    private static float terrainStatsGlobalMaxContinentalness01 = float.MinValue;
+    private static float terrainStatsGlobalMinTemperature01 = float.MaxValue;
+    private static float terrainStatsGlobalMaxTemperature01 = float.MinValue;
+    private static float terrainStatsGlobalMinHumidity01 = float.MaxValue;
+    private static float terrainStatsGlobalMaxHumidity01 = float.MinValue;
+    private static float terrainStatsGlobalMinErosion01 = float.MaxValue;
+    private static float terrainStatsGlobalMaxErosion01 = float.MinValue;
+    private static float terrainStatsGlobalMinPeaksValleys01 = float.MaxValue;
+    private static float terrainStatsGlobalMaxPeaksValleys01 = float.MinValue;
+    private static float terrainStatsGlobalMinWeirdness = float.MaxValue;
+    private static float terrainStatsGlobalMaxWeirdness = float.MinValue;
     private static readonly int[] terrainStatsBiomeColumnCounts = new int[256];
 
     private static bool IsTerrainStatsEnabled()
     {
-    #if !DEBUG
+#if !DEBUG
         return false;
-    #else
+#else
         var v = Environment.GetEnvironmentVariable("SPYRO_TERRAIN_STATS");
-        if (string.IsNullOrWhiteSpace(v)) return false;
+        if (string.IsNullOrWhiteSpace(v))
+        {
+            OpenRender.Log.Info("TerrainStats: disabled (set SPYRO_TERRAIN_STATS=1 to enable biome/height histograms)");
+            return false;
+        }
         return v.Equals("1", StringComparison.OrdinalIgnoreCase)
             || v.Equals("true", StringComparison.OrdinalIgnoreCase)
             || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
@@ -342,6 +360,63 @@ internal sealed class CpuTerrainGenerator
             if (h > localMaxBaseHeight) localMaxBaseHeight = h;
         }
 
+        var localMinCont = float.MaxValue;
+        var localMaxCont = float.MinValue;
+        for (var i = 0; i < columnContinentalness01.Length; i++)
+        {
+            var c = columnContinentalness01[i];
+            if (c < localMinCont) localMinCont = c;
+            if (c > localMaxCont) localMaxCont = c;
+        }
+
+        var localMinContRaw = float.MaxValue;
+        var localMaxContRaw = float.MinValue;
+        for (var i = 0; i < columnContinentalness.Length; i++)
+        {
+            var c = columnContinentalness[i];
+            if (c < localMinContRaw) localMinContRaw = c;
+            if (c > localMaxContRaw) localMaxContRaw = c;
+        }
+
+        var localMinTemp01 = float.MaxValue;
+        var localMaxTemp01 = float.MinValue;
+        var localMinHum01 = float.MaxValue;
+        var localMaxHum01 = float.MinValue;
+        var localMinErosion01 = float.MaxValue;
+        var localMaxErosion01 = float.MinValue;
+        var localMinPv01 = float.MaxValue;
+        var localMaxPv01 = float.MinValue;
+        var localMinWeird = float.MaxValue;
+        var localMaxWeird = float.MinValue;
+
+        var temp01 = climateCache.Temperature01;
+        var hum01 = climateCache.Humidity01;
+        var erosion01 = climateCache.Erosion01;
+        var pv01 = climateCache.PeaksValleys01;
+        var weird = climateCache.Weirdness;
+        for (var i = 0; i < temp01.Length; i++)
+        {
+            var t = temp01[i];
+            if (t < localMinTemp01) localMinTemp01 = t;
+            if (t > localMaxTemp01) localMaxTemp01 = t;
+
+            var h = hum01[i];
+            if (h < localMinHum01) localMinHum01 = h;
+            if (h > localMaxHum01) localMaxHum01 = h;
+
+            var e = erosion01[i];
+            if (e < localMinErosion01) localMinErosion01 = e;
+            if (e > localMaxErosion01) localMaxErosion01 = e;
+
+            var p = pv01[i];
+            if (p < localMinPv01) localMinPv01 = p;
+            if (p > localMaxPv01) localMaxPv01 = p;
+
+            var w = weird[i];
+            if (w < localMinWeird) localMinWeird = w;
+            if (w > localMaxWeird) localMaxWeird = w;
+        }
+
         lock (TerrainStatsLock)
         {
             terrainStatsChunks++;
@@ -350,6 +425,20 @@ internal sealed class CpuTerrainGenerator
             if (localMaxSurface > terrainStatsGlobalMaxSurface) terrainStatsGlobalMaxSurface = localMaxSurface;
             if (localMinBaseHeight < terrainStatsGlobalMinBaseHeight) terrainStatsGlobalMinBaseHeight = localMinBaseHeight;
             if (localMaxBaseHeight > terrainStatsGlobalMaxBaseHeight) terrainStatsGlobalMaxBaseHeight = localMaxBaseHeight;
+            if (localMinContRaw < terrainStatsGlobalMinContinentalness) terrainStatsGlobalMinContinentalness = localMinContRaw;
+            if (localMaxContRaw > terrainStatsGlobalMaxContinentalness) terrainStatsGlobalMaxContinentalness = localMaxContRaw;
+            if (localMinCont < terrainStatsGlobalMinContinentalness01) terrainStatsGlobalMinContinentalness01 = localMinCont;
+            if (localMaxCont > terrainStatsGlobalMaxContinentalness01) terrainStatsGlobalMaxContinentalness01 = localMaxCont;
+            if (localMinTemp01 < terrainStatsGlobalMinTemperature01) terrainStatsGlobalMinTemperature01 = localMinTemp01;
+            if (localMaxTemp01 > terrainStatsGlobalMaxTemperature01) terrainStatsGlobalMaxTemperature01 = localMaxTemp01;
+            if (localMinHum01 < terrainStatsGlobalMinHumidity01) terrainStatsGlobalMinHumidity01 = localMinHum01;
+            if (localMaxHum01 > terrainStatsGlobalMaxHumidity01) terrainStatsGlobalMaxHumidity01 = localMaxHum01;
+            if (localMinErosion01 < terrainStatsGlobalMinErosion01) terrainStatsGlobalMinErosion01 = localMinErosion01;
+            if (localMaxErosion01 > terrainStatsGlobalMaxErosion01) terrainStatsGlobalMaxErosion01 = localMaxErosion01;
+            if (localMinPv01 < terrainStatsGlobalMinPeaksValleys01) terrainStatsGlobalMinPeaksValleys01 = localMinPv01;
+            if (localMaxPv01 > terrainStatsGlobalMaxPeaksValleys01) terrainStatsGlobalMaxPeaksValleys01 = localMaxPv01;
+            if (localMinWeird < terrainStatsGlobalMinWeirdness) terrainStatsGlobalMinWeirdness = localMinWeird;
+            if (localMaxWeird > terrainStatsGlobalMaxWeirdness) terrainStatsGlobalMaxWeirdness = localMaxWeird;
 
             if (currentChunkBiome is not null)
             {
@@ -406,6 +495,13 @@ internal sealed class CpuTerrainGenerator
                 $"TerrainStats: chunks={terrainStatsChunks} water={VoxelHelper.WaterLevel} " +
                 $"surface[min,max]=[{terrainStatsGlobalMinSurface},{terrainStatsGlobalMaxSurface}] " +
                 $"baseHeight[min,max]=[{terrainStatsGlobalMinBaseHeight:F1},{terrainStatsGlobalMaxBaseHeight:F1}] " +
+                $"contRaw[min,max]=[{terrainStatsGlobalMinContinentalness:F2},{terrainStatsGlobalMaxContinentalness:F2}] " +
+                $"cont01[min,max]=[{terrainStatsGlobalMinContinentalness01:F2},{terrainStatsGlobalMaxContinentalness01:F2}] " +
+                $"temp01[min,max]=[{terrainStatsGlobalMinTemperature01:F2},{terrainStatsGlobalMaxTemperature01:F2}] " +
+                $"hum01[min,max]=[{terrainStatsGlobalMinHumidity01:F2},{terrainStatsGlobalMaxHumidity01:F2}] " +
+                $"erosion01[min,max]=[{terrainStatsGlobalMinErosion01:F2},{terrainStatsGlobalMaxErosion01:F2}] " +
+                $"pv01[min,max]=[{terrainStatsGlobalMinPeaksValleys01:F2},{terrainStatsGlobalMaxPeaksValleys01:F2}] " +
+                $"weird[min,max]=[{terrainStatsGlobalMinWeirdness:F2},{terrainStatsGlobalMaxWeirdness:F2}] " +
                 $"topBiomes=[{topText}] hist=[{histText}] (lastChunk={chunkIndex})");
         }
     }
@@ -682,6 +778,10 @@ internal sealed class CpuTerrainGenerator
             
             
             float baseHeight;
+
+            // Macro elevation comes from the height spline (continentalness-driven).
+            // Biome height is blended in to control local character (flat/jagged), not absolute elevation.
+            var macroHeight = densityEvaluator.CalculateSplineHeight(cont01, pv01[i], erosion01, heightSpline);
             
             if (biome != null)
             {
@@ -703,19 +803,22 @@ internal sealed class CpuTerrainGenerator
                 {
                     foreach (var (b, weight) in weightedBiomes)
                     {
-                        baseHeight += densityEvaluator.CalculateBiomeHeight(b, pv, erosion01, cont01) * weight;
+                        var biomeHeight = densityEvaluator.CalculateBiomeHeight(b, pv, erosion01, cont01);
+                        var blended = densityEvaluator.BlendMacroAndBiomeHeight(macroHeight, b, biomeHeight);
+                        baseHeight += blended * weight;
                     }
                 }
                 else
                 {
                     // Fallback if no biome selected (shouldn't happen)
-                    baseHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
+                    var biomeHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
+                    baseHeight = densityEvaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
                 }
             }
             else
             {
                 // Fallback to spline-based calculation
-                baseHeight = SampleHeightSpline(cont01) + VoxelHelper.WaterLevel;
+                baseHeight = macroHeight;
                 column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
             }
 

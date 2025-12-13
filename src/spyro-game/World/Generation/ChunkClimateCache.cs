@@ -256,7 +256,7 @@ internal sealed class ChunkClimateCache
         // Normalize to [0, 1] with contrast boost
         for (var i = 0; i < ColumnCount; i++)
         {
-            var raw = _continentalness[i] * 0.5f + 0.5f;
+            var raw = (_continentalness[i] * layer.OutputScale) * 0.5f + 0.5f;
             var centered = raw - 0.5f;
             var sign = MathF.Sign(centered);
             var magnitude = MathF.Abs(centered) * 2f;
@@ -346,7 +346,7 @@ internal sealed class ChunkClimateCache
         {
             // Convert raw noise [-1,1] into a climate value centered around BaseTemperature.
             // Using a ±0.5 amplitude gives full-range potential without introducing new knobs.
-            var t = config.BaseTemperature + _temperature[i] * 0.5f;
+            var t = config.BaseTemperature + (_temperature[i] * layer.OutputScale) * 0.5f;
             _temperature01[i] = Math.Clamp(t, 0f, 1f);
         }
     }
@@ -370,7 +370,7 @@ internal sealed class ChunkClimateCache
         for (var i = 0; i < ColumnCount; i++)
         {
             // Base humidity plus noise, then apply continental drying beyond CoastThreshold.
-            var hum = config.BaseHumidity + _humidity[i] * 0.5f;
+            var hum = config.BaseHumidity + (_humidity[i] * layer.OutputScale) * 0.5f;
 
             var cont01 = _continentalness01[i];
             var inland = MathF.Max(0f, cont01 - config.CoastThreshold);
