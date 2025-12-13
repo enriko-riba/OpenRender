@@ -8,7 +8,7 @@ namespace SpyroGame.World.Generation;
 /// This replaces the old height-spline-first approach where biomes were selected AFTER
 /// terrain was already calculated.
 /// 
-/// Key principle: Biomes control terrain shape, not vice versa.
+/// Key principle: Biomes control terrain shape, not vice versa. Check the TERRAIN_ARCHITECTURE.md document for details.
 /// </summary>
 /// <remarks>
 /// Initializes a new instance of <see cref="TerrainDensityEvaluator"/>.

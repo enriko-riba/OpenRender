@@ -22,6 +22,7 @@ internal sealed class BiomeSelector
 {
     private readonly BiomeDefinition[] _biomes;
     private readonly int _biomeCount;
+    private const float WeightFalloff = 6f;
     
     /// <summary>
     /// Creates a new biome selector with biome definitions sorted by priority.
@@ -137,10 +138,9 @@ internal sealed class BiomeSelector
                 var distMax = MathF.Abs(continentalness01 - biome.Continentalness.Max);
                 var dist = MathF.Min(distMin, distMax);
 
-                // Continuous penalty: start from edge value and increase
-                // Edge value was halfWidth * 0.5
-                // We add dist * 2.0 to make it grow fast
-                contDist = (halfWidth * 0.5f) + (dist * 2.0f); 
+                // Continuous penalty: start from edge value and increase.
+                // NOTE: Keep this fairly steep so far-out biomes don't bleed into each other.
+                contDist = (halfWidth * 0.5f) + (dist * 2.0f);
             }
             
             // Climate distance scoring
@@ -165,7 +165,7 @@ internal sealed class BiomeSelector
             
             // Convert score to weight using Gaussian-like falloff for smooth blending
             // Previous 1/score method caused singularities and sharp transitions
-            var weight = MathF.Exp(-score * 10f);
+            var weight = MathF.Exp(-score * WeightFalloff);
             
             results.Add((biome, weight));
             totalWeight += weight;
@@ -180,21 +180,10 @@ internal sealed class BiomeSelector
                 results[i] = (b, w / totalWeight);
             }
             
-            // Keep only top contributors to save performance
+            // Keep all contributors.
+            // Truncating to top-N can create hard discontinuities (contour-like cliff walls)
+            // when the Nth/N+1th contributors swap order, followed by renormalization.
             results.Sort((a, b) => b.Weight.CompareTo(a.Weight));
-            if (results.Count > 6)
-            {
-                results.RemoveRange(6, results.Count - 6);
-                
-                // Renormalize
-                totalWeight = 0;
-                foreach (var (_, weight) in results) totalWeight += weight;
-                for (var i = 0; i < results.Count; i++)
-                {
-                    var (b, w) = results[i];
-                    results[i] = (b, w / totalWeight);
-                }
-            }
         }
     }
 }

@@ -3,6 +3,7 @@ namespace SpyroGame.World;
 /// <summary>
 /// Generates biome data for chunks using Minecraft-style multi-parameter climate system.
 /// Biomes are determined by: Continentalness, Temperature, Humidity, Erosion, Peaks/Valleys, Weirdness.
+/// Check the TERRAIN_ARCHITECTURE.md document for details.
 /// </summary>
 public sealed class BiomeGenerator(TerrainConfig config)
 {

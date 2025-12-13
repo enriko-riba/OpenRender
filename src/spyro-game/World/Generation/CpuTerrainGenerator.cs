@@ -6,6 +6,7 @@ namespace SpyroGame.World.Generation;
 /// <summary>
 /// Fully CPU-based terrain generator that mirrors the GLSL pipeline.
 /// Produces voxel descriptors and collision spans for a chunk.
+/// Check the TERRAIN_ARCHITECTURE.md document for details.
 /// </summary>
 internal sealed class CpuTerrainGenerator
 {
@@ -395,7 +396,6 @@ internal sealed class CpuTerrainGenerator
         // Uses cached climate values (PV, Erosion) - NO re-sampling.
         profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
         BuildColumnHeightsFromBiomes();
-        BuildColumnSlopes();
         profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
         
         // ============================================================
@@ -559,7 +559,6 @@ internal sealed class CpuTerrainGenerator
                 var coastDist = (cont01 - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
                 var effectiveCoastDist = shaping.CoastDistanceBase + coastDist * shaping.CoastDistanceMultiplier;
                 var coastBlend = Smoothstep(terrainParams.OceanThreshold, terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth), cont01);
-                var slopeMask = Smoothstep(shaping.CliffSlopeMin, shaping.CliffSlopeMax, slopeValue);
                 
                 // Weirdness terrain variety
                 // Multiply by coastBlend to ensure weirdness starts at 0 at the coast line

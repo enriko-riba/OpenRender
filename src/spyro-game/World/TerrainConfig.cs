@@ -3,7 +3,7 @@ namespace SpyroGame.World;
 /// <summary>
 /// Terrain configuration parameters bucket. Holds all tweakable parameters and small data tables
 /// (splines, biome defs, region + cave params). No generation logic here.
-/// Upload/bake these into GPU buffers/textures elsewhere.
+/// Check the TERRAIN_ARCHITECTURE.md document for details.
 /// </summary>
 public sealed class TerrainConfig
 {
@@ -1050,7 +1050,7 @@ public sealed class BiomeDefinition
                     Vegetation =
                     [
                         new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.009f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Podzol, BlockId.Dirt, BlockId.Grass] }
                     ]
                 },
             
@@ -1066,8 +1066,8 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.25f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.20f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.10f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
                         new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Poppy, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
                         new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] }
                     ]
@@ -1085,9 +1085,9 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.4f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Dandelion, Density = 0.1f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Dandelion, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
                         new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] }
                     ]
                 },
