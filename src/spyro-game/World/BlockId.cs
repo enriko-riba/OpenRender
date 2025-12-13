@@ -54,6 +54,8 @@ public enum BlockId : ushort
     Mycelium = 14,
     /// <summary>Coarse dirt (no grass growth) - solid, opaque.</summary>
     CoarseDirt = 15,
+    /// <summary>Grass block (greenish yellow top) - solid, opaque.</summary>
+    GrassH = 16,
 
     // --- Sand (20-29) ---
     /// <summary>Sand block - solid, opaque.</summary>

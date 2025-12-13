@@ -64,6 +64,16 @@ internal sealed class ChunkClimateCache
     private int _chunkZ;
     private bool _isValid;
 
+    private static float ApplyContrast01(float value01, float contrastPower)
+    {
+        var raw = Math.Clamp(value01, 0f, 1f);
+        var centered = raw - 0.5f;
+        var sign = MathF.Sign(centered);
+        var magnitude = MathF.Abs(centered) * 2f;
+        var stretched = MathF.Pow(magnitude, Math.Max(0.01f, contrastPower));
+        return Math.Clamp(sign * stretched * 0.5f + 0.5f, 0f, 1f);
+    }
+
 #if DEBUG
     private readonly Stopwatch _stepTimer = new();
     private long _lastSampleTicks;
@@ -256,13 +266,15 @@ internal sealed class ChunkClimateCache
         // Normalize to [0, 1] with contrast boost
         for (var i = 0; i < ColumnCount; i++)
         {
-            var raw = (_continentalness[i] * layer.OutputScale) * 0.5f + 0.5f;
-            var centered = raw - 0.5f;
-            var sign = MathF.Sign(centered);
-            var magnitude = MathF.Abs(centered) * 2f;
-            const float ContrastPower = 0.7f;
-            var stretched = MathF.Pow(magnitude, ContrastPower);
-            _continentalness01[i] = Math.Clamp(sign * stretched * 0.5f + 0.5f, 0f, 1f);
+            // Apply layer scaling and clamp back into expected [-1, 1] domain.
+            // This lets OutputScale widen the effective distribution without destabilizing downstream logic.
+            var n = Math.Clamp(_continentalness[i] * layer.OutputScale, -1f, 1f);
+            _continentalness[i] = n;
+
+            // Contrast shaping helps local sampling reach both ocean/continent bands,
+            // but too much contrast collapses midlands. Keep this modest.
+            const float ContrastPower = 0.8f;
+            _continentalness01[i] = ApplyContrast01(n * 0.5f + 0.5f, ContrastPower);
         }
     }
 
@@ -283,7 +295,9 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            _erosion01[i] = _erosion[i] * 0.5f + 0.5f;
+            var n = Math.Clamp(_erosion[i] * layer.OutputScale, -1f, 1f);
+            _erosion[i] = n;
+            _erosion01[i] = n * 0.5f + 0.5f;
         }
     }
 
@@ -304,7 +318,8 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            var n = _scratch3[i];
+            var n = Math.Clamp(_scratch3[i] * layer.OutputScale, -1f, 1f);
+            _scratch3[i] = n;
 
             if (layer.UseRidged)
             {
@@ -344,9 +359,15 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            // Convert raw noise [-1,1] into a climate value centered around BaseTemperature.
-            // Using a ±0.5 amplitude gives full-range potential without introducing new knobs.
-            var t = config.BaseTemperature + (_temperature[i] * layer.OutputScale) * 0.5f;
+            var n = Math.Clamp(_temperature[i] * layer.OutputScale, -1f, 1f);
+            _temperature[i] = n;
+
+            // Map noise to [0,1] and apply a mild contrast curve so the field spans hot/cold
+            // enough for rare biomes (rainforest/tundra) without per-chunk normalization.
+            // BaseTemperature acts as a global offset around 0.5.
+            const float ContrastPower = 0.8f;
+            var noise01 = ApplyContrast01(n * 0.5f + 0.5f, ContrastPower);
+            var t = (config.BaseTemperature - 0.5f) + noise01;
             _temperature01[i] = Math.Clamp(t, 0f, 1f);
         }
     }
@@ -370,7 +391,12 @@ internal sealed class ChunkClimateCache
         for (var i = 0; i < ColumnCount; i++)
         {
             // Base humidity plus noise, then apply continental drying beyond CoastThreshold.
-            var hum = config.BaseHumidity + (_humidity[i] * layer.OutputScale) * 0.5f;
+            var n = Math.Clamp(_humidity[i] * layer.OutputScale, -1f, 1f);
+            _humidity[i] = n;
+
+            const float ContrastPower = 0.8f;
+            var noise01 = ApplyContrast01(n * 0.5f + 0.5f, ContrastPower);
+            var hum = (config.BaseHumidity - 0.5f) + noise01;
 
             var cont01 = _continentalness01[i];
             var inland = MathF.Max(0f, cont01 - config.CoastThreshold);
@@ -389,7 +415,9 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            _weirdness01[i] = _weirdness[i] * 0.5f + 0.5f;
+            var n = Math.Clamp(_weirdness[i] * layer.OutputScale, -1f, 1f);
+            _weirdness[i] = n;
+            _weirdness01[i] = n * 0.5f + 0.5f;
         }
     }
 
@@ -412,7 +440,9 @@ internal sealed class ChunkClimateCache
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            _aquiferNoise01[i] = _aquiferNoise[i] * 0.5f + 0.5f;
+            var n = Math.Clamp(_aquiferNoise[i] * layer.OutputScale, -1f, 1f);
+            _aquiferNoise[i] = n;
+            _aquiferNoise01[i] = n * 0.5f + 0.5f;
         }
     }
 

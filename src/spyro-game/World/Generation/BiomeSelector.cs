@@ -72,6 +72,13 @@ internal sealed class BiomeSelector
             // This replaces all the old TerrainType checks
             if (!biome.Continentalness.Contains(continentalness01))
                 continue;
+
+            // Additional climate axes (Minecraft-style): Erosion and Peaks/Valleys
+            if (!biome.Erosion.Contains(erosion01))
+                continue;
+
+            if (!biome.PeaksValleys.Contains(peaksValleys01))
+                continue;
             
             // Climate distance scoring for Temperature and Humidity
             var tempDist = biome.Temperature.Contains(temperature01) 
@@ -83,15 +90,28 @@ internal sealed class BiomeSelector
                 ? 0f
                 : MathF.Min(MathF.Abs(humidity01 - biome.Humidity.Min),
                             MathF.Abs(humidity01 - biome.Humidity.Max));
+
+            var erosionDist = biome.Erosion.Contains(erosion01)
+                ? 0f
+                : MathF.Min(MathF.Abs(erosion01 - biome.Erosion.Min),
+                            MathF.Abs(erosion01 - biome.Erosion.Max));
+
+            var pvDist = biome.PeaksValleys.Contains(peaksValleys01)
+                ? 0f
+                : MathF.Min(MathF.Abs(peaksValleys01 - biome.PeaksValleys.Min),
+                            MathF.Abs(peaksValleys01 - biome.PeaksValleys.Max));
             
             // Continentalness distance (for tiebreaking within valid range)
             var contDist = MathF.Abs(continentalness01 - biome.Continentalness.Center) * 0.5f;
             
-            // Priority bonus (higher priority = lower score)
-            var priorityBonus = (100 - biome.Priority) * 0.01f;
+            // Priority bonus (higher priority = lower score).
+            // Keep this small so climate fit dominates; otherwise mid-tier biomes (e.g., Highlands)
+            // almost never win against broad-range, high-priority biomes (e.g., Alpine).
+            var priorityBonus = (100 - biome.Priority) * 0.001f;
             
             // Combined score: climate fit + continentalness fit + priority
-            var score = tempDist + humidDist + contDist + priorityBonus;
+            // Keep PV/Erosion contributions smaller than T/H so they shape placement without dominating climate.
+            var score = tempDist + humidDist + (erosionDist * 0.6f) + (pvDist * 0.6f) + contDist + priorityBonus;
             
             if (score < bestScore)
             {
@@ -162,6 +182,16 @@ internal sealed class BiomeSelector
                 ? 0f
                 : MathF.Min(MathF.Abs(humidity01 - biome.Humidity.Min),
                             MathF.Abs(humidity01 - biome.Humidity.Max));
+
+            var erosionDist = biome.Erosion.Contains(erosion01)
+                ? 0f
+                : MathF.Min(MathF.Abs(erosion01 - biome.Erosion.Min),
+                            MathF.Abs(erosion01 - biome.Erosion.Max));
+
+            var pvDist = biome.PeaksValleys.Contains(peaksValleys01)
+                ? 0f
+                : MathF.Min(MathF.Abs(peaksValleys01 - biome.PeaksValleys.Min),
+                            MathF.Abs(peaksValleys01 - biome.PeaksValleys.Max));
             
             // Priority bonus (higher priority = lower score)
             // REDUCED impact of priority to allow smoother blending
@@ -170,7 +200,7 @@ internal sealed class BiomeSelector
             var priorityBonus = (100 - biome.Priority) * 0.001f;
             
             // Combined score
-            var score = tempDist + humidDist + contDist + priorityBonus;
+            var score = tempDist + humidDist + (erosionDist * 0.6f) + (pvDist * 0.6f) + contDist + priorityBonus;
             
             // Convert score to weight using Gaussian-like falloff for smooth blending
             // Previous 1/score method caused singularities and sharp transitions

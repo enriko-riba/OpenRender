@@ -21,7 +21,7 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
 
     // Biomes should define local shape (flat/jagged) more than absolute elevation.
     // Macro elevation comes from continentalness spline ("continents") + erosion/weirdness shaping.
-    private const float LandBiomeHeightInfluence = 0.30f;
+    private const float LandBiomeHeightInfluence = 0.55f;
     private const float BeachBiomeHeightInfluence = 0.55f;
     private const float OceanBiomeHeightInfluence = 0.85f;
 

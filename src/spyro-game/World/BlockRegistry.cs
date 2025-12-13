@@ -123,7 +123,7 @@ public static class BlockRegistry
         RegisterOpaqueSolid(builder, BlockId.Podzol);
         RegisterOpaqueSolid(builder, BlockId.Mycelium);
         RegisterOpaqueSolid(builder, BlockId.CoarseDirt);
-
+        RegisterOpaqueSolid(builder, BlockId.GrassH);
         // === Sand Types ===
         RegisterOpaqueSolid(builder, BlockId.Sand);
         RegisterOpaqueSolid(builder, BlockId.RedSand);

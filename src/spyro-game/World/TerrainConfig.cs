@@ -109,7 +109,9 @@ public sealed class TerrainConfig
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 1000f,
         DomainWarpStrength = 80f,
-        OutputScale = 2.0f
+        // Higher OutputScale helps local sampling reach high/low bands more often,
+        // unlocking highlands/alpine and deeper oceans without changing biome thresholds.
+        OutputScale = 4.5f
     };
 
     /// <summary>
@@ -124,7 +126,8 @@ public sealed class TerrainConfig
         Persistence = 0.4f,      // Was 0.45 - smoother
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 600f,   // Was 1/400
-        DomainWarpStrength = 60f       // Was 80 - less warping
+        DomainWarpStrength = 60f,      // Was 80 - less warping
+        OutputScale = 2.0f
     };
 
     /// <summary>
@@ -138,7 +141,8 @@ public sealed class TerrainConfig
         Persistence = 0.5f,      // Was 0.55
         Lacunarity = 2.0f,
         UseRidged = false,
-        RidgeSharpness = 1.5f
+        RidgeSharpness = 1.5f,
+        OutputScale = 2.5f
     };
 
     /// <summary>
@@ -153,7 +157,7 @@ public sealed class TerrainConfig
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 3000f,
         DomainWarpStrength = 120f,
-        OutputScale = 1.35f
+        OutputScale = 3.0f
     };
 
     /// <summary>
@@ -168,7 +172,7 @@ public sealed class TerrainConfig
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 2500f,
         DomainWarpStrength = 120f,
-        OutputScale = 1.35f
+        OutputScale = 3.0f
     };
 
     /// <summary>
@@ -183,7 +187,8 @@ public sealed class TerrainConfig
         Persistence = 0.75f,      // Was 0.6
         Lacunarity = 2.0f,
         DomainWarpScale = 1f / 200f,   // Was 1/200
-        DomainWarpStrength = 40f       // Was 50 - less distortion
+        DomainWarpStrength = 40f,      // Was 50 - less distortion
+        OutputScale = 1.5f
     };
 
     // === AQUIFER SYSTEM (Phase 3) ===
@@ -730,6 +735,20 @@ public sealed class BiomeDefinition
     public Range Humidity { get; set; } = new(0.4f, 0.6f);
 
     /// <summary>
+    /// Gets or sets the erosion comfort range [0,1] where this biome naturally occurs.
+    /// 0 = rough/jagged, 1 = smooth/flat.
+    /// Used during biome selection as an additional climate axis (Minecraft-style C/T/H/E/PV).
+    /// </summary>
+    public Range Erosion { get; set; } = new(0.0f, 1.0f);
+
+    /// <summary>
+    /// Gets or sets the peaks/valleys comfort range [0,1] where this biome naturally occurs.
+    /// 0 = valley-heavy, 0.5 = neutral, 1 = peak-heavy.
+    /// Used during biome selection as an additional climate axis (Minecraft-style C/T/H/E/PV).
+    /// </summary>
+    public Range PeaksValleys { get; set; } = new(0.0f, 1.0f);
+
+    /// <summary>
     /// Gets or sets the continentalness comfort range [0,1] where this biome naturally occurs.
     /// 0=deep ocean, 0.25=ocean, 0.40=coast, 0.5=plains, 0.8=highlands, 1.0=mountain peaks.
     /// This is the PRIMARY filter for ocean vs land biomes - replaces TerrainType.
@@ -830,6 +849,7 @@ public sealed class BiomeDefinition
     /// Initializes a new instance of <see cref="BiomeDefinition"/> with specified parameters.
     /// </summary>
     public BiomeDefinition(int id, string name, Range continentalness, Range temperature, Range humidity,
+        Range? erosion = null, Range? peaksValleys = null,
         int priority = 0, float minElevation = float.MinValue, float maxElevation = float.MaxValue,
         float baseHeight = 10f, float heightVariation = 15f, float peaksInfluence = 0.5f, float erosionSensitivity = 0.5f,
         BlockId surfaceBlock = BlockId.Grass, BlockId subsurfaceBlock = BlockId.Dirt, BlockId deepBlock = BlockId.Stone,
@@ -840,6 +860,8 @@ public sealed class BiomeDefinition
         Continentalness = continentalness;
         Temperature = temperature;
         Humidity = humidity;
+        Erosion = erosion ?? new Range(0.0f, 1.0f);
+        PeaksValleys = peaksValleys ?? new Range(0.0f, 1.0f);
         Priority = priority;
         MinElevation = minElevation;
         MaxElevation = maxElevation;
@@ -932,12 +954,15 @@ public sealed class BiomeDefinition
                     ]
                 },
             
-                // Alpine: C > 0.80 + high elevation - mountain peaks
+                // Alpine: Mountain peaks.
                 new (ALPINE_BIOME_ID, nameof(BiomeId.Alpine),
-                    continentalness: new(0.75f, 1.0f),    // Start earlier for smoother transition
-                    temperature: new(0.0f, 1.0f),         // Any temperature (elevation makes it cold)
-                    humidity: new(0.0f, 1.0f),            // Any humidity
-                    priority: 90,
+                    // Keep alpine restricted to the highest continentalness so "Highlands" has room.
+                    continentalness: new(0.85f, 1.0f),
+                    // Constrain to colder global temperature bands so tropical biomes don't border alpine.
+                    // (Temperature noise is smooth, so this avoids abrupt rainforest<->alpine adjacency.)
+                    temperature: new(0.0f, 0.35f),
+                    humidity: new(0.0f, 1.0f),
+                    priority: 85,
                     minElevation: 120f,                   // Reachable with current height budget
                     baseHeight: 100f, heightVariation: 40f, peaksInfluence: 0.8f, erosionSensitivity: 0.3f,
                     surfaceBlock: BlockId.Snow, subsurfaceBlock: BlockId.SnowDirt, deepBlock: BlockId.Stone,
@@ -976,14 +1001,14 @@ public sealed class BiomeDefinition
                     ]
                 },
             
-                // Highlands: cool + moderate humidity
+                // Highlands: transition biome for uplands (between Plains and Alpine)
                 new ((int)BiomeId.Highlands, nameof(BiomeId.Highlands),
-                    continentalness: new(0.75f, 0.95f),   // Push highlands upward so plains dominate midlands
-                    temperature: new(0.30f, 0.50f),       // Cool
-                    humidity: new(0.25f, 0.50f),          // Moderate humidity
+                    continentalness: new(0.72f, 0.92f),
+                    temperature: new(0.25f, 0.60f),
+                    humidity: new(0.20f, 0.65f),
                     priority: 50,
                     baseHeight: 45f, heightVariation: 28f, peaksInfluence: 0.7f, erosionSensitivity: 0.4f,
-                    surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
+                    surfaceBlock: BlockId.GrassH, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
                     Vegetation =
@@ -1016,9 +1041,13 @@ public sealed class BiomeDefinition
             
                 // Rainforest: hot + very wet
                 new ((int)BiomeId.Rainforest, nameof(BiomeId.Rainforest),
-                    continentalness: new(0.45f, 0.75f),   // Land, not mountains
-                    temperature: new(0.70f, 1.0f),        // Hot
+                    // Keep rainforest out of uplands/mountain transition zones.
+                    continentalness: new(0.45f, 0.70f),
+                    temperature: new(0.75f, 1.0f),        // Hot
                     humidity: new(0.70f, 1.0f),           // Very wet
+                    // Prefer smoother lowlands; avoid extreme peak/valley zones.
+                    erosion: new(0.45f, 1.0f),
+                    peaksValleys: new(0.25f, 0.75f),
                     priority: 50,
                     baseHeight: 28f, heightVariation: 22f, peaksInfluence: 0.5f, erosionSensitivity: 0.5f,
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
@@ -1038,6 +1067,9 @@ public sealed class BiomeDefinition
                     continentalness: new(0.45f, 0.60f),   // Low-lying land
                     temperature: new(0.50f, 0.70f),       // Temperate
                     humidity: new(0.75f, 1.0f),           // Very wet
+                    // Strongly bias toward flat/valley-ish terrain.
+                    erosion: new(0.70f, 1.0f),
+                    peaksValleys: new(0.0f, 0.55f),
                     priority: 55,                          // Higher than plains when conditions match
                     baseHeight: 11f, heightVariation: 5f, peaksInfluence: 0.1f, erosionSensitivity: 0.9f,
                     surfaceBlock: BlockId.Grass, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
@@ -1073,6 +1105,9 @@ public sealed class BiomeDefinition
                     continentalness: new(0.45f, 0.80f),   // Land
                     temperature: new(0.75f, 1.0f),        // Hot
                     humidity: new(0.0f, 0.20f),           // Very dry
+                    // Deserts should overwhelmingly prefer smooth terrain; avoid jagged ridges/cliffs.
+                    erosion: new(0.65f, 1.0f),
+                    peaksValleys: new(0.20f, 0.75f),
                     priority: 50,
                     baseHeight: 15f, heightVariation: 10f, peaksInfluence: 0.3f, erosionSensitivity: 0.7f,
                     surfaceBlock: BlockId.Sand, subsurfaceBlock: BlockId.Sand, deepBlock: BlockId.Sandstone,
