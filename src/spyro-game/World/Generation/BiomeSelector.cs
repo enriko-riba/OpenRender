@@ -33,14 +33,6 @@ internal sealed class BiomeSelector
         _biomeCount = _biomes.Length;
     }
     
-    /// <summary>
-    /// Update thresholds from config (kept for API compatibility, but no longer needed).
-    /// </summary>
-    public void UpdateConfig(TerrainConfig config)
-    {
-        // Thresholds are now encoded in biome Continentalness ranges
-        // This method is kept for API compatibility
-    }
     
     /// <summary>
     /// Select biome using ONLY climate parameters.
@@ -103,5 +95,106 @@ internal sealed class BiomeSelector
         }
         
         return bestBiomeId;
+    }
+
+    /// <summary>
+    /// Selects multiple biomes with weights for blending.
+    /// Allows smooth transitions between biomes by removing hard cutoffs.
+    /// </summary>
+    public void SelectWeighted(
+        float continentalness01,
+        float temperature01,
+        float humidity01,
+        float erosion01,
+        float peaksValleys01,
+        List<(BiomeDefinition Biome, float Weight)> results)
+    {
+        results.Clear();
+        var totalWeight = 0f;
+        
+        for (var i = 0; i < _biomeCount; i++)
+        {
+            var biome = _biomes[i];
+            
+            // Skip Lake/River - they're handled separately
+            if (biome.Id is (int)BiomeId.Lake or (int)BiomeId.River)
+                continue;
+            
+            // Calculate distance to Continentalness range
+            // Instead of hard cutoff, we apply a penalty for being outside
+            float contDist;
+            var halfWidth = (biome.Continentalness.Max - biome.Continentalness.Min) * 0.5f;
+            
+            if (biome.Continentalness.Contains(continentalness01))
+            {
+                // Inside: 0 at center, increasing to halfWidth * 0.5 at edge
+                contDist = MathF.Abs(continentalness01 - biome.Continentalness.Center) * 0.5f;
+            }
+            else
+            {
+                // Penalty grows rapidly outside the range
+                var distMin = MathF.Abs(continentalness01 - biome.Continentalness.Min);
+                var distMax = MathF.Abs(continentalness01 - biome.Continentalness.Max);
+                var dist = MathF.Min(distMin, distMax);
+
+                // Continuous penalty: start from edge value and increase
+                // Edge value was halfWidth * 0.5
+                // We add dist * 2.0 to make it grow fast
+                contDist = (halfWidth * 0.5f) + (dist * 2.0f); 
+            }
+            
+            // Climate distance scoring
+            var tempDist = biome.Temperature.Contains(temperature01) 
+                ? 0f 
+                : MathF.Min(MathF.Abs(temperature01 - biome.Temperature.Min),
+                            MathF.Abs(temperature01 - biome.Temperature.Max));
+            
+            var humidDist = biome.Humidity.Contains(humidity01)
+                ? 0f
+                : MathF.Min(MathF.Abs(humidity01 - biome.Humidity.Min),
+                            MathF.Abs(humidity01 - biome.Humidity.Max));
+            
+            // Priority bonus (higher priority = lower score)
+            // REDUCED impact of priority to allow smoother blending
+            // Was (100 - priority) * 0.01f -> range 0.0 to 1.0
+            // Now (100 - priority) * 0.001f -> range 0.0 to 0.1
+            var priorityBonus = (100 - biome.Priority) * 0.001f;
+            
+            // Combined score
+            var score = tempDist + humidDist + contDist + priorityBonus;
+            
+            // Convert score to weight using Gaussian-like falloff for smooth blending
+            // Previous 1/score method caused singularities and sharp transitions
+            var weight = MathF.Exp(-score * 10f);
+            
+            results.Add((biome, weight));
+            totalWeight += weight;
+        }
+        
+        // Normalize weights and filter insignificant ones
+        if (totalWeight > 0)
+        {
+            for (var i = 0; i < results.Count; i++)
+            {
+                var (b, w) = results[i];
+                results[i] = (b, w / totalWeight);
+            }
+            
+            // Keep only top contributors to save performance
+            results.Sort((a, b) => b.Weight.CompareTo(a.Weight));
+            if (results.Count > 6)
+            {
+                results.RemoveRange(6, results.Count - 6);
+                
+                // Renormalize
+                totalWeight = 0;
+                foreach (var (_, weight) in results) totalWeight += weight;
+                for (var i = 0; i < results.Count; i++)
+                {
+                    var (b, w) = results[i];
+                    results[i] = (b, w / totalWeight);
+                }
+            }
+        }
     }
 }

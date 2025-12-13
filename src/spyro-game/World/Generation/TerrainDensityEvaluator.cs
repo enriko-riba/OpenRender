@@ -73,21 +73,7 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
                 height = Lerp(minCoastHeight, height, coastFactor * coastFactor);
             }
         }
-        else
-        {
-            // Smooth ocean floor up to coast to avoid underwater cliffs
-            var distToCoast = _params.OceanThreshold - continentalness01;
-            
-            // If within 0.15 continentalness of coast (e.g. 0.25 to 0.40)
-            if (distToCoast < _config.TerrainShaping.UnderwaterCoastalSmoothingDistance)
-            {
-                var coastFactor = distToCoast / _config.TerrainShaping.UnderwaterCoastalSmoothingDistance; // 0 at coast, 1 at deep
-                // Blend towards just below water level at the coast
-                var maxOceanHeight = VoxelHelper.WaterLevel - _config.TerrainShaping.MaxOceanHeightOffset;
-                // Use quadratic ease-out for smoother transition
-                height = Lerp(maxOceanHeight, height, coastFactor * coastFactor);
-            }
-        }
+        // Ocean biomes: Keep natural ocean floor depth, no smoothing upward
         
         return height;
     }

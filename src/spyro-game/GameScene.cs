@@ -698,7 +698,7 @@ internal class GameScene : Scene
         const int radiusBlocks = 1024;
 
         // Create output directory based on world name
-        var savesDir = Path.Combine(Environment.CurrentDirectory, "Saves", config.WorldName);
+        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
         if (!Directory.Exists(savesDir))
         {
             Directory.CreateDirectory(savesDir);

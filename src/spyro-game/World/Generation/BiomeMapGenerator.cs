@@ -80,7 +80,7 @@ public static class BiomeMapGenerator
         var startZ = centerZ - radiusBlocks;
 
         var biomeSelector = new BiomeSelector(config.Biomes);
-        biomeSelector.UpdateConfig(config);
+        //biomeSelector.UpdateConfig(config);
 
         using var image = new Image<Rgba32>(imageSize, imageSize);
         var climateCache = new ChunkClimateCache();
@@ -133,7 +133,7 @@ public static class BiomeMapGenerator
 
                         // Find dominant biome in this cell by voting
                         biomeVotes.Clear();
-                        float avgTemp = 0f;
+                        var avgTemp = 0f;
 
                         for (var dz = 0; dz < cellSize && lz + dz < VoxelHelper.ChunkSideSize; dz++)
                         {
@@ -224,7 +224,7 @@ public static class BiomeMapGenerator
         var startZ = centerZ - radiusBlocks;
 
         var biomeSelector = new BiomeSelector(config.Biomes);
-        biomeSelector.UpdateConfig(config);
+        //biomeSelector.UpdateConfig(config);
 
         using var image = new Image<Rgba32>(size, size);
         var climateCache = new ChunkClimateCache();

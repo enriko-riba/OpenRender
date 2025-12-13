@@ -117,7 +117,7 @@ public sealed class TerrainShapingConfig
     /// - 3: Subtle cliff contributions
     /// - 10: Strong cliff variations
     /// </summary>
-    public float CliffBaseMultiplier { get; set; } = 5f;
+    public float CliffBaseMultiplier { get; set; } = 2f;
     
     /// <summary>
     /// Cliffiness threshold where sharp cliffs begin [−1, 1].
@@ -341,12 +341,6 @@ public sealed class TerrainShapingConfig
     public float MountainHeightBoostMultiplier { get; set; } = 1.3f;
 
     /// <summary>
-    /// Multiplier for cliff amplitude.
-    /// Replaces hardcoded 1.5f.
-    /// </summary>
-    public float CliffAmplitudeMultiplier { get; set; } = 1.0f;
-
-    /// <summary>
     /// Multiplier for valley depth carving.
     /// Higher values create deeper, more dramatic valleys.
     /// </summary>
@@ -396,6 +390,15 @@ public sealed class TerrainShapingConfig
     /// - 4.0: Very dramatic overhangs
     /// </summary>
     public float OverhangMultiplier { get; set; } = 2.5f;
+    
+    /// <summary>
+    /// Multiplier for cliff amplitude in terrain generation.
+    /// Applied to CliffAmplitude to control final cliff height.
+    /// - 1.0 (default): Use CliffAmplitude as-is
+    /// - 0.5: Half cliff heights
+    /// - 2.0: Double cliff heights
+    /// </summary>
+    public float CliffAmplitudeMultiplier { get; set; } = 0.8f;
 
     /// <summary>
     /// Continentalness threshold where overhangs begin.
@@ -433,8 +436,13 @@ public sealed class TerrainShapingConfig
 
     public float WeirdnessRoughnessBase { get; set; } = 0.5f;
     public float WeirdnessRoughnessMultiplier { get; set; } = 0.5f;
-    public float CliffStrengthBase { get; set; } = 0.3f;
-    public float CliffStrengthRoughness { get; set; } = 0.7f;
+    public float CliffStrengthBase { get; set; } = 0.2f;
+    public float CliffStrengthRoughness { get; set; } = 0.4f;
+    public float CliffSlopeMin { get; set; } = 0.25f;
+    public float CliffSlopeMax { get; set; } = 1.35f;
+    public float CliffBreakFrequency { get; set; } = 1f / 32f;
+    public float CliffBreakThreshold { get; set; } = 0.4f;
+    public float CliffBreakFade { get; set; } = 0.18f;
     
     /// <summary>
     /// Creates default terrain shaping configuration.

@@ -119,7 +119,7 @@ internal sealed class CpuTerrainGenerator
         
         // Phase 3: Initialize allocation-free BiomeSelector
         biomeSelector = new BiomeSelector(config.Biomes);
-        biomeSelector.UpdateConfig(config);
+        //biomeSelector.UpdateConfig(config);
         
         // Stage 2: Initialize biome-driven density evaluator
         densityEvaluator = new TerrainDensityEvaluator(config);
@@ -275,7 +275,7 @@ internal sealed class CpuTerrainGenerator
                 chunkData.SurfaceHeights[columnIndex] = ComputeSurfaceHeight(chunkData, lx, lz);
             }
         }
-        
+
         profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
 
         // ChunkCollisionData.Spans populated inside TryCommitSpan
@@ -491,6 +491,13 @@ internal sealed class CpuTerrainGenerator
         var zSpan = columnWorldZ.AsSpan();
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, columnCliff);
         
+       
+        // Reusable list for weighted biome selection
+        var weightedBiomes = new List<(BiomeDefinition Biome, float Weight)>(8);
+        var temp01 = climateCache.Temperature01;
+        var humid01 = climateCache.Humidity01;
+        var pv01 = climateCache.PeaksValleys01;
+
         for (var i = 0; i < ColumnCount; i++)
         {
             var biome = columnBiomes[i];
@@ -499,16 +506,40 @@ internal sealed class CpuTerrainGenerator
             var erosion01 = cachedErosion01[i];
             var weirdness = cachedWeirdness[i];
             var absWeirdness = MathF.Abs(weirdness);
+            var isOceanBiome = biome != null && (biome.Id == BiomeDefinition.OCEAN_BIOME_ID || biome.Id == (int)BiomeId.DeepOcean);
+            var slopeValue = columnSlope[i];
+            
             
             float baseHeight;
             
-            if (biome != null && densityEvaluator != null)
+            if (biome != null && densityEvaluator != null && biomeSelector != null)
             {
-                // STAGE 2: Use biome properties to calculate height
-                baseHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
-                
                 // Calculate 3D factor from weirdness + erosion
                 column3DFactor[i] = densityEvaluator.Calculate3DFactor(absWeirdness, erosion01);
+
+                // ALWAYS use weighted biome properties to calculate height
+                // This blends heights between ALL biomes (including Ocean->Beach) to avoid cliffs
+                baseHeight = 0f;
+                biomeSelector.SelectWeighted(
+                    cont01, 
+                    temp01[i], 
+                    humid01[i], 
+                    erosion01, 
+                    pv01[i], 
+                    weightedBiomes);
+
+                if (weightedBiomes.Count > 0)
+                {
+                    foreach (var (b, weight) in weightedBiomes)
+                    {
+                        baseHeight += densityEvaluator.CalculateBiomeHeight(b, pv, erosion01, cont01) * weight;
+                    }
+                }
+                else
+                {
+                    // Fallback if no biome selected (shouldn't happen)
+                    baseHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
+                }
             }
             else
             {
@@ -516,17 +547,25 @@ internal sealed class CpuTerrainGenerator
                 baseHeight = SampleHeightSpline(cont01) + VoxelHelper.WaterLevel;
                 column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
             }
-            
+
+            // Use continuous threshold for land/ocean distinction, ignoring hard biome classification.
+            // This prevents mode-switching artifacts where "Ocean" biome wins by 0.1% but triggers different logic.
+            var isLandColumn = cont01 >= terrainParams.OceanThreshold && !isOceanBiome;
+
             // Apply additional terrain detail for land areas
-            if (cont01 >= terrainParams.OceanThreshold)
+            if (isLandColumn)
             {
                 var roughness = 1f - erosion01;
                 var coastDist = (cont01 - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
                 var effectiveCoastDist = shaping.CoastDistanceBase + coastDist * shaping.CoastDistanceMultiplier;
+                var coastBlend = Smoothstep(terrainParams.OceanThreshold, terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth), cont01);
+                var slopeMask = Smoothstep(shaping.CliffSlopeMin, shaping.CliffSlopeMax, slopeValue);
                 
                 // Weirdness terrain variety
+                // Multiply by coastBlend to ensure weirdness starts at 0 at the coast line
+                // This prevents the ~8 block jump where weirdness suddenly kicked in at 30% strength
                 var weirdnessInfluence = weirdness * shaping.WeirdnessAmplitude * 
-                    (shaping.WeirdnessInfluenceBase + roughness * shaping.WeirdnessInfluenceRoughness) * effectiveCoastDist;
+                    (shaping.WeirdnessInfluenceBase + roughness * shaping.WeirdnessInfluenceRoughness) * effectiveCoastDist * coastBlend;
                 
                 if (absWeirdness > shaping.ExtremeWeirdnessThreshold)
                 {
@@ -535,34 +574,61 @@ internal sealed class CpuTerrainGenerator
                 }
                 baseHeight += weirdnessInfluence;
                 
-                // Mountain/cliff features
-                if (cont01 > shaping.MountainStartThreshold)
-                {
-                    var mountainFactor = Smoothstep(shaping.MountainStartThreshold, shaping.MountainFullThreshold, cont01);
-                    var cliffAmplitude = terrainParams.CliffAmplitude * shaping.CliffAmplitudeMultiplier;
-                    var cliffStrength = MathF.Abs(columnCliff[i]) * (shaping.CliffStrengthBase + roughness * shaping.CliffStrengthRoughness) * mountainFactor;
-                    baseHeight += cliffStrength * cliffAmplitude;
-                }
-                
-                // Ensure minimum land height
                 var minLandHeight = VoxelHelper.WaterLevel + shaping.MinLandHeightOffset + coastDist * shaping.MinLandHeightCoastMultiplier;
-                if (baseHeight < minLandHeight)
+                var coastalMinHeight = Lerp(VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset), minLandHeight, coastBlend);
+                if (baseHeight < coastalMinHeight)
                 {
-                    baseHeight = minLandHeight;
+                    baseHeight = coastalMinHeight;
                 }
+
+                baseHeight = ApplyCoastalLandSmoothing(baseHeight, cont01, shaping);
+            }
+            else
+            {
+                // Ocean columns ease into the shoreline instead of forming vertical cliffs
+                baseHeight = ApplyOceanShoreSmoothing(baseHeight, cont01, shaping);
             }
             
             columnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
             
             // Guard: land must be above sea level
-            if (cont01 >= terrainParams.OceanThreshold && rounded < (int)VoxelHelper.WaterLevel + 1)
+            if (isLandColumn && rounded < (int)VoxelHelper.WaterLevel + 1)
             {
                 rounded = (int)VoxelHelper.WaterLevel + 1;
                 columnHeights[i] = rounded;
             }
             columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
+    }
+
+    private float ApplyOceanShoreSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
+    {
+        var distanceToCoast = MathF.Max(0f, terrainParams.OceanThreshold - continentalness01);
+        var smoothingRange = Math.Max(0.0001f, shaping.UnderwaterCoastalSmoothingDistance);
+        var blend = 1f - Math.Clamp(distanceToCoast / smoothingRange, 0f, 1f);
+
+        var maxDepth = MathF.Max(0f, shaping.MaxOceanHeightOffset);
+        var depthBlend = Math.Clamp(distanceToCoast / (smoothingRange * 2f), 0f, 1f);
+        var shallowDepth = maxDepth * depthBlend;
+        var shallowTarget = VoxelHelper.WaterLevel - shallowDepth;
+
+        if (blend > 0f)
+        {
+            baseHeight = Lerp(baseHeight, shallowTarget, blend * blend);
+        }
+
+        var maxOceanHeight = VoxelHelper.WaterLevel - 0.05f;
+        return MathF.Min(baseHeight, maxOceanHeight);
+    }
+
+    private float ApplyCoastalLandSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
+    {
+        var coastStart = terrainParams.OceanThreshold;
+        var coastEnd = terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth);
+        var blend = Smoothstep(coastStart, coastEnd, continentalness01);
+        var beachHeight = VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset);
+        return Lerp(beachHeight, baseHeight, blend);
     }
     
     /// <summary>
@@ -940,7 +1006,7 @@ internal sealed class CpuTerrainGenerator
             currentChunkZ, 
             columnHeightInts, 
             isLandColumn,
-            (x, z) => GetSurfaceHeightFloat(x, z));
+            GetSurfaceHeightFloat);
         
         // Copy cave mask from CaveCarver to local buffer
         caveCarver.CaveMask.CopyTo(caveMaskVolume);
@@ -1556,7 +1622,7 @@ internal sealed class CpuTerrainGenerator
 
     /// <summary>
     /// 3D hash function for ore generation. Returns a value in [0,1).
-    /// </summary>
+ /// </summary>
     private static float OreHash3D(int x, int y, int z, uint seed)
     {
         unchecked
@@ -1620,7 +1686,6 @@ internal sealed class CpuTerrainGenerator
             
             // Phase 4: Modulate overhang amplitude by 3D factor
             // High |weirdness| + low erosion → factor3D near 1.0 → full overhang effect
-            // SIGNIFICANTLY INCREASED: Multiplier for dramatic overhangs
             density += overhangNoise * terrainParams.OverhangAmplitude * shaping.OverhangMultiplier * mountainness * heightFactor * factor3D;
         }
 
