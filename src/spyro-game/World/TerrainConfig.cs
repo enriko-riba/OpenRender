@@ -335,7 +335,9 @@ public sealed class TerrainConfig
     /// - Lower values (0.50): Mountains appear in more areas, more dramatic terrain
     /// - Higher values (0.85): Mountains only in highest continentalness, flatter world
     /// </summary>
-    public float MountainThreshold { get; set; } = 0.55f;
+    // Raised to reduce the "coast -> immediate wall" feel and create more midlands/foothills
+    // between the shoreline (OceanThreshold=0.40) and true mountain zones.
+    public float MountainThreshold { get; set; } = 0.70f;
 
     /// <summary>
     /// Frequency of cliff noise (inverse of feature size in blocks).
@@ -981,7 +983,11 @@ public sealed class BiomeDefinition
                     surfaceBlock: BlockId.GrassSnowy, subsurfaceBlock: BlockId.Dirt, deepBlock: BlockId.Stone,
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone)
                 {
-                    Vegetation = [new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }]
+                    Vegetation = [
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Peony, Density = 0.0001f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.DeadBush, Density = 0.001f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.TreeCone, MainBlock = BlockId.SpruceLog, SecondaryBlock = BlockId.SpruceLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.GrassSnowy, BlockId.Dirt] }
+                        ]
                 },
             
                 // Taiga: cold + humid land biome
@@ -1013,9 +1019,11 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.20f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.10f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Poppy, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Lilac, Density = 0.004f, AllowedSurfaceBlocks = [BlockId.GrassH, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.WitherRose, Density = 0.002f, AllowedSurfaceBlocks = [BlockId.GrassH, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.GrassH, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.10f, AllowedSurfaceBlocks = [BlockId.GrassH, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Poppy, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.GrassH] },
                         new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] }
                     ]
                 },
@@ -1032,9 +1040,14 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Dandelion, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Sunflower, Density = 0.02f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.AzureBluet, Density = 0.003f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.WhiteTulip, Density = 0.001f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.LilyOfTheValley, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.RoseBush, Density = 0.008f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.Dandelion, Density = 0.005f, AllowedSurfaceBlocks = [BlockId.Grass] },
                         new() { Generator = VegetationGeneratorType.TreeBalloon, MainBlock = BlockId.OakLog, SecondaryBlock = BlockId.OakLeaves, Density = 0.01f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] }
                     ]
                 },
@@ -1055,10 +1068,11 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.TreeJungle, MainBlock = BlockId.JungleLog, SecondaryBlock = BlockId.JungleLeaves, Density = 0.15f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.3f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.5f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
-                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.BlueOrchid, Density = 0.2f, AllowedSurfaceBlocks = [BlockId.Grass] }
+                        new() { Generator = VegetationGeneratorType.TreeJungle, MainBlock = BlockId.JungleLog, SecondaryBlock = BlockId.JungleLeaves, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.125f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.BlueOrchid, Density = 0.001f, AllowedSurfaceBlocks = [BlockId.Grass] },
+                        new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.DeadBush, Density = 0.025f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
                     ]
                 },
             

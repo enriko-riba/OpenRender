@@ -172,6 +172,34 @@ public sealed class TerrainMeshBufferManager : IDisposable
         GL.NamedBufferSubData(buffer, IntPtr.Zero, sizeBytes, data);
     }
 
+    /// <summary>
+    /// Clear a range within a uint buffer to a known value.
+    /// Uses chunked uploads to avoid allocating very large arrays.
+    /// </summary>
+    private static void ClearBufferUIntRange(uint buffer, IntPtr byteOffset, int sizeBytes, uint value)
+    {
+        if (sizeBytes <= 0)
+        {
+            return;
+        }
+
+        const int ChunkUints = 4096;
+        var chunk = new uint[ChunkUints];
+        Array.Fill(chunk, value);
+
+        var remainingBytes = sizeBytes;
+        var offset = byteOffset;
+        var chunkBytes = ChunkUints * sizeof(uint);
+
+        while (remainingBytes > 0)
+        {
+            var writeBytes = Math.Min(remainingBytes, chunkBytes);
+            GL.NamedBufferSubData(buffer, offset, writeBytes, chunk);
+            offset += writeBytes;
+            remainingBytes -= writeBytes;
+        }
+    }
+
     public void Dispose()
     {
         DisposeUploadChannels();
@@ -693,6 +721,14 @@ public sealed class TerrainMeshBufferManager : IDisposable
             GL.CopyNamedBufferSubData(indirectDrawBuffer, newBuffer, IntPtr.Zero, IntPtr.Zero, oldSize);
         }
 
+        // IMPORTANT: Initialize the newly-allocated tail.
+        // GL buffer storage is uninitialized; leaving garbage commands can cause stray draws
+        // (e.g. chunks appearing at incorrect offsets) until the slot is overwritten.
+        if (newSize > oldSize)
+        {
+            ClearBufferUIntRange(newBuffer, (IntPtr)oldSize, newSize - oldSize, 0u);
+        }
+
         // Delete old buffer and replace
         GL.DeleteBuffer(indirectDrawBuffer);
         indirectDrawBuffer = newBuffer;
@@ -767,6 +803,15 @@ public sealed class TerrainMeshBufferManager : IDisposable
         if (oldCapacity > 0)
         {
             GL.CopyNamedBufferSubData(chunkInfoBuffer, newInfoBuffer, IntPtr.Zero, IntPtr.Zero, (nint)(oldCapacity * sizeof(int)));
+        }
+
+        // Initialize new slots to invalid (-1) so they never produce a valid chunk index.
+        // Without this, new slots can read as 0 and map to chunk 0 in the shader.
+        if (newCapacity > oldCapacity)
+        {
+            var byteOffset = (IntPtr)(oldCapacity * sizeof(int));
+            var byteCount = (int)((newCapacity - oldCapacity) * sizeof(int));
+            ClearBufferUIntRange(newInfoBuffer, byteOffset, byteCount, 0xFFFFFFFFu);
         }
         
         GL.DeleteBuffer(chunkInfoBuffer);

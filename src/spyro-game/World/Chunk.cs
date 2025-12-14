@@ -55,8 +55,8 @@ public class Chunk(int index)
                 var col = x + z * size;
                 var c = counts[col];
                 var maxH = 0;
-                var baseIdx = col * 16 * 2; // MaxSpansPerColumn = 16
-                for (var i = 0; i < c && i < 16; i++)
+                var baseIdx = col * ChunkCollisionData.MaxSpansPerColumn * 2;
+                for (var i = 0; i < c && i < ChunkCollisionData.MaxSpansPerColumn; i++)
                 {
                     var y1 = spansPairs[baseIdx + i * 2 + 1];
                     if (y1 > maxH) maxH = y1;

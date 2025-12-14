@@ -19,7 +19,10 @@ public struct ColumnSpan
 public class ChunkCollisionData
 {
     public const int ColumnsPerChunk = 16 * 16;
-    public const int MaxSpansPerColumn = 16;
+    // NOTE: 16 is too low once you have caves/overhangs/vegetation in the same column.
+    // When a column exceeds this span budget, collision/picking can miss blocks ("holes"),
+    // which matches the reported "fall through a single column" symptom.
+    public const int MaxSpansPerColumn = 64;
 
     // Flattened array of spans for all columns
     // Indexing: columnIdx * MaxSpansPerColumn + spanIdx
@@ -267,7 +270,7 @@ public class CollisionManager
 
             var colIdx = localZ * 16 + localX;
             var count = data.SpanCounts[colIdx];
-            var offset = colIdx * 16;       // MaxSpansPerColumn
+            var offset = colIdx * ChunkCollisionData.MaxSpansPerColumn;
 
             for (var i = 0; i < count; i++)
             {
