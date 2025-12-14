@@ -156,15 +156,9 @@ void main(){
 
     // Underwater Override
     if (uIsUnderwater == 1) {
-        // Match voxel-terrain.frag fog color (dirLight.ambient * vec3(0.2, 0.5, 0.8))
-        vec3 deepColor = dirLight.ambient * vec3(0.2, 0.5, 0.8);
-        // Surface color can be a bit lighter/different, but deep color (horizon) must match fog.
-        vec3 surfaceColor = dirLight.ambient * vec3(0.4, 0.7, 1.0);
-        
-        // Gradient: Deep color at horizon and below, fading to surface color at zenith
-        // This ensures seamless blending with the underwater fog which uses deepColor
-        float t = smoothstep(0.0, 1.0, dir.y); 
-        finalC = mix(deepColor, surfaceColor, t);
+        // Underwater: skybox should not show gradient/stars/sun.
+        // Use the shared fog color so it matches terrain/water fog and preserves day/night tint.
+        finalC = (fogParams.z > 0.5) ? fogColor4.rgb : (dirLight.ambient * vec3(0.12, 0.32, 0.45));
     }
 
     // Subtle dithering

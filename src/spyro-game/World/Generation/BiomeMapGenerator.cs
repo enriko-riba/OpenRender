@@ -48,11 +48,9 @@ public static class BiomeMapGenerator
         int centerZ,
         int radiusBlocks,
         string outputPath,
-        bool includeClimateOverlay = false)
-    {
+        bool includeClimateOverlay = false) =>
         // Use downsampled version for efficiency (1 pixel = 4x4 blocks)
         GenerateBiomeMapDownsampled(config, centerX, centerZ, radiusBlocks, outputPath, 4, includeClimateOverlay);
-    }
 
     /// <summary>
     /// Generate a downsampled biome map for faster generation of large areas.
@@ -503,7 +501,7 @@ public static class BiomeMapGenerator
                         var c01 = cont01[columnIndex];
                         var macroHeight = evaluator.CalculateSplineHeight(c01, pv01[columnIndex], erosion01[columnIndex], heightLut);
                         var biomeHeight = evaluator.CalculateBiomeHeight(biome, pv01[columnIndex], erosion01[columnIndex], c01);
-                        var height = evaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
+                        var height = TerrainDensityEvaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
 
                         var idx = imageZ * imageSize + imageX;
                         heights[idx] = height;
@@ -563,10 +561,13 @@ public static class BiomeMapGenerator
         var t = Math.Clamp((height - waterLevel) / denom, 0f, 1f);
 
         // Color stops: 0=Blue, 0.35=Yellow, 0.65=Green, 0.85=Cyan, 1=White
-        if (t <= 0.35f) return LerpColor(new Rgba32(0, 0, 255), new Rgba32(255, 255, 0), t / 0.35f);
-        if (t <= 0.65f) return LerpColor(new Rgba32(255, 255, 0), new Rgba32(0, 255, 0), (t - 0.35f) / 0.30f);
-        if (t <= 0.85f) return LerpColor(new Rgba32(0, 255, 0), new Rgba32(0, 255, 255), (t - 0.65f) / 0.20f);
-        return LerpColor(new Rgba32(0, 255, 255), new Rgba32(255, 255, 255), (t - 0.85f) / 0.15f);
+        return t <= 0.35f
+            ? LerpColor(new Rgba32(0, 0, 255), new Rgba32(255, 255, 0), t / 0.35f)
+            : t <= 0.65f
+            ? LerpColor(new Rgba32(255, 255, 0), new Rgba32(0, 255, 0), (t - 0.35f) / 0.30f)
+            : t <= 0.85f
+            ? LerpColor(new Rgba32(0, 255, 0), new Rgba32(0, 255, 255), (t - 0.65f) / 0.20f)
+            : LerpColor(new Rgba32(0, 255, 255), new Rgba32(255, 255, 255), (t - 0.85f) / 0.15f);
     }
 
     private static Rgba32 LerpColor(Rgba32 a, Rgba32 b, float t)

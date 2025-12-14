@@ -170,7 +170,17 @@ internal static class ChunkMeshBuilder
                     for (uint face = 0; face < FaceDirections.Length; face++)
                     {
                         var (dx, dy, dz) = FaceDirections[(int)face];
-                        var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz);
+                        var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz, out var neighborMissing);
+                        if (isLiquid && neighborMissing)
+                        {
+                            // If the neighbor chunk isn't loaded/available yet, treating it as air causes
+                            // liquid side faces to be emitted at the streaming boundary. Because liquids are
+                            // blended (and not per-face sorted), these boundary "curtains" can accumulate and
+                            // show up as dark rectangular artifacts.
+                            //
+                            // Instead, treat missing neighbor data as "same liquid" so we cull those faces.
+                            neighborBlock = block;
+                        }
                         
                         // LIQUID FACE CULLING:
                         // - Render top face (+Y) for water/lava surface ONLY when exposed to air/transparent
@@ -179,7 +189,7 @@ internal static class ChunkMeshBuilder
                         // - Never render faces against opaque solid blocks (hidden anyway)
                         if (isLiquid)
                         {
-                            var isTopFace = face == 2; // +Y
+                            //var isTopFace = face == 2; // +Y
                             
                             // Skip internal liquid-liquid faces (same liquid type)
                             if (neighborBlock.IsLiquid() && neighborBlock == block)
@@ -650,7 +660,11 @@ internal static class ChunkMeshBuilder
         }
 
         public BlockId SampleBlock(int x, int y, int z)
+            => SampleBlock(x, y, z, out _);
+
+        public BlockId SampleBlock(int x, int y, int z, out bool missingNeighborData)
         {
+            missingNeighborData = false;
             if (y < 0)
             {
                 return BlockId.Stone;
@@ -690,6 +704,7 @@ internal static class ChunkMeshBuilder
 
             // Neighbor lookup failed - track this for debugging
             NeighborMisses++;
+            missingNeighborData = true;
             return BlockId.Air;
         }
 
@@ -1033,11 +1048,10 @@ internal static class ChunkMeshBuilder
         /// t1 and t2 define the two axes along which the face extends.
         /// Returns (t1x, t1y, t1z, t2x, t2y, t2z).
         /// </summary>
-        private static (int, int, int, int, int, int) GetFaceTangents(uint face)
-        {
+        private static (int, int, int, int, int, int) GetFaceTangents(uint face) =>
             // For each face, define the two axes the face spans.
             // These are unit vectors along positive axis directions.
-            return face switch
+            face switch
             {
                 0 => (0, 1, 0, 0, 0, 1),   // +X: spans Y and Z
                 1 => (0, 1, 0, 0, 0, 1),   // -X: spans Y and Z
@@ -1047,8 +1061,7 @@ internal static class ChunkMeshBuilder
                 5 => (1, 0, 0, 0, 1, 0),   // -Z: spans X and Y
                 _ => (1, 0, 0, 0, 1, 0)
             };
-        }
-        
+
         /// <summary>
         /// Get the corner-specific sign multipliers for tangent directions.
         /// For a corner at position (ox, oy, oz), if the corner is at the low end of an axis (0),

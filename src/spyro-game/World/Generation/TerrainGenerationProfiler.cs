@@ -258,13 +258,10 @@ internal sealed class TerrainGenerationProfiler
     /// <summary>
     /// Get a formatted string with the last chunk's timing breakdown.
     /// </summary>
-    public string GetLastChunkSummary()
-    {
-        return $"Climate={GetLastMs(Step.ClimateSampling):F2}ms, " +
+    public string GetLastChunkSummary() => $"Climate={GetLastMs(Step.ClimateSampling):F2}ms, " +
                $"Height={GetLastMs(Step.HeightCalculation):F2}ms, " +
                $"3D={GetLastMs(Step.Noise3DSampling):F2}ms, " +
                $"Biome={GetLastMs(Step.BiomeSelection):F2}ms, " +
                $"Blocks={GetLastMs(Step.BlockGeneration):F2}ms, " +
                $"Total={GetLastMs(Step.Total):F2}ms";
-    }
 }

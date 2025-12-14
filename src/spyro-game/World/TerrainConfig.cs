@@ -12,7 +12,7 @@ public sealed class TerrainConfig
     /// <summary>
     /// Gets or sets the world name used for save file identification.
     /// </summary>
-    public string WorldName { get; set; } = "default";
+    public string WorldName { get; set; } = "DefaultWorld";
 
     /// <summary>
     /// Gets or sets the random seed for procedural generation.
@@ -685,10 +685,6 @@ public struct SlopeRange
     }
 }
 
-// TerrainType enum removed - biomes are now selected purely by climate parameter ranges
-// (Continentalness, Temperature, Humidity, Erosion, PeaksValleys)
-// See TERRAIN_ARCHITECTURE.md for the Minecraft-style pipeline design.
-
 /// <summary>
 /// Defines a biome with its climate requirements, elevation constraints, texture mappings, and placement priority.
 /// Biomes are selected in the shader based on a combination of hardcoded checks (ocean, alpine) and
@@ -696,16 +692,6 @@ public struct SlopeRange
 /// </summary>
 public sealed class BiomeDefinition
 {
-    /// <summary>
-    /// Hardcoded biome ID for Ocean. Must match shader constant OCEAN_BIOME_ID.
-    /// </summary>
-    public const int OCEAN_BIOME_ID = (int)BiomeId.Ocean;
-
-    /// <summary>
-    /// Hardcoded biome ID for Alpine. Must match shader constant ALPINE_BIOME_ID.
-    /// </summary>
-    public const int ALPINE_BIOME_ID = (int)BiomeId.Alpine;
-
     /// <summary>
     /// Default fallback biome ID used when LUT sampling fails. Must match shader constant DEFAULT_FALLBACK_BIOME_ID.
     /// </summary>
@@ -930,7 +916,7 @@ public sealed class BiomeDefinition
                     underwaterSurfaceBlock: BlockId.Gravel, underwaterSubsurfaceBlock: BlockId.Stone),
             
                 // Ocean: C 0.25-0.40 - regular ocean
-                new (OCEAN_BIOME_ID, nameof(BiomeId.Ocean),
+                new ((int)BiomeId.Ocean, nameof(BiomeId.Ocean),
                     continentalness: new(0.25f, 0.40f),
                     temperature: new(0.0f, 1.0f),         // Any temperature
                     humidity: new(0.0f, 1.0f),            // Any humidity
@@ -957,7 +943,7 @@ public sealed class BiomeDefinition
                 },
             
                 // Alpine: Mountain peaks.
-                new (ALPINE_BIOME_ID, nameof(BiomeId.Alpine),
+                new ((int)BiomeId.Alpine, nameof(BiomeId.Alpine),
                     // Keep alpine restricted to the highest continentalness so "Highlands" has room.
                     continentalness: new(0.85f, 1.0f),
                     // Constrain to colder global temperature bands so tropical biomes don't border alpine.
@@ -1029,7 +1015,7 @@ public sealed class BiomeDefinition
                 },
             
                 // Plains: temperate, moderate - THE MOST COMMON biome (wide ranges)
-                new (DEFAULT_FALLBACK_BIOME_ID, nameof(BiomeId.Plains),
+                new ((int)BiomeId.Plains, nameof(BiomeId.Plains),
                     continentalness: new(0.45f, 0.70f),   // Low to mid land
                     temperature: new(0.35f, 0.70f),       // Wide temperate range
                     humidity: new(0.25f, 0.70f),          // Wide humidity range
@@ -1479,10 +1465,7 @@ public sealed class Spline1D
     /// Sorts all control points by X coordinate in ascending order.
     /// Required for proper linear interpolation. Call after adding all points.
     /// </summary>
-    public void Sort()
-    {
-        Points.Sort((a, b) => a.X.CompareTo(b.X));
-    }
+    public void Sort() => Points.Sort((a, b) => a.X.CompareTo(b.X));
 
     /// <summary>
     /// Evaluates the spline at the given X coordinate using linear interpolation.

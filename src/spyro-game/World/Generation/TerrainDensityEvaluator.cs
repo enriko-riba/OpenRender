@@ -88,10 +88,10 @@ internal sealed class TerrainDensityEvaluator(TerrainConfig config)
     /// Blend macro elevation (from height spline / continentalness) with biome-defined height.
     /// This allows e.g. Plains to exist at multiple absolute altitudes while remaining flat.
     /// </summary>
-    public float BlendMacroAndBiomeHeight(float macroHeight, BiomeDefinition biome, float biomeHeight)
+    public static float BlendMacroAndBiomeHeight(float macroHeight, BiomeDefinition biome, float biomeHeight)
     {
         var t = LandBiomeHeightInfluence;
-        if (biome.Id == BiomeDefinition.OCEAN_BIOME_ID || biome.Id == (int)BiomeId.DeepOcean)
+        if (biome.Id is ((int)BiomeId.Ocean) or ((int)BiomeId.DeepOcean))
         {
             t = OceanBiomeHeightInfluence;
         }

@@ -31,6 +31,13 @@ layout(std140, binding = 1) uniform light {
     Light dirLight;
 };
 
+// Fog UBO (shared across shaders)
+// fogColor4.rgb = fog color; fogParams = (near, far, enabled, unused)
+layout (std140, binding = 4) uniform fogBlock {
+    vec4 fogColor4;
+    vec4 fogParams;
+};
+
 // Material properties
 uniform vec3 uMaterialDiffuse = vec3(0.6, 0.8, 0.4);
 uniform vec3 uMaterialSpecular = vec3(0.2, 0.2, 0.2);
@@ -214,6 +221,9 @@ void main() {
     bool isWater = blockId == 1u;
     bool isTopFace = N.y > 0.5;
 
+    // Water fog color is used in multiple stages (water shading + final visibility clamp).
+    vec3 waterFogColor = vec3(0.0);
+
     // Sample block texture (use animated UVs for water top faces)
     vec4 baseColor;
     if (isWater && isTopFace) {
@@ -250,7 +260,7 @@ void main() {
         // Scale water ambient by sky light to darken in caves
         vec3 waterBaseColor = deepWaterColor * dirLight.ambient * 2.5 * max(vSkyLight, 0.05);
 
-        vec3 waterFogColor = isCameraUnderwater
+        waterFogColor = isCameraUnderwater
             ? dirLight.ambient * vec3(0.08, 0.2, 0.35)
             : dirLight.ambient * vec3(0.10, 0.18, 0.30);
         
@@ -305,6 +315,15 @@ void main() {
                 baseColor.rgb = mix(waterFogColor, baseColor.rgb, absorption);
                 float opacityBoost = mix(0.60, 0.98, 1.0 - absorption);
                 baseColor.a = max(baseColor.a, opacityBoost);
+
+                // Looking into water from above: hard-cap visibility.
+                // At grazing angles, depth doesn't block the skybox (water doesn't write depth),
+                // so far pixels must converge to a single fog color and become effectively opaque.
+                const float viewFogNear = 4.0;
+                const float viewFogFar  = 12.0;
+                float viewFog = smoothstep(viewFogNear, viewFogFar, dist);
+                baseColor.rgb = mix(baseColor.rgb, waterFogColor, viewFog);
+                baseColor.a = mix(baseColor.a, 1.0, viewFog);
             }
         } else {
             // ==================== WATER SIDE FACES ====================
@@ -349,6 +368,13 @@ void main() {
             // Additional opacity boost based on absorption (same as top face)
             float opacityBoost = mix(0.60, 0.98, 1.0 - absorption);
             baseColor.a = max(baseColor.a, opacityBoost);
+
+            // Same visibility clamp for side faces when viewed from above.
+            const float viewFogNear = 4.0;
+            const float viewFogFar  = 12.0;
+            float viewFog = smoothstep(viewFogNear, viewFogFar, dist);
+            baseColor.rgb = mix(baseColor.rgb, waterFogColor, viewFog);
+            baseColor.a = mix(baseColor.a, 1.0, viewFog);
         }
     }
 
@@ -441,50 +467,65 @@ void main() {
 
     // Underwater rendering effects - apply when camera is submerged
     if (isCameraUnderwater && !isWater) {
-        const float fogEnd = 30.0;            // Matches water.frag distance fog
-        const float maxDepthEffect = 60.0;    // Matches water.frag depth rolloff
-        const float depthFogEnd = 20.0;       // Depth distance where depth-based fog reaches 100%
-
         float dist = length(vWorldPos - cameraPos);
-        float cameraDepth = max(waterLevel - cameraPos.y, 0.0);
-        float fragmentDepthBelowWater = waterLevel - vWorldPos.y;
-        float fragmentDepth = max(fragmentDepthBelowWater, 0.0);
-        bool isFragmentAboveWater = fragmentDepthBelowWater < 0.0;
 
-        float distanceFog = clamp(dist / fogEnd, 0.0, 1.0);
-        float depthFactor = clamp(fragmentDepth / maxDepthEffect, 0.0, 1.0);
-        float depthFog = clamp(fragmentDepth / depthFogEnd, 0.0, 1.0);
-        float combinedFog = clamp(distanceFog + depthFog * 0.85, 0.0, 1.0);
+        // Use shared fog params when enabled; otherwise fall back to a sane underwater range.
+        float fogNear = (fogParams.z > 0.5) ? fogParams.x : 4.0;
+        float fogFar  = (fogParams.z > 0.5) ? fogParams.y : 12.0;
+        vec3  fogCol  = (fogParams.z > 0.5) ? fogColor4.rgb : (dirLight.ambient * vec3(0.12, 0.32, 0.45));
 
-        vec3 shallowFogColor = vec3(0.1, 0.35, 0.55);
-        vec3 deepFogColor = vec3(0.02, 0.1, 0.18);
-        vec3 waterFogColor = mix(shallowFogColor, deepFogColor, depthFactor) * dirLight.ambient * 2.5;
+        // Distance fog: beyond fogFar, everything converges to fogCol (hides terrain contours).
+        float fogK = smoothstep(fogNear, fogFar, dist);
 
-        // Light absorption with depth (same exponential curve as water.frag)
-        float lightAbsorption = exp(-fragmentDepth * 0.015);
-        vec3 foggedColor = finalColor * lightAbsorption;
+        // Additional depth-based thickening (murkier deeper down), but keep distance as the hard cap.
+        float depthBelowSurface = max(waterLevel - vWorldPos.y, 0.0);
+        float depthK = smoothstep(0.0, 10.0, depthBelowSurface) * 0.35;
+        fogK = clamp(fogK + depthK, 0.0, 1.0);
 
-        // Treat fragments above the water surface as fully fogged (total internal reflection)
-        if (isFragmentAboveWater) {
-            combinedFog = 1.0;
+        // Anything above the water surface should be fully fogged from underwater POV.
+        if (vWorldPos.y > waterLevel) {
+            fogK = 1.0;
         }
 
-        // Blend towards underwater fog color to limit visibility
-        foggedColor = mix(foggedColor, waterFogColor, combinedFog);
-
-        // Distance is still the absolute factor; enforce a strong fade between 20-30 units
-        float farFade = smoothstep(20.0, fogEnd, dist);
-        foggedColor = mix(foggedColor, waterFogColor, max(farFade, combinedFog));
-
-        // Apply the same subtle blue tint used in water.frag for underwater view
-        foggedColor *= vec3(0.5, 0.7, 1.0);
-
-        // Reduce visibility based on how deep the camera is
-        float cameraDepthFactor = clamp(cameraDepth / maxDepthEffect, 0.0, 1.0);
-        foggedColor *= (1.0 - cameraDepthFactor * 0.25);
-
+        vec3 foggedColor = mix(finalColor, fogCol, fogK);
         FragColor = vec4(foggedColor, baseColor.a);
         return;
+    }
+
+    // Underwater clamp for water pixels too: make far water match the same fog color so
+    // missing chunks / skybox don't show through as distinct bands.
+    if (isCameraUnderwater && isWater)
+    {
+        float dist = length(vWorldPos - cameraPos);
+        float fogNear = (fogParams.z > 0.5) ? fogParams.x : 4.0;
+        float fogFar  = (fogParams.z > 0.5) ? fogParams.y : 12.0;
+        vec3  fogCol  = (fogParams.z > 0.5) ? fogColor4.rgb : (dirLight.ambient * vec3(0.12, 0.32, 0.45));
+        float fogK = smoothstep(fogNear, fogFar, dist);
+        finalColor = mix(finalColor, fogCol, fogK);
+        baseColor.a = mix(baseColor.a, 1.0, fogK * 0.85);
+    }
+
+    // Above-water visibility clamp for water (post-lighting):
+    // Even with per-face clamps, fresnel/specular/lighting can reintroduce bright sky-like
+    // contributions and, because water doesn't write depth, silhouettes can show through at
+    // grazing angles. Force *final* color to converge to waterFogColor and alpha to 1.0.
+    if (!isCameraUnderwater && isWater)
+    {
+        float dist = length(vWorldPos - cameraPos);
+
+        // Grazing-angle reinforcement: when looking almost parallel to the surface,
+        // even near fragments can leak the skybox because water doesn't write depth.
+        vec3 viewDir = normalize(vViewDir);
+        float viewCos = clamp(abs(dot(waterNormal, viewDir)), 0.0, 1.0);
+        float grazing = 1.0 - viewCos; // 0 = straight down/up, 1 = perfectly grazing
+        float angleK = smoothstep(0.55, 0.92, grazing);
+
+        // Color can fade a bit later; alpha must clamp sooner to hide sky/terrain contours.
+        float fogK = max(smoothstep(4.0, 12.0, dist), angleK * 0.65);
+        float alphaK = max(smoothstep(2.0, 8.0, dist), angleK);
+
+        finalColor = mix(finalColor, waterFogColor, fogK);
+        baseColor.a = mix(baseColor.a, 1.0, alphaK);
     }
 
     FragColor = vec4(finalColor, baseColor.a);

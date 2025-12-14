@@ -1,5 +1,4 @@
 using static SpyroGame.World.Generation.NoiseUtilities;
-using System.Numerics;
 
 namespace SpyroGame.World.Generation;
 
@@ -56,10 +55,7 @@ internal sealed class CaveCarver(TerrainConfig config)
     /// <summary>
     /// Update configuration when terrain config changes.
     /// </summary>
-    public void UpdateConfig(TerrainConfig config)
-    {
-        _params = config.GetGenerationParams();
-    }
+    public void UpdateConfig(TerrainConfig config) => _params = config.GetGenerationParams();
 
     /// <summary>
     /// Carve caves for a chunk. This is the main entry point.
@@ -360,10 +356,10 @@ internal sealed class CaveCarver(TerrainConfig config)
     {
         // Region size = 32 blocks (2x2 chunks)
         const int RegionSize = 32;
-        
+
         var worldX = chunkX * VoxelHelper.ChunkSideSize;
         var worldZ = chunkZ * VoxelHelper.ChunkSideSize;
-        
+
         // Calculate region coordinates
         var regionX = (int)MathF.Floor(worldX / (float)RegionSize);
         var regionZ = (int)MathF.Floor(worldZ / (float)RegionSize);
@@ -390,31 +386,31 @@ internal sealed class CaveCarver(TerrainConfig config)
     {
         var seed = _params.Seed + 9000u;
         var rHash = Hash2D(rx, rz, seed);
-        
+
         // 20% chance per region
         if (rHash > 0.2f) return null;
-        
+
         // Pick random spot in region
         var rRand = Hash2D(rx, rz, seed + 1);
         var wx = rx * regionSize + (int)(rRand * regionSize);
         var wz = rz * regionSize + (int)(Hash2D(rx, rz, seed + 2) * regionSize);
-        
+
         // Get surface height (Global Lookup)
         var surfaceY = heightProvider(wx, wz);
-        
+
         // Find cave below
         // Scan down from surface to find a cave ceiling
         var caveY = -1;
         var foundCeiling = false;
-        
+
         // Scan down from surface
         for (var y = (int)surfaceY - 5; y > 10; y--)
         {
             var density = GetGlobalCaveDensity(wx, y, wz);
-            
+
             // Density > Threshold means AIR (Carved)
             // We use a slightly lower threshold for detection to be safe
-            if (density > _params.CaveCarveThreshold) 
+            if (density > _params.CaveCarveThreshold)
             {
                 if (!foundCeiling)
                 {
@@ -431,46 +427,51 @@ internal sealed class CaveCarver(TerrainConfig config)
                 }
             }
         }
-        
+
         if (caveY == -1) return null;
-        
+
         // Found a cave! Now find an exit.
         // Pick random direction
         var angle = Hash2D(rx, rz, seed + 3) * MathF.PI * 2;
         var dirX = MathF.Cos(angle);
         var dirZ = MathF.Sin(angle);
-        
+
         // Scan ahead for exit
         float exitDist = -1;
         float exitSlope = 0;
-        
+
         // Scan up to 80 blocks
         for (float d = 5; d < 80; d += 2)
         {
             var tx = wx + dirX * d;
             var tz = wz + dirZ * d;
             var th = heightProvider((int)tx, (int)tz);
-            
+
             var rise = th - caveY;
             var slope = rise / d;
-            
+
             // Valid walkable slope
-            if (slope > 0.2f && slope < 0.8f)
+            if (slope is > 0.2f and < 0.8f)
             {
                 exitDist = d;
                 exitSlope = slope;
                 break;
             }
         }
-        
-        if (exitDist < 0) return null;
-        
-        return new GlobalEntrance
-        {
-            StartX = wx, StartY = caveY, StartZ = wz,
-            EndX = wx + dirX * exitDist, EndY = caveY + exitSlope * exitDist, EndZ = wz + dirZ * exitDist,
-            RadiusH = 2.5f, RadiusV = 3.5f
-        };
+
+        return exitDist < 0
+            ? null
+            : new GlobalEntrance
+            {
+                StartX = wx,
+                StartY = caveY,
+                StartZ = wz,
+                EndX = wx + dirX * exitDist,
+                EndY = caveY + exitSlope * exitDist,
+                EndZ = wz + dirZ * exitDist,
+                RadiusH = 2.5f,
+                RadiusV = 3.5f
+            };
     }
 
     /// <summary>
@@ -482,27 +483,27 @@ internal sealed class CaveCarver(TerrainConfig config)
         var dx = e.EndX - e.StartX;
         var dy = e.EndY - e.StartY;
         var dz = e.EndZ - e.StartZ;
-        var len = MathF.Sqrt(dx*dx + dy*dy + dz*dz);
-        
+        var len = MathF.Sqrt(dx * dx + dy * dy + dz * dz);
+
         var stepSize = 0.5f;
         var steps = (int)(len / stepSize);
-        
+
         var dirX = dx / len;
         var dirY = dy / len;
         var dirZ = dz / len;
-        
+
         var chunkWX = chunkX * VoxelHelper.ChunkSideSize;
         var chunkWZ = chunkZ * VoxelHelper.ChunkSideSize;
-        
+
         var px = e.StartX;
         var py = e.StartY;
         var pz = e.StartZ;
-        
+
         var rH = e.RadiusH;
         var rV = e.RadiusV;
-        
+
         // Carve path + extra for exit clearing
-        for (var i = 0; i <= steps + 12; i++) 
+        for (var i = 0; i <= steps + 12; i++)
         {
             // Check if point is in current chunk (with radius buffer)
             // We use a generous buffer to ensure smooth carving across borders
@@ -512,15 +513,15 @@ internal sealed class CaveCarver(TerrainConfig config)
                 // Convert to local coords
                 var lx = px - chunkWX;
                 var lz = pz - chunkWZ;
-                
+
                 // Carve spheroid (ignoring terrain height check to force the tunnel)
-                CarveSpheroid(lx, py + rV, lz, rH, rV, default); 
+                CarveSpheroid(lx, py + rV, lz, rH, rV, default);
             }
-            
+
             px += dirX * stepSize;
             py += dirY * stepSize;
             pz += dirZ * stepSize;
-            
+
             // Widen near end (last 15 steps)
             if (i > steps - 15)
             {
@@ -541,31 +542,32 @@ internal sealed class CaveCarver(TerrainConfig config)
         var amp = 1f;
         var freq = _params.CheeseFrequency;
         var totalAmp = 0f;
-        for(int i=0; i<2; i++) {
-            cheese += ValueNoise3D(x*freq, y*freq, z*freq, _params.Seed + 300u + (uint)(i*1013)) * amp;
+        for (var i = 0; i < 2; i++)
+        {
+            cheese += ValueNoise3D(x * freq, y * freq, z * freq, _params.Seed + 300u + (uint)(i * 1013)) * amp;
             totalAmp += amp;
             amp *= 0.6f;
             freq *= 1.9f;
         }
         cheese = (cheese / totalAmp) * 2f - 1f;
         cheese *= _params.CheeseAmplitude;
-        
+
         // Spaghetti
         var yStretch = _config.Caves.SpaghettiYStretch;
         var sy = y * yStretch;
-        
-        var spagA = ValueNoise3D(x*_params.SpaghettiFrequency, sy*_params.SpaghettiFrequency, z*_params.SpaghettiFrequency, _params.Seed + 400u);
-        var spagB = ValueNoise3D(x*_params.SpaghettiFrequency, sy*_params.SpaghettiFrequency, z*_params.SpaghettiFrequency, _params.Seed + 500u);
-        
+
+        var spagA = ValueNoise3D(x * _params.SpaghettiFrequency, sy * _params.SpaghettiFrequency, z * _params.SpaghettiFrequency, _params.Seed + 400u);
+        var spagB = ValueNoise3D(x * _params.SpaghettiFrequency, sy * _params.SpaghettiFrequency, z * _params.SpaghettiFrequency, _params.Seed + 500u);
+
         var n1 = spagA * 2f - 1f;
         var n2 = spagB * 2f - 1f;
-        var dist = MathF.Sqrt(n1*n1 + n2*n2);
-        
+        var dist = MathF.Sqrt(n1 * n1 + n2 * n2);
+
         var sAmp = Math.Clamp(_params.SpaghettiAmplitude, 0.2f, 4f);
         var ampT = (sAmp - 0.2f) / 3.8f;
         var widthFactor = Lerp(2.8f, 1.1f, ampT);
         var tunnelWidth = 1f - dist * widthFactor;
-        
+
         return MathF.Max(cheese, tunnelWidth);
     }
 
@@ -583,7 +585,7 @@ internal sealed class CaveCarver(TerrainConfig config)
 
         var rHSq = rH * rH;
         var rVSq = rV * rV;
-        
+
         var checkHeights = !columnHeights.IsEmpty;
 
         for (var lz = minZ; lz <= maxZ; lz++)
@@ -599,7 +601,7 @@ internal sealed class CaveCarver(TerrainConfig config)
 
                 var colIdx = lz * VoxelHelper.ChunkSideSize + lx;
                 var mask = GetColumnMask(colIdx);
-                
+
                 // Optimization: if checking heights, get surface once
                 var surface = checkHeights ? columnHeights[colIdx] : 0;
 

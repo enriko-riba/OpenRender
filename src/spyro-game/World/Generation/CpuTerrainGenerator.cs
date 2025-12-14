@@ -38,7 +38,6 @@ internal sealed class CpuTerrainGenerator
     private readonly float[] columnWarpX = new float[ColumnCount];
     private readonly float[] columnWarpZ = new float[ColumnCount];
     private readonly float[] column3DFactor = new float[ColumnCount];  // Phase 4: Weirdness-based 3D strength
-    private readonly float[] columnSlope = new float[ColumnCount];
     private static readonly (int dx, int dz)[] EntranceNeighborOffsets =
     [
         (1, 0), (-1, 0), (0, 1), (0, -1),
@@ -255,8 +254,6 @@ internal sealed class CpuTerrainGenerator
                         y,
                         worldX,
                         worldZ,
-                        lx,
-                        lz,
                         baseHeight,
                         continentalness01,
                         columnIndex,
@@ -773,8 +770,8 @@ internal sealed class CpuTerrainGenerator
             var erosion01 = cachedErosion01[i];
             var weirdness = cachedWeirdness[i];
             var absWeirdness = MathF.Abs(weirdness);
-            var isOceanBiome = biome != null && (biome.Id == BiomeDefinition.OCEAN_BIOME_ID || biome.Id == (int)BiomeId.DeepOcean);
-            var slopeValue = columnSlope[i];
+            var isOceanBiome = biome != null && (biome.Id == (int)BiomeId.Ocean || biome.Id == (int)BiomeId.DeepOcean);
+            //var slopeValue = columnSlope[i];
             
             
             float baseHeight;
@@ -804,7 +801,7 @@ internal sealed class CpuTerrainGenerator
                     foreach (var (b, weight) in weightedBiomes)
                     {
                         var biomeHeight = densityEvaluator.CalculateBiomeHeight(b, pv, erosion01, cont01);
-                        var blended = densityEvaluator.BlendMacroAndBiomeHeight(macroHeight, b, biomeHeight);
+                        var blended = TerrainDensityEvaluator.BlendMacroAndBiomeHeight(macroHeight, b, biomeHeight);
                         baseHeight += blended * weight;
                     }
                 }
@@ -812,7 +809,7 @@ internal sealed class CpuTerrainGenerator
                 {
                     // Fallback if no biome selected (shouldn't happen)
                     var biomeHeight = densityEvaluator.CalculateBiomeHeight(biome, pv, erosion01, cont01);
-                    baseHeight = densityEvaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
+                    baseHeight = TerrainDensityEvaluator.BlendMacroAndBiomeHeight(macroHeight, biome, biomeHeight);
                 }
             }
             else
@@ -946,16 +943,6 @@ internal sealed class CpuTerrainGenerator
         ApplyBeachBiomeOverride();
     }
 
-    private void BuildColumnSlopes()
-    {
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            var wx = (int)columnWorldX[i];
-            var wz = (int)columnWorldZ[i];
-            columnSlope[i] = GetSlope(wx, wz);
-        }
-    }
-
     /// <summary>
     /// Compute distance to nearest ocean column for beach width calculation.
     /// Uses a flood-fill approach to find minimum Manhattan distance to any ocean column.
@@ -1032,7 +1019,6 @@ internal sealed class CpuTerrainGenerator
         // Compute per-column beach threshold using noise for organic coastlines
         // Beach appears where oceanDistance <= beachThreshold
         var baseBeachWidth = config.BeachMaxWidth;
-        var beachNoiseScale = config.BeachNoiseScale;
         var beachNoiseStrength = config.BeachNoiseStrength;
         
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
@@ -1669,15 +1655,9 @@ internal sealed class CpuTerrainGenerator
         return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
     }
 
-    private float GetSurfaceHeightFloat(int wx, int wz)
-    {
-        if (TryGetColumnIndex(wx, wz, out var columnIndex))
-        {
-            return columnHeights[columnIndex];
-        }
-
-        return GetHeight(new Vector2(wx, wz));
-    }
+    private float GetSurfaceHeightFloat(int wx, int wz) 
+        => TryGetColumnIndex(wx, wz, out var columnIndex) ? columnHeights[columnIndex] 
+            : GetHeight(new Vector2(wx, wz));
 
     /// <summary>
     /// Generate the block type for a voxel at the given world position.
@@ -1701,8 +1681,6 @@ internal sealed class CpuTerrainGenerator
         int y,
         int wx,
         int wz,
-        int localX,
-        int localZ,
         float baseHeight,
         float continentalness01,
         int columnIndex,
@@ -1735,11 +1713,7 @@ internal sealed class CpuTerrainGenerator
         if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
         {
             // Water ONLY in columns that have water body (Ocean biomes)
-            if (hasWaterHere && y <= localWaterLevel)
-            {
-                return BlockId.Water;
-            }
-            return BlockId.Air;
+            return hasWaterHere && y <= localWaterLevel ? BlockId.Water : BlockId.Air;
         }
 
         // 1. Calculate 3D Density for THIS voxel
@@ -1749,11 +1723,7 @@ internal sealed class CpuTerrainGenerator
         if (density < 0f)
         {
             // Water fills air space ONLY in columns with water body
-            if (hasWaterHere && y <= localWaterLevel)
-            {
-                return BlockId.Water;
-            }
-            return BlockId.Air;
+            return hasWaterHere && y <= localWaterLevel ? BlockId.Water : BlockId.Air;
         }
 
         // Block is solid - check cave carving
@@ -1807,11 +1777,9 @@ internal sealed class CpuTerrainGenerator
             // Note: Beach detection is distance-based for natural variation in beach width
             var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            if (!isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere)
-            {
-                return BlockId.Sand;
-            }
-            return isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
+            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+                ? BlockId.Sand
+                : isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
         }
 
         // Subsurface blocks - check depth below the ACTUAL surface
@@ -1855,11 +1823,9 @@ internal sealed class CpuTerrainGenerator
             // Beach subsurface: within beach distance of ocean, at beach height, not underwater
             var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            if (!isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere)
-            {
-                return BlockId.Sand;
-            }
-            return isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
+            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+                ? BlockId.Sand
+                : isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
         }
 
         // Deep blocks - try to generate ore in stone regions

@@ -38,6 +38,9 @@ internal class GameScene : Scene
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
     private bool wasLeftButtonDown;
+
+    private FogUniform defaultFog;
+    //private bool defaultFogCaptured;
     private Sprite crosshair = default!;
     private DayNightCycle dayNightCycle = default!;
     private SkyBoxSun skyBox = default!;
@@ -111,6 +114,10 @@ internal class GameScene : Scene
     {
         base.Load();
         BackgroundColor = Color4.CornflowerBlue;
+
+        // Capture default fog settings so we can restore them when not submerged.
+        defaultFog = Fog;
+        //defaultFogCaptured = true;
 
         // CRITICAL: Disable polygon/line smoothing to prevent visible triangle edges
         // The base Scene.Load() enables these, but they cause visible lines on voxel terrain
@@ -319,6 +326,32 @@ internal class GameScene : Scene
 
             terrainRenderer?.IsCameraUnderwater = isUnderwater;
             skyBox?.IsCameraUnderwater = isUnderwater;
+
+            // Underwater fog: clamp visibility to ~dozen blocks and ensure sky/terrain/water
+            // all converge to the same ambient-tinted fog color (preserves day/night).
+            //if (defaultFogCaptured)
+            {
+                if (isUnderwater)
+                {
+                    var ambient = dayNightCycle.DirLight.Ambient;
+                    // Water-tinted fog that still tracks ambient intensity and color.
+                    var fogColor = new Vector3(ambient.X * 0.12f, ambient.Y * 0.32f, ambient.Z * 0.45f);
+
+                    Fog = new FogUniform
+                    {
+                        FogColor = new Vector4(fogColor.X, fogColor.Y, fogColor.Z, 1.0f),
+                        FogParams = new Vector4(
+                            5.0f,   // near
+                            20.0f,  // far
+                            1.0f,   // enabled
+                            0.0f)
+                    };
+                }
+                else
+                {
+                    Fog = defaultFog;
+                }
+            }
         }
 
         // Update player (handles physics, collision, and WASD movement input)
