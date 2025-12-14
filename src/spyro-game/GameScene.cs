@@ -765,7 +765,8 @@ internal class GameScene : Scene
         var centerX = (int)camera.Position.X;
         var centerZ = (int)camera.Position.Z;
 
-        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
+        var folderName = $"{config.WorldName}_{config.Seed}";
+        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
         Directory.CreateDirectory(savesDir);
 
         try
@@ -804,7 +805,8 @@ internal class GameScene : Scene
         var centerX = (int)camera.Position.X;
         var centerZ = (int)camera.Position.Z;
 
-        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
+        var folderName = $"{config.WorldName}_{config.Seed}";
+        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
         Directory.CreateDirectory(savesDir);
 
         try
@@ -843,7 +845,8 @@ internal class GameScene : Scene
         var centerX = (int)camera.Position.X;
         var centerZ = (int)camera.Position.Z;
 
-        var savesDir = Path.Combine(Environment.CurrentDirectory, "save", config.WorldName);
+        var folderName = $"{config.WorldName}_{config.Seed}";
+        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
         Directory.CreateDirectory(savesDir);
 
         try

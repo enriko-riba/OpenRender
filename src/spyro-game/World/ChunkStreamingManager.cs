@@ -30,6 +30,11 @@ public sealed class ChunkStreamingManager : IDisposable
     // Background save system
     private const int AUTO_SAVE_INTERVAL_SECONDS = 30;
     private const int SAVE_FILE_VERSION = 2;  // v2 = compressed format
+
+    public const string SaveRootFolderName = "save";
+    public const string ChunkSaveFileExtension = ".dat";
+    private const string ChunkFilePrefix = "chunk_";
+    private const string ChunkEditsSuffix = "_edits";
     
     /// <summary>
     /// All 8 neighbors (cardinal + diagonal) for marking reprocess
@@ -2393,8 +2398,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var seed = generationSeed;
 
         var folderName = $"{worldName}_{seed}";
-        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.bin";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+        var fileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkEditsSuffix}{ChunkSaveFileExtension}";
+        var path = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, fileName);
 
         var dirName = Path.GetDirectoryName(path);
         if (dirName is not null) Directory.CreateDirectory(dirName);
@@ -2425,8 +2430,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var seed = generationSeed;
 
         var folderName = $"{worldName}_{seed}";
-        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+        var fileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkSaveFileExtension}";
+        var path = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, fileName);
 
         var dirName = Path.GetDirectoryName(path);
         if (dirName is not null) Directory.CreateDirectory(dirName);
@@ -2478,8 +2483,8 @@ public sealed class ChunkStreamingManager : IDisposable
         var seed = generationSeed;
 
         var folderName = $"{worldName}_{seed}";
-        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
-        var path = Path.Combine(Environment.CurrentDirectory, "save", folderName, fileName);
+        var fileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkSaveFileExtension}";
+        var path = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, fileName);
 
         if (!File.Exists(path)) return false;
 
@@ -2694,13 +2699,86 @@ public sealed class ChunkStreamingManager : IDisposable
         var worldName = terrainConfig.WorldName;
         var seed = generationSeed;
         var folderName = $"{worldName}_{seed}";
-        var dirPath = Path.Combine(Environment.CurrentDirectory, "save", folderName);
+        var dirPath = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName);
 
         if (!Directory.Exists(dirPath)) return;
 
-        var files = Directory.GetFiles(dirPath, "chunk_*.bin");
         var loadedCount = 0;
         var deletedCount = 0;
+
+        // Load legacy edit files first (.bin), then current format (.dat) so the newer files win.
+        var legacyFiles = Directory.GetFiles(dirPath, $"{ChunkFilePrefix}*.bin");
+        var files = Directory.GetFiles(dirPath, $"{ChunkFilePrefix}*{ChunkEditsSuffix}{ChunkSaveFileExtension}");
+
+        foreach (var file in legacyFiles)
+        {
+            try
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var parts = name.Split('_');
+                if (parts.Length >= 3 && int.TryParse(parts[1], out var worldX) && int.TryParse(parts[2], out var worldZ))
+                {
+                    // CRITICAL FIX: Convert world coordinates to chunk indices
+                    // SaveChunkEdits saves as world block coordinates (chunkPos.X, chunkPos.Z)
+                    // We must divide by ChunkSideSize to get chunk indices
+                    var chunkX = worldX / VoxelHelper.ChunkSideSize;
+                    var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+
+                    if (chunkX >= 0 && chunkX < VoxelHelper.WorldChunksXZ && chunkZ >= 0 && chunkZ < VoxelHelper.WorldChunksXZ)
+                    {
+                        var chunkIdx = chunkZ * VoxelHelper.WorldChunksXZ + chunkX;
+
+                        using var stream = File.OpenRead(file);
+                        using var reader = new BinaryReader(stream);
+
+                        var count = reader.ReadInt32();
+
+                        // Check if file has enough data for ushort format (4 + count * 6 bytes)
+                        // Old format was byte (4 + count * 5 bytes)
+                        var expectedNewSize = 4 + count * (sizeof(int) + sizeof(ushort));
+                        var expectedOldSize = 4 + count * (sizeof(int) + sizeof(byte));
+                        var fileSize = stream.Length;
+
+                        if (fileSize == expectedOldSize)
+                        {
+                            // Old format - delete the file as it's incompatible
+                            stream.Close();
+                            File.Delete(file);
+                            deletedCount++;
+                            continue;
+                        }
+
+                        if (fileSize != expectedNewSize)
+                        {
+                            Log.Warn($"Skipping edit file {name}: unexpected file size {fileSize} (expected {expectedNewSize})");
+                            continue;
+                        }
+
+                        var edits = new Dictionary<int, BlockId>(count);
+                        for (var k = 0; k < count; k++)
+                        {
+                            var voxelIdx = reader.ReadInt32();
+                            var type = (BlockId)reader.ReadUInt16();
+                            edits[voxelIdx] = type;
+                        }
+                        chunkEdits[chunkIdx] = edits;
+                        loadedCount++;
+                        Log.Debug($"Loaded {count} edits for chunk {chunkIdx} (legacy file {name})");
+
+                        // Legacy extension; delete so next save writes the consolidated format.
+                        try { File.Delete(file); } catch { }
+                    }
+                    else
+                    {
+                        try { File.Delete(file); deletedCount++; } catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Failed to load legacy edit file '{file}': {ex.Message}");
+            }
+        }
 
         foreach (var file in files)
         {

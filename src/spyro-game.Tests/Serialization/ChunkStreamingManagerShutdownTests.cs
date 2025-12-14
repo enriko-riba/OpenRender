@@ -59,7 +59,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(42);
         
         var folderName = $"{worldName}_{seed}";
-        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}";
         var savePath = Path.Combine(testSaveDir, "save", folderName);
         Directory.CreateDirectory(savePath);
         
@@ -113,7 +113,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(0);
         
         var folderName = $"{worldName}_{seed}";
-        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}.dat";
+        var fileName = $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}";
         var savePath = Path.Combine(testSaveDir, "save", folderName);
         Directory.CreateDirectory(savePath);
         
@@ -162,19 +162,19 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         foreach (var kvp in chunks)
         {
             var chunkPos = VoxelHelper.GetChunkPositionGlobal(kvp.Key);
-            var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+            var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
             WriteChunkFile(filePath, kvp.Value);
         }
         
         // Verify all files exist
-        var savedFiles = Directory.GetFiles(savePath, "*.dat");
+        var savedFiles = Directory.GetFiles(savePath, $"*{ChunkStreamingManager.ChunkSaveFileExtension}");
         Assert.Equal(3, savedFiles.Length);
         
         // Verify each has correct data
         foreach (var kvp in chunks)
         {
             var chunkPos = VoxelHelper.GetChunkPositionGlobal(kvp.Key);
-            var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+            var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
             var loaded = ReadChunkFile(filePath);
             
             // Check the unique edit for each chunk
@@ -218,7 +218,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         Directory.CreateDirectory(savePath);
         
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(5);
-        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
         
         WriteChunkFile(filePath, chunkData);
         var loaded = ReadChunkFile(filePath);
@@ -244,7 +244,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         Directory.CreateDirectory(savePath);
         
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(100);
-        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
         
         // Simulate the dirty chunk tracking
         var dirtyChunks = new HashSet<int> { 100 };
@@ -275,7 +275,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         Directory.CreateDirectory(savePath);
         
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(200);
-        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
         
         // Simulate: chunk 200 is NOT in dirty set
         var dirtyChunks = new HashSet<int> { 100, 150 }; // Different chunks are dirty
@@ -323,28 +323,28 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
             if (dirtyChunks.Remove(kvp.Key))
             {
                 var chunkPos = VoxelHelper.GetChunkPositionGlobal(kvp.Key);
-                var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+                var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
                 WriteChunkFile(filePath, kvp.Value);
             }
         }
         
         // Assert - only dirty chunks should have files
-        var savedFiles = Directory.GetFiles(savePath, "*.dat");
+        var savedFiles = Directory.GetFiles(savePath, $"*{ChunkStreamingManager.ChunkSaveFileExtension}");
         Assert.Equal(2, savedFiles.Length); // Only 2 files (chunks 10 and 12)
         
         // Verify correct chunks were saved
         var chunk10Pos = VoxelHelper.GetChunkPositionGlobal(10);
         var chunk12Pos = VoxelHelper.GetChunkPositionGlobal(12);
         
-        Assert.True(File.Exists(Path.Combine(savePath, $"chunk_{chunk10Pos.X}_{chunk10Pos.Z}.dat")));
-        Assert.True(File.Exists(Path.Combine(savePath, $"chunk_{chunk12Pos.X}_{chunk12Pos.Z}.dat")));
+        Assert.True(File.Exists(Path.Combine(savePath, $"chunk_{chunk10Pos.X}_{chunk10Pos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}")));
+        Assert.True(File.Exists(Path.Combine(savePath, $"chunk_{chunk12Pos.X}_{chunk12Pos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}")));
         
         // Verify non-dirty chunks were NOT saved
         var chunk11Pos = VoxelHelper.GetChunkPositionGlobal(11);
         var chunk13Pos = VoxelHelper.GetChunkPositionGlobal(13);
         
-        Assert.False(File.Exists(Path.Combine(savePath, $"chunk_{chunk11Pos.X}_{chunk11Pos.Z}.dat")));
-        Assert.False(File.Exists(Path.Combine(savePath, $"chunk_{chunk13Pos.X}_{chunk13Pos.Z}.dat")));
+        Assert.False(File.Exists(Path.Combine(savePath, $"chunk_{chunk11Pos.X}_{chunk11Pos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}")));
+        Assert.False(File.Exists(Path.Combine(savePath, $"chunk_{chunk13Pos.X}_{chunk13Pos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}")));
     }
 
     [Fact]
@@ -366,7 +366,7 @@ public class ChunkStreamingManagerShutdownTests : IDisposable
         LightingCalculator.CalculateLighting(originalChunk);
         
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(50);
-        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}.dat");
+        var filePath = Path.Combine(savePath, $"chunk_{chunkPos.X}_{chunkPos.Z}{ChunkStreamingManager.ChunkSaveFileExtension}");
         
         // Act 1: Unload (save dirty chunk)
         WriteChunkFile(filePath, originalChunk);
