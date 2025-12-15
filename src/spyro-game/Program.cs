@@ -4,6 +4,10 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
 using SpyroGame;
+using SpyroGame.Client;
+using SpyroGame.Server;
+using SpyroGame.Shared.Net;
+using SpyroGame.Shared.State;
 using SpyroGame.World;
 
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
@@ -44,6 +48,17 @@ var tr2 = new TextRenderer(TextRenderer.CreateTextRenderingProjection(scm.Client
 // Create VoxelWorld once
 var world = new VoxelWorld(1338);
 
+// Create local in-process session wiring (server lifecycle is owned by Program).
+var localPlayerId = PlayerId.New();
+var (clientConn, serverConn) = InMemoryDuplexConnection.CreatePair<IClientToServerMessage, IServerToClientMessage>();
+var serverStreamer = new SpyroGame.Server.Streaming.ChunkStreamingManager(world);
+var server = new LocalGameServer(world, serverStreamer, spawnPosition: new Vector3(6450, 80, 7850));
+
+// Server is GL-free; it can tick safely on its own host thread.
+var serverHost = new LocalGameServerHost(server, serverConn, localPlayerId);
+var localClient = new LocalGameClient(clientConn, localPlayerId);
+var session = new GameSession(world, localClient, serverHost, localPlayerId);
+
 // Create GameScene (will receive terrain from loading scene)
 var gameScene = new GameScene(tr2)
 {
@@ -52,7 +67,7 @@ var gameScene = new GameScene(tr2)
 scm.AddScene(gameScene);
 
 // Start with TerrainLoadingScene which initializes the terrain and transitions to GameScene
-var loadingScene = new TerrainLoadingScene(tr1, world);
+var loadingScene = new TerrainLoadingScene(tr1, session);
 scm.AddScene(loadingScene);
 scm.ActivateScene(loadingScene);
 scm.Run();

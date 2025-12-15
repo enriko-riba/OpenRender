@@ -12,7 +12,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Client;
-using SpyroGame.Server;
+using SpyroGame.Client.Terrain;
 using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Net;
 using SpyroGame.Shared.State;
@@ -35,11 +35,11 @@ internal class GameScene : Scene
     private VoxelWorld world = default!;
     private Player player = default!;
 
-    private ChunkStreamingManager? streamingManager;
+    private ClientTerrainSystem? terrainSystem;
     private VoxelTerrainRenderer? terrainRenderer;
     private BlockPickingService? blockPickingService;
     private LocalGameClient? localClient;
-    private LocalGameServerHost? serverHost;
+    private GameSession? session;
 
     private PlayerId localPlayerId;
 
@@ -77,11 +77,15 @@ internal class GameScene : Scene
     /// <summary>
     /// Called by TerrainLoadingScene to pass initialized terrain streaming components.
     /// </summary>
-    public void SetupTerrainSystem(ChunkStreamingManager streamingMgr, VoxelTerrainRenderer renderer, Vector3 spawnPosition)
+    public void SetupTerrainSystem(
+        ClientTerrainSystem terrainSystem,
+        VoxelTerrainRenderer renderer,
+        Vector3 spawnPosition,
+        GameSession session)
     {
-        streamingManager = streamingMgr;
+        this.terrainSystem = terrainSystem;
         terrainRenderer = renderer;
-        world = streamingManager.World; // Sync world reference
+        // world reference is provided via Program.cs
 
         // Add renderer to scene
         AddNode(terrainRenderer);
@@ -90,34 +94,23 @@ internal class GameScene : Scene
         EnsureCameraInitialized(spawnPosition);
 
         // Initialize player with world at center position
-        player = new Player(camera!, spawnPosition, world, streamingManager);
+        player = new Player(camera!, spawnPosition, world, streamingManager: null);
 
         // Initialize block picking service
-        blockPickingService = new BlockPickingService(streamingManager);
+        blockPickingService = new BlockPickingService(terrainSystem.CollisionManager, terrainRenderer);
 
         // Assign service to player
         player.BlockPickingService = blockPickingService;
 
-        // Local in-process client/server via an abstract connection (UDP/TCP later).
-        // Even though it's local, treat it like a real server: identify players by PlayerId.
-        localPlayerId = PlayerId.New();
-        var (clientConn, serverConn) = InMemoryDuplexConnection.CreatePair<IClientToServerMessage, IServerToClientMessage>();
-        var server = new LocalGameServer(world, streamingManager, spawnPosition);
-        serverHost = new LocalGameServerHost(server, serverConn, AddAction, localPlayerId);
-        localClient = new LocalGameClient(clientConn, localPlayerId);
-
-        serverHost.Start();
-        localClient.Start();
+        this.session = session;
+        localPlayerId = session.PlayerId;
+        localClient = session.Client;
 
         // Reset input state tracking on scene (re)entry.
         hasSentInitialInputState = false;
         lastSentInputState = default;
 
-        // Restore full load distance for gameplay
-        streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
-        streamingManager.SetPrefetchMargin(GameplayPrefetchMarginChunks);
-
-        Log.Info("GameScene: terrain components configured");
+        Log.Info("GameScene: terrain components configured (server streams, client meshes)");
     }
 
     private void EnsureCameraInitialized(Vector3 startPos)
@@ -156,10 +149,10 @@ internal class GameScene : Scene
         GL.Disable(EnableCap.PolygonSmooth);
         GL.Disable(EnableCap.LineSmooth);
 
-        // Initialize block picking service NOW (after world and terrainRenderer are set)
-        if (terrainRenderer != null && world != null && blockPickingService == null)
+        // Initialize block picking service NOW (after terrain system and renderer are set)
+        if (terrainRenderer != null && terrainSystem != null && blockPickingService == null)
         {
-            blockPickingService = new BlockPickingService(terrainRenderer);
+            blockPickingService = new BlockPickingService(terrainSystem.CollisionManager, terrainRenderer);
             Log.Info("GameScene: Block picking service initialized");
         }
 
@@ -174,12 +167,6 @@ internal class GameScene : Scene
         GL.FrontFace(FrontFaceDirection.Ccw);
 
         //EnsureCameraInitialized();
-
-        if (streamingManager != null)
-        {
-            // Ensure existing player has the streaming manager
-            player.StreamingManager = streamingManager;
-        }
 
         if (player != null && blockPickingService != null)
         {
@@ -339,17 +326,6 @@ internal class GameScene : Scene
         }
         wasLeftButtonDown = isLeftButtonDown;
 
-        // Execute GPU frustum culling (every frame for smooth rotation)
-        if (streamingManager != null && terrainRenderer != null && camera != null)
-        {
-            // Generate surrounding chunk indices based on camera position
-            var chunkIndices = GenerateSurroundingChunkIndices();
-
-            // Execute GPU frustum culling
-            var visibilityFlags = streamingManager.ExecuteFrustumCulling(camera, chunkIndices);
-            terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
-        }
-
         // Terrain streaming/generation is server-owned (LocalGameServer.Tick).
 
 
@@ -481,15 +457,43 @@ internal class GameScene : Scene
                 });
             }
 
-            if (localClient.LastSnapshot is { } snap)
+            GameStateSnapshot? latestSnap = null;
+            while (localClient.TryDequeueSnapshot(out var snap))
             {
-                player.ApplyServerSnapshot(snap.Player);
+                latestSnap = snap;
 
                 if (snap.ChunkDelta is { HasChanges: true } chunkDelta)
                 {
                     ApplyChunkDelta(chunkDelta);
                 }
             }
+
+            if (latestSnap.HasValue)
+            {
+                player.ApplyServerSnapshot(latestSnap.Value.Player);
+            }
+
+            // Smooth rendered position between server ticks.
+            player.UpdateClientSmoothing(elapsedSeconds);
+        }
+
+        // Apply any received voxel payloads and upload meshes.
+        if (localClient != null && terrainSystem != null)
+        {
+            const int maxChunkPayloadsToApplyPerFrame = 4;
+            var appliedThisFrame = 0;
+            while (localClient.TryDequeueChunkPayload(out var payload))
+            {
+                terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
+
+                appliedThisFrame++;
+                if (appliedThisFrame >= maxChunkPayloadsToApplyPerFrame)
+                {
+                    break;
+                }
+            }
+
+            terrainSystem.UpdateUploads();
         }
 
         // Update block below player - find highest solid block at player X/Z regardless of mode
@@ -509,6 +513,15 @@ internal class GameScene : Scene
         {
             if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
             {
+                // Predict locally for responsiveness: update inventory, collision, and picking immediately.
+                if (!picked.Block.IsAir())
+                {
+                    player.Inventory.AddItem(picked.Block);
+                    terrainSystem?.TryApplyPredictedBlockEdit(picked.GlobalPosition, BlockId.Air);
+                    blockPickingService.Invalidate();
+                    blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                }
+
                 localClient.Send(new BreakBlockCommand(picked.GlobalPosition));
             }
 
@@ -519,6 +532,15 @@ internal class GameScene : Scene
                 {
                     var hitNormal = blockPickingService.HitNormal;
                     var placePos = picked.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+
+                    // Predict locally: consume item + set voxel so the feedback is instant.
+                    if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, item.Block) == true)
+                    {
+                        player.Inventory.TryConsumeSelectedItem();
+                        blockPickingService.Invalidate();
+                        blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                    }
+
                     localClient.Send(new PlaceBlockCommand(placePos, item.Block));
                 }
             }
@@ -541,8 +563,6 @@ internal class GameScene : Scene
     /// </summary>
     private void UpdateBlockBelow()
     {
-        if (streamingManager == null) return;
-
         var playerPos = player.Position;
         var blockX = (int)playerPos.X;
         var blockZ = (int)playerPos.Z;
@@ -589,57 +609,20 @@ internal class GameScene : Scene
         WriteLine("", textColor);
 
         // Rendering Stats (Merged Chunks + Rendering)
-        int readyChunks;
-        int queuedChunks;
-        int targetChunks;
-
-        if (streamingManager != null)
-        {
-            var (_, pending, generating, ready) = streamingManager.GetStats();
-            readyChunks = ready;
-            queuedChunks = pending + generating;
-
-            var (target, _, _, _, _) = streamingManager.GetStreamingProgress();
-            targetChunks = target;
-        }
-        else
-        {
-            readyChunks = world.LoadedChunksCount;
-            queuedChunks = 0;
-            targetChunks = world.LoadedChunksCount;
-        }
+        var readyChunks = serverReadyChunkIndices.Count;
+        var queuedChunks = 0;
+        var targetChunks = serverReadyChunkIndices.Count;
 
         WriteLine("Rendering:", highlightColor);
         WriteLine($"  GPU Ready: {readyChunks:N0} | Queued: {queuedChunks:N0} | Target: {targetChunks:N0}", textColor);
 
-        // Get visibility stats from terrain renderer (GPU-based)
-        if (terrainRenderer != null && streamingManager != null)
-        {
-            WriteLine($"  Visible: {streamingManager.StatVisibleChunks:N0} | Culled: {streamingManager.StatFrustumCulledChunks:N0}", textColor);
-            WriteLine($"  Indices: {streamingManager.StatVisibleIndices:N0} / {streamingManager.StatTotalIndices:N0}", textColor);
-        }
+        // Visibility stats are not available in the decoupled client pipeline yet.
         
         if (terrainRenderer != null)
         {
             WriteLine($"  Visible Chunks: {terrainRenderer.VisibleDraws:N0} | Draw Calls: {terrainRenderer.DrawCallCount}", textColor);
         }
         WriteLine("", textColor);
-
-        // Processing Metrics with terrain breakdown
-        if (streamingManager != null)
-        {
-            var m = streamingManager.Metrics;
-            WriteLine("Processing:", highlightColor);
-            WriteLine($"  Terrain Gen: {m.AvgTerrainGenerationMs:F1}ms | Light Calc: {m.AvgLightCalculationMs:F1}ms", textColor);
-            WriteLine($"  Light Prop: {m.AvgLightPropagationMs:F1}ms | Mesh Build: {m.AvgMeshBuildMs:F1}ms", textColor);
-            WriteLine("", textColor);
-            
-            // NEW: Terrain generation breakdown
-            WriteLine("Terrain Breakdown:", highlightColor);
-            WriteLine($"  Climate: {m.AvgClimateMs:F2}ms | 3D Noise: {m.AvgNoise3DMs:F2}ms", textColor);
-            WriteLine($"  Biome: {m.AvgBiomeMs:F2}ms | Blocks: {m.AvgBlockGenMs:F2}ms", textColor);
-            WriteLine("", textColor);
-        }
 
         // Player Stats
         WriteLine("Player:", highlightColor);
@@ -656,7 +639,18 @@ internal class GameScene : Scene
         var pChunk = player.CurrentChunk?.Index ?? -1;
         var pGlobal = player.Position;
 
-        WriteLine($"  Position: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
+        WriteLine($"  Smoothed Pos: ({(int)pLocal.X},{(int)pLocal.Y},{(int)pLocal.Z})@{pChunk} : ({pGlobal.X:F1},{pGlobal.Y:F1},{pGlobal.Z:F1})", textColor);
+
+        var serverPos = player.ServerPosition;
+        var sChunkIdx = -1;
+        var sLocal = Vector3.Zero;
+        if (world.GetChunkByGlobalPosition(serverPos, out var sChunk) && sChunk != null)
+        {
+            sChunkIdx = sChunk.Index;
+            sLocal = serverPos - sChunk.Position;
+        }
+
+        WriteLine($"  Server Pos:   ({(int)sLocal.X},{(int)sLocal.Y},{(int)sLocal.Z})@{sChunkIdx} : ({serverPos.X:F1},{serverPos.Y:F1},{serverPos.Z:F1})", textColor);
 
         // Block Below - Always displayed, shows highest solid block at player X/Z
         if (player.CurrentBlockBellow.HasValue)
@@ -678,87 +672,7 @@ internal class GameScene : Scene
         }
 
 
-        // Climate data for block below player - show RAW CELL values (not interpolated)
-        // This matches what biome selection actually uses
-        if (player.CurrentBlockBellow.HasValue && streamingManager != null)
-        {
-            var bb = player.CurrentBlockBellow.Value;
-            var worldX = (int)bb.GlobalPosition.X;
-            var worldZ = (int)bb.GlobalPosition.Z;
-            var climate = streamingManager.GetCellClimateAtWorldPos(worldX, worldZ);
-            if (climate.HasValue)
-            {
-            var (C, T, H, E, PV, W) = climate.Value;
-                // Show cell coordinates (4x4 grid per chunk)
-                var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
-                var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
-                var cellX = localX / ChunkBiomeData.BlocksPerCell;
-                var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
-                
-                // Compact format for normal display
-            WriteLine($"  C:{C:F3} T:{T:F3} H:{H:F2} E:{E:F2} PV:{PV:F2} W:{W:F2} Cell:({cellX},{cellZ})", textColor);
-                
-                // Extended climate info when F3 biome debug is active
-                if (terrainRenderer?.ShowBiomes == true)
-                {
-                    // Interpret climate values
-                    // NOTE: c.C and c.E are RAW [-1, 1]; convert to [0, 1] for display thresholds
-                    var cont01 = C * 0.5f + 0.5f;
-                    var erosion01 = E * 0.5f + 0.5f;
-                    // Erosion: low = dramatic terrain, high = flat
-                    var terrainType = erosion01 < 0.25f ? "Dramatic" : erosion01 < 0.6f ? "Hills" : "Flat";
-                    var tempZone = T < 0.3f ? "Cold" : T > 0.7f ? "Hot" : "Temperate";
-                    var moistZone = H < 0.3f ? "Dry" : H > 0.7f ? "Humid" : "Moderate";
-                    // Use actual terrain config thresholds for consistency
-                    var config = streamingManager!.Config;
-                    string landType;
-
-                    // FIXED: First check actual biome ID for Lake - it takes priority over terrain classification
-                    var actualBiome = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
-                    
-                    if (actualBiome == BiomeId.Lake)
-                    {
-                        landType = "Lake";
-                    }
-                    else if (actualBiome is BiomeId.Ocean or BiomeId.DeepOcean)
-                    {
-                        landType = "Ocean";
-                    }
-                    else if (actualBiome == BiomeId.Beach)
-                    {
-                        landType = "Coast";
-                    }
-                    else if (actualBiome == BiomeId.Alpine)
-                    {
-                        landType = "Alpine";
-                    }
-                    else if (config != null)
-                    {
-                        var height = bb.GlobalPosition.Y;
-                        var isUnderwater = height < VoxelHelper.WaterLevel;
-                        
-                        if (isUnderwater) landType = "Underwater";
-                        else landType = cont01 < config.MountainThreshold ? "Inland" : "Mountain";
-                    }
-                    else
-                    {
-                        landType = cont01 < 0.30f ? "Ocean" : cont01 < 0.40f ? "Coast" : cont01 < 0.65f ? "Inland" : "Mountain";
-                    }
-                    
-                    WriteLine($"  {landType} | {terrainType} | {tempZone} | {moistZone}", new Vector3(0.8f, 1.0f, 0.8f)); // Light green
-                }
-            }
-        }
         WriteLine("", textColor);
-
-        // Terrain config (selected knobs)
-        if (streamingManager?.Config is TerrainConfig configForUi)
-        {
-            WriteLine("Terrain Config:", highlightColor);
-            WriteLine($"  WaterLevel: {VoxelHelper.WaterLevel} | OceanTh: {configForUi.OceanThreshold:F2} | CoastTh: {configForUi.CoastThreshold:F2}", textColor);
-            WriteLine($"  BaseTemp: {configForUi.BaseTemperature:F2} | Lapse: {configForUi.LapseRate:F4} | BaseHum: {configForUi.BaseHumidity:F2} | CoastDry: {configForUi.CoastDrying:F2}", textColor);
-            WriteLine("", textColor);
-        }
 
         // Picked Block (highlighted section)
         {
@@ -841,15 +755,14 @@ internal class GameScene : Scene
     /// </summary>
     private string GetBiomeNameForBlock(BlockState block)
     {
-        if (streamingManager == null)
+        if (terrainSystem == null)
             return "Unknown";
 
-        // Query the actual biome from the cached chunk biome data
+        // Query the actual biome from the client-side cached voxel data
         var worldX = (int)block.GlobalPosition.X;
         var worldZ = (int)block.GlobalPosition.Z;
 
-        // Try to get biome from the chunk cache
-        var biomeId = streamingManager.GetBiomeAtWorldPos(worldX, worldZ);
+        var biomeId = terrainSystem.GetBiomeAtWorldPos(worldX, worldZ);
 
         return biomeId.ToString();
     }
@@ -864,131 +777,22 @@ internal class GameScene : Scene
 
     private void GenerateBiomeDebugMap()
     {
-        if (streamingManager?.Config == null || camera == null)
-        {
-            Log.Warn("Cannot generate biome map: streaming manager or camera not initialized");
-            return;
-        }
-
-        Log.Info("Generating biome debug map...");
-
-        var config = streamingManager.Config;
-        var centerX = (int)camera.Position.X;
-        var centerZ = (int)camera.Position.Z;
-
-        var folderName = $"{config.WorldName}_{config.Seed}";
-        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
-        Directory.CreateDirectory(savesDir);
-
-        try
-        {
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
-            var outPath = Path.Combine(savesDir, $"{prefix}_biomes.bmp");
-            BiomeMapGenerator.GenerateBiomeMapDownsampled(
-                config,
-                centerX,
-                centerZ,
-                DebugMapRadiusBlocks,
-                outPath,
-                DebugMapCellSizeBlocks,
-                includeClimateOverlay: false,
-                mirrorX: DebugMapMirrorX);
-            Log.Info($"Biome map saved to: {outPath}");
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"Failed to generate biome map: {ex.Message}");
-        }
+        Log.Warn("Biome debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
 
     private void GenerateClimateDebugMap(ClimateParameter parameter)
     {
-        if (streamingManager?.Config == null || camera == null)
-        {
-            Log.Warn("Cannot generate climate map: streaming manager or camera not initialized");
-            return;
-        }
-
-        Log.Info($"Generating {parameter} debug map...");
-
-        var config = streamingManager.Config;
-        var centerX = (int)camera.Position.X;
-        var centerZ = (int)camera.Position.Z;
-
-        var folderName = $"{config.WorldName}_{config.Seed}";
-        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
-        Directory.CreateDirectory(savesDir);
-
-        try
-        {
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
-            var outPath = Path.Combine(savesDir, $"{prefix}_{parameter.ToString().ToLowerInvariant()}.bmp");
-            BiomeMapGenerator.GenerateClimateMap(
-                config,
-                centerX,
-                centerZ,
-                DebugMapRadiusBlocks,
-                outPath,
-                parameter,
-                DebugMapCellSizeBlocks,
-                mirrorX: DebugMapMirrorX);
-            Log.Info($"{parameter} map saved to: {outPath}");
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"Failed to generate climate map: {ex.Message}");
-        }
+        Log.Warn("Climate debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
 
     private void GenerateHeightDebugMap()
     {
-        if (streamingManager?.Config == null || camera == null)
-        {
-            Log.Warn("Cannot generate height map: streaming manager or camera not initialized");
-            return;
-        }
-
-        Log.Info("Generating height debug map...");
-
-        var config = streamingManager.Config;
-        var centerX = (int)camera.Position.X;
-        var centerZ = (int)camera.Position.Z;
-
-        var folderName = $"{config.WorldName}_{config.Seed}";
-        var savesDir = Path.Combine(Environment.CurrentDirectory, ChunkStreamingManager.SaveRootFolderName, folderName);
-        Directory.CreateDirectory(savesDir);
-
-        try
-        {
-            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            var prefix = $"map_{timestamp}_c{centerX}_{centerZ}_r{DebugMapRadiusBlocks}_cs{DebugMapCellSizeBlocks}";
-            var outPath = Path.Combine(savesDir, $"{prefix}_height.bmp");
-            BiomeMapGenerator.GenerateHeightMapDownsampled(
-                config,
-                centerX,
-                centerZ,
-                DebugMapRadiusBlocks,
-                outPath,
-                DebugMapCellSizeBlocks,
-                mirrorX: DebugMapMirrorX);
-            Log.Info($"Height map saved to: {outPath}");
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"Failed to generate height map: {ex.Message}");
-        }
+        Log.Warn("Height debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
 
     public override void Close()
     {
         try { localClient?.Stop(); } catch { }
-        try { serverHost?.Stop(); } catch { }
-
-        // CRITICAL: Explicitly save all pending world data before closing.
-        // This must be called before any cleanup to ensure block edits are persisted.
-        streamingManager?.Shutdown();
         
         world?.Close();
         base.Close();
@@ -1000,28 +804,8 @@ internal class GameScene : Scene
     /// </summary>
     private int[] GenerateSurroundingChunkIndices()
     {
-        if (camera == null || streamingManager == null) return [];
-
-        // Prefer server-reported ready set when available.
-        if (serverReadyChunkIndices.Count > 0)
-        {
-            return serverReadyChunkIndices.ToArray();
-        }
-
-        // Get only the chunks that have actually been generated
-        var (total, pending, generating, ready) = streamingManager.GetStats();
-
-        if (ready == 0)
-        {
-            return []; // No chunks ready yet
-        }
-
-        // Get chunk indices from streaming manager (only loaded chunks)
-        // This avoids testing 2,601 theoretical chunks when only 81 exist
-        var readyChunks = streamingManager.GetReadyChunks();
-        var indices = readyChunks.Select(c => c.ChunkIndex).ToArray();
-
-        return indices;
+        if (camera == null) return [];
+        return serverReadyChunkIndices.ToArray();
     }
 
     private void ApplyChunkDelta(in ChunkDeltaSnapshot delta)
@@ -1030,6 +814,7 @@ internal class GameScene : Scene
         foreach (var idx in delta.UnloadedChunkIndices)
         {
             serverReadyChunkIndices.Remove(idx);
+            terrainSystem?.UnloadChunk(idx);
         }
 
         foreach (var idx in delta.LoadedChunkIndices)

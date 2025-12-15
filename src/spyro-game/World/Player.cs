@@ -1,6 +1,7 @@
 ﻿using OpenRender;
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
+using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Gameplay;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
@@ -36,10 +37,18 @@ public class Player
 
     private readonly ICamera camera;
     private readonly VoxelWorld world;
-    private ChunkStreamingManager? streamingManager;
+    private IBlockEditService? streamingManager;
     private Vector3 position;
 
-    public ChunkStreamingManager? StreamingManager
+    // Client-side smoothing toward server-authoritative state.
+    private Vector3 serverTargetPosition;
+    private Vector3 serverTargetDirection;
+    private bool hasServerTarget;
+    private bool hasAppliedFirstServerSnapshot;
+
+    public Vector3 ServerPosition { get; private set; }
+
+    public IBlockEditService? StreamingManager
     {
         get => streamingManager;
         set => streamingManager = value;
@@ -59,7 +68,7 @@ public class Player
 
     public BlockPickingService? BlockPickingService { get; set; }
 
-    public Player(ICamera camera, Vector3 position, VoxelWorld world, ChunkStreamingManager? streamingManager = null)
+    public Player(ICamera camera, Vector3 position, VoxelWorld world, IBlockEditService? streamingManager = null)
     {
         this.camera = camera;
         this.world = world;
@@ -229,11 +238,60 @@ public class Player
             IsGhostMode = snapshot.IsGhostMode;
         }
 
-        Direction = snapshot.Direction;
-        Position = snapshot.Position;
+        ServerPosition = snapshot.Position;
+        serverTargetPosition = snapshot.Position;
+        serverTargetDirection = snapshot.Direction;
+        hasServerTarget = true;
+
+        // Snap immediately on first snapshot to avoid long lerps from an arbitrary local spawn.
+        if (!hasAppliedFirstServerSnapshot)
+        {
+            Position = snapshot.Position;
+            Direction = snapshot.Direction;
+            hasAppliedFirstServerSnapshot = true;
+        }
 
         Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
+        Inventory.ApplySnapshot(snapshot.Inventory);
         Attributes.ApplySnapshot(snapshot.Attributes);
+
+        // Keep chunk-local debug info in sync even when the client isn't simulating.
+        UpdateChunkTrackingFromCurrentPosition();
+    }
+
+    /// <summary>
+    /// Client-only: smooth the rendered/player-local position toward the last server snapshot.
+    /// The authoritative simulation still runs on the server.
+    /// </summary>
+    public void UpdateClientSmoothing(double elapsedSeconds)
+    {
+        if (!hasServerTarget)
+        {
+            return;
+        }
+
+        // Exponential smoothing with a stable time constant.
+        const float positionSmoothingRate = 18.0f; // 1/s
+        var dt = (float)Math.Clamp(elapsedSeconds, 0.0, 0.25);
+        var alpha = 1.0f - MathF.Exp(-positionSmoothingRate * dt);
+
+        // Smooth position (camera follows in Position setter).
+        var newPos = Vector3.Lerp(position, serverTargetPosition, alpha);
+        Position = newPos;
+
+        // Optionally smooth direction for UI/diagnostics. Do not drive the camera orientation here.
+        Direction = Vector3.Lerp(Direction, serverTargetDirection, alpha);
+
+        UpdateChunkTrackingFromCurrentPosition();
+    }
+
+    private void UpdateChunkTrackingFromCurrentPosition()
+    {
+        if (world.GetChunkByGlobalPosition(Position, out var chunk) && chunk != null)
+        {
+            CurrentChunk = chunk;
+            ChunkLocalPosition = Position - chunk.Position;
+        }
     }
 
     #region Commands
@@ -339,7 +397,7 @@ public class Player
         }
 
         Log.Info($"Player placing block {blockId} at {placePos}");
-        streamingManager.ApplyBlockEdit(placePos, blockId, true);
+        streamingManager.ApplyBlockEdit(placePos, blockId, isBreaking: false);
         Inventory.TryConsumeSelectedItem();
     }
     #endregion
@@ -432,8 +490,15 @@ public class Player
 
         if (isGrounded)
         {
+            // Ground movement: direct control.
             velocity.X = wishDir.X * speed;
             velocity.Z = wishDir.Z * speed;
+        }
+        else if (wishDir.LengthSquared > 0.001f)
+        {
+            // Air control: allow steering while falling so controls don't feel "stuck".
+            // Keep this intentionally conservative.
+            Accelerate(wishDir, speed, AirControl * 10.0f, dt);
         }
 
         Move(velocity * dt);

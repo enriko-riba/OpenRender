@@ -10,7 +10,7 @@ namespace SpyroGame.World;
 /// </summary>
 public class BlockPickingService
 {
-    private readonly ChunkStreamingManager? streamingManager;
+    private readonly CollisionManager collisionManager;
     private readonly VoxelTerrainRenderer terrainRenderer;
     
     // Timing
@@ -27,20 +27,10 @@ public class BlockPickingService
     private BlockState? cachedPickedBlock = null;
     private Vector3 cachedHitNormal = Vector3.Zero;
     
-    public BlockPickingService(VoxelTerrainRenderer terrainRenderer)
+    public BlockPickingService(CollisionManager collisionManager, VoxelTerrainRenderer terrainRenderer)
     {
+        this.collisionManager = collisionManager;
         this.terrainRenderer = terrainRenderer;
-    }
-
-    /// <summary>
-    /// Constructor for GPU streaming mode.
-    /// </summary>
-    public BlockPickingService(ChunkStreamingManager streamingManager)
-    {
-        // In GPU mode, we don't have direct access to VoxelWorld or VoxelTerrainRenderer in the same way
-        // But since picking is disabled anyway, we just need to satisfy the constructor
-        this.streamingManager = streamingManager;
-        terrainRenderer = streamingManager.GetTerrainRenderer()!;
     }
     
     /// <summary>
@@ -52,6 +42,19 @@ public class BlockPickingService
     /// Normal of the face that was hit.
     /// </summary>
     public Vector3 HitNormal => cachedHitNormal;
+
+    public void Invalidate()
+    {
+        lastPickTime = double.NegativeInfinity;
+    }
+
+    public void ForceUpdate(double currentTime, ICamera camera, float maxDistance = 5.0f)
+    {
+        lastPickTime = currentTime;
+        lastCameraPosition = camera.Position;
+        lastCameraDirection = camera.Front;
+        DoPick(camera, maxDistance);
+    }
     
     /// <summary>
     /// Update the picking service. Call this once per frame.
@@ -73,25 +76,30 @@ public class BlockPickingService
         var shouldUpdate = (currentTime - lastPickTime >= PickIntervalSeconds) || 
                            HasCameraMoved(camera.Position, camera.Front);
                            
-        if (shouldUpdate && streamingManager != null)
+        if (shouldUpdate)
         {
             lastPickTime = currentTime;
             lastCameraPosition = camera.Position;
             lastCameraDirection = camera.Front;
-            
-            if (streamingManager.CollisionManager.Raycast(camera.Position, camera.Front, maxDistance, out var hitPoint, out var blockPos, out var normal, out var descriptor))
-            {
-                cachedPickedBlock = new BlockState(blockPos, descriptor);
-                cachedHitNormal = normal;
-            }
-            else
-            {
-                cachedPickedBlock = null;
-                cachedHitNormal = Vector3.Zero;
-            }
 
-            terrainRenderer?.PickedBlock = cachedPickedBlock;
+            DoPick(camera, maxDistance);
         }
+    }
+
+    private void DoPick(ICamera camera, float maxDistance)
+    {
+        if (collisionManager.Raycast(camera.Position, camera.Front, maxDistance, out _, out var blockPos, out var normal, out var descriptor))
+        {
+            cachedPickedBlock = new BlockState(blockPos, descriptor);
+            cachedHitNormal = normal;
+        }
+        else
+        {
+            cachedPickedBlock = null;
+            cachedHitNormal = Vector3.Zero;
+        }
+
+        terrainRenderer?.PickedBlock = cachedPickedBlock;
     }
    
     /// <summary>

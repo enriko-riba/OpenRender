@@ -1,4 +1,5 @@
 using System;
+using SpyroGame.Shared.State;
 
 namespace SpyroGame.World;
 
@@ -18,6 +19,8 @@ public class Inventory
 
     private readonly InventoryItem[] slots = new InventoryItem[SlotCount];
     private int selectedSlot = 0;
+
+    public int Version { get; private set; }
 
     public int SelectedSlot
     {
@@ -60,6 +63,7 @@ public class Inventory
                 var toAdd = Math.Min(space, count);
                 slots[i].Count += toAdd;
                 count -= toAdd;
+                if (toAdd > 0) Version++;
                 if (count <= 0) return;
             }
         }
@@ -71,6 +75,7 @@ public class Inventory
             {
                 slots[i].Block = block;
                 slots[i].Count = count; // Assuming count <= 64 for simplicity
+                Version++;
                 return;
             }
         }
@@ -86,8 +91,39 @@ public class Inventory
         {
             slots[SelectedSlot] = default;
         }
+
+        Version++;
         return true;
     }
 
     public InventoryItem GetItem(int slot) => slot is < 0 or >= SlotCount ? default : slots[slot];
+
+    public InventorySnapshot CreateSnapshot()
+    {
+        var result = new InventoryItemSnapshot[SlotCount];
+        for (var i = 0; i < SlotCount; i++)
+        {
+            var it = slots[i];
+            result[i] = new InventoryItemSnapshot(it.Block, it.Count);
+        }
+
+        return new InventorySnapshot(Version, result);
+    }
+
+    public void ApplySnapshot(InventorySnapshot snapshot)
+    {
+        var src = snapshot.Slots;
+        if (src == null || src.Length != SlotCount)
+        {
+            return;
+        }
+
+        for (var i = 0; i < SlotCount; i++)
+        {
+            slots[i].Block = src[i].Block;
+            slots[i].Count = src[i].Count;
+        }
+
+        Version = snapshot.Version;
+    }
 }

@@ -9,4 +9,5 @@ public readonly record struct PlayerSnapshot(
     bool IsGrounded,
     bool IsGhostMode,
     int SelectedHotbarSlot,
-    PlayerAttributesSnapshot Attributes);
+    PlayerAttributesSnapshot Attributes,
+    InventorySnapshot Inventory);

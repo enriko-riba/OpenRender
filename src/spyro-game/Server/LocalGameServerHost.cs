@@ -1,6 +1,7 @@
 using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Net;
 using SpyroGame.Shared.State;
+using System.Diagnostics;
 using System.Threading;
 
 namespace SpyroGame.Server;
@@ -11,7 +12,6 @@ namespace SpyroGame.Server;
 public sealed class LocalGameServerHost(
     IGameServer server,
     IServerConnection<IClientToServerMessage, IServerToClientMessage> connection,
-    Action<Action> scheduleOnMainThread,
     PlayerId playerId) : IDisposable
 {
     private readonly object sync = new();
@@ -19,6 +19,8 @@ public sealed class LocalGameServerHost(
     private Task? loopTask;
 
     public double TickRateHz { get; set; } = 60.0;
+
+    private const int MaxChunkPayloadsPerTick = 16;
 
     public void Start()
     {
@@ -58,30 +60,64 @@ public sealed class LocalGameServerHost(
     private void RunLoop(CancellationToken token)
     {
         var tickHz = Math.Clamp(TickRateHz, 1.0, 240.0);
-        var tickSeconds = 1.0 / tickHz;
-        var tickTimeout = TimeSpan.FromSeconds(tickSeconds);
+        var tickInterval = TimeSpan.FromSeconds(1.0 / tickHz);
+        var tickSeconds = tickInterval.TotalSeconds;
+
+        var stopwatch = Stopwatch.StartNew();
+        var lastTime = stopwatch.Elapsed;
+        var accumulator = TimeSpan.Zero;
+        var maxCatchUp = TimeSpan.FromSeconds(0.25);
 
         PlayerSnapshot? lastSentPlayer = null;
         ChunkDeltaSnapshot? lastSentChunkDelta = null;
 
         while (!token.IsCancellationRequested)
         {
-            // Wait for new messages, but tick at a fixed cadence.
-            if (connection.WaitReceive(tickTimeout, out var firstMsg))
+            var now = stopwatch.Elapsed;
+            var frameTime = now - lastTime;
+            lastTime = now;
+
+            // Clamp to avoid spiral-of-death if paused/broken.
+            if (frameTime > maxCatchUp)
             {
-                InvokeOnMainThread(() => HandleMessage(firstMsg));
-                while (connection.TryReceive(out var msg))
+                frameTime = maxCatchUp;
+            }
+
+            accumulator += frameTime;
+            if (accumulator > maxCatchUp)
+            {
+                accumulator = maxCatchUp;
+            }
+
+            // Wait up to the time remaining until the next tick (or return early on messages).
+            var timeUntilTick = tickInterval - accumulator;
+            if (timeUntilTick > TimeSpan.Zero)
+            {
+                if (connection.WaitReceive(timeUntilTick, out var firstMsg))
                 {
-                    InvokeOnMainThread(() => HandleMessage(msg));
+                    HandleMessage(firstMsg);
                 }
             }
 
-            GameStateSnapshot snapshot = default;
-            InvokeOnMainThread(() =>
+            while (connection.TryReceive(out var msg))
+            {
+                HandleMessage(msg);
+            }
+
+            var ticked = false;
+            while (accumulator >= tickInterval)
             {
                 server.Tick(tickSeconds);
-                server.TryGetSnapshot(playerId, out snapshot);
-            });
+                accumulator -= tickInterval;
+                ticked = true;
+            }
+
+            if (!ticked)
+            {
+                continue;
+            }
+
+            server.TryGetSnapshot(playerId, out var snapshot);
 
             // Avoid sending state when nothing changed (idle).
             var hasChunkChanges = snapshot.ChunkDelta is { HasChanges: true };
@@ -92,38 +128,59 @@ public sealed class LocalGameServerHost(
                 lastSentChunkDelta = snapshot.ChunkDelta;
                 connection.Send(new ServerStateMessage(playerId, snapshot));
             }
-        }
-    }
 
-    private void InvokeOnMainThread(Action action)
-    {
-        // Schedule the work on the main thread (render thread) and block until it completes.
-        // This keeps server-side world/terrain logic safe while still allowing the transport to be threaded.
-        using var done = new ManualResetEventSlim(false);
-        Exception? error = null;
-        scheduleOnMainThread(() =>
-        {
-            try
+            // Send chunk voxel payloads for any loaded/changed chunks.
+            if (server is IChunkPayloadSource payloadSource)
             {
-                action();
+                var payloads = new List<(int ChunkIndex, byte[] Payload)>(capacity: 8);
+                for (var i = 0; i < MaxChunkPayloadsPerTick; i++)
+                {
+                    if (!payloadSource.TryDequeueOutgoingChunkPayload(playerId, out var idx, out var bytes))
+                    {
+                        break;
+                    }
+
+                    payloads.Add((idx, bytes));
+                }
+
+                foreach (var p in payloads)
+                {
+                    connection.Send(new ServerChunkPayloadMessage(playerId, p.ChunkIndex, p.Payload));
+                }
             }
-            catch (Exception ex)
+
+            // Send periodic loading progress updates.
+            if (server is ILoadingProgressSource progressSource)
             {
-                error = ex;
+                LoadingProgressSnapshot progress = default;
+                var hasProgress = false;
+
+                hasProgress = progressSource.TryGetLoadingProgress(playerId, out progress);
+
+                if (hasProgress)
+                {
+                    connection.Send(new ServerLoadingProgressMessage(playerId, progress));
+                }
             }
-            finally
+
+            // Game start signal once initial chunks have been sent.
+            if (server is LocalGameServer concrete && concrete.ShouldSendGameStart(playerId))
             {
-                done.Set();
+                connection.Send(new ServerGameStartMessage(playerId));
             }
-        });
-        done.Wait();
-        if (error != null) throw error;
+        }
     }
 
     private void HandleMessage(IClientToServerMessage msg)
     {
         switch (msg)
         {
+            case ClientHelloMessage hello:
+                if (hello.PlayerId.Equals(playerId) && server is LocalGameServer concrete)
+                {
+                    concrete.Connect(hello.PlayerId);
+                }
+                break;
             case ClientInputMessage input:
                 if (input.PlayerId.Equals(playerId))
                     server.Submit(input.PlayerId, input.Input);

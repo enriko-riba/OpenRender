@@ -10,12 +10,59 @@ public sealed class LocalGameClient(
     PlayerId playerId)
 {
     private readonly object sync = new();
+    private readonly object stateSync = new();
     private CancellationTokenSource? cts;
     private Task? loopTask;
 
-    public GameStateSnapshot? LastSnapshot { get; private set; }
+    private readonly System.Collections.Concurrent.ConcurrentQueue<ServerChunkPayloadMessage> chunkPayloads = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<GameStateSnapshot> snapshots = new();
+
+    private LoadingProgressSnapshot? lastLoadingProgress;
+    private GameStateSnapshot? lastSnapshot;
+    private bool hasServerGameStarted;
+
+    public LoadingProgressSnapshot? LastLoadingProgress
+    {
+        get
+        {
+            lock (stateSync)
+            {
+                return lastLoadingProgress;
+            }
+        }
+    }
+
+    public GameStateSnapshot? LastSnapshot
+    {
+        get
+        {
+            lock (stateSync)
+            {
+                return lastSnapshot;
+            }
+        }
+    }
+
+    public bool HasServerGameStarted
+    {
+        get
+        {
+            lock (stateSync)
+            {
+                return hasServerGameStarted;
+            }
+        }
+    }
 
     public PlayerId PlayerId => playerId;
+
+    public void Connect() => connection.Send(new ClientHelloMessage(playerId));
+
+    public bool TryDequeueChunkPayload(out ServerChunkPayloadMessage payload)
+        => chunkPayloads.TryDequeue(out payload);
+
+    public bool TryDequeueSnapshot(out GameStateSnapshot snapshot)
+        => snapshots.TryDequeue(out snapshot);
 
     public void SendInput(PlayerInputCommand input) => connection.Send(new ClientInputMessage(playerId, input));
 
@@ -84,7 +131,38 @@ public sealed class LocalGameClient(
             case ServerStateMessage state:
                 if (state.PlayerId.Equals(playerId))
                 {
-                    LastSnapshot = state.Snapshot;
+                    snapshots.Enqueue(state.Snapshot);
+                    lock (stateSync)
+                    {
+                        lastSnapshot = state.Snapshot;
+                    }
+                }
+                break;
+
+            case ServerLoadingProgressMessage progress:
+                if (progress.PlayerId.Equals(playerId))
+                {
+                    lock (stateSync)
+                    {
+                        lastLoadingProgress = progress.Progress;
+                    }
+                }
+                break;
+
+            case ServerChunkPayloadMessage chunk:
+                if (chunk.PlayerId.Equals(playerId))
+                {
+                    chunkPayloads.Enqueue(chunk);
+                }
+                break;
+
+            case ServerGameStartMessage start:
+                if (start.PlayerId.Equals(playerId))
+                {
+                    lock (stateSync)
+                    {
+                        hasServerGameStarted = true;
+                    }
                 }
                 break;
         }

@@ -91,7 +91,10 @@ internal static class ChunkMeshBuilder
 
         if (workItem.CacheVersion > 0 && chunkView.Version != workItem.CacheVersion)
         {
-            Log.Warn($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+            if (VerboseBuilderLogging)
+            {
+                Log.Debug($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+            }
         }
 
         // Performance optimization: Use thread-local pooled lists instead of allocating new ones

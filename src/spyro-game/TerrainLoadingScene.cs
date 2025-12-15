@@ -3,25 +3,32 @@ using OpenRender.Core.Rendering;
 using OpenRender.Core.Rendering.Text;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
+using SpyroGame.Client;
+using SpyroGame.Client.Terrain;
+using SpyroGame.Shared.State;
+using SpyroGame.Shared.Input;
 using SpyroGame.World;
 using System.Diagnostics;
 
 namespace SpyroGame;
 
 /// <summary>
-/// Loading scene for CPU-based procedural terrain generation.
-/// Uses ChunkStreamingManager's CPU pipeline for voxel generation while keeping GPU rendering.
-/// Transitions to GameScene when terrain is ready with detailed 0-100% progress tracking.
+/// Loading scene that initializes client-side terrain rendering resources.
+/// Terrain streaming/generation is server-owned.
 /// </summary>
 internal class TerrainLoadingScene : Scene
 {
     private readonly ITextRenderer textRenderer;
+    private readonly GameSession session;
     private readonly VoxelWorld world;
     private readonly Stopwatch timer = new();
     private readonly ProgressTracker progressTracker = new();
 
-    private ChunkStreamingManager? streamingManager;
+    private ClientTerrainSystem? terrainSystem;
     private VoxelTerrainRenderer? terrainRenderer;
+
+    private LocalGameClient localClient;
+    private int appliedChunkPayloadCount;
 
     private readonly Vector3 textColor = Vector3.One;
     private readonly Vector3 progressColor = new(1.0f, 0.8f, 0.3f);
@@ -34,12 +41,13 @@ internal class TerrainLoadingScene : Scene
     private bool isQueueBuilt = false;
 
     private Vector3 startPosition;
-    private int targetChunkCount = 0;
 
-    public TerrainLoadingScene(ITextRenderer textRenderer, VoxelWorld world)
+    public TerrainLoadingScene(ITextRenderer textRenderer, GameSession session)
     {
         this.textRenderer = textRenderer;
-        this.world = world;
+        this.session = session;
+        world = session.World;
+        localClient = session.Client;
         Name = "TerrainLoadingScene";
     }
 
@@ -55,84 +63,32 @@ internal class TerrainLoadingScene : Scene
         // Calculate starting position (center of world)
         startPosition = new Vector3(6450, 80, 7850);    //  TODO: hardcoded position to debug Ocean biome
 
-        Log.Info("TerrainLoadingScene: Starting CPU terrain generation with enhanced progress tracking...");
+        Log.Info("TerrainLoadingScene: Initializing client terrain + connecting to local server...");
     }
-
-    private bool isStreamingTerrain = false;
-    private bool isWaitingForProgressAnimation = false;
-    private int minimumReadyChunksForTransition;
-    private const int MaxOutstandingChunksForTransition = 4;
 
     private void BuildOperationQueue()
     {
-        // Use square chunk count since visibility uses Chebyshev distance (square region)
-        minimumReadyChunksForTransition = VoxelHelper.CalculateSquareChunkCount(VoxelHelper.MaxDistanceInChunks);
-        targetChunkCount = minimumReadyChunksForTransition;
-        
-        // Define progress ranges for each operation
-        progressTracker.AddOperation("Initialize Streaming Manager", 0f, 1f);
-        progressTracker.AddOperation("Initialize Terrain Generation", 1f, 2f);
-        progressTracker.AddOperation("Initialize Visibility & Compaction", 2f, 3f);
-        progressTracker.AddOperation("Initialize Terrain Renderer", 3f, 4f);
-        progressTracker.AddOperation("Initialize Frustum Culling", 4f, 5f);
-        progressTracker.AddOperation("Stream Initial Terrain", 5f, 95f);
-        progressTracker.AddOperation("Finalize", 95f, 100f);
+        progressTracker.AddOperation("Chunk Generation", 0f, 50f);
+        progressTracker.AddOperation("Meshing", 50f, 100f);
 
-        // Phase 1: Initialize ChunkStreamingManager
-        operationQueue.Enqueue(("Initialize Streaming Manager", () =>
+        operationQueue.Enqueue(("Initialize Client Terrain", () =>
         {
-            progressTracker.UpdateOperation("Initialize Streaming Manager", 0.5f, "Creating chunk streaming manager...");
-            streamingManager = new ChunkStreamingManager(world)
-            {
-                LoadDistance = VoxelHelper.MaxDistanceInChunks
-            };
-            streamingManager.SetPrefetchMargin(0);
-            progressTracker.CompleteOperation("Initialize Streaming Manager");
-            Log.Info("ChunkStreamingManager created");
+            terrainSystem = new ClientTerrainSystem();
+            terrainSystem.InitializeGraphics();
+            terrainRenderer = terrainSystem.TerrainRenderer;
+            Log.Info("Client terrain system initialized");
         }));
 
-        // Phase 2: GPU Pipeline initialization
-        operationQueue.Enqueue(("Initialize Terrain Generation", () =>
+        operationQueue.Enqueue(("Connect", () =>
         {
-            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.3f, "Allocating buffers...");
-            streamingManager!.InitializeCpuGeneration(world.Seed);
-            progressTracker.UpdateOperation("Initialize Terrain Generation", 0.9f, "Preparing CPU pipeline...");
-            progressTracker.CompleteOperation("Initialize Terrain Generation");
-            Log.Info($"CPU terrain generation initialized with pre-allocated buffers");
-        }));
+            // Program owns server lifecycle. Loading scene just starts the session + connects.
+            session.Start();
+            localClient.Connect();
 
-        operationQueue.Enqueue(("Initialize Visibility & Compaction", () =>
-        {
-            progressTracker.UpdateOperation("Initialize Visibility & Compaction", 0.4f, "Setting up visibility buffers...");
-            streamingManager!.InitializeMeshBuffers();
-            progressTracker.UpdateOperation("Initialize Visibility & Compaction", 0.8f, "Setting up compaction pipeline...");
-            progressTracker.CompleteOperation("Initialize Visibility & Compaction");
-            Log.Info($"Mesh buffers initialized");
-        }));
+            // Send one baseline input so the server has a known held-state, but do not rely on it for connect.
+            localClient.SendInput(default(PlayerInputCommand));
 
-        operationQueue.Enqueue(("Initialize Terrain Renderer", () =>
-        {
-            progressTracker.UpdateOperation("Initialize Terrain Renderer", 0.5f, "Creating renderer...");
-            streamingManager!.InitializeRendering();
-            terrainRenderer = streamingManager.GetTerrainRenderer();
-            progressTracker.CompleteOperation("Initialize Terrain Renderer");
-            Log.Info("Terrain renderer initialized");
-        }));
-
-        operationQueue.Enqueue(("Initialize Frustum Culling", () =>
-        {
-            progressTracker.UpdateOperation("Initialize Frustum Culling", 0.5f, "Allocating culling buffers...");
-            streamingManager!.InitializeFrustumCulling();
-            progressTracker.CompleteOperation("Initialize Frustum Culling");
-            Log.Info("Frustum culling initialized with pre-allocated buffers");
-        }));
-
-        // Phase 3: Stream terrain with progress tracking
-        operationQueue.Enqueue(("Stream Initial Terrain", () =>
-        {
-            isStreamingTerrain = true;
-            streamingManager!.Update(startPosition);
-            Log.Info($"Started terrain streaming (target: {targetChunkCount} chunks)...");
+            Log.Info("Session started; hello sent");
         }));
 
         Log.Info($"TerrainLoadingScene: Queued {operationQueue.Count} operations");
@@ -158,77 +114,6 @@ internal class TerrainLoadingScene : Scene
 
         try
         {
-            // Handle terrain streaming progress
-            if (isStreamingTerrain && streamingManager != null)
-            {
-                streamingManager.Update(startPosition);
-                var (total, pending, generating, hasTerrain, processing, ready) = streamingManager.GetDetailedStats();
-
-                // Calculate granular progress:
-                // - Terrain generation (Generating → HasTerrain): 0-50% of streaming phase
-                // - Meshing (Processing → Ready): 50-100% of streaming phase
-                var terrainComplete = hasTerrain + processing + ready;
-                var meshingComplete = ready;
-                
-                // Weight: terrain gen = 50%, meshing = 50%
-                var terrainProgress = terrainComplete / (float)targetChunkCount * 0.5f;
-                var meshingProgress = meshingComplete / (float)targetChunkCount * 0.5f;
-                var streamingProgress = Math.Clamp(terrainProgress + meshingProgress, 0f, 1f);
-                
-                // Build descriptive status
-                string status;
-                if (terrainComplete < targetChunkCount)
-                {
-                    status = $"Generating terrain: {terrainComplete}/{targetChunkCount}";
-                    currentStage = "Generating terrain...";
-                }
-                else if (ready < targetChunkCount)
-                {
-                    status = $"Building meshes: {ready}/{targetChunkCount}";
-                    currentStage = "Building meshes...";
-                }
-                else
-                {
-                    status = $"{ready}/{targetChunkCount} chunks ready";
-                    currentStage = "Finalizing...";
-                }
-                
-                progressTracker.UpdateOperation("Stream Initial Terrain", streamingProgress, status);
-
-                // Check if streaming is complete
-                var requiredReadyChunks = Math.Max(targetChunkCount, minimumReadyChunksForTransition);
-                var outstanding = pending + generating;
-                var areaReady = ready >= requiredReadyChunks && outstanding <= MaxOutstandingChunksForTransition;
-
-                if (areaReady)
-                {
-                    isStreamingTerrain = false;
-                    isWaitingForProgressAnimation = true; // NEW: Wait for animation to catch up
-                    progressTracker.CompleteOperation("Stream Initial Terrain");
-                    Log.Info($"Initial terrain streaming complete. Ready: {ready}/{requiredReadyChunks}. Waiting for progress animation...");
-                }
-                else
-                {
-                    return; // Keep streaming
-                }
-            }
-
-            // Wait for progress animation to catch up before finalizing
-            if (isWaitingForProgressAnimation)
-            {
-                if (!progressTracker.HasCaughtUp())
-                {
-                    // Keep updating to allow progress bar to animate
-                    return;
-                }
-                else
-                {
-                    // Progress has caught up, proceed to finalization
-                    isWaitingForProgressAnimation = false;
-                    Log.Info("Progress animation caught up, proceeding to finalization");
-                }
-            }
-
             // Process one operation per frame
             if (operationQueue.Count > 0)
             {
@@ -238,31 +123,88 @@ internal class TerrainLoadingScene : Scene
                 Log.Info($"[Loading] {description}");
                 operation.Invoke();
             }
-            else if (streamingManager != null && terrainRenderer != null && !isStreamingTerrain)
+            else if (terrainSystem != null && terrainRenderer != null)
             {
-                // All operations complete - finalize and transition
-                progressTracker.UpdateOperation("Finalize", 0.5f, "Preparing game scene...");
-                
-                isComplete = true;
-                currentStage = "Complete!";
-                progressTracker.SetProgress(100f);
+                // Keep draining chunk payloads and uploading meshes while we show progress.
+                var desired = 0;
+                var ready = 0;
+                var generating = 0;
 
-                Log.Info("TerrainLoadingScene: Transitioning to GameScene");
-
-                AddAction(() =>
+                var progress = localClient.LastLoadingProgress;
+                if (progress.HasValue)
                 {
-                    var gameScene = SceneManager.GetScene("GameScene");
-                    if (gameScene is GameScene gs)
+                    desired = progress.Value.DesiredChunkCount;
+                    ready = progress.Value.ReadyChunkCount;
+                    generating = progress.Value.GeneratingChunkCount;
+                }
+
+                var meshed = terrainSystem.ReadyChunkCount;
+
+                currentStage = desired > 0
+                    ? $"Generation: {ready}/{desired} (generating {generating}) | Meshing: {meshed}/{desired}"
+                    : (localClient.HasServerGameStarted ? "Starting game..." : "Waiting for server streaming...");
+
+                // Apply a limited number of chunk payloads per frame to keep the loading UI responsive.
+                var appliedThisFrame = 0;
+                const int MaxChunkPayloadsToApplyPerFrame = 8;
+                while (appliedThisFrame < MaxChunkPayloadsToApplyPerFrame && localClient.TryDequeueChunkPayload(out var payload))
+                {
+                    terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
+                    appliedChunkPayloadCount++;
+                    appliedThisFrame++;
+                }
+
+                terrainSystem.UpdateUploads();
+
+                var haveTargets = desired > 0;
+                var generationDone = haveTargets && ready >= desired;
+                var meshingDone = haveTargets && meshed >= desired && terrainSystem.PendingMeshCount == 0;
+
+                // Transition when the server has started gameplay AND the client finished meshing the initial set.
+                if (localClient.HasServerGameStarted && (!haveTargets || (generationDone && meshingDone)))
+                {
+                    isComplete = true;
+                    currentStage = "Complete!";
+                    progressTracker.SetProgress(100f);
+
+                    Log.Info("TerrainLoadingScene: Transitioning to GameScene");
+
+                    AddAction(() =>
                     {
-                        Log.Info($"TerrainLoadingScene: Passing terrain to GameScene");
-                        gs.SetupTerrainSystem(streamingManager, terrainRenderer, startPosition);
-                    }
-                    else
+                        var gameScene = SceneManager.GetScene("GameScene");
+                        if (gameScene is GameScene gs)
+                        {
+                            Log.Info("TerrainLoadingScene: Passing terrain + connections to GameScene");
+                            gs.SetupTerrainSystem(terrainSystem, terrainRenderer, startPosition, session);
+                        }
+                        else
+                        {
+                            Log.Error("TerrainLoadingScene: GameScene not found or wrong type!");
+                        }
+                        SceneManager.ActivateScene(gameScene);
+                    });
+                }
+                else
+                {
+                    // Phase 1: server chunk readiness (0-50%)
+                    if (desired > 0)
                     {
-                        Log.Error("TerrainLoadingScene: GameScene not found or wrong type!");
+                        var genProgress = ready / (float)Math.Max(1, desired);
+                        genProgress = Math.Clamp(genProgress, 0f, 1f);
+                        progressTracker.UpdateOperation(
+                            "Chunk Generation",
+                            genProgress,
+                            $"Server: ready {ready}/{desired}, generating {generating}");
+
+                        // Phase 2: client meshing completion (50-100%)
+                        var meshProgress = meshed / (float)Math.Max(1, desired);
+                        meshProgress = Math.Clamp(meshProgress, 0f, 1f);
+                        progressTracker.UpdateOperation(
+                            "Meshing",
+                            meshProgress,
+                            $"Client: payloads {appliedChunkPayloadCount:N0}, meshed {meshed}/{desired}, pending meshes {terrainSystem.PendingMeshCount:N0}");
                     }
-                    SceneManager.ActivateScene(gameScene);
-                });
+                }
             }
         }
         catch (Exception ex)
@@ -329,13 +271,6 @@ internal class TerrainLoadingScene : Scene
         textRenderer.Render(percentText, 20, leftMargin + (int)barSize.Width + 20, currentY, textColor);
         
         currentY += 24 + 10 + SectionGap;
-        
-        if (streamingManager != null)
-        {
-            var (totalBytes, _, _, _) = streamingManager.GetMemoryStats();
-            var totalMB = totalBytes / (1024f * 1024f);
-            DrawText($"Estimated terrain GPU Memory: {totalMB:F1} MB", 22, dimColor);
-        }
 
         currentY += SectionGap;
         DrawText($"Elapsed Time: {progressTracker.ElapsedTime:mm\\:ss\\:ff}", 22, textColor);
