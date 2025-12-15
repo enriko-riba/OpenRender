@@ -47,6 +47,39 @@ public class CameraFps : CameraBase
         isDirty = true;
     }
 
+    /// <summary>
+    /// Sets the camera look direction (front) explicitly.
+    /// Useful when synchronizing the render camera to an authoritative simulation state.
+    /// </summary>
+    public void SetLookDirection(Vector3 direction)
+    {
+        if (direction.LengthSquared < 0.000001f)
+        {
+            return;
+        }
+
+        direction = direction.Normalized();
+
+        // CameraFps front is computed as:
+        // front = (cosYaw * cosPitch, sinPitch, sinYaw * cosPitch)
+        // so: pitch = asin(y), yaw = atan2(z, x)
+        var clampedY = MathHelper.Clamp(direction.Y, -1f, 1f);
+        pitchRads = MathF.Asin(clampedY);
+        yawRads = MathF.Atan2(direction.Z, direction.X);
+
+        rotation.X = MathHelper.RadiansToDegrees(pitchRads);
+        rotation.X %= 360;
+        if (rotation.X > 80) rotation.X = 80;
+        if (rotation.X < -89) rotation.X = -89;
+        pitchRads = MathHelper.DegreesToRadians(rotation.X);
+
+        rotation.Y = MathHelper.RadiansToDegrees(yawRads);
+        rotation.Y %= 360;
+        yawRads = MathHelper.DegreesToRadians(rotation.Y);
+
+        isDirty = true;
+    }
+
     public override void MoveForward(float distance)
     {
         var dir = Vector3.Normalize(new Vector3(front.X, 0, front.Z));

@@ -1100,6 +1100,11 @@ public sealed class ChunkStreamingManager : IDisposable
             indexCount = mesh.IndexData.Length;
             faceCount = indexCount / 6;
             vertexCount = faceCount * 4;
+
+            // Keep material splits consistent with the new face count.
+            waterFaceCount = Math.Clamp(mesh.WaterFaceCount, 0, faceCount);
+            translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, Math.Max(0, faceCount - waterFaceCount));
+            opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount);
         }
 
         var expectedVertexEntries = vertexCount * 2; // packed position + attributes per vertex
@@ -1123,27 +1128,27 @@ public sealed class ChunkStreamingManager : IDisposable
             indexSpan = mesh.IndexData.AsSpan(0, safeLength);
         }
 
-        // Allocate buffer regions BEFORE upload so we know offsets
-        // Only allocate if we have data to upload
+        // Allocate buffer regions BEFORE upload so we know offsets.
+        // IMPORTANT: Do NOT free the old regions yet.
+        // Upload may be deferred (channels busy). If we freed first, other chunks could reuse
+        // and overwrite the old region while this chunk is still being drawn using the old
+        // indirect commands, causing rare visual corruption (raised/missing columns) while
+        // collision/picking remains correct.
         int vertexOffset = -1, indexOffset = -1;
-        
+
+        var oldVertexOffset = descriptor.AtlasOffset;
+        var oldIndexOffset = descriptor.IndexOffset;
+        var oldFaceCount = Math.Max(0, descriptor.VisibleVoxelCount);
+        var oldVertexCount = oldFaceCount * 4;
+        var oldIndexCount = oldFaceCount * 6;
+
         if (vertexCount > 0)
         {
-            // Free old region if exists
-            if (descriptor.VisibleVoxelCount > 0 && descriptor.AtlasOffset >= 0)
-            {
-                meshBuffers.FreeVertexRegion((uint)descriptor.AtlasOffset, (uint)(descriptor.VisibleVoxelCount * 4));
-            }
             vertexOffset = (int)meshBuffers.AllocateVertexRegion((uint)vertexCount);
         }
-        
+
         if (indexCount > 0)
         {
-            // Free old region if exists
-            if (descriptor.VisibleVoxelCount > 0 && descriptor.IndexOffset >= 0)
-            {
-                meshBuffers.FreeIndexRegion((uint)descriptor.IndexOffset, (uint)(descriptor.VisibleVoxelCount * 6));
-            }
             indexOffset = (int)meshBuffers.AllocateIndexRegion((uint)indexCount);
         }
 
@@ -1175,6 +1180,21 @@ public sealed class ChunkStreamingManager : IDisposable
             MaxSurfaceHeight = mesh.MaxSurfaceHeight,
         };
         activeChunks[mesh.ChunkIndex] = refreshedDescriptor;
+
+        // Now that the new mesh is uploaded and indirect commands have been updated,
+        // we can safely release the old regions.
+        if (oldFaceCount > 0)
+        {
+            if (oldVertexCount > 0 && oldVertexOffset >= 0)
+            {
+                meshBuffers.FreeVertexRegion((uint)oldVertexOffset, (uint)oldVertexCount);
+            }
+
+            if (oldIndexCount > 0 && oldIndexOffset >= 0)
+            {
+                meshBuffers.FreeIndexRegion((uint)oldIndexOffset, (uint)oldIndexCount);
+            }
+        }
 
         return true;
     }

@@ -146,6 +146,10 @@ public sealed class TerrainMeshBufferManager : IDisposable
         GL.NamedBufferStorage(indirectDrawBuffer, indirectSize, IntPtr.Zero,
             BufferStorageFlags.DynamicStorageBit);
         GL.ObjectLabel(ObjectLabelIdentifier.Buffer, indirectDrawBuffer, -1, "indirect_draw_commands");
+        // IMPORTANT: Explicitly zero the command buffer.
+        // GL buffer storage is uninitialized; leaving garbage commands can cause stray draws
+        // (e.g. chunks appearing at incorrect offsets/heights) until the slot is overwritten.
+        ClearBufferUIntRange(indirectDrawBuffer, IntPtr.Zero, (int)indirectSize, 0u);
         commandSlotCapacity = (uint)maxChunks;
 
         // Chunk Info Buffer (maps slot -> chunk index/info)
@@ -408,6 +412,58 @@ public sealed class TerrainMeshBufferManager : IDisposable
         if ((vertexData.Length == 0 || vertexOffset < 0) && (indexData.Length == 0 || indexOffset < 0))
         {
             return true; // Nothing to upload = success
+        }
+
+        // If the payload doesn't fit our staging buffers, do a direct upload rather than truncating.
+        // Truncation leaves tail data from old chunks in GPU buffers, which can manifest as
+        // raised columns/spikes and missing chunk sections.
+        var needsDirect = false;
+        var vertexBytesNeeded = 0;
+        var indexBytesNeeded = 0;
+
+        if (vertexData.Length > 0 && vertexOffset >= 0)
+        {
+            vertexBytesNeeded = MemoryMarshal.AsBytes(vertexData).Length;
+            if (vertexBytesNeeded > maxChunkVertexBytes)
+            {
+                needsDirect = true;
+            }
+        }
+
+        if (indexData.Length > 0 && indexOffset >= 0)
+        {
+            indexBytesNeeded = MemoryMarshal.AsBytes(indexData).Length;
+            if (indexBytesNeeded > maxChunkIndexBytes)
+            {
+                needsDirect = true;
+            }
+        }
+
+        if (needsDirect)
+        {
+            unsafe
+            {
+                if (vertexData.Length > 0 && vertexOffset >= 0 && vertexBytesNeeded > 0)
+                {
+                    var vertexByteOffset = (IntPtr)(vertexOffset * VoxelHelper.VERTEX_STRIDE_BYTES);
+                    fixed (uint* vPtr = vertexData)
+                    {
+                        GL.NamedBufferSubData(vertexBuffer, vertexByteOffset, vertexBytesNeeded, (IntPtr)vPtr);
+                    }
+                }
+
+                if (indexData.Length > 0 && indexOffset >= 0 && indexBytesNeeded > 0)
+                {
+                    var indexByteOffset = (IntPtr)(indexOffset * sizeof(uint));
+                    fixed (uint* iPtr = indexData)
+                    {
+                        GL.NamedBufferSubData(indexBuffer, indexByteOffset, indexBytesNeeded, (IntPtr)iPtr);
+                    }
+                }
+            }
+
+            uploadsThisFrame++;
+            return true;
         }
 
         var channelIndex = TryAcquireUploadChannel();

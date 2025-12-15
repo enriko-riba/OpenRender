@@ -1,8 +1,9 @@
 ﻿using OpenRender;
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.GraphicsLibraryFramework;
-using SpyroGame.Input;
+using SpyroGame.Shared.Gameplay;
+using SpyroGame.Shared.Input;
+using SpyroGame.Shared.State;
 
 namespace SpyroGame.World;
 
@@ -46,12 +47,15 @@ public class Player
 
     private bool isGrounded;
     private Vector3 velocity;
-    private Vector3 requestedMovement;
+    private Vector2 moveAxes;
+    private float verticalAxis;
     private Vector3 requestedRotation;
-    private readonly KeyboardActionMapper kbdActions = new();
+    private bool jumpRequested;
 
     // speed modifiers captured each Update() from KeyboardState
     private bool _isSprinting, _isCrouching;
+
+    public PlayerAttributes Attributes { get; } = new();
 
     public BlockPickingService? BlockPickingService { get; set; }
 
@@ -76,36 +80,82 @@ public class Player
             isGrounded = false;
         }
 
-        kbdActions.AddActions([
-            new KeyboardAction("fly mode", [Keys.F], () => IsGhostMode = !IsGhostMode),
-            new KeyboardAction("forward", [Keys.W], MoveForward, false),
-            new KeyboardAction("left", [Keys.A], MoveLeft, false),
-            new KeyboardAction("right", [Keys.D], MoveRight, false),
-            new KeyboardAction("back", [Keys.S], MoveBack, false),
-            new KeyboardAction("jump", [Keys.Space], Jump),
-            new KeyboardAction("rot CCW", [Keys.Q], () => AddRotation(0, 0, -1), false),
-            new KeyboardAction("rot CW", [Keys.E], () => AddRotation(0, 0, 1), false),
-        ]);
     }
 
     internal bool IsGrounded => isGrounded;
     internal bool IsJumping => !isGrounded && velocity.Y > 0;
     internal float VelocityY => velocity.Y;
     internal Vector3 Velocity => velocity;
-    internal Vector3 RequestedMovement => requestedMovement;
+    internal Vector3 RequestedMovement { get; private set; }
     
     public Inventory Inventory { get; } = new();
 
-    public void Update(double elapsedSeconds, KeyboardState keyboardState, MouseState mouseState)
+    /// <summary>
+    /// Applies client-produced input intent. This does not execute physics immediately.
+    /// Use <see cref="Simulate"/> for the authoritative tick.
+    /// </summary>
+    public void ApplyInput(PlayerInputCommand input)
     {
-        // Update actions (e.g., toggle ghost mode)
-        kbdActions.Update(keyboardState);
+        if (input.SetGhostMode is { } ghost)
+        {
+            IsGhostMode = ghost;
+        }
 
-        // Sample speed mods before processing
-        _isSprinting = keyboardState.IsKeyDown(Keys.LeftShift) || keyboardState.IsKeyDown(Keys.RightShift);
-        _isCrouching = keyboardState.IsKeyDown(Keys.LeftControl) || keyboardState.IsKeyDown(Keys.RightControl);
+        _isSprinting = input.SprintHeld;
+        _isCrouching = input.CrouchHeld;
 
-        // Process movement/physics (grounded or ghost)
+        moveAxes = input.MoveAxes;
+        verticalAxis = input.VerticalAxis;
+
+        if (input.LookDelta != Vector2.Zero)
+        {
+            AddRotation(input.LookDelta.X, input.LookDelta.Y, 0);
+        }
+
+        if (input.JumpPressed)
+        {
+            jumpRequested = true;
+        }
+
+        if (input.SelectHotbarSlot.HasValue)
+        {
+            Inventory.SelectedSlot = input.SelectHotbarSlot.Value;
+        }
+
+        if (input.HotbarScrollDelta != 0)
+        {
+            Inventory.SelectedSlot += input.HotbarScrollDelta;
+            if (Inventory.SelectedSlot < 0) Inventory.SelectedSlot = Inventory.HotbarSize - 1;
+            if (Inventory.SelectedSlot >= Inventory.HotbarSize) Inventory.SelectedSlot = 0;
+        }
+    }
+
+    /// <summary>
+    /// Server-authoritative simulation tick.
+    /// </summary>
+    public void Simulate(double elapsedSeconds)
+    {
+        // Apply rotation first so movement uses current view.
+        if (requestedRotation != Vector3.Zero)
+        {
+            camera.AddRotation(requestedRotation.X * RotationSpeed, requestedRotation.Y * RotationSpeed, requestedRotation.Z * RotationSpeed);
+            // IMPORTANT: CameraFps updates Front/Right/Up during Update().
+            // Server simulation doesn't run the render loop, so we must update explicitly.
+            camera.Update();
+            Direction = camera.Front;
+            requestedRotation = Vector3.Zero;
+        }
+
+        // Convert move intent into world-space vector.
+        RequestedMovement = BuildMovementVector(moveAxes, verticalAxis);
+        var isMoving = RequestedMovement.LengthSquared > 0.0001f;
+
+        if (jumpRequested)
+        {
+            jumpRequested = false;
+            Jump();
+        }
+
         if (IsGhostMode)
         {
             HandleGhostMode(elapsedSeconds);
@@ -115,16 +165,7 @@ public class Player
             HandleMovement(elapsedSeconds);
         }
 
-        // Update camera position and direction
         UpdateCamera();
-
-        // Handle rotation
-        if (requestedRotation != Vector3.Zero)
-        {
-            camera.AddRotation(requestedRotation.X * RotationSpeed, requestedRotation.Y * RotationSpeed, requestedRotation.Z * RotationSpeed);
-            Direction = camera.Front;
-            requestedRotation = Vector3.Zero;
-        }
 
         // Update chunk tracking
         if (world.GetChunkByGlobalPosition(Position, out var chunk))
@@ -133,25 +174,11 @@ public class Player
             ChunkLocalPosition = Position - chunk!.Position;
         }
 
-        // Handle inventory selection
-        if (keyboardState.IsKeyPressed(Keys.D1)) Inventory.SelectedSlot = 0;
-        if (keyboardState.IsKeyPressed(Keys.D2)) Inventory.SelectedSlot = 1;
-        if (keyboardState.IsKeyPressed(Keys.D3)) Inventory.SelectedSlot = 2;
-        if (keyboardState.IsKeyPressed(Keys.D4)) Inventory.SelectedSlot = 3;
-        if (keyboardState.IsKeyPressed(Keys.D5)) Inventory.SelectedSlot = 4;
-        if (keyboardState.IsKeyPressed(Keys.D6)) Inventory.SelectedSlot = 5;
-        if (keyboardState.IsKeyPressed(Keys.D7)) Inventory.SelectedSlot = 6;
-        if (keyboardState.IsKeyPressed(Keys.D8)) Inventory.SelectedSlot = 7;
-        if (keyboardState.IsKeyPressed(Keys.D9)) Inventory.SelectedSlot = 8;
-        
-        // Scroll wheel
-        if (mouseState.ScrollDelta.Y != 0)
-        {
-            Inventory.SelectedSlot -= (int)Math.Sign(mouseState.ScrollDelta.Y);
-            // Wrap around
-            if (Inventory.SelectedSlot < 0) Inventory.SelectedSlot = Inventory.HotbarSize - 1;
-            if (Inventory.SelectedSlot >= Inventory.HotbarSize) Inventory.SelectedSlot = 0;
-        }
+        Attributes.Tick(elapsedSeconds, new PlayerAttributeTickContext(isMoving, _isSprinting, IsGhostMode));
+
+        // NOTE: movement intent is a held state (WASD, sprint, crouch, ghost vertical).
+        // It is updated when input state changes and must persist across ticks.
+        RequestedMovement = Vector3.Zero;
     }
 
     /// <summary>
@@ -194,15 +221,30 @@ public class Player
 
     public BlockState? CurrentBlockBellow { get; set; } = null;
 
+    public void ApplyServerSnapshot(PlayerSnapshot snapshot)
+    {
+        // Keep state application minimal; this is the seam where interpolation/prediction can live later.
+        if (IsGhostMode != snapshot.IsGhostMode)
+        {
+            IsGhostMode = snapshot.IsGhostMode;
+        }
+
+        Direction = snapshot.Direction;
+        Position = snapshot.Position;
+
+        Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
+        Attributes.ApplySnapshot(snapshot.Attributes);
+    }
+
     #region Commands
     public void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees)
-        => requestedRotation = new Vector3(yawDegrees, pitchDegrees, rollDegrees);
+        => requestedRotation += new Vector3(yawDegrees, pitchDegrees, rollDegrees);
 
-    // Input layer always records intent; physics layer decides how much applies (air control).
-    public void MoveBack() => requestedMovement -= new Vector3(camera.Front.X, 0, camera.Front.Z);
-    public void MoveForward() => requestedMovement += new Vector3(camera.Front.X, 0, camera.Front.Z);
-    public void MoveLeft() => requestedMovement -= Vector3.Cross(Direction, Vector3.UnitY);
-    public void MoveRight() => requestedMovement += Vector3.Cross(Direction, Vector3.UnitY);
+    // Legacy input helpers (kept for now).
+    public void MoveBack() => moveAxes.Y -= 1;
+    public void MoveForward() => moveAxes.Y += 1;
+    public void MoveLeft() => moveAxes.X -= 1;
+    public void MoveRight() => moveAxes.X += 1;
 
     public void Jump()
     {
@@ -229,51 +271,48 @@ public class Player
     public void BreakBlock()
     {
         var pickedBlock = BlockPickingService?.PickedBlock;
-        if (pickedBlock is not null)
-        {
-            if (streamingManager != null)
-            {
-                Log.Info($"Player breaking block at {pickedBlock.Value.GlobalPosition}");
-                
-                // Add to inventory
-                Inventory.AddItem(pickedBlock.Value.Block);
-                
-                streamingManager.ApplyBlockEdit(pickedBlock.Value.GlobalPosition, BlockId.Air, true);
-            }
-            else
-            {
-                Log.Error("Player.BreakBlock: streamingManager is null!");
-            }
-
-            // NOTE: PickedBlock sync handled by GameScene
-        }
-        else
-        {
-            Log.Info("Player.BreakBlock: pickedBlock is null");
-        }
+        if (pickedBlock is null) return;
+        TryBreakBlock(pickedBlock.Value.GlobalPosition);
     }
     
     public void PlaceBlock()
     {
         var pickedBlock = BlockPickingService?.PickedBlock;
         if (pickedBlock is null) return;
-        if (streamingManager == null) return;
 
         var item = Inventory.GetSelectedItem();
         if (item.IsEmpty) return;
 
         var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
-
-        // Calculate new position
         var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
-        
-        // Check if target block is replaceable (Air, Water, etc.)
-        // We can use the world accessor from streamingManager or player's world reference
-        // Since we are in Player, we have 'world'
+        TryPlaceBlock(placePos, item.Block);
+    }
+
+    public void TryBreakBlock(Vector3i globalPosition)
+    {
+        if (streamingManager == null)
+        {
+            Log.Error("Player.TryBreakBlock: streamingManager is null!");
+            return;
+        }
+
+        var existing = world.GetBlockByPositionGlobalSafe(globalPosition.X, globalPosition.Y, globalPosition.Z);
+        if (!existing.HasValue) return;
+        if (existing.Value.Block.IsAir()) return;
+
+        Log.Info($"Player breaking block at {globalPosition}");
+        Inventory.AddItem(existing.Value.Block);
+        streamingManager.ApplyBlockEdit(globalPosition, BlockId.Air, true);
+    }
+
+    public void TryPlaceBlock(Vector3i placePos, BlockId blockId)
+    {
+        if (streamingManager == null) return;
+        if (blockId.IsAir()) return;
+
         var targetBlock = world.GetBlockByPositionGlobalSafe(placePos.X, placePos.Y, placePos.Z);
         if (targetBlock.HasValue && !targetBlock.Value.Block.IsReplaceable())
         {
-            // Cannot place block inside another solid block
             return;
         }
 
@@ -283,7 +322,6 @@ public class Player
         var minY = position.Y;
         var maxY = position.Y + Height;
 
-        // Block AABB
         var bMinX = placePos.X;
         var bMaxX = placePos.X + 1;
         var bMinY = placePos.Y;
@@ -291,22 +329,44 @@ public class Player
         var bMinZ = placePos.Z;
         var bMaxZ = placePos.Z + 1;
 
-        // Intersection test
         var intersects = (minX < bMaxX && maxX > bMinX) &&
-                          (minY < bMaxY && maxY > bMinY) &&
-                          (position.Z - HalfWidth < bMaxZ && position.Z + HalfWidth > bMinZ);
+                         (minY < bMaxY && maxY > bMinY) &&
+                         (position.Z - HalfWidth < bMaxZ && position.Z + HalfWidth > bMinZ);
 
-        if (intersects && item.Block.IsSolid())
+        if (intersects && blockId.IsSolid())
         {
-            // Don't place solid blocks inside player
             return;
         }
 
-        Log.Info($"Player placing block {item.Block} at {placePos}");
-        streamingManager.ApplyBlockEdit(placePos, item.Block, true);
+        Log.Info($"Player placing block {blockId} at {placePos}");
+        streamingManager.ApplyBlockEdit(placePos, blockId, true);
         Inventory.TryConsumeSelectedItem();
     }
     #endregion
+
+    private Vector3 BuildMovementVector(Vector2 axes, float vertical)
+    {
+        // Use the player view direction, but keep XZ movement on the ground plane.
+        var forward = new Vector3(Direction.X, 0, Direction.Z);
+        if (forward.LengthSquared < 0.0001f)
+        {
+            forward = -Vector3.UnitZ;
+        }
+        else
+        {
+            forward = forward.Normalized();
+        }
+
+        var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+        var move = forward * axes.Y + right * axes.X;
+
+        if (IsGhostMode && Math.Abs(vertical) > 0.001f)
+        {
+            move += Vector3.UnitY * vertical;
+        }
+
+        return move;
+    }
 
     private void UpdateCamera()
     {
@@ -318,7 +378,7 @@ public class Player
     private void HandleGhostMode(double elapsedSeconds)
     {
         velocity = Vector3.Zero;
-        var moveInput = requestedMovement;
+        var moveInput = RequestedMovement;
         var remaining = (float)elapsedSeconds;
 
         while (remaining > 0f && moveInput.LengthSquared > 0f)
@@ -329,12 +389,12 @@ public class Player
             remaining -= dt;
         }
 
-        requestedMovement = Vector3.Zero;
+        RequestedMovement = Vector3.Zero;
     }
 
     private void HandleMovement(double elapsedSeconds)
     {
-        var moveInput = requestedMovement;
+        var moveInput = RequestedMovement;
         var remaining = (float)elapsedSeconds;
         var steps = 0;
 
@@ -351,7 +411,7 @@ public class Player
             }
         }
 
-        requestedMovement = Vector3.Zero;
+        RequestedMovement = Vector3.Zero;
     }
 
     private void ApplyMovementStep(Vector3 moveInput, float dt)

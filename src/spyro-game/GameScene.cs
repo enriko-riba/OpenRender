@@ -11,6 +11,12 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using SpyroGame.Client;
+using SpyroGame.Server;
+using SpyroGame.Shared.Commands;
+using SpyroGame.Shared.Net;
+using SpyroGame.Shared.State;
+using SpyroGame.Shared.Input;
 using SpyroGame.World;
 using SpyroGame.World.Generation;
 
@@ -32,6 +38,17 @@ internal class GameScene : Scene
     private ChunkStreamingManager? streamingManager;
     private VoxelTerrainRenderer? terrainRenderer;
     private BlockPickingService? blockPickingService;
+    private LocalGameClient? localClient;
+    private LocalGameServerHost? serverHost;
+
+    private PlayerId localPlayerId;
+
+    // Client-side view of server streaming state (chunk indices that are Ready).
+    // This is the seam for future remote server chunk streaming.
+    private readonly HashSet<int> serverReadyChunkIndices = [];
+
+    private PlayerInputState lastSentInputState;
+    private bool hasSentInitialInputState;
 
     private const int GameplayPrefetchMarginChunks = 2;
 
@@ -80,6 +97,21 @@ internal class GameScene : Scene
 
         // Assign service to player
         player.BlockPickingService = blockPickingService;
+
+        // Local in-process client/server via an abstract connection (UDP/TCP later).
+        // Even though it's local, treat it like a real server: identify players by PlayerId.
+        localPlayerId = PlayerId.New();
+        var (clientConn, serverConn) = InMemoryDuplexConnection.CreatePair<IClientToServerMessage, IServerToClientMessage>();
+        var server = new LocalGameServer(world, streamingManager, spawnPosition);
+        serverHost = new LocalGameServerHost(server, serverConn, AddAction, localPlayerId);
+        localClient = new LocalGameClient(clientConn, localPlayerId);
+
+        serverHost.Start();
+        localClient.Start();
+
+        // Reset input state tracking on scene (re)entry.
+        hasSentInitialInputState = false;
+        lastSentInputState = default;
 
         // Restore full load distance for gameplay
         streamingManager.LoadDistance = VoxelHelper.MaxDistanceInChunks;
@@ -132,7 +164,9 @@ internal class GameScene : Scene
         }
 
         // Hide mouse cursor
-        SceneManager.CursorState = CursorState.Hidden;
+        // NOTE: Hidden does not confine the cursor, which can cause the window to lose focus
+        // and make keyboard/mouse input appear "stuck". Grabbed keeps focus stable for FPS controls.
+        SceneManager.CursorState = CursorState.Grabbed;
 
         // Enable backface culling
         GL.Enable(EnableCap.CullFace);
@@ -222,11 +256,21 @@ internal class GameScene : Scene
 
     public override void UpdateFrame(double elapsedSeconds)
     {
-        if (!SceneManager.IsFocused)
+        var wantsInputCapture = SceneManager.CursorState == CursorState.Grabbed;
+        if (!SceneManager.IsFocused && !wantsInputCapture)
         {
+            if (SceneManager.CursorState != CursorState.Normal)
+            {
+                SceneManager.CursorState = CursorState.Normal;
+            }
             lastMousePosition = SceneManager.MouseState.Position;
             base.UpdateFrame(elapsedSeconds);
             return;
+        }
+
+        if (SceneManager.CursorState != CursorState.Grabbed)
+        {
+            SceneManager.CursorState = CursorState.Grabbed;
         }
 
         // Exit on Esc key
@@ -306,12 +350,7 @@ internal class GameScene : Scene
             terrainRenderer.SetVisibilityFlags(visibilityFlags, chunkIndices);
         }
 
-        // Update terrain streaming (if using NEW GPU system)
-        if (streamingManager != null && camera != null)
-        {
-            // Call streaming manager every frame to handle chunk loading/unloading
-            streamingManager.Update(camera.Position);
-        }
+        // Terrain streaming/generation is server-owned (LocalGameServer.Tick).
 
 
         // Update visibility
@@ -354,8 +393,104 @@ internal class GameScene : Scene
             }
         }
 
-        // Update player (handles physics, collision, and WASD movement input)
-        player.Update(elapsedSeconds, SceneManager.KeyboardState, SceneManager.MouseState);
+        // Gather mouse look delta first so the simulation tick uses current view.
+        // When cursor is grabbed, MouseState.Position may remain constant; use MouseState.Delta instead.
+        var lookDelta = Vector2.Zero;
+        const float mouseSensitivity = 0.05f;
+        if (SceneManager.CursorState == CursorState.Grabbed)
+        {
+            // Preserve previous behavior: we previously used (lastPos - currentPos), i.e. negative of typical delta.
+            var mouseDelta = SceneManager.MouseState.Delta;
+            if (mouseDelta.LengthSquared > 0)
+            {
+                lookDelta = -mouseDelta * mouseSensitivity;
+            }
+        }
+        else
+        {
+            var mousePos = SceneManager.MouseState.Position;
+            var posDelta = lastMousePosition - mousePos;
+            lastMousePosition = mousePos;
+
+            if (posDelta.LengthSquared > 0)
+            {
+                lookDelta = posDelta * mouseSensitivity;
+
+                // Re-center mouse when near edge
+                if (mousePos.X < 100 || mousePos.Y < 100 ||
+                    mousePos.X > Width - 100 || mousePos.Y > Height - 100)
+                {
+                    SceneManager.MousePosition = mouseCenter;
+                    lastMousePosition = mouseCenter;
+                }
+            }
+        }
+
+        // Apply look rotation locally for rendering/picking. The same look delta is also sent
+        // to the authoritative server; keeping the client camera in sync prevents WASD from
+        // feeling "sideways" relative to the visible camera direction.
+        if (camera != null && lookDelta != Vector2.Zero)
+        {
+            const float lookRotationSpeed = 10.0f; // Must match Player.RotationSpeed semantics.
+            camera.AddRotation(lookDelta.X * lookRotationSpeed, lookDelta.Y * lookRotationSpeed, 0);
+            camera.Invalidate();
+        }
+
+        // Client sends input only on change; server runs independently; client applies latest received snapshot.
+        if (localClient != null)
+        {
+            var toggleGhostPressed = SceneManager.KeyboardState.IsKeyPressed(Keys.F);
+            var desiredGhostMode = toggleGhostPressed ? !player.IsGhostMode : player.IsGhostMode;
+            bool? setGhostMode = toggleGhostPressed ? desiredGhostMode : null;
+
+            var state = PlayerInputMapper.BuildState(SceneManager.KeyboardState, desiredGhostMode);
+            var input = PlayerInputMapper.Build(SceneManager.KeyboardState, SceneManager.MouseState, desiredGhostMode, lookDelta, setGhostMode);
+
+            var shouldSend = false;
+
+            // Always send once so the server has a known baseline.
+            if (!hasSentInitialInputState)
+            {
+                shouldSend = true;
+                hasSentInitialInputState = true;
+            }
+
+            // Send when held-state changes (press/release W/A/S/D, sprint/crouch, ghost vertical).
+            if (!state.Equals(lastSentInputState))
+            {
+                shouldSend = true;
+                lastSentInputState = state;
+            }
+
+            // Send when there are one-shot events or look deltas.
+            if (input.LookDelta != Vector2.Zero || input.JumpPressed || input.SetGhostMode.HasValue ||
+                input.SelectHotbarSlot.HasValue || input.HotbarScrollDelta != 0)
+            {
+                shouldSend = true;
+            }
+
+            if (shouldSend)
+            {
+                // Always send full current state; server persists held input.
+                localClient.SendInput(input with
+                {
+                    MoveAxes = state.MoveAxes,
+                    VerticalAxis = state.VerticalAxis,
+                    SprintHeld = state.SprintHeld,
+                    CrouchHeld = state.CrouchHeld
+                });
+            }
+
+            if (localClient.LastSnapshot is { } snap)
+            {
+                player.ApplyServerSnapshot(snap.Player);
+
+                if (snap.ChunkDelta is { HasChanges: true } chunkDelta)
+                {
+                    ApplyChunkDelta(chunkDelta);
+                }
+            }
+        }
 
         // Update block below player - find highest solid block at player X/Z regardless of mode
         UpdateBlockBelow();
@@ -368,51 +503,24 @@ internal class GameScene : Scene
             maxDistance: 5.0f
         );
 
-        // Handle interactions (Break/Place) with fresh picking data
-        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+        // Handle interactions (Break/Place) with fresh picking data.
+        // Client determines target positions via picking; server executes edits.
+        if (localClient != null && blockPickingService?.PickedBlock is { } picked)
         {
-            player.BreakBlock();
-        }
-        if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
-        {
-            player.PlaceBlock();
-        }
-        // Manual vertical movement (Shift=up, Ctrl=down) - resets accumulated Y velocity
-        const float verticalSpeed = 25.0f; // blocks per second (increased from 15.0)
-        if (SceneManager.KeyboardState.IsKeyDown(Keys.LeftShift) || SceneManager.KeyboardState.IsKeyDown(Keys.RightShift))
-        {
-            var pos = player.Position;
-            pos.Y += verticalSpeed * (float)elapsedSeconds;
-            player.Position = pos;
-            // Reset Y velocity when manually moving vertically
-            typeof(Player).GetField("velocityY", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.SetValue(player, 0f);
-        }
-        if (SceneManager.KeyboardState.IsKeyDown(Keys.LeftControl) || SceneManager.KeyboardState.IsKeyDown(Keys.RightControl))
-        {
-            var pos = player.Position;
-            pos.Y -= verticalSpeed * (float)elapsedSeconds;
-            player.Position = pos;
-            // Reset Y velocity when manually moving vertically
-            typeof(Player).GetField("velocityY", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.SetValue(player, 0f);
-        }
-
-        // Handle mouse rotation
-        var mousePos = SceneManager.MouseState.Position;
-        var delta = lastMousePosition - mousePos;
-        lastMousePosition = mousePos;
-        if (delta.LengthSquared > 0)
-        {
-            const float mouseSensitivity = 0.05f;
-            player.AddRotation(delta.X * mouseSensitivity, delta.Y * mouseSensitivity, 0);
-
-            // Re-center mouse when near edge
-            if (mousePos.X < 100 || mousePos.Y < 100 ||
-                mousePos.X > Width - 100 || mousePos.Y > Height - 100)
+            if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
             {
-                SceneManager.MousePosition = mouseCenter;
-                lastMousePosition = mouseCenter;
+                localClient.Send(new BreakBlockCommand(picked.GlobalPosition));
+            }
+
+            if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
+            {
+                var item = player.Inventory.GetSelectedItem();
+                if (!item.IsEmpty)
+                {
+                    var hitNormal = blockPickingService.HitNormal;
+                    var placePos = picked.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+                    localClient.Send(new PlaceBlockCommand(placePos, item.Block));
+                }
             }
         }
 
@@ -540,6 +648,9 @@ internal class GameScene : Scene
         var groundedStr = player.IsGrounded ? "Grnd" : "Air";
         var jumpStr = player.IsJumping ? "Jump" : "";
         WriteLine($"  {modeStr} | {groundedStr} {jumpStr} | VelY: {player.VelocityY:F2}", textColor);
+
+        var a = player.Attributes;
+        WriteLine($"  HP: {a.Health}/{a.MaxHealth} | Food: {a.Food}/{a.MaxFood} | Sat: {a.Saturation:F1}", textColor);
 
         var pLocal = player.ChunkLocalPosition;
         var pChunk = player.CurrentChunk?.Index ?? -1;
@@ -872,6 +983,9 @@ internal class GameScene : Scene
 
     public override void Close()
     {
+        try { localClient?.Stop(); } catch { }
+        try { serverHost?.Stop(); } catch { }
+
         // CRITICAL: Explicitly save all pending world data before closing.
         // This must be called before any cleanup to ensure block edits are persisted.
         streamingManager?.Shutdown();
@@ -888,6 +1002,12 @@ internal class GameScene : Scene
     {
         if (camera == null || streamingManager == null) return [];
 
+        // Prefer server-reported ready set when available.
+        if (serverReadyChunkIndices.Count > 0)
+        {
+            return serverReadyChunkIndices.ToArray();
+        }
+
         // Get only the chunks that have actually been generated
         var (total, pending, generating, ready) = streamingManager.GetStats();
 
@@ -902,6 +1022,20 @@ internal class GameScene : Scene
         var indices = readyChunks.Select(c => c.ChunkIndex).ToArray();
 
         return indices;
+    }
+
+    private void ApplyChunkDelta(in ChunkDeltaSnapshot delta)
+    {
+        // Apply unloads first to keep sets consistent.
+        foreach (var idx in delta.UnloadedChunkIndices)
+        {
+            serverReadyChunkIndices.Remove(idx);
+        }
+
+        foreach (var idx in delta.LoadedChunkIndices)
+        {
+            serverReadyChunkIndices.Add(idx);
+        }
     }
 
     public override void OnResize(ResizeEventArgs e)
