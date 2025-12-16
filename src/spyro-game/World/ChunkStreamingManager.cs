@@ -1658,6 +1658,12 @@ public sealed class ChunkStreamingManager : IDisposable
         }
 
         // Phase 5.3: Free BOTH vertex and index buffer regions for reuse
+        // IMPORTANT: Clear indirect commands first so the renderer can't draw from freed/reused regions.
+        if (meshBuffers != null && desc.CommandSlot >= 0)
+        {
+            meshBuffers.FreeCommandSlot(desc.CommandSlot);
+        }
+
         if (desc.AtlasOffset >= 0 && desc.VisibleVoxelCount > 0 && meshBuffers != null)
         {
             var verticesPerFace = 4;
@@ -1674,12 +1680,7 @@ public sealed class ChunkStreamingManager : IDisposable
                 //Log.Debug($"Freed index region for chunk {chunkIndex}: offset={desc.IndexOffset}, size={desc.VisibleVoxelCount * indicesPerFace}");
             }
 
-            // Free command slot
-            if (desc.CommandSlot >= 0)
-            {
-                meshBuffers.FreeCommandSlot(desc.CommandSlot);
-                //Log.Debug($"Freed command slot for chunk {chunkIndex}: slot={desc.CommandSlot}");
-            }
+            // Command slot is freed above.
         }
 
         // Remove from active chunks

@@ -55,6 +55,19 @@ void main(){
     vBlockLight = float((lightByte >> 4) & 0xF) / 15.0;
 
     int chunkIdx=chunkInfo[gl_DrawIDARB];
+    if (chunkIdx < 0)
+    {
+        // Freed/invalid draw slot: clip safely.
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vWorldPos = vec3(0.0);
+        vNormal = vec3(0.0, 1.0, 0.0);
+        vTexCoord = vec2(0.0);
+        vAO = 1.0;
+        vViewDir = vec3(0.0);
+        vSkyLight = 0.0;
+        vBlockLight = 0.0;
+        return;
+    }
     int cx=chunkIdx%int(uWorldChunksXZ); 
     int cz=chunkIdx/int(uWorldChunksXZ);
     

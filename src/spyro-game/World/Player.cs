@@ -271,7 +271,9 @@ public class Player
         }
 
         // Exponential smoothing with a stable time constant.
-        const float positionSmoothingRate = 18.0f; // 1/s
+        // Keep this fairly stiff so the rendered camera doesn't lag whole chunks behind the server,
+        // otherwise server-authoritative streaming will appear to keep "too-far" chunks loaded.
+        const float positionSmoothingRate = 60.0f; // 1/s
         var dt = (float)Math.Clamp(elapsedSeconds, 0.0, 0.25);
         var alpha = 1.0f - MathF.Exp(-positionSmoothingRate * dt);
 

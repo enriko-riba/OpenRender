@@ -123,56 +123,11 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             changedChunkIndices.Add(changedIdx);
         }
 
-        // Build per-player snapshots and per-player visible chunk deltas.
+        // Maintain per-player bookkeeping.
         foreach (var kvp in players)
         {
             var playerId = kvp.Key;
             var player = kvp.Value;
-
-            // IMPORTANT: Treat chunk deltas as authoritative streaming state (loaded+ready),
-            // not as a secondary visibility/culling filter. Using a filtered set here can
-            // cause the client to stop rendering chunks that are still loaded, producing
-            // holes during movement (especially when moving backwards).
-            var currentVisibleReady = streamingManager.GetReadyChunksForPlayer(playerId);
-            var lastVisible = GetOrCreateLastVisibleSet(playerId);
-
-            List<int>? loaded = null;
-            foreach (var idx in currentVisibleReady)
-            {
-                if (!lastVisible.Contains(idx))
-                {
-                    loaded ??= [];
-                    loaded.Add(idx);
-                }
-            }
-
-            List<int>? unloaded = null;
-            foreach (var idx in lastVisible)
-            {
-                if (!currentVisibleReady.Contains(idx))
-                {
-                    unloaded ??= [];
-                    unloaded.Add(idx);
-                }
-            }
-
-            ChunkDeltaSnapshot? chunkDelta = null;
-            if (loaded != null || unloaded != null)
-            {
-                chunkDelta = new ChunkDeltaSnapshot(
-                    LoadedChunkIndices: loaded?.ToArray() ?? [],
-                    UnloadedChunkIndices: unloaded?.ToArray() ?? []);
-            }
-
-            // Queue payloads for newly loaded chunks.
-            if (loaded != null)
-            {
-                var pending = GetOrCreatePendingPayloadQueue(playerId);
-                foreach (var idx in loaded)
-                {
-                    pending.Enqueue(idx);
-                }
-            }
 
             // Establish the initial target set once: the player's desired set.
             // This is used to gate the server's "game start" signal.
@@ -186,23 +141,22 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 }
             }
 
-            // Queue payloads for changed chunks that this player currently has loaded.
-            if (changedChunkIndices.Count > 0)
+            // Queue payloads for changed chunks that the client has already been told are loaded.
+            // This avoids sending updates for chunks the client hasn't received a "load" delta for yet.
+            if (changedChunkIndices.Count > 0 && lastVisibleReadyChunksByPlayer.TryGetValue(playerId, out var lastSentReady))
             {
                 var pending = GetOrCreatePendingPayloadQueue(playerId);
                 foreach (var idx in changedChunkIndices)
                 {
-                    if (currentVisibleReady.Contains(idx))
+                    if (lastSentReady.Contains(idx))
                     {
                         pending.Enqueue(idx);
                     }
                 }
             }
 
-            lastVisible.Clear();
-            lastVisible.UnionWith(currentVisibleReady);
-
-            lastSnapshotByPlayer[playerId] = BuildSnapshot(player, chunkDelta);
+            // Store latest player-only snapshot; chunk deltas are computed when a snapshot is requested.
+            lastSnapshotByPlayer[playerId] = BuildSnapshot(player, chunkDelta: null);
         }
     }
 
@@ -290,7 +244,66 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     }
 
     public bool TryGetSnapshot(PlayerId playerId, out GameStateSnapshot snapshot)
-        => lastSnapshotByPlayer.TryGetValue(playerId, out snapshot);
+    {
+        snapshot = default;
+
+        if (!players.TryGetValue(playerId, out var player))
+        {
+            return false;
+        }
+
+        // Compute delta against the last snapshot that was actually SENT to the client.
+        // IMPORTANT: the host may tick multiple times per loop when catching up;
+        // if we compute deltas per server tick, the client can miss intermediate unloads.
+        var currentReady = streamingManager.GetReadyChunksForPlayer(playerId);
+        var lastSentReady = GetOrCreateLastVisibleSet(playerId);
+
+        List<int>? loaded = null;
+        foreach (var idx in currentReady)
+        {
+            if (!lastSentReady.Contains(idx))
+            {
+                loaded ??= [];
+                loaded.Add(idx);
+            }
+        }
+
+        List<int>? unloaded = null;
+        foreach (var idx in lastSentReady)
+        {
+            if (!currentReady.Contains(idx))
+            {
+                unloaded ??= [];
+                unloaded.Add(idx);
+            }
+        }
+
+        ChunkDeltaSnapshot? chunkDelta = null;
+        if (loaded != null || unloaded != null)
+        {
+            chunkDelta = new ChunkDeltaSnapshot(
+                LoadedChunkIndices: loaded?.ToArray() ?? [],
+                UnloadedChunkIndices: unloaded?.ToArray() ?? []);
+        }
+
+        // Queue initial payloads for newly loaded chunks so the client receives data promptly.
+        if (loaded != null)
+        {
+            var pending = GetOrCreatePendingPayloadQueue(playerId);
+            foreach (var idx in loaded)
+            {
+                pending.Enqueue(idx);
+            }
+        }
+
+        // Advance last-sent set.
+        lastSentReady.Clear();
+        lastSentReady.UnionWith(currentReady);
+
+        snapshot = BuildSnapshot(player, chunkDelta);
+        lastSnapshotByPlayer[playerId] = snapshot;
+        return true;
+    }
 
     private Player EnsurePlayer(PlayerId playerId)
     {

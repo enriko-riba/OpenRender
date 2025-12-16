@@ -3,7 +3,6 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.World;
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
 
 namespace SpyroGame.Client.Terrain;
 
@@ -32,6 +31,42 @@ public sealed class ClientTerrainSystem : IDisposable
 
     public int ActiveChunkCount => activeChunks.Count;
     public int PendingMeshCount => pendingMeshes.Count;
+
+    public int[] GetActiveChunkIndicesSnapshot()
+    {
+        if (activeChunks.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new int[activeChunks.Count];
+        var i = 0;
+        foreach (var idx in activeChunks.Keys)
+        {
+            result[i++] = idx;
+        }
+
+        return result;
+    }
+
+    public int[] GetReadyChunkIndicesSnapshot()
+    {
+        if (activeChunks.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<int>(capacity: Math.Max(16, activeChunks.Count));
+        foreach (var kvp in activeChunks)
+        {
+            if (kvp.Value.State == TerrainChunkState.Ready)
+            {
+                result.Add(kvp.Key);
+            }
+        }
+
+        return result.ToArray();
+    }
 
     public int ReadyChunkCount
     {

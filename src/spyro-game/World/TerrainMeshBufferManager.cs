@@ -839,14 +839,22 @@ public sealed class TerrainMeshBufferManager : IDisposable
 
         freeCommandSlots.Enqueue(slot);
 
-        // Zero out the command in the buffer so it doesn't draw anything
+        // Zero out the command in the buffer so it doesn't draw anything.
         // Command is 5 uints = 20 bytes. We have 3 commands per slot = 60 bytes.
-        var zeros = new uint[15]; // all zero
-        GL.NamedBufferSubData(indirectDrawBuffer, (IntPtr)(slot * 60), 60, zeros);
+        // Use the pointer overload to avoid any ambiguity about "size" units.
+        Span<uint> zeros = stackalloc uint[15];
+        zeros.Clear();
+        unsafe
+        {
+            fixed (uint* zerosPtr = zeros)
+            {
+                GL.NamedBufferSubData((int)indirectDrawBuffer, (IntPtr)(slot * 60), 60, (IntPtr)zerosPtr);
+            }
 
-        // Mark chunk info as invalid (-1)
-        var invalid = -1;
-        GL.NamedBufferSubData(chunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref invalid);
+            // Mark chunk info as invalid (-1)
+            var invalid = -1;
+            GL.NamedBufferSubData((int)chunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref invalid);
+        }
     }
 
     private void ResizeCommandSlotBuffer(uint newCapacity, uint oldCapacity)

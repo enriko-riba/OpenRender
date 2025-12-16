@@ -1,6 +1,7 @@
 using OpenRender;
 using OpenRender.Components;
 using OpenRender.Core;
+using OpenRender.Core.Culling;
 using OpenRender.Core.Geometry;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Rendering.Text;
@@ -46,6 +47,12 @@ internal class GameScene : Scene
     // Client-side view of server streaming state (chunk indices that are Ready).
     // This is the seam for future remote server chunk streaming.
     private readonly HashSet<int> serverReadyChunkIndices = [];
+
+    private readonly Frustum uiFrustum = new();
+
+    private sealed record DeferredChunkPayload(byte[] Payload, double ExpiresAtSeconds);
+    private readonly Dictionary<int, DeferredChunkPayload> deferredChunkPayloads = new();
+    private const double DeferredPayloadTtlSeconds = 2.0;
 
     private PlayerInputState lastSentInputState;
     private bool hasSentInitialInputState;
@@ -464,7 +471,7 @@ internal class GameScene : Scene
 
                 if (snap.ChunkDelta is { HasChanges: true } chunkDelta)
                 {
-                    ApplyChunkDelta(chunkDelta);
+                    ApplyChunkDelta(snap.TickId, snap.Player.Position, chunkDelta);
                 }
             }
 
@@ -480,16 +487,63 @@ internal class GameScene : Scene
         // Apply any received voxel payloads and upload meshes.
         if (localClient != null && terrainSystem != null)
         {
+            var nowSeconds = SceneManager.Time;
+
             const int maxChunkPayloadsToApplyPerFrame = 4;
             var appliedThisFrame = 0;
             while (localClient.TryDequeueChunkPayload(out var payload))
             {
-                terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
+                // Payloads can arrive out-of-order relative to snapshot deltas.
+                // If we apply a payload for a chunk that the server has already unloaded,
+                // we can accidentally resurrect stale terrain behind the visible disk.
+                if (serverReadyChunkIndices.Contains(payload.ChunkIndex))
+                {
+                    terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
+                    appliedThisFrame++;
+                }
+                else
+                {
+                    deferredChunkPayloads[payload.ChunkIndex] = new DeferredChunkPayload(payload.Payload, nowSeconds + DeferredPayloadTtlSeconds);
+                }
 
-                appliedThisFrame++;
                 if (appliedThisFrame >= maxChunkPayloadsToApplyPerFrame)
                 {
                     break;
+                }
+            }
+
+            // Apply deferred payloads for chunks that became ready.
+            // Keep the same per-frame budget.
+            if (appliedThisFrame < maxChunkPayloadsToApplyPerFrame && deferredChunkPayloads.Count > 0)
+            {
+                var toRemove = new List<int>(capacity: 8);
+                foreach (var kvp in deferredChunkPayloads)
+                {
+                    if (appliedThisFrame >= maxChunkPayloadsToApplyPerFrame)
+                    {
+                        break;
+                    }
+
+                    var idx = kvp.Key;
+                    var entry = kvp.Value;
+                    if (serverReadyChunkIndices.Contains(idx))
+                    {
+                        terrainSystem.ApplyChunkPayloadBytes(idx, entry.Payload);
+                        appliedThisFrame++;
+                        toRemove.Add(idx);
+                    }
+                    else
+                    {
+                        if (nowSeconds >= entry.ExpiresAtSeconds)
+                        {
+                            toRemove.Add(idx);
+                        }
+                    }
+                }
+
+                foreach (var idx in toRemove)
+                {
+                    deferredChunkPayloads.Remove(idx);
                 }
             }
 
@@ -610,18 +664,46 @@ internal class GameScene : Scene
 
         // Rendering Stats (Merged Chunks + Rendering)
         var readyChunks = serverReadyChunkIndices.Count;
-        var queuedChunks = 0;
-        var targetChunks = serverReadyChunkIndices.Count;
+
+        var clientActiveChunks = terrainSystem?.ActiveChunkCount ?? 0;
+        var clientReadyChunks = terrainSystem?.ReadyChunkCount ?? 0;
+        var clientPendingMeshes = terrainSystem?.PendingMeshCount ?? 0;
+
+        // UI-only frustum culling approximation for terrain.
+        // Uses the set of Ready chunks (chunks that can actually render).
+        var totalCullingChunks = 0;
+        var visibleCullingChunks = 0;
+        if (terrainSystem != null && camera != null)
+        {
+            uiFrustum.Update(camera);
+            var planes = uiFrustum.Planes;
+
+            var readyIndices = terrainSystem.GetReadyChunkIndicesSnapshot();
+            totalCullingChunks = readyIndices.Length;
+            for (var i = 0; i < readyIndices.Length; i++)
+            {
+                var idx = readyIndices[i];
+                var origin = VoxelHelper.GetChunkPositionGlobal(idx);
+                var min = new Vector3(origin.X, 0, origin.Z);
+                var max = new Vector3(origin.X + VoxelHelper.ChunkSideSize, VoxelHelper.ChunkYSize, origin.Z + VoxelHelper.ChunkSideSize);
+                if (CullingHelper.IsAabbCenterInFrustum((min, max), planes))
+                {
+                    visibleCullingChunks++;
+                }
+            }
+        }
+        else
+        {
+            totalCullingChunks = clientReadyChunks;
+            visibleCullingChunks = clientReadyChunks;
+        }
+
+        var culledCullingChunks = Math.Max(0, totalCullingChunks - visibleCullingChunks);
 
         WriteLine("Rendering:", highlightColor);
-        WriteLine($"  GPU Ready: {readyChunks:N0} | Queued: {queuedChunks:N0} | Target: {targetChunks:N0}", textColor);
-
-        // Visibility stats are not available in the decoupled client pipeline yet.
-        
-        if (terrainRenderer != null)
-        {
-            WriteLine($"  Visible Chunks: {terrainRenderer.VisibleDraws:N0} | Draw Calls: {terrainRenderer.DrawCallCount}", textColor);
-        }
+        WriteLine($"  GPU Ready: {readyChunks:N0}", textColor);
+        WriteLine($"  Frustum: culled {culledCullingChunks:N0} | visible {visibleCullingChunks:N0} | total {totalCullingChunks:N0}", textColor);
+        WriteLine($"  Client Chunks: active {clientActiveChunks:N0} | ready {clientReadyChunks:N0} | pending {clientPendingMeshes:N0}", textColor);
         WriteLine("", textColor);
 
         // Player Stats
@@ -702,7 +784,24 @@ internal class GameScene : Scene
             WriteLine("", textColor);
         }
 
-        // === RIGHT SIDE: Inventory at center, Controls below ===
+        // Controls below Picked Block (left side)
+        WriteLine("Controls:", highlightColor);
+        WriteLine("  WASD - Move", textColor);
+        WriteLine("  Shift/Ctrl - Up/Down", textColor);
+        WriteLine("  Mouse - Look", textColor);
+        WriteLine("  F - Toggle Ghost/Physics", textColor);
+        WriteLine("  F3 - Toggle Biome Debug", textColor);
+        WriteLine("  F5 - Toggle Wireframe", textColor);
+        WriteLine("  F6 - Generate Heightmap", textColor);
+        WriteLine("  F7 - Generate Biome Map", textColor);
+        WriteLine("  F8 - Generate Continentalness Map", textColor);
+        WriteLine("  F9 - Generate Temperature Map", textColor);
+        WriteLine("  F10 - Generate Humidity Map", textColor);
+        WriteLine("  F11 - Generate Erosion Map", textColor);
+        WriteLine("  Left Click - Break Block", textColor);
+        WriteLine("  Esc - Exit", textColor);
+
+        // === RIGHT SIDE: Inventory ===
         const int rightMargin = 300;
         var rightX = Width - rightMargin;
         const int invSlotHeight = 30;
@@ -721,33 +820,6 @@ internal class GameScene : Scene
 
             textRenderer.Render(content, 22, rightX, invStartY + i * invSlotHeight, color);
         }
-
-        // Controls below inventory
-        var controlsStartY = invStartY + invTotalHeight + 20;
-        const int controlLineHeight = 22;
-        var controlY = controlsStartY;
-
-        void WriteControlLine(string text, Vector3 color)
-        {
-            textRenderer.Render(text, 20, rightX, controlY, color);
-            controlY += controlLineHeight;
-        }
-
-        WriteControlLine("Controls:", highlightColor);
-        WriteControlLine("  WASD - Move", textColor);
-        WriteControlLine("  Shift/Ctrl - Up/Down", textColor);
-        WriteControlLine("  Mouse - Look", textColor);
-        WriteControlLine("  F - Toggle Ghost/Physics", textColor);
-        WriteControlLine("  F3 - Toggle Biome Debug", textColor);
-        WriteControlLine("  F5 - Toggle Wireframe", textColor);
-        WriteControlLine("  F6 - Generate Heightmap", textColor);
-        WriteControlLine("  F7 - Generate Biome Map", textColor);
-        WriteControlLine("  F8 - Generate Continentalness Map", textColor);
-        WriteControlLine("  F9 - Generate Temperature Map", textColor);
-        WriteControlLine("  F10 - Generate Humidity Map", textColor);
-        WriteControlLine("  F11 - Generate Erosion Map", textColor);
-        WriteControlLine("  Left Click - Break Block", textColor);
-        WriteControlLine("  Esc - Exit", textColor);
     }
 
     /// <summary>
@@ -808,12 +880,13 @@ internal class GameScene : Scene
         return serverReadyChunkIndices.ToArray();
     }
 
-    private void ApplyChunkDelta(in ChunkDeltaSnapshot delta)
+    private void ApplyChunkDelta(ulong tickId, Vector3 snapshotPlayerPosition, in ChunkDeltaSnapshot delta)
     {
         // Apply unloads first to keep sets consistent.
         foreach (var idx in delta.UnloadedChunkIndices)
         {
             serverReadyChunkIndices.Remove(idx);
+            deferredChunkPayloads.Remove(idx);
             terrainSystem?.UnloadChunk(idx);
         }
 

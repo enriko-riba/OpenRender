@@ -68,9 +68,6 @@ public sealed class LocalGameServerHost(
         var accumulator = TimeSpan.Zero;
         var maxCatchUp = TimeSpan.FromSeconds(0.25);
 
-        PlayerSnapshot? lastSentPlayer = null;
-        ChunkDeltaSnapshot? lastSentChunkDelta = null;
-
         while (!token.IsCancellationRequested)
         {
             var now = stopwatch.Elapsed;
@@ -119,15 +116,11 @@ public sealed class LocalGameServerHost(
 
             server.TryGetSnapshot(playerId, out var snapshot);
 
-            // Avoid sending state when nothing changed (idle).
-            var hasChunkChanges = snapshot.ChunkDelta is { HasChanges: true };
-            var chunkChanged = hasChunkChanges && (lastSentChunkDelta is null || !lastSentChunkDelta.Value.Equals(snapshot.ChunkDelta!.Value));
-            if (chunkChanged || lastSentPlayer is null || !lastSentPlayer.Value.Equals(snapshot.Player))
-            {
-                lastSentPlayer = snapshot.Player;
-                lastSentChunkDelta = snapshot.ChunkDelta;
-                connection.Send(new ServerStateMessage(playerId, snapshot));
-            }
+            // Always send the latest state after ticking.
+            // IMPORTANT: the server may advance multiple ticks per loop when catching up.
+            // Sending only "changed" snapshots can cause the client to miss intermediate
+            // unload deltas and accumulate stale chunks.
+            connection.Send(new ServerStateMessage(playerId, snapshot));
 
             // Send chunk voxel payloads for any loaded/changed chunks.
             if (server is IChunkPayloadSource payloadSource)
