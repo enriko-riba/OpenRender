@@ -56,19 +56,18 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     /// </summary>
     public BiomeId GetBiomeAtWorldPos(int worldX, int worldZ)
     {
-        // Get chunk indices from world coordinates
-        var chunkX = worldX / VoxelHelper.ChunkSideSize;
-        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
-        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
-        
+        var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(new OpenTK.Mathematics.Vector3i(worldX, 0, worldZ));
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+        var localX = worldX - chunkPos.X;
+        var localZ = worldZ - chunkPos.Z;
+
+        // Prefer high-resolution per-column biome data when present.
         if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData))
         {
-            // Calculate local coordinates within the chunk
-            var localX = worldX - chunkX * VoxelHelper.ChunkSideSize;
-            var localZ = worldZ - chunkZ * VoxelHelper.ChunkSideSize;
             return biomeData.GetBiomeAt(localX, localZ);
         }
-        return BiomeId.Plains; // Default fallback
+
+        return BiomeId.Unknown;
     }
 
     /// <summary>
@@ -76,14 +75,13 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     /// </summary>
     public (float C, float T, float H, float E, float PV)? GetClimateAtWorldPos(int worldX, int worldZ)
     {
-        var chunkX = worldX / VoxelHelper.ChunkSideSize;
-        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
-        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
-        
+        var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(new OpenTK.Mathematics.Vector3i(worldX, 0, worldZ));
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+        var localX = worldX - chunkPos.X;
+        var localZ = worldZ - chunkPos.Z;
+
         if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData) && biomeData != null)
         {
-            var localX = worldX - chunkX * VoxelHelper.ChunkSideSize;
-            var localZ = worldZ - chunkZ * VoxelHelper.ChunkSideSize;
             var climate = biomeData.GetInterpolatedClimate(localX, localZ);
             return (climate.continentalness, climate.temperature, climate.humidity, climate.erosion, climate.peaksValleys);
         }
@@ -95,14 +93,15 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     /// </summary>
     public (float C, float T, float H, float E, float PV, float W)? GetCellClimateAtWorldPos(int worldX, int worldZ)
     {
-        var chunkX = worldX / VoxelHelper.ChunkSideSize;
-        var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
-        var chunkIndex = chunkX + chunkZ * VoxelHelper.WorldChunksXZ;
-        
+        var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(new OpenTK.Mathematics.Vector3i(worldX, 0, worldZ));
+        var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+        var localX = worldX - chunkPos.X;
+        var localZ = worldZ - chunkPos.Z;
+
         if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData) && biomeData != null)
         {
-            var localX = ((worldX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
-            var localZ = ((worldZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+            localX = ((localX % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
+            localZ = ((localZ % VoxelHelper.ChunkSideSize) + VoxelHelper.ChunkSideSize) % VoxelHelper.ChunkSideSize;
             var cellX = localX / ChunkBiomeData.BlocksPerCell;
             var cellZ = localZ / ChunkBiomeData.BlocksPerCell;
             return biomeData.GetCellClimate(cellX, cellZ);
@@ -255,6 +254,8 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         public long Version => chunkData?.Version ?? -1;
 
         public bool IsValid => chunkData != null && chunkData.VoxelData != null;
+
+        public BiomeId ReadCoarseBiome(int localX, int localZ) => BiomeId.Unknown;
 
         /// <summary>
         /// Gets the surface height (highest opaque block Y) for a column in the chunk.

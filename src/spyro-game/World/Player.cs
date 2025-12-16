@@ -255,6 +255,11 @@ public class Player
         Inventory.ApplySnapshot(snapshot.Inventory);
         Attributes.ApplySnapshot(snapshot.Attributes);
 
+        // The client does not run authoritative physics; keep diagnostics derived from the
+        // server simulation so debug UI (VelY/grounded/jumping) remains accurate.
+        velocity = snapshot.Velocity;
+        isGrounded = snapshot.IsGrounded;
+
         // Keep chunk-local debug info in sync even when the client isn't simulating.
         UpdateChunkTrackingFromCurrentPosition();
     }

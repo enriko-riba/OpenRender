@@ -19,6 +19,7 @@ out vec3 vWorldPos; out vec3 vNormal; out vec2 vTexCoord; out float vAO; out vec
 flat out uint vBlockDescriptor; flat out uint vBiomeId; flat out uint vIsEmissive;
 flat out uint vFaceId;
 out float vSkyLight; out float vBlockLight;
+out float vBiomeDebugTint;
 
 vec2 getBaseUV(uint c){
     if(c==0u) return vec2(0,0); 
@@ -53,6 +54,10 @@ void main(){
     
     vSkyLight = float(lightByte & 0xF) / 15.0;
     vBlockLight = float((lightByte >> 4) & 0xF) / 15.0;
+
+    // Biome debug tint strength (consumed by fragment shader).
+    // Kept in the vertex shader so it can be tuned centrally and later varied per-face if desired.
+    vBiomeDebugTint = 0.85;
 
     int chunkIdx=chunkInfo[gl_DrawIDARB];
     if (chunkIdx < 0)

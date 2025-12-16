@@ -92,6 +92,7 @@ flat in uint vIsEmissive;       // Emissive flag (1 = full brightness)
 flat in uint vFaceId;           // Face ID (0-5 for cube faces, 6 for cross-billboard)
 in float vSkyLight;
 in float vBlockLight;
+in float vBiomeDebugTint;
 
 // ============================================================================
 // Fragment Output
@@ -171,8 +172,8 @@ vec4 sampleWaterTexture(uint blockId, vec2 localUV, vec3 normal, float time) {
 
 // Biome debug colors (for visualization when ShowBiomes is enabled)
 vec3 getBiomeDebugColor(uint biomeId) {
-    // 13 distinct colors for all biomes (including DeepOcean, River, Swamp)
-    vec3 colors[13] = vec3[13](
+    // Distinct colors for all biomes (including DeepOcean, River, Swamp, Lake)
+    vec3 colors[14] = vec3[14](
         vec3(0.0, 0.3, 0.8),   // 0: Ocean (blue)
         vec3(0.95, 0.85, 0.55),// 1: Beach (sand yellow)
         vec3(0.4, 0.75, 0.3),  // 2: Plains (bright green)
@@ -185,10 +186,11 @@ vec3 getBiomeDebugColor(uint biomeId) {
         vec3(0.98, 0.98, 1.0), // 9: Alpine (pure white)
         vec3(0.0, 0.15, 0.5),  // 10: DeepOcean (very dark blue)
         vec3(0.2, 0.5, 0.8),   // 11: River (light blue)
-        vec3(0.35, 0.5, 0.3)   // 12: Swamp (murky green)
+        vec3(0.35, 0.5, 0.3),  // 12: Swamp (murky green)
+        vec3(0.12, 0.35, 0.65) // 13: Lake (medium blue)
     );
     
-    if (biomeId < 13u) {
+    if (biomeId < 14u) {
         return colors[biomeId];
     }
     return vec3(1.0, 0.0, 1.0); // Magenta for unknown
@@ -220,6 +222,8 @@ void main() {
     // Check if this is water
     bool isWater = blockId == 1u;
     bool isTopFace = N.y > 0.5;
+
+    // Biome debug mode is applied later as a tint so textures remain readable.
 
     // Water fog color is used in multiple stages (water shading + final visibility clamp).
     vec3 waterFogColor = vec3(0.0);
@@ -378,10 +382,10 @@ void main() {
         }
     }
 
-    // Biome debug mode
+    // Biome debug mode: tint on top of the real textures so block details remain visible.
     if (uShowBiomes == 1 && !isWater) {
         vec3 biomeColor = getBiomeDebugColor(vBiomeId);
-        baseColor.rgb = mix(baseColor.rgb, biomeColor, 0.7);
+        baseColor.rgb = mix(baseColor.rgb, biomeColor, clamp(vBiomeDebugTint, 0.0, 1.0));
     }
 
     // Lighting

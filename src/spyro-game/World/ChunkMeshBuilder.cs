@@ -841,14 +841,18 @@ internal static class ChunkMeshBuilder
         /// </summary>
         public BiomeId SampleBiome(int localX, int localZ)
         {
-            if (biomeData is null)
-            {
-                return BiomeId.Plains; // Fallback if no biome data
-            }
             // Clamp to valid range
             localX = Math.Clamp(localX, 0, VoxelHelper.ChunkSideSize - 1);
             localZ = Math.Clamp(localZ, 0, VoxelHelper.ChunkSideSize - 1);
-            return biomeData.GetBiomeAt(localX, localZ);
+
+            // Prefer high-res per-column biomes when available.
+            if (biomeData is not null)
+            {
+                return biomeData.GetBiomeAt(localX, localZ);
+            }
+
+            // Fallback: indicate missing biome data.
+            return BiomeId.Unknown;
         }
 
         /// <summary>

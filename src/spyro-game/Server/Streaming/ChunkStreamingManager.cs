@@ -222,6 +222,25 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         using (var writer = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
         {
             chunkData.Serialize(writer);
+
+            // Optional biome payload (network-only).
+            // The client-side mesher/debug overlay needs per-column biome ids.
+            // In the client-server architecture ChunkBiomeData is owned by the server,
+            // so include a compact copy when available.
+            if (voxelCache.TryGetBiomeData(chunkIndex, out var biomeData) && biomeData != null)
+            {
+                const uint biomeMagic = 0x4D4F4942; // 'BIOM' in little-endian
+                const byte biomeVersion = 1;
+                writer.Write(biomeMagic);
+                writer.Write(biomeVersion);
+
+                // Only send per-column biome ids (16x16 = 256 bytes) to keep bandwidth low.
+                writer.Write(ChunkBiomeData.ColumnCount);
+                for (var i = 0; i < ChunkBiomeData.ColumnCount; i++)
+                {
+                    writer.Write((byte)biomeData.ColumnBiomes[i]);
+                }
+            }
         }
 
         payload = ms.ToArray();

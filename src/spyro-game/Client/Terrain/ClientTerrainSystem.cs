@@ -128,6 +128,38 @@ public sealed class ClientTerrainSystem : IDisposable
         }
 
         voxelCache.Store(data);
+
+        // Optional biome payload footer (network-only).
+        // Server may append per-column biome ids after the ChunkData payload.
+        if (ms.Position < ms.Length)
+        {
+            try
+            {
+                const uint biomeMagic = 0x4D4F4942; // 'BIOM' in little-endian
+                var magic = reader.ReadUInt32();
+                if (magic == biomeMagic)
+                {
+                    var biomeVersion = reader.ReadByte();
+                    if (biomeVersion == 1)
+                    {
+                        var len = reader.ReadInt32();
+                        if (len == ChunkBiomeData.ColumnCount)
+                        {
+                            var biomeData = new ChunkBiomeData();
+                            for (var i = 0; i < ChunkBiomeData.ColumnCount; i++)
+                            {
+                                biomeData.ColumnBiomes[i] = (BiomeId)reader.ReadByte();
+                            }
+                            voxelCache.StoreBiomeData(chunkIndex, biomeData);
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore malformed/partial footer; chunk voxel data is still valid.
+            }
+        }
         EnqueueCollisionRebuild(chunkIndex);
 
         if (!voxelCache.TryGetVersion(chunkIndex, out var version))
