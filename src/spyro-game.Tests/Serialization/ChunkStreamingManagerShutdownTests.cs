@@ -12,24 +12,16 @@ namespace SpyroGame.Tests.Serialization;
 public class ChunkStreamingManagerShutdownTests : IDisposable
 {
     private readonly string testSaveDir;
-    private readonly string originalDir;
 
     public ChunkStreamingManagerShutdownTests()
     {
         // Create isolated test directory
         testSaveDir = Path.Combine(Path.GetTempPath(), $"spyro_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(testSaveDir);
-        
-        // Store original directory and change to test directory
-        originalDir = Environment.CurrentDirectory;
-        Environment.CurrentDirectory = testSaveDir;
     }
 
     public void Dispose()
     {
-        // Restore original directory
-        Environment.CurrentDirectory = originalDir;
-        
         // Clean up test directory
         try
         {

@@ -184,12 +184,15 @@ public class ChunkData
 
     public static ChunkData Deserialize(System.IO.BinaryReader reader)
     {
-        var data = new ChunkData();
-        data.Version = reader.ReadInt64();
-        data.ChunkIndex = reader.ReadInt32();
+        var data = new ChunkData
+        {
+            Version = reader.ReadInt64(),
+            ChunkIndex = reader.ReadInt32(),
 
-        // Palette
-        data.paletteCount = reader.ReadInt32();
+            // Palette
+            paletteCount = reader.ReadInt32()
+        };
+
         if (data.Palette.Length < data.paletteCount)
         {
             data.Palette = new BlockId[data.paletteCount];
@@ -245,9 +248,7 @@ public class ChunkData
             if (airIndex != -1)
             {
                 // Swap Palette[0] and Palette[airIndex]
-                var temp = data.Palette[0];
-                data.Palette[0] = data.Palette[airIndex];
-                data.Palette[airIndex] = temp;
+                (data.Palette[airIndex], data.Palette[0]) = (data.Palette[0], data.Palette[airIndex]);
 
                 // Update reversePalette
                 data.reversePalette[data.Palette[0].GetId()] = 0;

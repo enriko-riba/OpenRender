@@ -98,8 +98,19 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         // Tick all connected players and update their streaming focal positions.
         foreach (var kvp in players)
         {
-            kvp.Value.Simulate(elapsedSeconds);
-            streamingManager.UpdatePlayer(kvp.Key, kvp.Value.Camera.Position);
+            var playerId = kvp.Key;
+            var player = kvp.Value;
+
+            // Do not run physics before the initial terrain/collision set is ready.
+            // Otherwise gravity can move the player below the surface during the loading scene,
+            // and the player will "spawn" underground once terrain data arrives.
+            if (gameStartSent.Contains(playerId))
+            {
+                player.Simulate(elapsedSeconds);
+            }
+
+            // Always update streaming focal position so initial chunks can load.
+            streamingManager.UpdatePlayer(playerId, player.Camera.Position);
         }
 
         // Server is authoritative for terrain streaming/generation.
