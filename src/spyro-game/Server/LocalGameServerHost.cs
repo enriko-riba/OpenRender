@@ -53,7 +53,21 @@ public sealed class LocalGameServerHost(
 
         if (localTask != null)
         {
-            try { localTask.Wait(TimeSpan.FromSeconds(1)); } catch { }
+            try { localTask.Wait(TimeSpan.FromSeconds(2)); } catch { }
+        }
+
+        // Graceful shutdown: apply any messages that were already enqueued but not yet processed.
+        // This prevents losing a last-moment BreakBlock/PlaceBlock when the user exits quickly.
+        try
+        {
+            while (connection.TryReceive(out var msg))
+            {
+                HandleMessage(msg);
+            }
+        }
+        catch
+        {
+            // Best-effort.
         }
     }
 
@@ -121,6 +135,12 @@ public sealed class LocalGameServerHost(
             // Sending only "changed" snapshots can cause the client to miss intermediate
             // unload deltas and accumulate stale chunks.
             connection.Send(new ServerStateMessage(playerId, snapshot));
+
+            // Send mob state for the player (nearby/loaded chunks).
+            if (server is LocalGameServer localServer && localServer.TryGetMobSnapshot(playerId, out var mobSnapshot))
+            {
+                connection.Send(new ServerMobStateMessage(playerId, mobSnapshot));
+            }
 
             // Send chunk voxel payloads for any loaded/changed chunks.
             if (server is IChunkPayloadSource payloadSource)

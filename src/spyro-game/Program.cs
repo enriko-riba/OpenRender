@@ -70,4 +70,14 @@ scm.AddScene(gameScene);
 var loadingScene = new TerrainLoadingScene(tr1, session);
 scm.AddScene(loadingScene);
 scm.ActivateScene(loadingScene);
-scm.Run();
+
+try
+{
+    scm.Run();
+}
+finally
+{
+    // Ensure server shutdown flushes dirty chunk states/edits to disk.
+    try { session.Stop(); } catch { }
+    try { serverStreamer.Dispose(); } catch { }
+}

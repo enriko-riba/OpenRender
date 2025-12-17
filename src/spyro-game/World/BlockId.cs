@@ -289,6 +289,17 @@ public static class BlockIdExtensions
     public static bool IsEmissive(this BlockId block) => BlockRegistry.IsEmissive(block);
 
     /// <summary>
+    /// Returns true if this block is tree.
+    /// </summary>
+    public static bool IsTree(this BlockId block) => BlockRegistry.IsTree(block);
+
+    /// <summary>
+    /// Returns true if this block is vegetation (plants, flowers, grass).
+    /// </summary>
+    /// <returns></returns>
+    public static bool IsVegetation(this BlockId block) => BlockRegistry.IsVegetation(block);
+
+    /// <summary>
     /// Returns true if this block is transparent (can be seen through).
     /// Includes: air, liquids (water/lava), translucent solids (glass/ice), and alpha-test blocks (leaves).
     /// Used for determining if faces should be rendered against this block.

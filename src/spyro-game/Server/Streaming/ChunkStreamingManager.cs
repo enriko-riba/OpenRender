@@ -29,7 +29,9 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private const string SaveRootFolderName = "save";
     private const string ChunkFilePrefix = "chunk_";
     private const string ChunkEditsSuffix = "_edits";
-    private const string ChunkSaveFileExtension = ".dat";
+    public const string ChunkSaveFileExtension = ".dat";
+
+    private const string TerrainConfigFileName = "terrain_config.json";
 
     private const string ChunkStateMagic = "CHNK";
     private const int ChunkStateSaveFileVersion = 2;
@@ -69,6 +71,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private readonly object chunkStateLoadLock = new();
     private readonly HashSet<int> loadingChunkStates = [];
     private readonly HashSet<int> missingChunkStatesOnDisk = [];
+    private readonly HashSet<int> knownChunkStatesOnDisk = [];
 
     // Monotonic counter for per-chunk edits so we can safely "bake" edits into full saves.
     private readonly Dictionary<int, long> chunkEditsVersion = [];
@@ -126,6 +129,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         terrainConfig.Seed = generationSeed;
         cpuGenerationJobs.UpdateConfig(terrainConfig);
         LoadEdits();
+        IndexChunkStateFilesOnDisk();
         lastEditsSaveUtc = DateTime.UtcNow;
         lastChunkStateSaveUtc = DateTime.UtcNow;
     }
@@ -480,7 +484,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
             var folderName = $"{terrainConfig.WorldName}_{generationSeed}";
             var editsFileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkEditsSuffix}{ChunkSaveFileExtension}";
-            var editsPath = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, editsFileName);
+            var editsPath = Path.Combine(ResolveDataRoot(), SaveRootFolderName, folderName, editsFileName);
             if (File.Exists(editsPath))
             {
                 File.Delete(editsPath);
@@ -601,6 +605,12 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 continue;
             }
 
+            lock (chunkStateLoadLock)
+            {
+                knownChunkStatesOnDisk.Add(result.ChunkIndex);
+                missingChunkStatesOnDisk.Remove(result.ChunkIndex);
+            }
+
             var currentEditsVersion = chunkEditsVersion.TryGetValue(result.ChunkIndex, out var v) ? v : 0;
             if (currentEditsVersion == result.EditsVersionAtSnapshot)
             {
@@ -611,6 +621,14 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                     chunkEdits.Remove(result.ChunkIndex);
                 }
             }
+        }
+    }
+
+    private bool IsChunkStateKnownOnDisk(int chunkIdx)
+    {
+        lock (chunkStateLoadLock)
+        {
+            return knownChunkStatesOnDisk.Contains(chunkIdx);
         }
     }
 
@@ -657,7 +675,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
         var folderName = $"{terrainConfig.WorldName}_{generationSeed}";
         var fileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkSaveFileExtension}";
-        return Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, fileName);
+        return Path.Combine(ResolveDataRoot(), SaveRootFolderName, folderName, fileName);
     }
 
     private static void ApplyEditsToChunkData(ChunkData data, Dictionary<int, BlockId> edits)
@@ -755,7 +773,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             var chunkPos = VoxelHelper.GetChunkPositionGlobal(chunkIdx);
             var folderName = $"{terrainConfig.WorldName}_{generationSeed}";
             var fileName = $"{ChunkFilePrefix}{chunkPos.X}_{chunkPos.Z}{ChunkEditsSuffix}{ChunkSaveFileExtension}";
-            var path = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName, fileName);
+            var path = Path.Combine(ResolveDataRoot(), SaveRootFolderName, folderName, fileName);
 
             var dirName = Path.GetDirectoryName(path);
             if (dirName is not null)
@@ -837,6 +855,20 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 continue;
             }
 
+            // If we KNOW there is a full chunk state on disk, do not generate it.
+            // Always load (or defer until we can enqueue a load) so saved edits are applied reliably.
+            if (IsChunkStateKnownOnDisk(idx))
+            {
+                if (TryEnqueueChunkStateLoad(idx))
+                {
+                    continue;
+                }
+
+                // Defer until we can enqueue the load (e.g., queue is temporarily full).
+                // Generation would overwrite the saved state.
+                continue;
+            }
+
             // Fast path: if we have a full chunk state on disk, load it via background workers.
             // IMPORTANT: no disk IO or decompression on the tick thread.
             if (enqueuedLoadsThisTick < MaxChunkStateLoadRequestsEnqueuedPerTick
@@ -852,6 +884,69 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             var edits = BuildBlockIdEdits(idx);
             cpuGenerationJobs.Enqueue(idx, edits, GenerationJobType.BaseTerrain);
             generatingChunks.Add(idx);
+        }
+    }
+
+    private void IndexChunkStateFilesOnDisk()
+    {
+        // Best-effort: build an index of chunk state files so we can prioritize loading saves
+        // and avoid generating over them when the per-tick load enqueue budget is hit.
+        try
+        {
+            var folderName = $"{terrainConfig.WorldName}_{generationSeed}";
+            var dirPath = Path.Combine(ResolveDataRoot(), SaveRootFolderName, folderName);
+            if (!Directory.Exists(dirPath))
+            {
+                lock (chunkStateLoadLock)
+                {
+                    knownChunkStatesOnDisk.Clear();
+                }
+                return;
+            }
+
+            var files = Directory.GetFiles(dirPath, $"{ChunkFilePrefix}*{ChunkSaveFileExtension}");
+            var indexed = new HashSet<int>();
+
+            foreach (var file in files)
+            {
+                // Skip edits files.
+                if (file.EndsWith($"{ChunkEditsSuffix}{ChunkSaveFileExtension}", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var name = Path.GetFileNameWithoutExtension(file);
+                var parts = name.Split('_');
+                if (parts.Length < 3
+                    || !int.TryParse(parts[1], out var worldX)
+                    || !int.TryParse(parts[2], out var worldZ))
+                {
+                    continue;
+                }
+
+                // Files encode chunk origin in world block coordinates, not chunk indices.
+                var chunkX = worldX / VoxelHelper.ChunkSideSize;
+                var chunkZ = worldZ / VoxelHelper.ChunkSideSize;
+                if (chunkX < 0 || chunkZ < 0 || chunkX >= VoxelHelper.WorldChunksXZ || chunkZ >= VoxelHelper.WorldChunksXZ)
+                {
+                    continue;
+                }
+
+                indexed.Add(chunkZ * VoxelHelper.WorldChunksXZ + chunkX);
+            }
+
+            lock (chunkStateLoadLock)
+            {
+                knownChunkStatesOnDisk.Clear();
+                foreach (var idx in indexed)
+                {
+                    knownChunkStatesOnDisk.Add(idx);
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort.
         }
     }
 
@@ -991,8 +1086,8 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
     private static TerrainConfig LoadTerrainConfig()
     {
-        const string configFileName = "terrain_config.json";
-        var path = Path.Combine(Environment.CurrentDirectory, configFileName);
+        var root = ResolveDataRoot();
+        var path = Path.Combine(root, TerrainConfigFileName);
         if (File.Exists(path))
         {
             try
@@ -1007,11 +1102,51 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         return new TerrainConfig();
     }
 
+    private static string ResolveDataRoot()
+    {
+        static bool LooksLikeDataRoot(string dir)
+            => File.Exists(Path.Combine(dir, TerrainConfigFileName))
+               || Directory.Exists(Path.Combine(dir, SaveRootFolderName));
+
+        var cwd = Environment.CurrentDirectory;
+        if (!string.IsNullOrWhiteSpace(cwd) && LooksLikeDataRoot(cwd))
+        {
+            return cwd;
+        }
+
+        var baseDir = AppContext.BaseDirectory;
+        if (!string.IsNullOrWhiteSpace(baseDir) && LooksLikeDataRoot(baseDir))
+        {
+            return baseDir;
+        }
+
+        // Walk up a few parents from the executable directory. This handles running from bin/Debug
+        // while keeping saves/config in the project folder.
+        try
+        {
+            var dir = new DirectoryInfo(baseDir);
+            for (var i = 0; i < 6 && dir.Parent != null; i++)
+            {
+                dir = dir.Parent;
+                if (LooksLikeDataRoot(dir.FullName))
+                {
+                    return dir.FullName;
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort.
+        }
+
+        return baseDir;
+    }
+
     private void LoadEdits()
     {
         // Load persisted chunk edit dictionaries (seed + edits -> regenerated chunks match).
         var folderName = $"{terrainConfig.WorldName}_{generationSeed}";
-        var dirPath = Path.Combine(Environment.CurrentDirectory, SaveRootFolderName, folderName);
+        var dirPath = Path.Combine(ResolveDataRoot(), SaveRootFolderName, folderName);
         if (!Directory.Exists(dirPath))
         {
             return;

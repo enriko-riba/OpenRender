@@ -16,6 +16,7 @@ public sealed class LocalGameClient(
 
     private readonly System.Collections.Concurrent.ConcurrentQueue<ServerChunkPayloadMessage> chunkPayloads = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<GameStateSnapshot> snapshots = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<MobStateSnapshot> mobSnapshots = new();
 
     private LoadingProgressSnapshot? lastLoadingProgress;
     private GameStateSnapshot? lastSnapshot;
@@ -63,6 +64,9 @@ public sealed class LocalGameClient(
 
     public bool TryDequeueSnapshot(out GameStateSnapshot snapshot)
         => snapshots.TryDequeue(out snapshot);
+
+    public bool TryDequeueMobSnapshot(out MobStateSnapshot snapshot)
+        => mobSnapshots.TryDequeue(out snapshot);
 
     public void SendInput(PlayerInputCommand input) => connection.Send(new ClientInputMessage(playerId, input));
 
@@ -136,6 +140,13 @@ public sealed class LocalGameClient(
                     {
                         lastSnapshot = state.Snapshot;
                     }
+                }
+                break;
+
+            case ServerMobStateMessage mobs:
+                if (mobs.PlayerId.Equals(playerId))
+                {
+                    mobSnapshots.Enqueue(mobs.Snapshot);
                 }
                 break;
 

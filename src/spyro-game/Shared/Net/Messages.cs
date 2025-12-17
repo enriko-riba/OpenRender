@@ -15,6 +15,8 @@ public readonly record struct ClientHelloMessage(PlayerId PlayerId) : IClientToS
 
 public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSnapshot Snapshot) : IServerToClientMessage;
 
+public readonly record struct ServerMobStateMessage(PlayerId PlayerId, MobStateSnapshot Snapshot) : IServerToClientMessage;
+
 public readonly record struct ServerLoadingProgressMessage(PlayerId PlayerId, LoadingProgressSnapshot Progress) : IServerToClientMessage;
 
 public readonly record struct ServerGameStartMessage(PlayerId PlayerId) : IServerToClientMessage;

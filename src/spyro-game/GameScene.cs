@@ -13,11 +13,11 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Client;
+using SpyroGame.Client.Mobs;
 using SpyroGame.Client.Terrain;
 using SpyroGame.Shared.Commands;
-using SpyroGame.Shared.Net;
-using SpyroGame.Shared.State;
 using SpyroGame.Shared.Input;
+using SpyroGame.Shared.State;
 using SpyroGame.World;
 using SpyroGame.World.Generation;
 
@@ -41,6 +41,8 @@ internal class GameScene : Scene
     private BlockPickingService? blockPickingService;
     private LocalGameClient? localClient;
     private GameSession? session;
+
+    private MobBlockRenderer? mobRenderer;
 
     private PlayerId localPlayerId;
 
@@ -223,6 +225,9 @@ internal class GameScene : Scene
         // Create skybox
         skyBox = SkyBoxSun.Create(dayNightCycle);
         AddNode(skyBox);
+
+        // Client-side mob renderer (single Corey-textured block per mob).
+        mobRenderer ??= new MobBlockRenderer(this);
 
         // Add terrain renderer
         if (terrainRenderer != null)
@@ -480,6 +485,18 @@ internal class GameScene : Scene
                 player.ApplyServerSnapshot(latestSnap.Value.Player);
             }
 
+            // Apply latest mob snapshot (if any) to the renderer.
+            MobStateSnapshot? latestMobSnap = null;
+            while (localClient.TryDequeueMobSnapshot(out var mobSnap))
+            {
+                latestMobSnap = mobSnap;
+            }
+
+            if (latestMobSnap.HasValue)
+            {
+                mobRenderer?.ApplySnapshot(latestMobSnap.Value);
+            }
+
             // Smooth rendered position between server ticks.
             player.UpdateClientSmoothing(elapsedSeconds);
         }
@@ -650,7 +667,7 @@ internal class GameScene : Scene
         // Performance - FPS at very top (no title)
         WriteLine($"FPS: {SceneManager.Fps:F0} ({SceneManager.AvgFrameDuration:F2}ms)", textColor);
         WriteLine($"View Distance: {VoxelHelper.MaxDistanceInChunks} chunks", textColor);
-        
+
         // Show biome debug mode indicator
         if (terrainRenderer?.ShowBiomes == true)
         {
@@ -865,7 +882,7 @@ internal class GameScene : Scene
     public override void Close()
     {
         try { localClient?.Stop(); } catch { }
-        
+
         world?.Close();
         base.Close();
     }

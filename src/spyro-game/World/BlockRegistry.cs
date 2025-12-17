@@ -51,6 +51,10 @@ public enum BlockFlags : byte
     Replaceable = 1 << 4,
     /// <summary>Emits light, rendered at full brightness.</summary>
     Emissive = 1 << 5,
+    /// <summary>Is a tree with trunc and leaves.</summary>
+    Tree = 1 << 6,
+    /// <summary>Is vegetation.</summary>
+    Vegetation = 1 << 7,
 }
 
 /// <summary>
@@ -86,6 +90,8 @@ public readonly record struct BlockProperties(
     public bool IsTranslucent => (Flags & BlockFlags.Translucent) != 0;
     public bool IsReplaceable => (Flags & BlockFlags.Replaceable) != 0;
     public bool IsEmissive => (Flags & BlockFlags.Emissive) != 0;
+    public bool IsTree => (Flags & BlockFlags.Tree) != 0;
+    public bool IsVegetation => (Flags & BlockFlags.Vegetation) != 0;
 }
 
 /// <summary>
@@ -165,10 +171,10 @@ public static class BlockRegistry
         RegisterOpaqueSolid(builder, BlockId.CopperOre);
 
         // === Wood Types ===
-        RegisterOpaqueSolid(builder, BlockId.OakLog);
-        RegisterOpaqueSolid(builder, BlockId.BirchLog);
-        RegisterOpaqueSolid(builder, BlockId.SpruceLog);
-        RegisterOpaqueSolid(builder, BlockId.JungleLog);
+        RegisterTree(builder, BlockId.OakLog);
+        RegisterTree(builder, BlockId.BirchLog);
+        RegisterTree(builder, BlockId.SpruceLog);
+        RegisterTree(builder, BlockId.JungleLog);
 
         // === Leaves (translucent, alpha test) ===
         RegisterLeaves(builder, BlockId.OakLeaves);
@@ -279,10 +285,15 @@ public static class BlockRegistry
     private static void RegisterOpaqueSolid(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, BlockProperties.Default);
 
+    private static void RegisterTree(Dictionary<ushort, BlockProperties> builder, BlockId block)
+        => Register(builder, block, new(
+        BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Tree,
+        0, 15, RenderMethod.Opaque, BlockRenderShape.FullCube));
+
     private static void RegisterLeaves(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
-            BlockFlags.Solid, // | BlockFlags.Translucent,
-            0, 1, RenderMethod.AlphaTest));
+            BlockFlags.Solid | BlockFlags.Tree,
+            0, 2, RenderMethod.AlphaTest));
 
     private static void RegisterGlass(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
@@ -291,7 +302,8 @@ public static class BlockRegistry
 
     private static void RegisterFlower(Dictionary<ushort, BlockProperties> builder, BlockId block)
         => Register(builder, block, new(
-            BlockFlags.Replaceable, // Can be washed away by water
+            BlockFlags.Replaceable // Can be washed away by water
+            | BlockFlags.Vegetation, 
             0, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
 
     /// <summary>
@@ -343,4 +355,10 @@ public static class BlockRegistry
 
     /// <summary>Returns true if this block is emissive.</summary>
     public static bool IsEmissive(BlockId block) => GetProperties(block).IsEmissive;
+
+    /// <summary
+    public static bool IsTree(BlockId block) => GetProperties(block).IsTree;
+
+    /// <summary>Returns true if this block is vegetation.</summary>
+    public static bool IsVegetation(BlockId block) => GetProperties(block).IsVegetation;
 }

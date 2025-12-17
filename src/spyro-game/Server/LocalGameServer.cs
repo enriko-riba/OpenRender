@@ -1,5 +1,6 @@
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
+using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
@@ -50,6 +51,13 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
     private ulong tickId;
     private double serverTimeSeconds;
+
+    private readonly MobManager mobManager = new();
+    private readonly MobSpawnSystem mobSpawnSystem = new(
+        new MobSpawnSystem.Settings(
+            NoSpawnRadiusBlocks: 12,
+            SpawnRadiusBlocks: 56,
+            MaxSpawnAttemptsPerTick: 4));
 
     private readonly Dictionary<PlayerId, Player> players = [];
     private readonly Dictionary<PlayerId, HashSet<int>> lastVisibleReadyChunksByPlayer = [];
@@ -115,6 +123,132 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
         // Server is authoritative for terrain streaming/generation.
         streamingManager.Tick(elapsedSeconds);
+
+        // Keep mobs scoped to the active (loaded/ready) region.
+        // For Phase 1, we consider a mob active if its chunk is ready for ANY connected player.
+        var anyReadyChunks = new HashSet<int>();
+        foreach (var playerId in players.Keys)
+        {
+            var ready = streamingManager.GetReadyChunksForPlayer(playerId);
+            anyReadyChunks.UnionWith(ready);
+        }
+
+        if (anyReadyChunks.Count > 0 && mobManager.Mobs.Count > 0)
+        {
+            List<MobId>? toRemove = null;
+            foreach (var mob in mobManager.Mobs.Values)
+            {
+                var chunkIdx = GetChunkIndexFromWorldPos(mob.Position);
+                if (!anyReadyChunks.Contains(chunkIdx))
+                {
+                    toRemove ??= [];
+                    toRemove.Add(mob.Id);
+                }
+            }
+
+            if (toRemove != null)
+            {
+                foreach (var id in toRemove)
+                {
+                    mobManager.Remove(id);
+                }
+            }
+        }
+
+        // Phase 1 spawning: sample candidate positions around players within their ready chunks.
+        if (players.Count > 0)
+        {
+            var playerPositions = new (PlayerId PlayerId, Vector3 Position)[players.Count];
+            var i = 0;
+            foreach (var kvp in players)
+            {
+                playerPositions[i++] = (kvp.Key, kvp.Value.Position);
+            }
+
+            mobSpawnSystem.Tick(
+                tickId,
+                serverTimeSeconds,
+                playerPositions,
+                world,
+                isChunkReadyForPlayer: streamingManager.IsChunkReadyForPlayer,
+                mobManager);
+        }
+
+        // Minimal Phase 1 movement: slow wandering on the surface.
+        // Keep mobs within ready chunks for at least one player.
+        if (mobManager.Mobs.Count > 0 && anyReadyChunks.Count > 0)
+        {
+            var dt = (float)Math.Clamp(elapsedSeconds, 0.0, 0.1);
+            foreach (var mob in mobManager.Mobs.Values)
+            {
+                if (mob.IsDead) continue;
+
+                var mobChunk = GetChunkIndexFromWorldPos(mob.Position);
+                if (!anyReadyChunks.Contains(mobChunk))
+                {
+                    continue;
+                }
+
+                // Occasionally change heading.
+                if (Random.Shared.NextDouble() < 0.02)
+                {
+                    mob.YawDegrees += (float)(Random.Shared.NextDouble() * 120.0 - 60.0);
+                    if (mob.YawDegrees < 0) mob.YawDegrees += 360;
+                    if (mob.YawDegrees >= 360) mob.YawDegrees -= 360;
+                }
+
+                var yawRad = MathHelper.DegreesToRadians(mob.YawDegrees);
+                var dir = new Vector3(MathF.Sin(yawRad), 0, MathF.Cos(yawRad));
+                var speed = mob.Definition.WalkSpeed * 0.25f;
+
+                var next = mob.Position + dir * (speed * dt);
+
+                // Snap to surface height in the destination column.
+                var wx = (int)MathF.Floor(next.X);
+                var wz = (int)MathF.Floor(next.Z);
+                if (wx < 0 || wz < 0 || wx > VoxelHelper.MaxBlockPositionXZ || wz > VoxelHelper.MaxBlockPositionXZ)
+                {
+                    continue;
+                }
+
+                var nextChunk = VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(wx, 0, wz));
+                if (!anyReadyChunks.Contains(nextChunk))
+                {
+                    continue;
+                }
+
+                var chunk = world[nextChunk];
+                if (chunk is null || !chunk.HasCollisionData)
+                {
+                    continue;
+                }
+
+                var origin = VoxelHelper.GetChunkPositionGlobal(nextChunk);
+                var lx = wx - origin.X;
+                var lz = wz - origin.Z;
+                if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize)
+                {
+                    continue;
+                }
+
+                var heightTopFace = chunk.GetTerrainHeightAt(lx, lz);
+                var startY = Math.Clamp(heightTopFace - 1, 0, VoxelHelper.MaxBlockPositionY);
+                if (!TryFindMobGroundY(world, wx, wz, startY, out var groundY))
+                {
+                    continue;
+                }
+
+                var spawnY = groundY + 1;
+                if (!HasMobHeadroom(world, wx, spawnY, wz))
+                {
+                    continue;
+                }
+                next.Y = spawnY + 0.55f;
+                mob.Position = next;
+                mob.Velocity = dir * speed;
+                mob.OnGround = true;
+            }
+        }
 
         // Drain global changed-chunk queue once per tick.
         var changedChunkIndices = new List<int>();
@@ -305,6 +439,36 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         return true;
     }
 
+    public bool TryGetMobSnapshot(PlayerId playerId, out MobStateSnapshot snapshot)
+    {
+        snapshot = default;
+
+        if (!players.ContainsKey(playerId))
+        {
+            return false;
+        }
+
+        var ready = streamingManager.GetReadyChunksForPlayer(playerId);
+        if (ready.Count == 0 || mobManager.Mobs.Count == 0)
+        {
+            snapshot = new MobStateSnapshot(tickId, serverTimeSeconds, Mobs: []);
+            return true;
+        }
+
+        var list = new List<MobSnapshot>(capacity: Math.Min(mobManager.Mobs.Count, 64));
+        foreach (var mob in mobManager.Mobs.Values)
+        {
+            var idx = GetChunkIndexFromWorldPos(mob.Position);
+            if (ready.Contains(idx))
+            {
+                list.Add(mob.ToSnapshot());
+            }
+        }
+
+        snapshot = new MobStateSnapshot(tickId, serverTimeSeconds, list.ToArray());
+        return true;
+    }
+
     private Player EnsurePlayer(PlayerId playerId)
     {
         if (players.TryGetValue(playerId, out var existing))
@@ -376,5 +540,62 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             ServerTimeSeconds: serverTimeSeconds,
             Player: pSnap,
             ChunkDelta: chunkDelta);
+    }
+
+    private static int GetChunkIndexFromWorldPos(in Vector3 worldPos)
+    {
+        // Chunk index is based on XZ only; Y is ignored.
+        // Use floor to match block-space semantics.
+        var x = (int)MathF.Floor(worldPos.X);
+        var z = (int)MathF.Floor(worldPos.Z);
+        return VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(x, 0, z));
+    }
+
+    private static bool TryFindMobGroundY(VoxelWorld world, int wx, int wz, int startY, out int groundY)
+    {
+        groundY = 0;
+        const int maxScan = 48;
+        var yMin = Math.Max(0, startY - maxScan);
+
+        for (var y = startY; y >= yMin; y--)
+        {
+            var b = world.GetBlockByPositionGlobalSafe(wx, y, wz);
+            if (b is null) continue;
+
+            if (IsSuitableMobGround(b.Value.Block))
+            {
+                groundY = y;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSuitableMobGround(BlockId block)
+    {
+        if (!block.IsSolid()) return false;
+        if (block.IsLiquid()) return false;
+        if (!block.IsOpaque()) return false;
+
+        return block is not (BlockId.OakLog or BlockId.BirchLog or BlockId.SpruceLog or BlockId.JungleLog)
+               && block is not (BlockId.OakLeaves or BlockId.BirchLeaves or BlockId.SpruceLeaves or BlockId.JungleLeaves);
+    }
+
+    private static bool HasMobHeadroom(VoxelWorld world, int wx, int spawnY, int wz)
+    {
+        var a0 = world.GetBlockByPositionGlobalSafe(wx, spawnY, wz);
+        if (a0 is not null && (!a0.Value.Block.IsReplaceable() || a0.Value.Block.IsLiquid()))
+        {
+            return false;
+        }
+
+        var a1 = world.GetBlockByPositionGlobalSafe(wx, spawnY + 1, wz);
+        if (a1 is not null && (!a1.Value.Block.IsReplaceable() || a1.Value.Block.IsLiquid()))
+        {
+            return false;
+        }
+
+        return true;
     }
 }

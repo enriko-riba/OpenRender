@@ -1,7 +1,9 @@
+using SpyroGame.Server.Streaming;
 using SpyroGame.World;
 using System.IO.Compression;
 using Xunit;
 using static SpyroGame.Tests.Common.LightingTestHelpers;
+using ChunkStreamingManager = SpyroGame.Server.Streaming.ChunkStreamingManager;
 
 namespace SpyroGame.Tests.Serialization;
 
