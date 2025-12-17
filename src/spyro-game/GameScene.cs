@@ -53,7 +53,7 @@ internal class GameScene : Scene
     private readonly Frustum uiFrustum = new();
 
     private sealed record DeferredChunkPayload(byte[] Payload, double ExpiresAtSeconds);
-    private readonly Dictionary<int, DeferredChunkPayload> deferredChunkPayloads = new();
+    private readonly Dictionary<int, DeferredChunkPayload> deferredChunkPayloads = [];
     private const double DeferredPayloadTtlSeconds = 2.0;
 
     private PlayerInputState lastSentInputState;
@@ -864,17 +864,17 @@ internal class GameScene : Scene
     private const int DebugMapCellSizeBlocks = 2;
     private const bool DebugMapMirrorX = true;
 
-    private void GenerateBiomeDebugMap()
+    private static void GenerateBiomeDebugMap()
     {
         Log.Warn("Biome debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
 
-    private void GenerateClimateDebugMap(ClimateParameter parameter)
+    private static void GenerateClimateDebugMap(ClimateParameter parameter)
     {
         Log.Warn("Climate debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
 
-    private void GenerateHeightDebugMap()
+    private static void GenerateHeightDebugMap()
     {
         Log.Warn("Height debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
     }
@@ -894,7 +894,7 @@ internal class GameScene : Scene
     private int[] GenerateSurroundingChunkIndices()
     {
         if (camera == null) return [];
-        return serverReadyChunkIndices.ToArray();
+        return [.. serverReadyChunkIndices];
     }
 
     private void ApplyChunkDelta(ulong tickId, Vector3 snapshotPlayerPosition, in ChunkDeltaSnapshot delta)

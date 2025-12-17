@@ -86,7 +86,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private readonly CancellationTokenSource chunkStateSaveCts = new();
     private readonly Task[] chunkStateSaveWorkers;
 
-    private TerrainConfig terrainConfig;
+    private readonly TerrainConfig terrainConfig;
     private int generationSeed;
 
     public CollisionManager CollisionManager { get; } = new();
@@ -180,7 +180,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     {
         if (desiredChunksByPlayer.TryGetValue(playerId, out var desired))
         {
-            desiredChunks = new HashSet<int>(desired);
+            desiredChunks = [.. desired];
             return true;
         }
 
@@ -1069,7 +1069,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             return edits;
         }
 
-        edits = new Dictionary<int, BlockId>();
+        edits = [];
         chunkEdits[chunkIdx] = edits;
         return edits;
     }

@@ -156,19 +156,16 @@ public sealed class LocalGameServerHost(
                     payloads.Add((idx, bytes));
                 }
 
-                foreach (var p in payloads)
+                foreach (var (ChunkIndex, Payload) in payloads)
                 {
-                    connection.Send(new ServerChunkPayloadMessage(playerId, p.ChunkIndex, p.Payload));
+                    connection.Send(new ServerChunkPayloadMessage(playerId, ChunkIndex, Payload));
                 }
             }
 
             // Send periodic loading progress updates.
             if (server is ILoadingProgressSource progressSource)
             {
-                LoadingProgressSnapshot progress = default;
-                var hasProgress = false;
-
-                hasProgress = progressSource.TryGetLoadingProgress(playerId, out progress);
+                var hasProgress = progressSource.TryGetLoadingProgress(playerId, out var progress);
 
                 if (hasProgress)
                 {

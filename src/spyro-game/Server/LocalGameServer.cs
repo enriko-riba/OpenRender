@@ -465,7 +465,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             }
         }
 
-        snapshot = new MobStateSnapshot(tickId, serverTimeSeconds, list.ToArray());
+        snapshot = new MobStateSnapshot(tickId, serverTimeSeconds, [.. list]);
         return true;
     }
 
@@ -579,7 +579,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         if (!block.IsOpaque()) return false;
 
         return block is not (BlockId.OakLog or BlockId.BirchLog or BlockId.SpruceLog or BlockId.JungleLog)
-               && block is not (BlockId.OakLeaves or BlockId.BirchLeaves or BlockId.SpruceLeaves or BlockId.JungleLeaves);
+               and not (BlockId.OakLeaves or BlockId.BirchLeaves or BlockId.SpruceLeaves or BlockId.JungleLeaves);
     }
 
     private static bool HasMobHeadroom(VoxelWorld world, int wx, int spawnY, int wz)
