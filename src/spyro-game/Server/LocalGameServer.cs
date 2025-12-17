@@ -58,6 +58,8 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             NoSpawnRadiusBlocks: 12,
             SpawnRadiusBlocks: 56,
             MaxSpawnAttemptsPerTick: 4));
+    private readonly MobPhysicsSystem mobPhysicsSystem;
+    private readonly MobAiSystem mobAiSystem;
 
     private readonly Dictionary<PlayerId, Player> players = [];
     private readonly Dictionary<PlayerId, HashSet<int>> lastVisibleReadyChunksByPlayer = [];
@@ -75,6 +77,9 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         this.spawnPosition = spawnPosition;
 
         this.streamingManager.Initialize(world.Seed);
+
+        mobPhysicsSystem = new MobPhysicsSystem(world);
+        mobAiSystem = new MobAiSystem();
     }
 
     public void Submit(PlayerId playerId, PlayerInputCommand input)
@@ -170,85 +175,15 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 serverTimeSeconds,
                 playerPositions,
                 world,
+                streamingManager.VoxelCache,
                 isChunkReadyForPlayer: streamingManager.IsChunkReadyForPlayer,
                 mobManager);
+
+            // Run AI and Physics
+            mobAiSystem.Tick(elapsedSeconds, mobManager, playerPositions);
+            mobPhysicsSystem.Tick(elapsedSeconds, mobManager);
         }
 
-        // Minimal Phase 1 movement: slow wandering on the surface.
-        // Keep mobs within ready chunks for at least one player.
-        if (mobManager.Mobs.Count > 0 && anyReadyChunks.Count > 0)
-        {
-            var dt = (float)Math.Clamp(elapsedSeconds, 0.0, 0.1);
-            foreach (var mob in mobManager.Mobs.Values)
-            {
-                if (mob.IsDead) continue;
-
-                var mobChunk = GetChunkIndexFromWorldPos(mob.Position);
-                if (!anyReadyChunks.Contains(mobChunk))
-                {
-                    continue;
-                }
-
-                // Occasionally change heading.
-                if (Random.Shared.NextDouble() < 0.02)
-                {
-                    mob.YawDegrees += (float)(Random.Shared.NextDouble() * 120.0 - 60.0);
-                    if (mob.YawDegrees < 0) mob.YawDegrees += 360;
-                    if (mob.YawDegrees >= 360) mob.YawDegrees -= 360;
-                }
-
-                var yawRad = MathHelper.DegreesToRadians(mob.YawDegrees);
-                var dir = new Vector3(MathF.Sin(yawRad), 0, MathF.Cos(yawRad));
-                var speed = mob.Definition.WalkSpeed * 0.25f;
-
-                var next = mob.Position + dir * (speed * dt);
-
-                // Snap to surface height in the destination column.
-                var wx = (int)MathF.Floor(next.X);
-                var wz = (int)MathF.Floor(next.Z);
-                if (wx < 0 || wz < 0 || wx > VoxelHelper.MaxBlockPositionXZ || wz > VoxelHelper.MaxBlockPositionXZ)
-                {
-                    continue;
-                }
-
-                var nextChunk = VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(wx, 0, wz));
-                if (!anyReadyChunks.Contains(nextChunk))
-                {
-                    continue;
-                }
-
-                var chunk = world[nextChunk];
-                if (chunk is null || !chunk.HasCollisionData)
-                {
-                    continue;
-                }
-
-                var origin = VoxelHelper.GetChunkPositionGlobal(nextChunk);
-                var lx = wx - origin.X;
-                var lz = wz - origin.Z;
-                if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize)
-                {
-                    continue;
-                }
-
-                var heightTopFace = chunk.GetTerrainHeightAt(lx, lz);
-                var startY = Math.Clamp(heightTopFace - 1, 0, VoxelHelper.MaxBlockPositionY);
-                if (!TryFindMobGroundY(world, wx, wz, startY, out var groundY))
-                {
-                    continue;
-                }
-
-                var spawnY = groundY + 1;
-                if (!HasMobHeadroom(world, wx, spawnY, wz))
-                {
-                    continue;
-                }
-                next.Y = spawnY + 0.55f;
-                mob.Position = next;
-                mob.Velocity = dir * speed;
-                mob.OnGround = true;
-            }
-        }
 
         // Drain global changed-chunk queue once per tick.
         var changedChunkIndices = new List<int>();

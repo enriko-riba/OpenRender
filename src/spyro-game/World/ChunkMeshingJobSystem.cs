@@ -22,6 +22,8 @@ public sealed class ChunkMeshingJobSystem : IDisposable
     private long enqueueCounter;
     private long buildCounter;
 
+    internal event Action<ChunkMeshWorkItem, bool>? WorkItemCompleted;
+
     public ChunkMeshingJobSystem(ChunkVoxelDataCache voxelCache, ChunkProcessingMetrics? metrics = null, int maxParallelism = 0)
     {
         this.voxelCache = voxelCache ?? throw new ArgumentNullException(nameof(voxelCache));
@@ -127,11 +129,12 @@ public sealed class ChunkMeshingJobSystem : IDisposable
 
     private void ProcessMeshItem(ChunkMeshWorkItem item)
     {
+        var buildId = Interlocked.Increment(ref buildCounter);
+        var executingItem = item with { BuildId = buildId };
+        var succeeded = false;
+
         try
         {
-            var buildId = Interlocked.Increment(ref buildCounter);
-            var executingItem = item with { BuildId = buildId };
-
             // Propagate boundary light BEFORE building mesh (on background thread)
             if (item.PropagateLight)
             {
@@ -147,6 +150,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
                 meshSw.Stop();
                 metrics?.RecordMeshBuild(meshSw.Elapsed.TotalMilliseconds);
                 completedMeshes.Enqueue(mesh);
+                succeeded = true;
             }
             else
             {
@@ -156,6 +160,17 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         catch (Exception ex)
         {
             Log.Error($"CPU meshing failed for chunk {item.ChunkIndex}: {ex.Message}");
+        }
+        finally
+        {
+            try
+            {
+                WorkItemCompleted?.Invoke(executingItem, succeeded);
+            }
+            catch (Exception callbackEx)
+            {
+                Log.Warn($"ChunkMeshingJobSystem completion callback threw: {callbackEx.Message}");
+            }
         }
     }
 
@@ -217,5 +232,5 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         }
     }
 
-    internal readonly record struct ChunkMeshWorkItem(int ChunkIndex, byte PlaceholderMask, long CacheVersion, long EnqueueId, long BuildId, bool PropagateLight = false);
+    public readonly record struct ChunkMeshWorkItem(int ChunkIndex, byte PlaceholderMask, long CacheVersion, long EnqueueId, long BuildId, bool PropagateLight = false);
 }

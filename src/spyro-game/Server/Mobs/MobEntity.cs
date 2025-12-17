@@ -3,6 +3,13 @@ using SpyroGame.Shared.State;
 
 namespace SpyroGame.Server.Mobs;
 
+public enum MobAiState
+{
+    Idle,
+    Wander,
+    Chase
+}
+
 /// <summary>
 /// Server-authoritative mob entity state.
 /// </summary>
@@ -21,6 +28,11 @@ public sealed class MobEntity
     public bool IsDead;
 
     public PlayerId? TargetPlayer;
+
+    // AI State
+    public MobAiState AiState;
+    public float AiTimer;
+    public Vector3? WanderTarget;
 
     public MobSnapshot ToSnapshot()
         => new(

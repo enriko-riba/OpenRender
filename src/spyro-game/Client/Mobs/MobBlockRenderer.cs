@@ -14,6 +14,7 @@ internal sealed class MobBlockRenderer
 {
     private readonly Scene scene;
     private readonly Material mobMaterial;
+    private readonly Material hostileMaterial;
 
     private readonly Vertex[] mobVerts;
     private readonly uint[] mobIndices;
@@ -35,19 +36,26 @@ internal sealed class MobBlockRenderer
         this.scene = scene;
 
         var shader = scene.DefaultShader;
+        var texture = new TextureDescriptor(
+            "Resources/Corey.png",
+            TextureType: TextureType.Diffuse,
+            MagFilter: TextureMagFilter.Nearest,
+            MinFilter: TextureMinFilter.Nearest,
+            TextureWrapS: TextureWrapMode.ClampToEdge,
+            TextureWrapT: TextureWrapMode.ClampToEdge,
+            GenerateMipMap: true);
+
         mobMaterial = Material.Create(
             shader,
-            [
-                new TextureDescriptor(
-                    "Resources/Corey.png",
-                    TextureType: TextureType.Diffuse,
-                    MagFilter: TextureMagFilter.Nearest,
-                    MinFilter: TextureMinFilter.Nearest,
-                    TextureWrapS: TextureWrapMode.ClampToEdge,
-                    TextureWrapT: TextureWrapMode.ClampToEdge,
-                    GenerateMipMap: true)
-            ],
+            [texture],
             diffuseColor: Vector3.One,
+            specularColor: Vector3.One,
+            shininess: 0.05f);
+
+        hostileMaterial = Material.Create(
+            shader,
+            [texture],
+            diffuseColor: new Vector3(0.6f, 1.0f, 0.6f), // Greenish glow
             specularColor: Vector3.One,
             shininess: 0.05f);
 
@@ -69,7 +77,10 @@ internal sealed class MobBlockRenderer
                 // OpenRender updates the bounding sphere on the Mesh instance during transform invalidation.
                 // So each mob needs its own Mesh instance for correct frustum culling.
                 var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, mobVerts, mobIndices);
-                node = new SceneNode(mesh, mobMaterial);
+
+                var isHostile = mob.Kind is MobKind.Zombie or MobKind.Skeleton;
+                node = new SceneNode(mesh, isHostile ? hostileMaterial : mobMaterial);
+
                 node.SetScale(MobScale);
 
                 //node.ShowBoundingSphere = true;

@@ -63,7 +63,7 @@ internal class GameScene : Scene
 
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
-    private bool wasLeftButtonDown;
+    //private bool wasLeftButtonDown;
 
     private FogUniform defaultFog;
     //private bool defaultFogCaptured;
@@ -328,22 +328,6 @@ internal class GameScene : Scene
         // Update day/night cycle
         dayNightCycle.Tick(elapsedSeconds);
 
-        // Handle block breaking
-        var mouseState = SceneManager.MouseState;
-        var isLeftButtonDown = mouseState.IsButtonDown(MouseButton.Left);
-        if (isLeftButtonDown && !wasLeftButtonDown)
-        {
-            // Log.Debug("Left mouse button clicked");
-            // player.BreakBlock(); // Handled by Player.Update
-        }
-        wasLeftButtonDown = isLeftButtonDown;
-
-        // Terrain streaming/generation is server-owned (LocalGameServer.Tick).
-
-
-        // Update visibility
-        // world.UpdateVisibilityFromCamera(camera!);
-
         // Check if camera is underwater (for visual effects)
         if (camera != null)
         {
@@ -506,7 +490,9 @@ internal class GameScene : Scene
         {
             var nowSeconds = SceneManager.Time;
 
-            const int maxChunkPayloadsToApplyPerFrame = 4;
+            // Gameplay streaming budget: keep higher than the loading scene to avoid
+            // visible "holes" when FPS drops (e.g., due to mobs) while crossing chunk borders.
+            const int maxChunkPayloadsToApplyPerFrame = 16;
             var appliedThisFrame = 0;
             while (localClient.TryDequeueChunkPayload(out var payload))
             {
@@ -564,7 +550,7 @@ internal class GameScene : Scene
                 }
             }
 
-            terrainSystem.UpdateUploads();
+            terrainSystem.UpdateUploads(maxUploadsPerFrame: 16);
         }
 
         // Update block below player - find highest solid block at player X/Z regardless of mode

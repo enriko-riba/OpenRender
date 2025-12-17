@@ -22,4 +22,7 @@ public sealed record MobDefinition(
     float AttackRange,
     float AttackCooldownSeconds,
     float AggroRange,
-    float LoseAggroRange);
+    float LoseAggroRange,
+    int SpawnLightLevelMin = 0,
+    int SpawnLightLevelMax = 15,
+    int SpawnWeight = 10);

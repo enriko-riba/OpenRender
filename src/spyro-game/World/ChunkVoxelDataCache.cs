@@ -38,18 +38,12 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     /// <summary>
     /// Retrieve biome data for a chunk.
     /// </summary>
-    public bool TryGetBiomeData(int chunkIndex, out ChunkBiomeData? biomeData)
-    {
-        return chunkBiomes.TryGetValue(chunkIndex, out biomeData);
-    }
+    public bool TryGetBiomeData(int chunkIndex, out ChunkBiomeData? biomeData) => chunkBiomes.TryGetValue(chunkIndex, out biomeData);
 
     /// <summary>
     /// Retrieve voxel data for a chunk.
     /// </summary>
-    public bool TryGetChunkData(int chunkIndex, out ChunkData? chunkData)
-    {
-        return chunkBuffers.TryGetValue(chunkIndex, out chunkData);
-    }
+    public bool TryGetChunkData(int chunkIndex, out ChunkData? chunkData) => chunkBuffers.TryGetValue(chunkIndex, out chunkData);
 
     /// <summary>
     /// Get biome at a specific world position by looking up the chunk and local coordinates.
@@ -62,12 +56,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         var localZ = worldZ - chunkPos.Z;
 
         // Prefer high-resolution per-column biome data when present.
-        if (chunkBiomes.TryGetValue(chunkIndex, out var biomeData))
-        {
-            return biomeData.GetBiomeAt(localX, localZ);
-        }
-
-        return BiomeId.Unknown;
+        return chunkBiomes.TryGetValue(chunkIndex, out var biomeData) ? biomeData.GetBiomeAt(localX, localZ) : BiomeId.Unknown;
     }
 
     /// <summary>

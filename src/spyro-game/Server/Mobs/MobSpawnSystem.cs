@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using SpyroGame.Server.Streaming;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
 
@@ -20,29 +21,12 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     private const int MaxMobsPerPlayerSoftCap = 24;
     private const ulong SpawnCooldownTicks = 45; // ~0.75s at 60Hz; keeps spawning bursts in check.
 
-    private static readonly MobDefinition DefaultCow = new(
-        Kind: MobKind.Cow,
-        Category: MobCategory.Passive,
-        HitboxWidth: 0.95f,
-        HitboxHeight: 0.95f,
-        MaxHealth: 10,
-        WalkSpeed: 2.0f,
-        RunSpeed: 3.5f,
-        StepHeight: 0.6f,
-        CanSwim: true,
-        CanClimb: false,
-        CanFly: false,
-        BaseDamage: 0,
-        AttackRange: 0,
-        AttackCooldownSeconds: 0,
-        AggroRange: 0,
-        LoseAggroRange: 0);
-
     public void Tick(
         ulong tickId,
         double serverTimeSeconds,
         ReadOnlySpan<(PlayerId PlayerId, Vector3 Position)> players,
         VoxelWorld world,
+        ChunkVoxelDataCache voxelCache,
         Func<PlayerId, int, bool> isChunkReadyForPlayer,
         MobManager mobManager)
     {
@@ -71,9 +55,9 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             var attempts = Math.Max(0, settings.MaxSpawnAttemptsPerTick);
             for (var attempt = 0; attempt < attempts; attempt++)
             {
-                if (TryPickSpawnPosition(playerPos, world, isChunkReadyForPlayer, playerId, out var spawnPos))
+                if (TryPickSpawnPosition(playerPos, world, voxelCache, isChunkReadyForPlayer, playerId, out var spawnPos, out var def))
                 {
-                    var mob = mobManager.CreateMob(DefaultCow);
+                    var mob = mobManager.CreateMob(def);
                     mob.Position = spawnPos;
                     mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
                     mob.PitchDegrees = 0;
@@ -108,11 +92,14 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     private bool TryPickSpawnPosition(
         in Vector3 playerPos,
         VoxelWorld world,
+        ChunkVoxelDataCache voxelCache,
         Func<PlayerId, int, bool> isChunkReadyForPlayer,
         PlayerId playerId,
-        out Vector3 spawnPos)
+        out Vector3 spawnPos,
+        out MobDefinition mobDef)
     {
         spawnPos = default;
+        mobDef = default!;
 
         // Choose a random offset in XZ.
         // We use a square ring for simplicity; it is good enough for Phase 1.
@@ -138,63 +125,63 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             return false;
         }
 
+        // Get ChunkData for light
+        if (!voxelCache.TryGetChunkData(chunkIndex, out var chunkData) || chunkData == null || chunkData.LightData == null)
+        {
+            return false;
+        }
+
         var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
         var lx = wx - origin.X;
         var lz = wz - origin.Z;
-        if ((uint)lx >= (uint)VoxelHelper.ChunkSideSize || (uint)lz >= (uint)VoxelHelper.ChunkSideSize)
+
+        var topY = chunk.GetTerrainHeightAt(lx, lz);
+
+        // Try surface spawn
+        if (TrySpawnAt(wx, topY, wz, chunkData, world, out spawnPos, out mobDef)) return true;
+
+        // Try cave spawn (random Y below surface)
+        if (topY > 10)
         {
-            return false;
+            var caveY = Random.Shared.Next(5, topY - 5);
+            if (TrySpawnAt(wx, caveY, wz, chunkData, world, out spawnPos, out mobDef)) return true;
         }
 
-        var heightTopFace = chunk.GetTerrainHeightAt(lx, lz);
-        var startY = Math.Clamp(heightTopFace - 1, 0, VoxelHelper.MaxBlockPositionY);
-
-        // The heightmap is "highest non-air", which can be leaves. Scan downward to find real ground.
-        if (!TryFindGroundY(world, wx, wz, startY, out var groundY))
-        {
-            return false;
-        }
-
-        var spawnY = groundY + 1;
-
-        if (!HasHeadroom(world, wx, spawnY, wz))
-        {
-            return false;
-        }
-
-        // Spawn centered on the block and slightly above the ground.
-        spawnPos = new Vector3(wx + 0.5f, spawnY + 0.55f, wz + 0.5f);
-        return true;
+        return false;
     }
 
-    private static bool HasHeadroom(VoxelWorld world, int wx, int spawnY, int wz)
+    private static bool TrySpawnAt(int x, int y, int z, ChunkData chunkData, VoxelWorld world, out Vector3 spawnPos, out MobDefinition mobDef)
     {
-        var a0 = world.GetBlockByPositionGlobalSafe(wx, spawnY, wz);
-        if (a0 is not null && (!a0.Value.Block.IsReplaceable() || a0.Value.Block.IsLiquid()))
+        spawnPos = default;
+        mobDef = default!;
+
+        // Check solid ground
+        var groundBlock = world.GetBlockByPositionGlobalSafe(x, y - 1, z);
+        if (!groundBlock.HasValue || !groundBlock.Value.IsSolid) return false;
+
+        // Check space for mob (assume max height 2 for check)
+        var headBlock = world.GetBlockByPositionGlobalSafe(x, y, z);
+        var headBlock2 = world.GetBlockByPositionGlobalSafe(x, y + 1, z);
+        if ((headBlock.HasValue && headBlock.Value.IsSolid) || (headBlock2.HasValue && headBlock2.Value.IsSolid)) return false;
+
+        // Check light
+        var light = GetSkyLight(chunkData, x % VoxelHelper.ChunkSideSize, y, z % VoxelHelper.ChunkSideSize);
+
+        // Pick a mob that fits
+        var candidates = MobRegistry.AllDefinitions.Where(d => light >= d.SpawnLightLevelMin && light <= d.SpawnLightLevelMax).ToList();
+        if (candidates.Count == 0) return false;
+
+        // Weighted random
+        var totalWeight = candidates.Sum(c => c.SpawnWeight);
+        var roll = Random.Shared.Next(totalWeight);
+        var current = 0;
+        foreach (var cand in candidates)
         {
-            return false;
-        }
-
-        var a1 = world.GetBlockByPositionGlobalSafe(wx, spawnY + 1, wz);
-        return a1 is null || a1.Value.Block.IsReplaceable() && !a1.Value.Block.IsLiquid();
-    }
-
-    private static bool TryFindGroundY(VoxelWorld world, int wx, int wz, int startY, out int groundY)
-    {
-        groundY = 0;
-
-        // Scan a limited distance down; trees aren't that tall, and this is called rarely.
-        const int maxScan = 48;
-        var yMin = Math.Max(0, startY - maxScan);
-
-        for (var y = startY; y >= yMin; y--)
-        {
-            var b = world.GetBlockByPositionGlobalSafe(wx, y, wz);
-            if (b is null) continue;
-
-            if (IsSuitableGround(b.Value.Block))
+            current += cand.SpawnWeight;
+            if (roll < current)
             {
-                groundY = y;
+                mobDef = cand;
+                spawnPos = new Vector3(x + 0.5f, y, z + 0.5f);
                 return true;
             }
         }
@@ -202,27 +189,13 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         return false;
     }
 
-    private static bool IsSuitableGround(BlockId block)
+    private static int GetSkyLight(ChunkData chunkData, int lx, int ly, int lz)
     {
-        if (block.IsLiquid()) return false;
-        if (block.IsTree()) return false;
-        if (!block.IsOpaque()) return false; // prevents leaves/alpha-test and many non-ground surfaces
-        return block.IsSolid();
+        if (ly < 0 || ly >= VoxelHelper.ChunkYSize) return 15;
+        var index = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
+        if (index < 0 || index >= chunkData.LightData.Length) return 15;
+        return (chunkData.LightData[index] >> 4) & 0xF;
     }
 
-    private static int RandomInRange(int minInclusive, int maxInclusive)
-    {
-        if (maxInclusive < minInclusive)
-        {
-            (minInclusive, maxInclusive) = (maxInclusive, minInclusive);
-        }
-
-        // Ensure we don't always pick the inner radius.
-        if (minInclusive == maxInclusive)
-        {
-            return minInclusive;
-        }
-
-        return Random.Shared.Next(minInclusive, maxInclusive + 1);
-    }
+    private static int RandomInRange(int min, int max) => Random.Shared.Next(min, max + 1);
 }

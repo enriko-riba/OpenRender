@@ -379,7 +379,7 @@ public sealed class ClientTerrainSystem : IDisposable
 
         // Rebuild a limited number of collision columns per frame to avoid hitching.
         // Collision is used for picking/interaction; being a few frames behind is OK.
-        ProcessCollisionRebuildBudget(maxColumnsPerFrame: 64);
+        ProcessCollisionRebuildBudget(maxColumnsPerFrame: 128);
     }
 
     private void ProcessCollisionRebuildBudget(int maxColumnsPerFrame)

@@ -74,11 +74,11 @@ public static class GeometryHelper
             6, 3, 2,
             6, 7, 3,
 
-            // up quad            
+            // up quad
             3, 8, 1,
             3, 9, 8,
 
-            // down quad                                
+            // down quad
             11, 0, 10,
             11, 2, 0
         ];

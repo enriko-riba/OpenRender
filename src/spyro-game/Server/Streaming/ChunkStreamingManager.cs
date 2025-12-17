@@ -90,6 +90,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private int generationSeed;
 
     public CollisionManager CollisionManager { get; } = new();
+    public ChunkVoxelDataCache VoxelCache => voxelCache;
 
     public ChunkStreamingManager(VoxelWorld world)
     {
