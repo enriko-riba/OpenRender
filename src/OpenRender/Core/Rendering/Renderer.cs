@@ -356,7 +356,7 @@ public class Renderer
         var frequencies = new Dictionary<int, int>();
         foreach (var node in nodes)
         {
-            var handle = node.Material.Shader.Handle;
+            var handle = node.Material?.Shader?.Handle ?? 0;
             if (handle > 0)
             {
                 frequencies[handle] = frequencies.TryGetValue(handle, out var value) ? ++value : 1;
@@ -394,7 +394,7 @@ public class Renderer
             var defaultLayer = renderLayers[RenderGroup.Default];
             if (defaultLayer.Any(n => (n.FrameBits.Value & (uint)FrameBitsFlags.RenderMask) == 0))
             {
-                defaultLayer.Sort((a, b) => a.Material.Shader.Handle - b.Material.Shader.Handle);
+                defaultLayer.Sort((a, b) => (a.Material?.Shader?.Handle ?? 0) - (b.Material?.Shader?.Handle ?? 0));
             }
         }
     }

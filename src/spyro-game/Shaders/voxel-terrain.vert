@@ -44,9 +44,14 @@ void main(){
     uint face=(p1>>19)&0x7u; uint aoIdx=(p1>>22)&0x7u; uint corner=(p1>>25)&0x3u;
     uint offsetSeed=(p1>>27)&0x1Fu;
     
-    // Unpack p2: bits 0-9 = blockId, bits 10-17 = light, bits 18-25 = biomeId, bit 26 = emissive
+    // Unpack p2:
+    // - bits 0-9 = blockId
+    // - bits 10-17 = light
+    // - bits 18-25 = biomeId
+    // - bit 26 = emissive
+    // - bit 27 = alphaTest (cutout)
     uint blockId = p2 & 0x3FFu;
-    vBlockDescriptor = blockId;
+    vBlockDescriptor = p2;
     uint lightByte = (p2 >> 10) & 0xFFu;
     vBiomeId = (p2 >> 18) & 0xFFu;
     vIsEmissive = (p2 >> 26) & 1u;

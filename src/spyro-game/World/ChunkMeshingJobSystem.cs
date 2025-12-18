@@ -154,7 +154,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
             }
             else
             {
-                Log.Warn($"CpuMeshing: builder skipped chunk {item.ChunkIndex} (seq={item.EnqueueId}, build={buildId})");
+                Log.Debug($"CpuMeshing: builder skipped chunk {item.ChunkIndex} (seq={item.EnqueueId}, build={buildId})");
             }
         }
         catch (Exception ex)

@@ -1,0 +1,167 @@
+{
+  "formatVersion": "0.1",
+  "texture": {
+    "path": "Resources/temperate_cow.png",
+    "width": 300,
+    "height": 200,
+    "atlas": {
+      "columns": 3,
+      "rows": 2,
+      "faceTiles": {
+        "top": {
+          "col": 0,
+          "row": 0
+        },
+        "bottom": {
+          "col": 1,
+          "row": 0
+        },
+        "front": {
+          "col": 2,
+          "row": 0
+        },
+        "left": {
+          "col": 0,
+          "row": 1
+        },
+        "right": {
+          "col": 1,
+          "row": 1
+        },
+        "back": {
+          "col": 2,
+          "row": 1
+        }
+      }
+    }
+  },
+  "bones": [
+    {
+      "name": "root",
+      "parent": null,
+      "pivot": { "x": 0, "y": 0, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": []
+    },
+    {
+      "name": "body",
+      "parent": "root",
+      "pivot": { "x": 0, "y": 0.9, "z": 0 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": -0.6, "y": 0.6, "z": -1.0 },
+          "size": { "x": 1.2, "y": 0.8, "z": 2.0 },
+          "pivot": { "x": 0, "y": 0.9, "z": 0 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+    {
+      "name": "neck",
+      "parent": "body",
+      "pivot": { "x": 0, "y": 1.05, "z": 0.95 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": -0.2, "y": 0.95, "z": 0.75 },
+          "size": { "x": 0.4, "y": 0.3, "z": 0.35 },
+          "pivot": { "x": 0, "y": 1.05, "z": 0.95 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+    {
+      "name": "head",
+      "parent": "neck",
+      "pivot": { "x": 0, "y": 1.05, "z": 1.25 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": -0.35, "y": 0.85, "z": 1.05 },
+          "size": { "x": 0.7, "y": 0.55, "z": 0.65 },
+          "pivot": { "x": 0, "y": 1.05, "z": 1.25 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        },
+        {
+          "origin": { "x": -0.15, "y": 1.30, "z": 1.20 },
+          "size": { "x": 0.10, "y": 0.12, "z": 0.10 },
+          "pivot": { "x": 0, "y": 1.35, "z": 1.25 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        },
+        {
+          "origin": { "x": 0.05, "y": 1.30, "z": 1.20 },
+          "size": { "x": 0.10, "y": 0.12, "z": 0.10 },
+          "pivot": { "x": 0, "y": 1.35, "z": 1.25 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+
+    {
+      "name": "front_left_leg",
+      "parent": "body",
+      "pivot": { "x": -0.40, "y": 0.60, "z": 0.75 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": -0.50, "y": 0.00, "z": 0.65 },
+          "size": { "x": 0.20, "y": 0.60, "z": 0.20 },
+          "pivot": { "x": -0.40, "y": 0.60, "z": 0.75 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+    {
+      "name": "front_right_leg",
+      "parent": "body",
+      "pivot": { "x": 0.40, "y": 0.60, "z": 0.75 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": 0.30, "y": 0.00, "z": 0.65 },
+          "size": { "x": 0.20, "y": 0.60, "z": 0.20 },
+          "pivot": { "x": 0.40, "y": 0.60, "z": 0.75 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+    {
+      "name": "back_left_leg",
+      "parent": "body",
+      "pivot": { "x": -0.40, "y": 0.60, "z": -0.75 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": -0.50, "y": 0.00, "z": -0.85 },
+          "size": { "x": 0.20, "y": 0.60, "z": 0.20 },
+          "pivot": { "x": -0.40, "y": 0.60, "z": -0.75 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    },
+    {
+      "name": "back_right_leg",
+      "parent": "body",
+      "pivot": { "x": 0.40, "y": 0.60, "z": -0.75 },
+      "rotation": { "x": 0, "y": 0, "z": 0 },
+      "cubes": [
+        {
+          "origin": { "x": 0.30, "y": 0.00, "z": -0.85 },
+          "size": { "x": 0.20, "y": 0.60, "z": 0.20 },
+          "pivot": { "x": 0.40, "y": 0.60, "z": -0.75 },
+          "rotation": { "x": 0, "y": 0, "z": 0 },
+          "faceTiles": null
+        }
+      ]
+    }
+  ]
+}

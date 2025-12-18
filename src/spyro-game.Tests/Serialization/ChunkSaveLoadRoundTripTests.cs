@@ -1,4 +1,5 @@
 using SpyroGame.World;
+using System.Buffers;
 using System.IO.Compression;
 using Xunit;
 using static SpyroGame.Tests.Common.LightingTestHelpers;
@@ -100,6 +101,43 @@ public class ChunkSaveLoadRoundTripTests
         }
         
         return (data, biomeData);
+    }
+
+    [Fact]
+    public void V2Compressed_RoundTrip_WorksWithArrayPoolOversizedVoxelBuffer()
+    {
+        // ArrayPool may return a larger buffer than requested (bucket sizing).
+        // We must not serialize the full backing length or the server will quarantine its own saves.
+        var pooled = ArrayPool<byte>.Shared.Rent(VoxelHelper.ChunkVoxelCount);
+        try
+        {
+            Assert.True(pooled.Length >= VoxelHelper.ChunkVoxelCount);
+            // This test is only meaningful if we got an oversized buffer.
+            Assert.True(pooled.Length > VoxelHelper.ChunkVoxelCount);
+
+            var originalData = new ChunkData { ChunkIndex = 42, Version = 12345 };
+            originalData.VoxelData = pooled;
+            // Clear the used range to avoid stale palette indices from the pool.
+            Array.Clear(originalData.VoxelData, 0, VoxelHelper.ChunkVoxelCount);
+
+            // Keep LightData at the expected size.
+            originalData.LightData = new byte[VoxelHelper.ChunkVoxelCount];
+
+            originalData.SetBlock(1, 10, 1, BlockId.Stone);
+
+            var bytes = SaveChunkV2(originalData, biomeData: null);
+            var (loadedData, loadedBiome) = LoadChunk(bytes);
+
+            Assert.Null(loadedBiome);
+            Assert.Equal(42, loadedData.ChunkIndex);
+            Assert.Equal(12345, loadedData.Version);
+            Assert.Equal(VoxelHelper.ChunkVoxelCount, loadedData.VoxelData.Length);
+            Assert.Equal(BlockId.Stone, loadedData.GetBlock(1, 10, 1));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(pooled);
+        }
     }
 
     [Fact]

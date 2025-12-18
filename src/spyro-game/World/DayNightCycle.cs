@@ -47,6 +47,16 @@ internal class DayNightCycle : IDayNightTimeProvider
         UpdateSunDirection(timeOfDay);
     }
 
+    public void SetTimeOfDaySeconds(int secondsOfDay)
+    {
+        // Treat as server-authoritative: override local progression.
+        const int secondsPerDay = 24 * 60 * 60;
+        var normalized = ((secondsOfDay % secondsPerDay) + secondsPerDay) % secondsPerDay;
+        var baseDate = DateTime.UtcNow.Date;
+        timeOfDay = new DateTimeOffset(baseDate, TimeSpan.Zero).AddSeconds(normalized);
+        UpdateSunDirection(timeOfDay);
+    }
+
     public LightUniform DirLight => dirLight;
     public TimeSpan TimeOfDay => timeOfDay.TimeOfDay;
 

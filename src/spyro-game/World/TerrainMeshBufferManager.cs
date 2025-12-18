@@ -839,6 +839,17 @@ public sealed class TerrainMeshBufferManager : IDisposable
 
         freeCommandSlots.Enqueue(slot);
 
+        ClearCommandSlot(slot);
+    }
+
+    /// <summary>
+    /// Zero out a command slot and mark its chunk mapping as invalid.
+    /// This does NOT return the slot to the free list.
+    /// </summary>
+    public void ClearCommandSlot(int slot)
+    {
+        if (slot < 0) return;
+
         // Zero out the command in the buffer so it doesn't draw anything.
         // Command is 5 uints = 20 bytes. We have 3 commands per slot = 60 bytes.
         // Use the pointer overload to avoid any ambiguity about "size" units.

@@ -1,0 +1,49 @@
+{
+  "formatVersion": "0.1",
+  "animations": [
+    {
+      "name": "cow_walk",
+      "lengthSeconds": 0.4,
+      "loop": true,
+      "bones": {
+        "front_left_leg": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": 28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.2, "value": { "x": -28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.4, "value": { "x": 28, "y": 0, "z": 0 } }
+          ]
+        },
+        "back_right_leg": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": 28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.2, "value": { "x": -28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.4, "value": { "x": 28, "y": 0, "z": 0 } }
+          ]
+        },
+
+        "front_right_leg": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": -28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.2, "value": { "x": 28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.4, "value": { "x": -28, "y": 0, "z": 0 } }
+          ]
+        },
+        "back_left_leg": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": -28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.2, "value": { "x": 28, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.4, "value": { "x": -28, "y": 0, "z": 0 } }
+          ]
+        },
+
+        "head": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": 6, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.2, "value": { "x": -6, "y": 0, "z": 0 } },
+            { "timeSeconds": 0.4, "value": { "x": 6, "y": 0, "z": 0 } }
+          ]
+        }
+      }
+    }
+  ]
+}

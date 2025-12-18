@@ -1,4 +1,5 @@
 ﻿using OpenRender.Core.Culling;
+using OpenRender.Core;
 using OpenRender.Core.Rendering;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -28,6 +29,9 @@ public class Scene
     public Scene(string? name)
     {
         defaultShader = new Shader("Shaders/standard.vert", "Shaders/standard.frag");
+        // Many transform-only nodes use Material.Default; ensure it has a valid shader.
+        // Without this, renderer sort/frequency logic can throw when accessing Material.Shader.
+        Material.Default.Shader = defaultShader;
         Name = name ?? GetType().Name;
     }
 

@@ -1,0 +1,23 @@
+{
+  "formatVersion": "0.1",
+  "controllers": [
+    {
+      "name": "default",
+      "initialState": "idle",
+      "states": {
+        "idle": {
+          "playAnimations": [],
+          "transitions": [
+            { "targetState": "walk", "conditionExpression": "query.speed > 0" }
+          ]
+        },
+        "walk": {
+          "playAnimations": ["walk"],
+          "transitions": [
+            { "targetState": "idle", "conditionExpression": "query.speed <= 0" }
+          ]
+        }
+      }
+    }
+  ]
+}

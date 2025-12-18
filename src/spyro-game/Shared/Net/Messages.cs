@@ -17,6 +17,8 @@ public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSna
 
 public readonly record struct ServerMobStateMessage(PlayerId PlayerId, MobStateSnapshot Snapshot) : IServerToClientMessage;
 
+public readonly record struct ServerWorldTimeMessage(PlayerId PlayerId, WorldTimeSnapshot Snapshot) : IServerToClientMessage;
+
 public readonly record struct ServerLoadingProgressMessage(PlayerId PlayerId, LoadingProgressSnapshot Progress) : IServerToClientMessage;
 
 public readonly record struct ServerGameStartMessage(PlayerId PlayerId) : IServerToClientMessage;

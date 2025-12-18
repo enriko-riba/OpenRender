@@ -107,6 +107,10 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         var data = new ChunkData();
         data.ChunkIndex = chunkIndex;
         data.VoxelData = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
+        data.VoxelDataIsPooled = true;
+
+        data.LightData = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
+        data.LightDataIsPooled = true;
         
         if (EnableVerboseLogging)
         {
@@ -124,6 +128,8 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     {
         ArgumentNullException.ThrowIfNull(data);
 
+        EnsurePooledBuffers(data);
+
         var version = Interlocked.Increment(ref globalStoreVersion);
         data.Version = version;
 
@@ -133,8 +139,15 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
             (_, existing) =>
             {
                 // Return old buffer to pool
-                if (existing.VoxelData != null)
+                if (existing.VoxelData != null && existing.VoxelDataIsPooled)
+                {
                     voxelPool.Return(existing.VoxelData);
+                }
+
+                if (existing.LightData != null && existing.LightDataIsPooled)
+                {
+                    voxelPool.Return(existing.LightData);
+                }
                 return data;
             });
 
@@ -196,8 +209,15 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
                 Log.Debug($"VoxelCache: Release chunk={chunkIndex} version={data.Version}");
             }
             
-            if (data.VoxelData != null)
+            if (data.VoxelData != null && data.VoxelDataIsPooled)
+            {
                 voxelPool.Return(data.VoxelData);
+            }
+
+            if (data.LightData != null && data.LightDataIsPooled)
+            {
+                voxelPool.Return(data.LightData);
+            }
                 
             return true;
         }
@@ -207,6 +227,37 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
             Log.Debug($"VoxelCache: Release miss chunk={chunkIndex}");
         }
         return false;
+    }
+
+    private void EnsurePooledBuffers(ChunkData data)
+    {
+        var expected = VoxelHelper.ChunkVoxelCount;
+
+        if (data.VoxelData is null || data.VoxelData.Length < expected)
+        {
+            throw new ArgumentException($"ChunkData.VoxelData must be at least {expected} bytes", nameof(data));
+        }
+
+        if (!data.VoxelDataIsPooled)
+        {
+            var pooled = voxelPool.Rent(expected);
+            Buffer.BlockCopy(data.VoxelData, 0, pooled, 0, expected);
+            data.VoxelData = pooled;
+            data.VoxelDataIsPooled = true;
+        }
+
+        if (data.LightData is null || data.LightData.Length < expected)
+        {
+            throw new ArgumentException($"ChunkData.LightData must be at least {expected} bytes", nameof(data));
+        }
+
+        if (!data.LightDataIsPooled)
+        {
+            var pooled = voxelPool.Rent(expected);
+            Buffer.BlockCopy(data.LightData, 0, pooled, 0, expected);
+            data.LightData = pooled;
+            data.LightDataIsPooled = true;
+        }
     }
 
     /// <summary>

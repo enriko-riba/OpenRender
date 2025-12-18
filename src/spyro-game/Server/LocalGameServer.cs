@@ -52,11 +52,13 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     private ulong tickId;
     private double serverTimeSeconds;
 
+    private readonly WorldTimeService worldTime = new();
+
     private readonly MobManager mobManager = new();
     private readonly MobSpawnSystem mobSpawnSystem = new(
         new MobSpawnSystem.Settings(
-            NoSpawnRadiusBlocks: 12,
-            SpawnRadiusBlocks: 56,
+            NoSpawnRadiusBlocks: 16,
+            SpawnRadiusBlocks: 64,
             MaxSpawnAttemptsPerTick: 4));
     private readonly MobPhysicsSystem mobPhysicsSystem;
     private readonly MobAiSystem mobAiSystem;
@@ -69,6 +71,9 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     private readonly Dictionary<PlayerId, HashSet<int>> initialChunkTargetByPlayer = [];
     private readonly Dictionary<PlayerId, HashSet<int>> initialChunksSentByPlayer = [];
     private readonly HashSet<PlayerId> gameStartSent = [];
+
+    // Used to detect newly-ready chunks (union across players) for deterministic per-chunk spawning.
+    private readonly HashSet<int> lastAnyReadyChunks = [];
 
     public LocalGameServer(VoxelWorld world, SpyroGame.Server.Streaming.ChunkStreamingManager streamingManager, Vector3 spawnPosition)
     {
@@ -106,7 +111,10 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     public void Tick(double elapsedSeconds)
     {
         serverTimeSeconds += Math.Max(0.0, elapsedSeconds);
+        worldTime.Tick(elapsedSeconds);
         tickId++;
+
+        var timeSnapshot = worldTime.GetSnapshot();
 
         // Tick all connected players and update their streaming focal positions.
         foreach (var kvp in players)
@@ -138,13 +146,86 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             anyReadyChunks.UnionWith(ready);
         }
 
-        if (anyReadyChunks.Count > 0 && mobManager.Mobs.Count > 0)
+        var playerPositions = new (PlayerId PlayerId, Vector3 Position)[players.Count];
+        {
+            var i = 0;
+            foreach (var kvp in players)
+            {
+                playerPositions[i++] = (kvp.Key, kvp.Value.Position);
+            }
+        }
+
+        var readyChunkIndices = anyReadyChunks.Count > 0 ? anyReadyChunks.ToArray() : [];
+
+        // Determine which chunks became ready since the last tick (for rare per-chunk spawn rolls).
+        List<int>? newlyReadyChunks = null;
+        foreach (var idx in anyReadyChunks)
+        {
+            if (!lastAnyReadyChunks.Contains(idx))
+            {
+                newlyReadyChunks ??= [];
+                newlyReadyChunks.Add(idx);
+            }
+        }
+
+        lastAnyReadyChunks.Clear();
+        lastAnyReadyChunks.UnionWith(anyReadyChunks);
+
+        if (mobManager.Mobs.Count > 0)
         {
             List<MobId>? toRemove = null;
             foreach (var mob in mobManager.Mobs.Values)
             {
                 var chunkIdx = GetChunkIndexFromWorldPos(mob.Position);
-                if (!anyReadyChunks.Contains(chunkIdx))
+
+                // Despawn rules (Minecraft-like):
+                // - >128 blocks from any player => instant
+                // - 32..128 blocks => random chance over time
+                var minDistSq = float.PositiveInfinity;
+                foreach (var (_, p) in playerPositions)
+                {
+                    var d = mob.Position - p;
+                    var dsq = d.X * d.X + d.Y * d.Y + d.Z * d.Z;
+                    if (dsq < minDistSq) minDistSq = dsq;
+                }
+
+                var shouldRemove = false;
+                if (mob.Definition.Category == MobCategory.Hostile)
+                {
+                    if (minDistSq > 128f * 128f)
+                    {
+                        shouldRemove = true;
+                    }
+                    else if (minDistSq > 32f * 32f)
+                    {
+                        mob.TimeInRandomDespawnRangeSeconds += (float)elapsedSeconds;
+
+                        // Bedrock/MC-like: after being in the 32..128 range for ~30 seconds,
+                        // roll a 1-in-800 chance each game tick.
+                        if (mob.TimeInRandomDespawnRangeSeconds >= 30.0f)
+                        {
+                            // 1/800 per tick at 20Hz => ~elapsedSeconds*20 trials.
+                            // Use a small-prob approximation for efficiency.
+                            var chance = Math.Clamp(elapsedSeconds / 40.0, 0.0, 1.0);
+                            if (Random.Shared.NextDouble() < chance)
+                            {
+                                shouldRemove = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        mob.TimeInRandomDespawnRangeSeconds = 0;
+                    }
+                }
+
+                // Also remove mobs that are no longer in any ready chunk.
+                if (!shouldRemove && anyReadyChunks.Count > 0 && !anyReadyChunks.Contains(chunkIdx))
+                {
+                    shouldRemove = true;
+                }
+
+                if (shouldRemove)
                 {
                     toRemove ??= [];
                     toRemove.Add(mob.Id);
@@ -160,28 +241,35 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             }
         }
 
-        // Phase 1 spawning: sample candidate positions around players within their ready chunks.
+        // Spawning: passive is a rare per-chunk roll on first ready-load; hostiles spawn continuously.
         if (players.Count > 0)
         {
-            var playerPositions = new (PlayerId PlayerId, Vector3 Position)[players.Count];
-            var i = 0;
-            foreach (var kvp in players)
-            {
-                playerPositions[i++] = (kvp.Key, kvp.Value.Position);
-            }
-
             mobSpawnSystem.Tick(
                 tickId,
-                serverTimeSeconds,
+                timeSnapshot,
+                world.Seed,
+                newlyReadyChunks?.ToArray() ?? [],
                 playerPositions,
                 world,
                 streamingManager.VoxelCache,
-                isChunkReadyForPlayer: streamingManager.IsChunkReadyForPlayer,
+                mobManager);
+
+            mobSpawnSystem.TickHostileContinuous(
+                elapsedSeconds,
+                timeSnapshot,
+                world.Seed,
+                readyChunkIndices,
+                playerPositions,
+                world,
+                streamingManager.VoxelCache,
                 mobManager);
 
             // Run AI and Physics
             mobAiSystem.Tick(elapsedSeconds, mobManager, playerPositions);
             mobPhysicsSystem.Tick(elapsedSeconds, mobManager);
+
+            ResolveMobVsPlayerCollisions(mobManager, players);
+            ResolveMobVsMobCollisions(mobManager);
         }
 
 
@@ -226,6 +314,121 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
             // Store latest player-only snapshot; chunk deltas are computed when a snapshot is requested.
             lastSnapshotByPlayer[playerId] = BuildSnapshot(player, chunkDelta: null);
+        }
+    }
+
+    public WorldTimeSnapshot GetWorldTimeSnapshot() => worldTime.GetSnapshot();
+
+    private static void ResolveMobVsPlayerCollisions(MobManager mobManager, Dictionary<PlayerId, Player> players)
+    {
+        if (mobManager.Mobs.Count == 0 || players.Count == 0) return;
+
+        foreach (var mob in mobManager.Mobs.Values)
+        {
+            var mobRadius = mob.Definition.HitboxWidth * 0.5f;
+            var mobMinY = mob.Position.Y;
+            var mobMaxY = mob.Position.Y + mob.Definition.HitboxHeight;
+
+            foreach (var player in players.Values)
+            {
+                var playerCollider = player.Collider;
+                var playerMinY = player.Position.Y;
+                var playerMaxY = player.Position.Y + playerCollider.Height;
+
+                if (mobMinY >= playerMaxY || playerMinY >= mobMaxY)
+                {
+                    continue;
+                }
+
+                var dx = mob.Position.X - player.Position.X;
+                var dz = mob.Position.Z - player.Position.Z;
+                var distSq = dx * dx + dz * dz;
+                var minDist = mobRadius + playerCollider.Radius;
+                var minDistSq = minDist * minDist;
+
+                if (distSq >= minDistSq)
+                {
+                    continue;
+                }
+
+                var dist = MathF.Sqrt(MathF.Max(distSq, 0));
+                var penetration = minDist - dist;
+                if (penetration <= 0) continue;
+
+                Vector3 normal;
+                if (dist < 1e-4f)
+                {
+                    normal = Vector3.UnitX;
+                }
+                else
+                {
+                    normal = new Vector3(dx / dist, 0, dz / dist);
+                }
+
+                // Push mobs out of players (keeps player control stable).
+                mob.Position += normal * (penetration + 0.001f);
+
+                var dot = Vector3.Dot(mob.Velocity, normal);
+                if (dot < 0)
+                {
+                    mob.Velocity -= normal * dot;
+                }
+            }
+        }
+    }
+
+    private static void ResolveMobVsMobCollisions(MobManager mobManager)
+    {
+        if (mobManager.Mobs.Count <= 1) return;
+
+        var mobs = mobManager.Mobs.Values.ToArray();
+        for (var i = 0; i < mobs.Length; i++)
+        {
+            for (var j = i + 1; j < mobs.Length; j++)
+            {
+                var a = mobs[i];
+                var b = mobs[j];
+
+                var aRadius = a.Definition.HitboxWidth * 0.5f;
+                var bRadius = b.Definition.HitboxWidth * 0.5f;
+                var aMinY = a.Position.Y;
+                var aMaxY = a.Position.Y + a.Definition.HitboxHeight;
+                var bMinY = b.Position.Y;
+                var bMaxY = b.Position.Y + b.Definition.HitboxHeight;
+
+                if (aMinY >= bMaxY || bMinY >= aMaxY) continue;
+
+                var dx = a.Position.X - b.Position.X;
+                var dz = a.Position.Z - b.Position.Z;
+                var distSq = dx * dx + dz * dz;
+                var minDist = aRadius + bRadius;
+                var minDistSq = minDist * minDist;
+                if (distSq >= minDistSq) continue;
+
+                var dist = MathF.Sqrt(MathF.Max(distSq, 0));
+                var penetration = minDist - dist;
+                if (penetration <= 0) continue;
+
+                Vector3 normal;
+                if (dist < 1e-4f)
+                {
+                    normal = Vector3.UnitX;
+                }
+                else
+                {
+                    normal = new Vector3(dx / dist, 0, dz / dist);
+                }
+
+                var correction = normal * ((penetration * 0.5f) + 0.001f);
+                a.Position += correction;
+                b.Position -= correction;
+
+                var aDot = Vector3.Dot(a.Velocity, normal);
+                if (aDot < 0) a.Velocity -= normal * aDot;
+
+                var bDot = Vector3.Dot(b.Velocity, normal);
+                if (bDot > 0) b.Velocity -= normal * bDot;
+            }
         }
     }
 

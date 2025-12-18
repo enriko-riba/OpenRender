@@ -1,0 +1,18 @@
+{
+  "formatVersion": "0.1",
+  "animations": [
+    {
+      "name": "walk",
+      "lengthSeconds": 1.0,
+      "loop": true,
+      "bones": {
+        "root": {
+          "rotationDeg": [
+            { "timeSeconds": 0.0, "value": { "x": 0, "y": 0, "z": 0 } }
+          ],
+          "rotationExpression": "cos(time * 6.283) * 5"
+        }
+      }
+    }
+  ]
+}

@@ -28,6 +28,9 @@ public class Player
     /// </summary>
     private const float JumpHorizontalDamping = 0.4f;
 
+    // StepHeight is for small ledges/slabs; full-block elevation changes are handled via auto-jump.
+    public KinematicCollider Collider => new(Radius: HalfWidth, Height: Height, StepHeight: 0.6f);
+
     private static readonly Vector3[] bottomCornerOffsets = [
         new Vector3(-HalfWidth, 0, -HalfWidth), // northwest
         new Vector3(-HalfWidth, 0, +HalfWidth), // southwest
@@ -519,7 +522,7 @@ public class Player
             velocity.Z = hVel.Y;
         }
 
-        CheckGround();
+        // Grounding is resolved inside VoxelKinematicMover.
     }
 
     private void Accelerate(Vector3 wishDir, float wishSpeed, float accel, float dt)
@@ -537,28 +540,17 @@ public class Player
 
     private void Move(Vector3 delta)
     {
-        // Separate XZ and Y movement for stability
-        var deltaXZ = new Vector3(delta.X, 0, delta.Z);
-        var deltaY = new Vector3(0, delta.Y, 0);
-
-        // Move XZ
-        position += deltaXZ;
-        ResolveCollisionXZ();
-
-        // Move Y
-        position += deltaY;
-        ResolveCollisionY();
-        
-        // === WORLD FLOOR LIMIT ===
-        // Prevent falling below Y=0 (the lava layer at the bottom of the world).
-        // Even though lava is non-solid, the player should stand on top of it.
-        const float WorldFloorY = 1.0f; // Stand on top of the lava layer (Y=0 is lava, Y=1 is bedrock)
-        if (position.Y < WorldFloorY)
-        {
-            position.Y = WorldFloorY;
-            velocity.Y = 0;
-            isGrounded = true;
-        }
+        VoxelKinematicMover.Move(
+            world,
+            ref position,
+            ref velocity,
+            ref isGrounded,
+            Collider,
+            delta,
+            worldFloorY: 1.0f,
+            enableAutoJump: true,
+            gravityMagnitude: MathF.Abs(Gravity),
+            autoJumpHorizontalDamping: JumpHorizontalDamping);
     }
 
     private void ResolveCollisionXZ()

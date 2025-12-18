@@ -550,6 +550,11 @@ public sealed class ClientTerrainSystem : IDisposable
             return;
         }
 
+        // Avoid transient mismatches between command data and chunkInfo mapping.
+        // If render and upload happen in different parts of the frame (or on different threads),
+        // clearing first ensures the slot is either "draw nothing" or fully consistent.
+        meshBuffers.ClearCommandSlot(slot);
+
         var baseVertex = vertexOffset >= 0 ? (uint)vertexOffset : 0u;
         var firstIndex = indexOffset >= 0 ? (uint)indexOffset : 0u;
 
@@ -572,6 +577,9 @@ public sealed class ClientTerrainSystem : IDisposable
             0u
         ];
 
+        // Write chunk mapping before enabling the commands.
+        GL.NamedBufferSubData((int)meshBuffers.ChunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref chunkIndex);
+
         unsafe
         {
             fixed (uint* cmdPtr = command)
@@ -579,8 +587,6 @@ public sealed class ClientTerrainSystem : IDisposable
                 GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 60), 60, (IntPtr)cmdPtr);
             }
         }
-
-        GL.NamedBufferSubData((int)meshBuffers.ChunkInfoBuffer, (IntPtr)(slot * sizeof(int)), sizeof(int), ref chunkIndex);
     }
 
     private void RefreshRendererBuffers(string reason)

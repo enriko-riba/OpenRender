@@ -70,6 +70,7 @@ internal class GameScene : Scene
     private Sprite crosshair = default!;
     private DayNightCycle dayNightCycle = default!;
     private SkyBoxSun skyBox = default!;
+    private bool hasAppliedServerWorldTime;
     //private WaterNode waterNode = default!;
 
     public GameScene(ITextRenderer textRenderer)
@@ -326,7 +327,10 @@ internal class GameScene : Scene
         }
 
         // Update day/night cycle
-        dayNightCycle.Tick(elapsedSeconds);
+        if (!hasAppliedServerWorldTime)
+        {
+            dayNightCycle.Tick(elapsedSeconds);
+        }
 
         // Check if camera is underwater (for visual effects)
         if (camera != null)
@@ -467,6 +471,19 @@ internal class GameScene : Scene
             if (latestSnap.HasValue)
             {
                 player.ApplyServerSnapshot(latestSnap.Value.Player);
+            }
+
+            // Apply latest server world time (if any) to day/night.
+            WorldTimeSnapshot? latestTime = null;
+            while (localClient.TryDequeueWorldTimeSnapshot(out var t))
+            {
+                latestTime = t;
+            }
+
+            if (latestTime.HasValue)
+            {
+                dayNightCycle.SetTimeOfDaySeconds(latestTime.Value.TimeOfDaySeconds);
+                hasAppliedServerWorldTime = true;
             }
 
             // Apply latest mob snapshot (if any) to the renderer.

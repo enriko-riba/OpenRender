@@ -38,6 +38,12 @@ public class ChunkData
     public int ChunkIndex;
     public long Version;
 
+    // Chunk voxel/light buffers are frequently allocated via ArrayPool in ChunkVoxelDataCache.
+    // When chunks are deserialized from disk/network, the buffers are plain arrays.
+    // Track ownership so we can safely return only pooled arrays.
+    internal bool VoxelDataIsPooled;
+    internal bool LightDataIsPooled;
+
     private int paletteCount;
     
     /// <summary>
@@ -55,6 +61,9 @@ public class ChunkData
         Biomes = new BiomeId[16]; // 4x4 grid
         SurfaceHeights = new int[VoxelHelper.ChunkSideSizeSquare];
         LightData = new byte[VoxelHelper.ChunkVoxelCount];
+
+        VoxelDataIsPooled = false;
+        LightDataIsPooled = false;
 
         // Always add Air as index 0
         Palette[0] = BlockId.Air;
@@ -160,12 +169,22 @@ public class ChunkData
         }
 
         // VoxelData
-        writer.Write(VoxelData.Length);
-        writer.Write(VoxelData);
+        var expectedVoxelLen = VoxelHelper.ChunkVoxelCount;
+        if (VoxelData is null || VoxelData.Length < expectedVoxelLen)
+        {
+            throw new InvalidOperationException($"ChunkData.VoxelData must be at least {expectedVoxelLen} bytes (actual={(VoxelData is null ? "<null>" : VoxelData.Length)})");
+        }
+        writer.Write(expectedVoxelLen);
+        writer.Write(VoxelData, 0, expectedVoxelLen);
 
         // LightData
-        writer.Write(LightData.Length);
-        writer.Write(LightData);
+        var expectedLightLen = VoxelHelper.ChunkVoxelCount;
+        if (LightData is null || LightData.Length < expectedLightLen)
+        {
+            throw new InvalidOperationException($"ChunkData.LightData must be at least {expectedLightLen} bytes (actual={(LightData is null ? "<null>" : LightData.Length)})");
+        }
+        writer.Write(expectedLightLen);
+        writer.Write(LightData, 0, expectedLightLen);
 
         // Biomes (ChunkData.Biomes)
         writer.Write(Biomes.Length);

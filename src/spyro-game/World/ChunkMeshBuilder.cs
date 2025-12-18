@@ -79,7 +79,9 @@ internal static class ChunkMeshBuilder
 
         if (!cache.TryGetReadOnly(workItem.ChunkIndex, out var chunkView) || !chunkView.IsValid)
         {
-            Log.Warn($"ChunkMeshBuilder: missing voxel cache for chunk {workItem.ChunkIndex} (mask=0x{workItem.PlaceholderMask:X2}) expectedVersion={workItem.CacheVersion} build={workItem.BuildId}");
+            // This can happen during streaming/unload when a chunk was enqueued for meshing
+            // but got evicted from the voxel cache before the worker executed.
+            Log.Debug($"ChunkMeshBuilder: missing voxel cache for chunk {workItem.ChunkIndex} (mask=0x{workItem.PlaceholderMask:X2}) expectedVersion={workItem.CacheVersion} build={workItem.BuildId}");
             return false;
         }
 
@@ -618,10 +620,24 @@ internal static class ChunkMeshBuilder
 
     /// <summary>
     /// Pack vertex attributes into a single uint.
-    /// Layout: bits 0-9: blockId (10 bits), bits 10-17: light (8 bits), bits 18-25: biomeId (8 bits), bit 26: emissive
+    /// Layout:
+    /// - bits  0-9:  blockId (10 bits)
+    /// - bits 10-17: light (8 bits)
+    /// - bits 18-25: biomeId (8 bits)
+    /// - bit  26:    emissive
+    /// - bit  27:    alphaTest (cutout) material
     /// </summary>
     private static uint PackVertexAttributes(BlockId block, uint light, BiomeId biome)
-        => (uint)block.GetId() | ((light & 0xFFu) << 10) | (((uint)biome & 0xFFu) << 18) | (block.IsEmissive() ? (1u << 26) : 0u);
+    {
+        var props = BlockRegistry.GetProperties(block);
+        var isAlphaTest = props.Render == RenderMethod.AlphaTest;
+
+        return (uint)block.GetId()
+            | ((light & 0xFFu) << 10)
+            | (((uint)biome & 0xFFu) << 18)
+            | (block.IsEmissive() ? (1u << 26) : 0u)
+            | (isAlphaTest ? (1u << 27) : 0u);
+    }
 
     private sealed class ChunkVoxelSampler
     {

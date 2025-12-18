@@ -134,6 +134,25 @@ vec4 sampleBlockTexture(uint blockId, vec2 localUV, vec3 normal, uint face) {
     return texture(uBlockTextures, vec3(atlasUV, float(blockId)));
 }
 
+// Alpha sample at LOD0 for AlphaTest (cutout) materials.
+// This avoids mipmap bleeding across the 3-in-1 atlas regions which can otherwise
+// raise alpha on pixels that should be fully transparent (triangle/edge artifacts).
+float sampleBlockAlphaLod0(uint blockId, vec2 localUV, vec3 normal, uint face) {
+    float uOffset;
+    if (face == 6u) {
+        uOffset = ATLAS_SIDE_U_MIN;
+    } else if (normal.y > 0.5) {
+        uOffset = ATLAS_TOP_U_MIN;
+    } else if (normal.y < -0.5) {
+        uOffset = ATLAS_BOTTOM_U_MIN;
+    } else {
+        uOffset = ATLAS_SIDE_U_MIN;
+    }
+
+    vec2 atlasUV = vec2(uOffset + localUV.x * 0.333333, 1.0 - localUV.y);
+    return textureLod(uBlockTextures, vec3(atlasUV, float(blockId)), 0.0).a;
+}
+
 // Sample block texture with animated UVs for water
 // Applies multi-layer scrolling effect for realistic water surface
 vec4 sampleWaterTexture(uint blockId, vec2 localUV, vec3 normal, float time) {
@@ -218,6 +237,7 @@ void main() {
 
     // Extract BlockId (lower 10 bits)
     uint blockId = vBlockDescriptor & 0x3FFu;
+    bool isAlphaTest = ((vBlockDescriptor >> 27) & 1u) == 1u;
     
     // Check if this is water
     bool isWater = blockId == 1u;
@@ -239,7 +259,12 @@ void main() {
     // Alpha test: Only discard in OPAQUE pass (pass 0) for AlphaTest materials (leaves, flowers)
     // Water (pass 1) and Translucent (pass 2) use smooth blending - don't discard!
     // Threshold 0.5 prevents "halo" artifacts where semi-transparent edges write to depth buffer.
-    if (uRenderPass == 0 && baseColor.a < 0.5) discard;
+    // For AlphaTest blocks, use LOD0 alpha to avoid mipmap bleed across atlas regions.
+    if (uRenderPass == 0 && isAlphaTest)
+    {
+        float alpha0 = sampleBlockAlphaLod0(blockId, vTexCoord, N, vFaceId);
+        if (alpha0 < 0.5) discard;
+    }
 
     // Procedural Water Normal
     vec3 waterNormal = N;

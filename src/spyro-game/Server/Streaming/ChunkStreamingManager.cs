@@ -502,6 +502,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         data = null;
         biomeData = null;
 
+        var fileSizeBytes = TryGetFileSizeBytes(path);
+        string? magic = null;
+        int? version = null;
+
         try
         {
             if (!File.Exists(path))
@@ -511,13 +515,15 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
             using var fileStream = File.OpenRead(path);
             using var headerReader = new BinaryReader(fileStream, Encoding.UTF8, leaveOpen: true);
-            var magic = headerReader.ReadString();
+            magic = headerReader.ReadString();
             if (!string.Equals(magic, ChunkStateMagic, StringComparison.Ordinal))
             {
+                Log.Warn($"Server ChunkStreamingManager: Invalid chunk state header; expectedMagic='{ChunkStateMagic}' actualMagic='{magic}' chunkIdx={chunkIdx} fileSizeBytes={fileSizeBytes} path='{path}'");
+                TryQuarantineCorruptChunkStateFile(path);
                 return false;
             }
 
-            var version = headerReader.ReadInt32();
+            version = headerReader.ReadInt32();
 
             if (version >= 2)
             {
@@ -538,12 +544,172 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 }
             }
 
+            if (data == null)
+            {
+                Log.Warn($"Server ChunkStreamingManager: Failed to deserialize chunk state (null) chunkIdx={chunkIdx} version={version} fileSizeBytes={fileSizeBytes} path='{path}'");
+                TryQuarantineCorruptChunkStateFile(path);
+                return false;
+            }
+
+            // Validate before forcing ChunkIndex so we can detect wrong-file loads.
+            if (!TryValidateChunkState(data, biomeData, expectedChunkIdx: chunkIdx, out var invalidReason))
+            {
+                Log.Warn($"Server ChunkStreamingManager: Invalid/corrupt chunk state; reason='{invalidReason}' chunkIdx={chunkIdx} serializedChunkIdx={data.ChunkIndex} version={version} fileSizeBytes={fileSizeBytes} path='{path}'");
+                TryQuarantineCorruptChunkStateFile(path);
+                data = null;
+                biomeData = null;
+                return false;
+            }
+
             data.ChunkIndex = chunkIdx;
             return true;
         }
+        catch (Exception ex)
+        {
+            Log.Warn($"Server ChunkStreamingManager: Exception while loading chunk state; chunkIdx={chunkIdx} magic='{magic ?? "<unread>"}' version='{(version.HasValue ? version.Value.ToString() : "<unread>")}' fileSizeBytes={fileSizeBytes} exType='{ex.GetType().Name}' exMessage='{ex.Message}' path='{path}'");
+            TryQuarantineCorruptChunkStateFile(path);
+            return false;
+        }
+    }
+
+    private static bool TryValidateChunkState(ChunkData data, ChunkBiomeData? biomeData, int expectedChunkIdx, out string invalidReason)
+    {
+        invalidReason = string.Empty;
+
+        // Wrong-file guard: prevents loading a different chunk's data into this chunk index.
+        if (data.ChunkIndex != expectedChunkIdx)
+        {
+            invalidReason = $"ChunkIndexMismatch expected={expectedChunkIdx} actual={data.ChunkIndex}";
+            return false;
+        }
+
+        // Shape/size checks: protects against old formats or partial writes.
+        if (data.VoxelData is null)
+        {
+            invalidReason = "VoxelDataNull";
+            return false;
+        }
+        if (data.VoxelData.Length < VoxelHelper.ChunkVoxelCount)
+        {
+            invalidReason = $"VoxelDataTooSmall expectedAtLeast={VoxelHelper.ChunkVoxelCount} actual={data.VoxelData.Length}";
+            return false;
+        }
+
+        if (data.LightData is null)
+        {
+            invalidReason = "LightDataNull";
+            return false;
+        }
+        if (data.LightData.Length < VoxelHelper.ChunkVoxelCount)
+        {
+            invalidReason = $"LightDataTooSmall expectedAtLeast={VoxelHelper.ChunkVoxelCount} actual={data.LightData.Length}";
+            return false;
+        }
+
+        if (data.SurfaceHeights is null)
+        {
+            invalidReason = "SurfaceHeightsNull";
+            return false;
+        }
+        if (data.SurfaceHeights.Length != VoxelHelper.ChunkSideSizeSquare)
+        {
+            invalidReason = $"SurfaceHeightsLengthMismatch expected={VoxelHelper.ChunkSideSizeSquare} actual={data.SurfaceHeights.Length}";
+            return false;
+        }
+
+        if (data.Biomes is null)
+        {
+            invalidReason = "BiomesNull";
+            return false;
+        }
+        if (data.Biomes.Length != 16)
+        {
+            invalidReason = $"BiomesLengthMismatch expected=16 actual={data.Biomes.Length}";
+            return false;
+        } // 4x4
+
+        if (data.Palette is null)
+        {
+            invalidReason = "PaletteNull";
+            return false;
+        }
+        // ChunkData keeps paletteCount private; infer a safe upper bound from array length.
+        // Also enforce that index 0 is Air after deserialize repair.
+        if (data.Palette.Length == 0)
+        {
+            invalidReason = "PaletteEmpty";
+            return false;
+        }
+        if (data.Palette[0] != BlockId.Air)
+        {
+            invalidReason = $"PaletteAirNotZero palette0={(ushort)data.Palette[0]}";
+            return false;
+        }
+        if (data.Palette.Length > 128)
+        {
+            invalidReason = $"PaletteTooLarge max=128 actual={data.Palette.Length}";
+            return false;
+        }
+
+        // Palette-index sanity: corrupted voxel data can reference beyond palette.
+        // This is a common source of "random solid pillars" after load.
+        var paletteLimit = data.Palette.Length;
+        for (var i = 0; i < VoxelHelper.ChunkVoxelCount; i++)
+        {
+            if (data.VoxelData[i] >= paletteLimit)
+            {
+                invalidReason = $"VoxelPaletteIndexOutOfRange paletteLen={paletteLimit} firstBadIndex={i} voxelValue={data.VoxelData[i]}";
+                return false;
+            }
+        }
+
+        if (biomeData != null)
+        {
+            // Biomes should always include per-column biome ids.
+            if (biomeData.ColumnBiomes is null || biomeData.ColumnBiomes.Length != ChunkBiomeData.ColumnCount)
+            {
+                invalidReason = $"BiomeColumnsInvalid expected={ChunkBiomeData.ColumnCount} actual={(biomeData.ColumnBiomes is null ? "<null>" : biomeData.ColumnBiomes.Length)}";
+                return false;
+            }
+        }
+
+        invalidReason = "";
+        return true;
+    }
+
+    private static long TryGetFileSizeBytes(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : -1;
+        }
         catch
         {
-            return false;
+            return -1;
+        }
+    }
+
+    private static void TryQuarantineCorruptChunkStateFile(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return;
+            }
+
+            var quarantinedPath = path + ".corrupt";
+            if (File.Exists(quarantinedPath))
+            {
+                // Keep the first copy; avoid repeated renames.
+                return;
+            }
+
+            File.Move(path, quarantinedPath);
+        }
+        catch
+        {
+            // Best-effort.
         }
     }
 
@@ -561,10 +727,17 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 if (result.ShouldFallbackToGeneration)
                 {
                     missingChunkStatesOnDisk.Add(result.ChunkIndex);
+                    // Treat corrupt/missing states as not-known so generation can proceed.
+                    knownChunkStatesOnDisk.Remove(result.ChunkIndex);
                 }
                 else
                 {
                     missingChunkStatesOnDisk.Remove(result.ChunkIndex);
+
+                    if (result.Succeeded)
+                    {
+                        knownChunkStatesOnDisk.Add(result.ChunkIndex);
+                    }
                 }
             }
 
@@ -629,7 +802,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     {
         lock (chunkStateLoadLock)
         {
-            return knownChunkStatesOnDisk.Contains(chunkIdx);
+            // If we've already attempted to load this chunk state and determined it is missing/corrupt,
+            // treat it as NOT known so the generator can take over.
+            return knownChunkStatesOnDisk.Contains(chunkIdx)
+                && !missingChunkStatesOnDisk.Contains(chunkIdx);
         }
     }
 
@@ -1350,12 +1526,12 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                     writer.Write(false);
                 }
             }
-
             File.Move(tmpPath, path, overwrite: true);
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            Log.Warn($"Server ChunkStreamingManager: Failed to save chunk state; chunkIdx={data.ChunkIndex} exType='{ex.GetType().Name}' exMessage='{ex.Message}' path='{path}'");
             return false;
         }
     }

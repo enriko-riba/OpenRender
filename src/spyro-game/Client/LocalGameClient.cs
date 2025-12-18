@@ -17,9 +17,11 @@ public sealed class LocalGameClient(
     private readonly System.Collections.Concurrent.ConcurrentQueue<ServerChunkPayloadMessage> chunkPayloads = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<GameStateSnapshot> snapshots = new();
     private readonly System.Collections.Concurrent.ConcurrentQueue<MobStateSnapshot> mobSnapshots = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<WorldTimeSnapshot> worldTimeSnapshots = new();
 
     private LoadingProgressSnapshot? lastLoadingProgress;
     private GameStateSnapshot? lastSnapshot;
+    private WorldTimeSnapshot? lastWorldTimeSnapshot;
     private bool hasServerGameStarted;
 
     public LoadingProgressSnapshot? LastLoadingProgress
@@ -67,6 +69,20 @@ public sealed class LocalGameClient(
 
     public bool TryDequeueMobSnapshot(out MobStateSnapshot snapshot)
         => mobSnapshots.TryDequeue(out snapshot);
+
+    public bool TryDequeueWorldTimeSnapshot(out WorldTimeSnapshot snapshot)
+        => worldTimeSnapshots.TryDequeue(out snapshot);
+
+    public WorldTimeSnapshot? LastWorldTimeSnapshot
+    {
+        get
+        {
+            lock (stateSync)
+            {
+                return lastWorldTimeSnapshot;
+            }
+        }
+    }
 
     public void SendInput(PlayerInputCommand input) => connection.Send(new ClientInputMessage(playerId, input));
 
@@ -147,6 +163,17 @@ public sealed class LocalGameClient(
                 if (mobs.PlayerId.Equals(playerId))
                 {
                     mobSnapshots.Enqueue(mobs.Snapshot);
+                }
+                break;
+
+            case ServerWorldTimeMessage time:
+                if (time.PlayerId.Equals(playerId))
+                {
+                    worldTimeSnapshots.Enqueue(time.Snapshot);
+                    lock (stateSync)
+                    {
+                        lastWorldTimeSnapshot = time.Snapshot;
+                    }
                 }
                 break;
 

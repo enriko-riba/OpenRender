@@ -1,8 +1,3 @@
-using OpenRender.Core;
-using OpenRender.Core.Buffers;
-using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
-using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -13,56 +8,36 @@ namespace SpyroGame.Client.Mobs;
 internal sealed class MobBlockRenderer
 {
     private readonly Scene scene;
-    private readonly Material mobMaterial;
-    private readonly Material hostileMaterial;
 
-    private readonly Vertex[] mobVerts;
-    private readonly uint[] mobIndices;
+    private readonly Dictionary<MobId, MobSceneNode> nodesById = [];
 
-    private readonly Dictionary<MobId, SceneNode> nodesById = [];
-
-    // Slightly larger than a voxel; still a single "block" representation.
-    private static readonly Vector3 MobScale = new(1.25f, 1.25f, 1.25f);
-    private static readonly float MobHalfHeight = 0.5f * MobScale.Y;
-
-    // The server currently places mobs at Y = groundTopFace + 0.55.
-    // Our cube is centered at the node origin and scaled to MobScale, so its half-height is 0.5*scale.
-    // Offset the render node upward so the bottom face rests on the ground.
-    private const float ServerMobCenterYOffset = 0.55f;
-    private static readonly float RenderYOffset = MobHalfHeight - ServerMobCenterYOffset;
+    private static Vector3 GetMobScale(MobKind kind)
+        => kind switch
+        {
+            // Match server hitbox dimensions so collisions line up visually.
+            MobKind.Cow => new Vector3(0.9f, 1.4f, 0.9f),
+            MobKind.Pig => new Vector3(0.9f, 0.9f, 0.9f),
+            MobKind.Zombie => new Vector3(0.6f, 1.95f, 0.6f),
+            MobKind.Skeleton => new Vector3(0.6f, 1.99f, 0.6f),
+            _ => Vector3.One
+        };
 
     public MobBlockRenderer(Scene scene)
     {
         this.scene = scene;
-
-        var shader = scene.DefaultShader;
-        var texture = new TextureDescriptor(
-            "Resources/Corey.png",
-            TextureType: TextureType.Diffuse,
-            MagFilter: TextureMagFilter.Nearest,
-            MinFilter: TextureMinFilter.Nearest,
-            TextureWrapS: TextureWrapMode.ClampToEdge,
-            TextureWrapT: TextureWrapMode.ClampToEdge,
-            GenerateMipMap: true);
-
-        mobMaterial = Material.Create(
-            shader,
-            [texture],
-            diffuseColor: Vector3.One,
-            specularColor: Vector3.One,
-            shininess: 0.05f);
-
-        hostileMaterial = Material.Create(
-            shader,
-            [texture],
-            diffuseColor: new Vector3(0.6f, 1.0f, 0.6f), // Greenish glow
-            specularColor: Vector3.One,
-            shininess: 0.05f);
-
-        var (verts, indices) = MobBlockGeometry.CreateCoreyBlock();
-        mobVerts = verts;
-        mobIndices = indices;
     }
+
+    private static (string ModelPath, string? AnimationPath) GetModelAndAnimation(MobKind kind)
+        => kind switch
+        {
+            MobKind.Cow => ("Resources/models/entity/cow.json", "Resources/animations/cow_walk.json"),
+
+            // TODO: move the rest to JSON models as we author them.
+            MobKind.Zombie or MobKind.Skeleton
+                => ("Resources/models/entity/simple_block_hostile.json", "Resources/animations/simple_walk.json"),
+
+            _ => ("Resources/models/entity/simple_block.json", "Resources/animations/simple_walk.json"),
+        };
 
     public void ApplySnapshot(in MobStateSnapshot snapshot)
     {
@@ -74,28 +49,15 @@ internal sealed class MobBlockRenderer
 
             if (!nodesById.TryGetValue(mob.Id, out var node))
             {
-                // OpenRender updates the bounding sphere on the Mesh instance during transform invalidation.
-                // So each mob needs its own Mesh instance for correct frustum culling.
-                var mesh = new Mesh(VertexDeclarations.VertexPositionNormalTexture, mobVerts, mobIndices);
-
-                var isHostile = mob.Kind is MobKind.Zombie or MobKind.Skeleton;
-                node = new SceneNode(mesh, isHostile ? hostileMaterial : mobMaterial);
-
-                node.SetScale(MobScale);
-
-                //node.ShowBoundingSphere = true;
-                node.DisableCulling = false;
-                node.IsBatchingAllowed = true;
+                var (modelPath, animationPath) = GetModelAndAnimation(mob.Kind);
+                node = new MobSceneNode(modelPath, animationPath);
                 nodesById[mob.Id] = node;
                 var nodeToAdd = node;
-                scene.AddAction(() => scene.AddNode(nodeToAdd));
+                scene.AddAction(() => nodeToAdd.AddToScene(scene));
             }
 
-            // Apply transform directly (safe; renderer reads world matrices each frame).
-            node.SetPosition(mob.Position + new Vector3(0, RenderYOffset, 0));
-            var yawRadians = MathHelper.DegreesToRadians(mob.YawDegrees);
-            node.SetRotation(new Vector3(0, yawRadians, 0));
-            node.IsVisible = !mob.Flags.HasFlag(MobSnapshotFlags.Dead);
+            var scale = GetMobScale(mob.Kind);
+            node.ApplySnapshot(mob, scale);
         }
 
         if (nodesById.Count == seen.Count)
@@ -126,7 +88,7 @@ internal sealed class MobBlockRenderer
             }
 
             var nodeToRemove = node;
-            scene.AddAction(() => scene.RemoveNode(nodeToRemove));
+            scene.AddAction(() => nodeToRemove.RemoveFromScene(scene));
         }
     }
 }

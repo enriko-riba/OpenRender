@@ -136,6 +136,12 @@ public sealed class LocalGameServerHost(
             // unload deltas and accumulate stale chunks.
             connection.Send(new ServerStateMessage(playerId, snapshot));
 
+            // Server-authoritative world time for day/night.
+            if (server is LocalGameServer localTimeServer)
+            {
+                connection.Send(new ServerWorldTimeMessage(playerId, localTimeServer.GetWorldTimeSnapshot()));
+            }
+
             // Send mob state for the player (nearby/loaded chunks).
             if (server is LocalGameServer localServer && localServer.TryGetMobSnapshot(playerId, out var mobSnapshot))
             {

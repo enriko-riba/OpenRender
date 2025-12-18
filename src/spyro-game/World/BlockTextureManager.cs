@@ -63,8 +63,9 @@ public sealed class BlockTextureManager : IDisposable
         // Use NearestMipmapLinear to reduce aliasing/shimmering at distance while keeping pixelated look
         GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.NearestMipmapLinear);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
-        GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
-        GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+        // Clamp the atlas to avoid wrap bleeding at UV edges (especially noticeable on cutout vegetation).
+        GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
 
         // Enable Anisotropic Filtering if supported (greatly improves ground texture quality at angles)
         var maxAniso = GL.GetFloat((GetPName)0x84FF); // GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT

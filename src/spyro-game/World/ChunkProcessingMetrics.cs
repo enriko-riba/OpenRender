@@ -119,7 +119,7 @@ public sealed class ChunkProcessingMetrics
         meshBuildCount = Math.Min(meshBuildCount + 1, SampleSize);
         chunksMeshedThisInterval++;
         UpdateAverage(meshBuildSamples, meshBuildCount, out var avg);
-        AvgMeshBuildMs = avg;
+        //AvgMeshBuildMs = avg;
     }
     
     /// <summary>Record terrain generation breakdown stats.</summary>

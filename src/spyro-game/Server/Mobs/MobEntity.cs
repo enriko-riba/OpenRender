@@ -3,6 +3,12 @@ using SpyroGame.Shared.State;
 
 namespace SpyroGame.Server.Mobs;
 
+public enum MobSpawnLayer : byte
+{
+    Surface = 0,
+    Cave = 1,
+}
+
 public enum MobAiState
 {
     Idle,
@@ -28,6 +34,10 @@ public sealed class MobEntity
     public bool IsDead;
 
     public PlayerId? TargetPlayer;
+
+    // Spawning/despawning bookkeeping (server-side only).
+    public MobSpawnLayer SpawnLayer;
+    public float TimeInRandomDespawnRangeSeconds;
 
     // AI State
     public MobAiState AiState;
