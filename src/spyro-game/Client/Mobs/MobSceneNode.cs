@@ -217,11 +217,7 @@ internal sealed class MobSceneNode : SceneNode
         }
 
         var atlas = model.Texture.Atlas;
-        if (atlas is null || atlas.FaceTiles is null)
-        {
-            // No atlas mapping => nothing to render yet.
-            return;
-        }
+        var atlasFaceTiles = atlas?.FaceTiles;
 
         var shader = scene.DefaultShader;
         var texDesc = new TextureDescriptor(
@@ -240,6 +236,11 @@ internal sealed class MobSceneNode : SceneNode
             specularColor: Vector3.One,
             shininess: 0.05f);
 
+        // Prefer the real loaded texture size over JSON metadata (keeps UVs correct even if the JSON width/height is stale).
+        var diffuseTexture = material.Textures[(int)TextureType.Diffuse];
+        var texWidth = diffuseTexture?.Width ?? model.Texture.Width;
+        var texHeight = diffuseTexture?.Height ?? model.Texture.Height;
+        
         // Precompute model-space pivots so we can compute local offsets.
         var pivotByName = model.Bones.ToDictionary(b => b.Name, b => b.Pivot, StringComparer.OrdinalIgnoreCase);
 
@@ -293,7 +294,23 @@ internal sealed class MobSceneNode : SceneNode
 
             foreach (var cube in bone.Cubes)
             {
-                var faceTiles = cube.FaceTiles ?? atlas.FaceTiles;
+                EntityModelUvFaces? uvs = null;
+                if (cube.Uv?.Faces is not null)
+                {
+                    uvs = cube.Uv.Faces;
+                }
+                else if (cube.Uv?.Box is not null)
+                {
+                    uvs = EntityModelMeshBuilder.BuildBoxUvFaces(cube.Uv.Box);
+                }
+
+                var faceTiles = cube.FaceTiles ?? atlasFaceTiles;
+
+                // If neither explicit UVs nor atlas tiles exist, there's nothing we can render for this cube.
+                if (uvs is null && faceTiles is null)
+                {
+                    continue;
+                }
 
                 // Cube pivot node (handles cube-local rotation around pivot).
                 var pivotNode = new NonRecursiveSceneNode(DummyMesh, Material.Default)
@@ -314,12 +331,18 @@ internal sealed class MobSceneNode : SceneNode
 
                 // Renderable cube mesh node.
                 // NOTE: each node needs its own Mesh instance because SceneNode.Invalidate mutates mesh.BoundingSphere.
-                var mesh = EntityModelMeshBuilder.BuildCubeMesh(cube.Size, faceTiles, atlas);
+                var mesh = uvs is not null
+                    ? EntityModelMeshBuilder.BuildCubeMesh(cube.Size, uvs, texWidth, texHeight)
+                    : EntityModelMeshBuilder.BuildCubeMesh(cube.Size, faceTiles!, atlas!);
                 var cubeNode = new NonRecursiveSceneNode(mesh, material)
                 {
                     IsVisible = true,
                     DisableCulling = false,
-                    IsBatchingAllowed = true,
+                    // NOTE: The scene's DefaultShader is `standard.vert/standard.frag`.
+                    // The renderer's batching path uses SSBOs + MultiDrawIndirect, which requires
+                    // the `*-batching.*` shader variants. If we allow these cubes to batch, they can
+                    // be rendered without the correct per-draw model/texture data (often showing black).
+                    IsBatchingAllowed = false,
                 };
 
                 cubeNode.SetPosition(cube.Origin - cube.Pivot);
