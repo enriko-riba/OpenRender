@@ -218,15 +218,19 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     {
         payload = [];
 
-        if (!voxelCache.TryGetChunkData(chunkIndex, out var chunkData) || chunkData == null)
+        if (!voxelCache.TryAcquireChunkData(chunkIndex, out var lease))
         {
             return false;
         }
 
-        using var ms = new MemoryStream(capacity: 64 * 1024);
-        using (var writer = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+        using (lease)
         {
-            chunkData.Serialize(writer);
+            var chunkData = lease.Data;
+
+            using var ms = new MemoryStream(capacity: 64 * 1024);
+            using (var writer = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+            {
+                chunkData.Serialize(writer);
 
             // Optional biome payload (network-only).
             // The client-side mesher/debug overlay needs per-column biome ids.
@@ -246,10 +250,11 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                     writer.Write((byte)biomeData.ColumnBiomes[i]);
                 }
             }
-        }
+            }
 
-        payload = ms.ToArray();
-        return true;
+            payload = ms.ToArray();
+            return true;
+        }
     }
 
     public bool TryDequeueChangedChunk(out int chunkIndex)
@@ -293,26 +298,31 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         }
 
         // If voxel data exists, apply immediately.
-        if (!voxelCache.TryGetChunkData(chunkIdx, out var chunkData) || chunkData == null)
+        if (!voxelCache.TryAcquireChunkData(chunkIdx, out var lease))
         {
             return;
         }
 
-        var oldBlock = chunkData.GetBlock(localX, localY, localZ);
-        if (oldBlock == blockId)
+        HashSet<int> affectedByLight;
+        using (lease)
         {
-            return;
+            var chunkData = lease.Data;
+            var oldBlock = chunkData.GetBlock(localX, localY, localZ);
+            if (oldBlock == blockId)
+            {
+                return;
+            }
+
+            chunkData.SetBlock(localX, localY, localZ, blockId);
+
+            // Update collision for this column.
+            var chunk = world.GetOrCreateChunkContainer(chunkIdx);
+            chunk.RebuildColumnSpans(localX, localZ, chunkData);
+            CollisionManager.RebuildColumnFromVoxelData(chunkIdx, localX, localZ, chunkData);
+
+            // Update lighting in cached chunk data so the client can re-mesh with correct light.
+            affectedByLight = RecalculateLightingForBlockEdit(chunkIdx, localX, localY, localZ, oldBlock, blockId);
         }
-
-        chunkData.SetBlock(localX, localY, localZ, blockId);
-
-        // Update collision for this column.
-        var chunk = world.GetOrCreateChunkContainer(chunkIdx);
-        chunk.RebuildColumnSpans(localX, localZ, chunkData);
-        CollisionManager.RebuildColumnFromVoxelData(chunkIdx, localX, localZ, chunkData);
-
-        // Update lighting in cached chunk data so the client can re-mesh with correct light.
-        var affectedByLight = RecalculateLightingForBlockEdit(chunkIdx, localX, localY, localZ, oldBlock, blockId);
         if (affectedByLight.Count == 0)
         {
             MarkChunkChanged(chunkIdx);
@@ -331,9 +341,6 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         }
     }
 
-    private ChunkData? GetChunkDataOrNull(int chunkIndex)
-        => voxelCache.TryGetChunkData(chunkIndex, out var data) ? data : null;
-
     private HashSet<int> RecalculateLightingForBlockEdit(
         int chunkIdx,
         int localX,
@@ -342,10 +349,26 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         BlockId oldBlock,
         BlockId newBlock)
     {
+        var leases = new List<ChunkVoxelDataCache.ChunkDataLease>(capacity: 8);
+
+        ChunkData? GetChunkDataLeaseBacked(int chunkIndex)
+        {
+            if (!voxelCache.TryAcquireChunkData(chunkIndex, out var lease))
+            {
+                return null;
+            }
+
+            leases.Add(lease);
+            return lease.Data;
+        }
+
         var oldLightValue = BlockRegistry.GetLightValue(oldBlock);
         var newLightValue = BlockRegistry.GetLightValue(newBlock);
         var oldIsOpaque = oldBlock.IsOpaque();
         var newIsOpaque = newBlock.IsOpaque();
+
+        try
+        {
 
         // Changing opacity can expose/block skylight and affect a larger volume.
         if (oldIsOpaque != newIsOpaque)
@@ -353,7 +376,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             return LightingCalculator.RecalculateLightingAroundBlock(
                 chunkIdx,
                 localX, localY, localZ,
-                GetChunkDataOrNull);
+                GetChunkDataLeaseBacked);
         }
 
         // Removing a light source: clear stale block light across chunk boundaries.
@@ -363,7 +386,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 chunkIdx,
                 localX, localY, localZ,
                 oldLightValue,
-                GetChunkDataOrNull);
+                GetChunkDataLeaseBacked);
         }
 
         // Placing a light source: propagate the new light across chunk boundaries.
@@ -373,10 +396,18 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 chunkIdx,
                 localX, localY, localZ,
                 newLightValue,
-                GetChunkDataOrNull);
+                GetChunkDataLeaseBacked);
         }
 
         return [];
+        }
+        finally
+        {
+            foreach (var lease in leases)
+            {
+                lease.Dispose();
+            }
+        }
     }
 
     public void Dispose()
@@ -456,14 +487,18 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
     private bool TryEnqueueChunkStateSaveSnapshot(int chunkIdx)
     {
-        if (!voxelCache.TryGetChunkData(chunkIdx, out var liveData) || liveData == null)
+        if (!voxelCache.TryAcquireChunkData(chunkIdx, out var lease))
         {
             return false;
         }
 
         var snapshot = new ChunkData();
-        liveData.CloneTo(snapshot);
-        snapshot.ChunkIndex = chunkIdx;
+        using (lease)
+        {
+            var liveData = lease.Data;
+            liveData.CloneTo(snapshot);
+            snapshot.ChunkIndex = chunkIdx;
+        }
 
         voxelCache.TryGetBiomeData(chunkIdx, out var biomeData);
 

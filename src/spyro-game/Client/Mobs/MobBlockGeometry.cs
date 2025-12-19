@@ -121,6 +121,8 @@ internal static class MobBlockGeometry
         return (v, indices);
     }
 
+    private static Vector3 ToGame(Vector3 v) => v;
+
     private static (Vertex[] Vertices, uint[] Indices) CreateFromModel(EntityModelDefinition model)
     {
         // For now: only support a single cube mesh (the existing block) but driven by JSON.
@@ -148,8 +150,9 @@ internal static class MobBlockGeometry
         var back = AtlasRect(tiles.Back.Col, tiles.Back.Row, atlas.Columns, atlas.Rows);
 
         // Use cube origin/size to build vertices.
-        var min = cube.Origin;
-        var max = cube.Origin + cube.Size;
+        // Use ToGame for Origin (Z-up -> Y-up), but Identity for Size (Y-up -> Y-up).
+        var min = ToGame(cube.Origin);
+        var max = min + (cube.Size ?? Vector3.One);
 
         // 6 faces * 4 vertices.
         var v = new Vertex[24];

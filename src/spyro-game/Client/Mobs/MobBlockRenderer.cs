@@ -14,8 +14,9 @@ internal sealed class MobBlockRenderer
     private static Vector3 GetMobScale(MobKind kind)
         => kind switch
         {
-            // Match server hitbox dimensions so collisions line up visually.
-            MobKind.Cow => new Vector3(0.9f, 1.4f, 0.9f),
+            // Visual scale - independent of collision hitbox.
+            // Cow: narrow (X), tall (Y), long (Z) to match Minecraft proportions.
+            MobKind.Cow => new Vector3(0.6f, 1.4f, 1.5f),
             MobKind.Pig => new Vector3(0.9f, 0.9f, 0.9f),
             MobKind.Zombie => new Vector3(0.6f, 1.95f, 0.6f),
             MobKind.Skeleton => new Vector3(0.6f, 1.99f, 0.6f),

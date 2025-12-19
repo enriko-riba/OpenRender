@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using OpenTK.Mathematics;
 
 namespace SpyroGame.Client.Content.EntityModels;
@@ -39,9 +41,26 @@ internal sealed record EntityModelBone(
     IReadOnlyList<EntityModelCube> Cubes);
 
 internal sealed record EntityModelCube(
+    // Optional label for debugging/authoring (has no semantic meaning to the renderer).
+    string? Name,
     Vector3 Origin,
-    Vector3 Size,
+    Vector3? Size,
     Vector3 Pivot,
     Vector3 Rotation,
     // If present, overrides the model atlas face-tiles for this cube.
-    EntityModelFaceTiles? FaceTiles = null);
+    EntityModelFaceTiles? FaceTiles = null,
+    // Optional per-face UV mapping in pixel coordinates (origin at top-left of the texture).
+    EntityModelCubeUv? Uv = null);
+
+// Per-face UV rectangles in pixel coordinates (origin at top-left of texture).
+// Each face specifies X, Y, W, H in pixels.
+internal sealed record EntityModelCubeUv(
+    EntityModelUvRect Top,
+    EntityModelUvRect Bottom,
+    EntityModelUvRect Front,
+    EntityModelUvRect Left,
+    EntityModelUvRect Right,
+    EntityModelUvRect Back);
+
+internal sealed record EntityModelUvRect(int X, int Y, int W, int H);
+

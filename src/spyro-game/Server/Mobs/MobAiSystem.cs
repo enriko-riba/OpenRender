@@ -42,12 +42,23 @@ public sealed class MobAiSystem()
                 break;
 
             case MobAiState.Wander:
-                if (mob.AiTimer <= 0 || (mob.WanderTarget.HasValue && Vector3.DistanceSquared(mob.Position, mob.WanderTarget.Value) < 1.0f))
+                if (mob.AiTimer <= 0)
                 {
+                    // Time expired - stop wandering
                     mob.AiState = MobAiState.Idle;
                     mob.AiTimer = 1.0f + (float)Random.Shared.NextDouble() * 2.0f;
                     mob.Velocity.X = 0;
                     mob.Velocity.Z = 0;
+                    mob.WanderTarget = null;
+                }
+                else if (mob.WanderTarget.HasValue && Vector3.DistanceSquared(mob.Position, mob.WanderTarget.Value) < 2.0f)
+                {
+                    // Reached destination (within ~1.4 blocks) - stop wandering
+                    mob.AiState = MobAiState.Idle;
+                    mob.AiTimer = 1.0f + (float)Random.Shared.NextDouble() * 2.0f;
+                    mob.Velocity.X = 0;
+                    mob.Velocity.Z = 0;
+                    mob.WanderTarget = null;
                 }
                 else
                 {
@@ -105,10 +116,22 @@ public sealed class MobAiSystem()
                 break;
         }
         
-        // Update Yaw
-        if (mob.Velocity.LengthSquared > 0.1f)
+        // Update Yaw - face the direction of movement
+        // Model forward is -Z, so add 180° to align visual with velocity
+        // Only update if moving with significant velocity to avoid jitter when stopping
+        if (mob.Velocity.X * mob.Velocity.X + mob.Velocity.Z * mob.Velocity.Z > 0.25f)
         {
-            mob.YawDegrees = MathHelper.RadiansToDegrees(MathF.Atan2(mob.Velocity.X, mob.Velocity.Z));
+            var targetYaw = MathHelper.RadiansToDegrees(MathF.Atan2(mob.Velocity.X, mob.Velocity.Z)) + 180f;
+            
+            // Smoothly interpolate yaw to avoid snapping
+            var deltaYaw = targetYaw - mob.YawDegrees;
+            
+            // Normalize to -180..180
+            while (deltaYaw > 180f) deltaYaw -= 360f;
+            while (deltaYaw < -180f) deltaYaw += 360f;
+            
+            // Apply smoothed rotation (lerp ~10% per tick at 20 TPS = smooth turn)
+            mob.YawDegrees += deltaYaw * 0.15f;
         }
     }
 

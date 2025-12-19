@@ -51,7 +51,13 @@ public static class LightingCalculator
                 for (var y = startY; y >= 0; y--)
                 {
                     var index = GetIndex(x, y, z);
-                    var block = chunk.GetBlock(x, y, z);
+                    // Defensive: chunk voxel/palette data can be temporarily malformed during streaming/generation.
+                    // Treat invalid reads as Air so boundary propagation can't crash background meshing.
+                    if (!TryGetBlockSafe(chunk, x, y, z, out var block))
+                    {
+                        skyVisibility[index] = (byte)(currentLight > 0 ? 1 : 0);
+                        continue;
+                    }
 
                     if (block.IsOpaque())
                     {
@@ -595,7 +601,10 @@ public static class LightingCalculator
         if (chunk == null) return;
 
         var index = GetIndex(targetX, y, targetZ);
-        var block = chunk.GetBlock(targetX, y, targetZ);
+        if (!TryGetBlockSafe(chunk, targetX, y, targetZ, out var block))
+        {
+            block = BlockId.Air;
+        }
         
         if (block.IsOpaque()) return;
 
@@ -669,7 +678,10 @@ public static class LightingCalculator
         if (chunk == null) return;
 
         var index = GetIndex(targetX, y, targetZ);
-        var block = chunk.GetBlock(targetX, y, targetZ);
+        if (!TryGetBlockSafe(chunk, targetX, y, targetZ, out var block))
+        {
+            block = BlockId.Air;
+        }
 
         if (block.IsOpaque()) return;
 
@@ -738,7 +750,10 @@ public static class LightingCalculator
         if (chunk == null) return;
 
         var index = GetIndex(targetX, y, targetZ);
-        var block = chunk.GetBlock(targetX, y, targetZ);
+        if (!TryGetBlockSafe(chunk, targetX, y, targetZ, out var block))
+        {
+            block = BlockId.Air;
+        }
         
         if (block.IsOpaque()) return;
 
@@ -816,7 +831,10 @@ public static class LightingCalculator
         if (chunk == null) return;
 
         var index = GetIndex(targetX, y, targetZ);
-        var block = chunk.GetBlock(targetX, y, targetZ);
+        if (!TryGetBlockSafe(chunk, targetX, y, targetZ, out var block))
+        {
+            block = BlockId.Air;
+        }
 
         if (block.IsOpaque()) return;
 
@@ -995,14 +1013,35 @@ public static class LightingCalculator
 
     private static bool PropagateSingleBlock(ChunkData sourceChunk, int sx, int sy, int sz, ChunkData targetChunk, int tx, int ty, int tz, bool isSkyLight)
     {
+        if (!ChunkData.IsWithinBounds(sx, sy, sz) || !ChunkData.IsWithinBounds(tx, ty, tz))
+        {
+            return false;
+        }
+
         var targetIndex = GetIndex(tx, ty, tz);
-        var targetBlock = targetChunk.GetBlock(tx, ty, tz);
+        if (!TryGetBlockSafe(targetChunk, tx, ty, tz, out var targetBlock))
+        {
+            return false;
+        }
+
+        if (!TryGetLightIndexSafe(targetChunk, targetIndex))
+        {
+            return false;
+        }
 
         // Target must be non-opaque to receive light
         if (targetBlock.IsOpaque()) return false;
 
         var sourceIndex = GetIndex(sx, sy, sz);
-        var sourceBlock = sourceChunk.GetBlock(sx, sy, sz);
+        if (!TryGetBlockSafe(sourceChunk, sx, sy, sz, out var sourceBlock))
+        {
+            return false;
+        }
+
+        if (!TryGetLightIndexSafe(sourceChunk, sourceIndex))
+        {
+            return false;
+        }
         
         // Source must be non-opaque to transmit light (light doesn't pass through solid blocks)
         // Exception: emissive blocks can emit light even if "opaque"
@@ -1024,6 +1063,46 @@ public static class LightingCalculator
             return true;
         }
         return false;
+    }
+
+    private static bool TryGetLightIndexSafe(ChunkData chunk, int index)
+    {
+        var light = chunk.LightData;
+        return light is not null && (uint)index < (uint)light.Length;
+    }
+
+    private static bool TryGetBlockSafe(ChunkData chunk, int x, int y, int z, out BlockId block)
+    {
+        if (!ChunkData.IsWithinBounds(x, y, z))
+        {
+            block = BlockId.Air;
+            return false;
+        }
+
+        var voxels = chunk.VoxelData;
+        if (voxels is null)
+        {
+            block = BlockId.Air;
+            return false;
+        }
+
+        var idx = GetIndex(x, y, z);
+        if ((uint)idx >= (uint)voxels.Length)
+        {
+            block = BlockId.Air;
+            return false;
+        }
+
+        var paletteIndex = voxels[idx];
+        var palette = chunk.Palette;
+        if (palette is null || (uint)paletteIndex >= (uint)palette.Length)
+        {
+            block = BlockId.Air;
+            return false;
+        }
+
+        block = palette[paletteIndex];
+        return true;
     }
 
     /// <summary>
@@ -1061,7 +1140,18 @@ public static class LightingCalculator
                 for (var y = startY; y >= 0; y--)
                 {
                     var index = GetIndex(x, y, z);
-                    var block = chunk.GetBlock(x, y, z);
+                    // Same defensive read as BuildSkyVisibilityMap.
+                    if (!TryGetBlockSafe(chunk, x, y, z, out var block))
+                    {
+                        // Invalid voxel/palette => treat as Air.
+                        skyVisibility[index] = (byte)(currentLight > 0 ? 1 : 0);
+                        if (currentLight > 0)
+                        {
+                            SetSkyLight(chunk, index, currentLight);
+                            queue.Enqueue(PackPos(x, y, z));
+                        }
+                        continue;
+                    }
 
                     if (block.IsOpaque())
                     {
@@ -1123,7 +1213,10 @@ public static class LightingCalculator
                 
                 for (var y = 0; y < maxY; y++)
                 {
-                    var block = chunk.GetBlock(x, y, z);
+                    if (!TryGetBlockSafe(chunk, x, y, z, out var block))
+                    {
+                        continue;
+                    }
                     var lightValue = BlockRegistry.GetLightValue(block);
 
                     if (lightValue > 0)
@@ -1197,7 +1290,10 @@ public static class LightingCalculator
         }
 
         var index = GetIndex(x, y, z);
-        var block = chunk.GetBlock(x, y, z);
+        if (!TryGetBlockSafe(chunk, x, y, z, out var block))
+        {
+            block = BlockId.Air;
+        }
 
         if (block.IsOpaque()) return; // Light doesn't pass through opaque blocks
 

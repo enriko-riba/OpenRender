@@ -227,21 +227,25 @@ public sealed class ClientTerrainSystem : IDisposable
             return false;
         }
 
-        if (!voxelCache.TryGetChunkData(chunkIndex, out var data) || data == null)
+        if (!voxelCache.TryAcquireChunkData(chunkIndex, out var lease))
         {
             return false;
         }
 
-        var old = data.GetBlock(localX, localY, localZ);
-        if (old == blockId)
+        using (lease)
         {
-            return true;
+            var data = lease.Data;
+            var old = data.GetBlock(localX, localY, localZ);
+            if (old == blockId)
+            {
+                return true;
+            }
+
+            data.SetBlock(localX, localY, localZ, blockId);
+
+            // Update collision immediately for better interaction/picking responsiveness.
+            CollisionManager.RebuildColumnFromVoxelData(chunkIndex, localX, localZ, data);
         }
-
-        data.SetBlock(localX, localY, localZ, blockId);
-
-        // Update collision immediately for better interaction/picking responsiveness.
-        CollisionManager.RebuildColumnFromVoxelData(chunkIndex, localX, localZ, data);
 
         if (!voxelCache.TryGetVersion(chunkIndex, out var version))
         {
@@ -402,19 +406,23 @@ public sealed class ClientTerrainSystem : IDisposable
             var chunkIndex = kvp.Key;
             var next = kvp.Value;
 
-            if (!voxelCache.TryGetChunkData(chunkIndex, out var data) || data == null)
+            if (!voxelCache.TryAcquireChunkData(chunkIndex, out var lease))
             {
                 completedChunks.Add(chunkIndex);
                 continue;
             }
 
-            while (next < VoxelHelper.ChunkSideSizeSquare && processed < maxColumnsPerFrame)
+            using (lease)
             {
-                var x = next % VoxelHelper.ChunkSideSize;
-                var z = next / VoxelHelper.ChunkSideSize;
-                CollisionManager.RebuildColumnFromVoxelData(chunkIndex, x, z, data);
-                next++;
-                processed++;
+                var data = lease.Data;
+                while (next < VoxelHelper.ChunkSideSizeSquare && processed < maxColumnsPerFrame)
+                {
+                    var x = next % VoxelHelper.ChunkSideSize;
+                    var z = next / VoxelHelper.ChunkSideSize;
+                    CollisionManager.RebuildColumnFromVoxelData(chunkIndex, x, z, data);
+                    next++;
+                    processed++;
+                }
             }
 
             if (next >= VoxelHelper.ChunkSideSizeSquare)

@@ -113,10 +113,18 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 continue;
             }
 
-            if (!voxelCache.TryGetChunkData(chunkIndex, out var chunkData) || chunkData == null || chunkData.LightData == null)
+            if (!voxelCache.TryAcquireChunkData(chunkIndex, out var chunkLease))
             {
                 continue;
             }
+
+            using (chunkLease)
+            {
+                var chunkData = chunkLease.Data;
+                if (chunkData.LightData == null)
+                {
+                    continue;
+                }
 
             var roll = (int)(HashToUInt(worldSeed, chunkIndex, salt: 0) % RollDenominator);
             if (roll >= PassiveRollThreshold)
@@ -124,19 +132,20 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 continue;
             }
 
-            if (TrySpawnForChunk(worldSeed, isDaytime: true, MobCategory.Passive, chunkIndex, chunk, chunkData, players, noSpawnRadiusSq, passiveCount, hostileCount, world, voxelCache, passiveDensity, out var spawnPos, out var def))
-            {
-                var mob = mobManager.CreateMob(def);
-                mob.Position = spawnPos;
-                mob.YawDegrees = HashToYawDegrees(worldSeed, chunkIndex);
-                mob.PitchDegrees = 0;
-                mob.SpawnLayer = MobSpawnLayer.Surface;
+                if (TrySpawnForChunk(worldSeed, isDaytime: true, MobCategory.Passive, chunkIndex, chunk, chunkData, players, noSpawnRadiusSq, passiveCount, hostileCount, world, voxelCache, passiveDensity, out var spawnPos, out var def))
+                {
+                    var mob = mobManager.CreateMob(def);
+                    mob.Position = spawnPos;
+                    mob.YawDegrees = HashToYawDegrees(worldSeed, chunkIndex);
+                    mob.PitchDegrees = 0;
+                    mob.SpawnLayer = MobSpawnLayer.Surface;
 
-                if (def.Category == MobCategory.Passive) passiveCount++;
-                else if (def.Category == MobCategory.Hostile) hostileCount++;
+                    if (def.Category == MobCategory.Passive) passiveCount++;
+                    else if (def.Category == MobCategory.Hostile) hostileCount++;
 
-                var areaKey = GetDensityAreaKey((int)MathF.Floor(spawnPos.X), (int)MathF.Floor(spawnPos.Z));
-                passiveDensity[areaKey] = passiveDensity.TryGetValue(areaKey, out var existing) ? (existing + 1) : 1;
+                    var areaKey = GetDensityAreaKey((int)MathF.Floor(spawnPos.X), (int)MathF.Floor(spawnPos.Z));
+                    passiveDensity[areaKey] = passiveDensity.TryGetValue(areaKey, out var existing) ? (existing + 1) : 1;
+                }
             }
         }
     }
@@ -242,10 +251,18 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             continue;
                         }
 
-                        if (!voxelCache.TryGetChunkData(chunkIndex, out var chunkData) || chunkData == null || chunkData.LightData == null)
+                        if (!voxelCache.TryAcquireChunkData(chunkIndex, out var chunkLease))
                         {
                             continue;
                         }
+
+                        using (chunkLease)
+                        {
+                            var chunkData = chunkLease.Data;
+                            if (chunkData.LightData == null)
+                            {
+                                continue;
+                            }
 
                         var chunk = world[chunkIndex];
                         if (chunk is null || !chunk.HasCollisionData)
@@ -267,61 +284,62 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             continue;
                         }
 
-                        // At night, allow surface hostiles (effective light handled inside TrySpawnAt).
-                        // During day, only allow caves/dark areas.
-                    if (!isDaytime)
-                    {
-                            var areaKey = GetDensityAreaKey(x, z);
-                        var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
-                        if (counts.Surface >= SurfaceHostileDensityCap)
+                            // At night, allow surface hostiles (effective light handled inside TrySpawnAt).
+                            // During day, only allow caves/dark areas.
+                            if (!isDaytime)
                             {
-                                continue;
+                                var areaKey = GetDensityAreaKey(x, z);
+                                var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
+                                if (counts.Surface >= SurfaceHostileDensityCap)
+                                {
+                                    continue;
+                                }
+
+                                if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Surface, SurfaceHostileDensityCap))
+                                {
+                                    continue;
+                                }
+
+                                if (TrySpawnAt(isDaytime: false, passiveCount, hostileCount, isCaveSpawn: false, x, topY, z, chunkData, world, voxelCache, out var spawnPos, out var spawnedDef))
+                                {
+                                    var mob = mobManager.CreateMob(spawnedDef);
+                                    mob.Position = spawnPos;
+                                    mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
+                                    mob.PitchDegrees = 0;
+                                    mob.SpawnLayer = MobSpawnLayer.Surface;
+                                    hostileCount++;
+
+                                    density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
+                                    continue;
+                                }
                             }
 
-                            if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Surface, SurfaceHostileDensityCap))
+                            // Cave spawn: scan downward for a dark pocket (raw skylight <= 7).
+                            if (TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out var y))
                             {
-                                continue;
-                            }
+                                var areaKey = GetDensityAreaKey(x, z);
+                                var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
+                                if (counts.Cave >= CaveHostileDensityCap)
+                                {
+                                    continue;
+                                }
 
-                            if (TrySpawnAt(isDaytime: false, passiveCount, hostileCount, isCaveSpawn: false, x, topY, z, chunkData, world, voxelCache, out var spawnPos, out var spawnedDef))
-                        {
-                            var mob = mobManager.CreateMob(spawnedDef);
-                            mob.Position = spawnPos;
-                            mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
-                            mob.PitchDegrees = 0;
-                                mob.SpawnLayer = MobSpawnLayer.Surface;
-                            hostileCount++;
+                                if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Cave, CaveHostileDensityCap))
+                                {
+                                    continue;
+                                }
 
-                            density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
-                            continue;
-                        }
-                    }
+                                if (TrySpawnAt(isDaytime, passiveCount, hostileCount, isCaveSpawn: true, x, y, z, chunkData, world, voxelCache, out var cavePos, out var caveDef))
+                                {
+                                    var mob = mobManager.CreateMob(caveDef);
+                                    mob.Position = cavePos;
+                                    mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
+                                    mob.PitchDegrees = 0;
+                                    mob.SpawnLayer = MobSpawnLayer.Cave;
+                                    hostileCount++;
 
-                        // Cave spawn: scan downward for a dark pocket (raw skylight <= 7).
-                        if (TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out var y))
-                        {
-                            var areaKey = GetDensityAreaKey(x, z);
-                            var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
-                            if (counts.Cave >= CaveHostileDensityCap)
-                            {
-                                continue;
-                            }
-
-                            if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Cave, CaveHostileDensityCap))
-                            {
-                                continue;
-                            }
-
-                            if (TrySpawnAt(isDaytime, passiveCount, hostileCount, isCaveSpawn: true, x, y, z, chunkData, world, voxelCache, out var cavePos, out var caveDef))
-                            {
-                                var mob = mobManager.CreateMob(caveDef);
-                                mob.Position = cavePos;
-                                mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
-                                mob.PitchDegrees = 0;
-                                mob.SpawnLayer = MobSpawnLayer.Cave;
-                                hostileCount++;
-
-                                density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
+                                    density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
+                                }
                             }
                         }
                 }
@@ -449,10 +467,18 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 continue;
             }
 
-            if (!voxelCache.TryGetChunkData(chunkIndex, out var chunkData) || chunkData == null || chunkData.LightData == null)
+            if (!voxelCache.TryAcquireChunkData(chunkIndex, out var chunkLease))
             {
                 continue;
             }
+
+            using (chunkLease)
+            {
+                var chunkData = chunkLease.Data;
+                if (chunkData.LightData == null)
+                {
+                    continue;
+                }
 
             var chunk = world[chunkIndex];
             if (chunk is null || !chunk.HasCollisionData)
@@ -477,16 +503,17 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             // Determine if this anchor can ever spawn a hostile:
             // - at night: surface is allowed (effective light will be 0)
             // - at day: require a dark cave in the column
-            if (isDaytime)
-            {
-                if (!TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out _))
+                if (isDaytime)
                 {
-                    continue;
+                    if (!TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out _))
+                    {
+                        continue;
+                    }
                 }
-            }
 
-            anchorPos = new Vector3(x + 0.5f, topY, z + 0.5f);
-            return true;
+                anchorPos = new Vector3(x + 0.5f, topY, z + 0.5f);
+                return true;
+            }
         }
 
         return false;

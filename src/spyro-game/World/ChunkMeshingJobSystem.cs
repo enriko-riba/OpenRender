@@ -159,7 +159,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Error($"CPU meshing failed for chunk {item.ChunkIndex}: {ex.Message}");
+            Log.Error($"CPU meshing failed for chunk {item.ChunkIndex}: {ex}");
         }
         finally
         {
@@ -205,8 +205,12 @@ public sealed class ChunkMeshingJobSystem : IDisposable
     /// </summary>
     private void PropagateBoundaryLight(int chunkIdx)
     {
-        if (!voxelCache.TryGetChunkData(chunkIdx, out var centerData) || centerData == null)
+        if (!voxelCache.TryAcquireChunkData(chunkIdx, out var centerLease))
             return;
+
+        using (centerLease)
+        {
+            var centerData = centerLease.Data;
 
         var chunkX = chunkIdx % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIdx / VoxelHelper.WorldChunksXZ;
@@ -214,21 +218,26 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         // Cardinal neighbors only
         (int dx, int dz)[] neighbors = [(-1, 0), (1, 0), (0, -1), (0, 1)];
 
-        foreach (var (dx, dz) in neighbors)
-        {
-            var nx = chunkX + dx;
-            var nz = chunkZ + dz;
+            foreach (var (dx, dz) in neighbors)
+            {
+                var nx = chunkX + dx;
+                var nz = chunkZ + dz;
 
-            if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
-                continue;
+                if (nx < 0 || nx >= VoxelHelper.WorldChunksXZ || nz < 0 || nz >= VoxelHelper.WorldChunksXZ)
+                    continue;
 
-            var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
+                var neighborIdx = nz * VoxelHelper.WorldChunksXZ + nx;
 
-            if (!voxelCache.TryGetChunkData(neighborIdx, out var neighborData) || neighborData == null)
-                continue;
+                if (!voxelCache.TryAcquireChunkData(neighborIdx, out var neighborLease))
+                    continue;
 
-            // Bidirectional propagation
-            LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
+                using (neighborLease)
+                {
+                    var neighborData = neighborLease.Data;
+                    // Bidirectional propagation
+                    LightingCalculator.PropagateNeighborLight(centerData, neighborData, dx, dz);
+                }
+            }
         }
     }
 

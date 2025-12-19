@@ -234,17 +234,34 @@ public class ChunkData
         // If the file was saved with Air at 0, then VoxelData 0 means Air.
         
         // VoxelData
+        // The on-disk format writes a length prefix. Older/corrupt files may have a different length;
+        // keep runtime buffers at the expected size to avoid downstream out-of-range indexing.
+        var expectedVoxelLen = VoxelHelper.ChunkVoxelCount;
         var voxelLen = reader.ReadInt32();
-        // Read into existing buffer if possible to avoid alloc, but here we just read new
-        // Note: ChunkData constructor allocates VoxelData, so we are discarding it here.
-        // Optimization: Read directly into data.VoxelData
-        if (voxelLen == data.VoxelData.Length)
+
+        if (voxelLen == expectedVoxelLen)
         {
-            reader.Read(data.VoxelData, 0, voxelLen);
+            reader.Read(data.VoxelData, 0, expectedVoxelLen);
         }
         else
         {
-            data.VoxelData = reader.ReadBytes(voxelLen);
+            // Read what we have, pad/trim to expected length.
+            var bytesToCopy = Math.Min(voxelLen, expectedVoxelLen);
+            if (bytesToCopy > 0)
+            {
+                reader.Read(data.VoxelData, 0, bytesToCopy);
+            }
+
+            // If file has more data than expected, consume the remainder.
+            var remaining = voxelLen - bytesToCopy;
+            while (remaining > 0)
+            {
+                var chunk = Math.Min(remaining, 8192);
+                _ = reader.ReadBytes(chunk);
+                remaining -= chunk;
+            }
+
+            // If file has less data than expected, leave the rest as zero (palette index 0).
         }
 
         // Sanity Check: Ensure Palette[0] is Air
@@ -295,14 +312,29 @@ public class ChunkData
         }
 
         // LightData
+        // Same story as VoxelData: keep the runtime buffer at expected size.
+        var expectedLightLen = VoxelHelper.ChunkVoxelCount;
         var lightLen = reader.ReadInt32();
-        if (lightLen == data.LightData.Length)
+        if (lightLen == expectedLightLen)
         {
-            reader.Read(data.LightData, 0, lightLen);
+            reader.Read(data.LightData, 0, expectedLightLen);
         }
         else
         {
-            data.LightData = reader.ReadBytes(lightLen);
+            var bytesToCopy = Math.Min(lightLen, expectedLightLen);
+            if (bytesToCopy > 0)
+            {
+                reader.Read(data.LightData, 0, bytesToCopy);
+            }
+
+            var remaining = lightLen - bytesToCopy;
+            while (remaining > 0)
+            {
+                var chunk = Math.Min(remaining, 8192);
+                _ = reader.ReadBytes(chunk);
+                remaining -= chunk;
+            }
+            // Pad remainder with 0 (no light).
         }
 
         // Biomes
@@ -375,24 +407,32 @@ public class ChunkData
         }
         
         // Copy VoxelData
-        if (target.VoxelData.Length != this.VoxelData.Length)
-             target.VoxelData = new byte[this.VoxelData.Length];
+        if (target.VoxelData.Length < this.VoxelData.Length)
+        {
+            target.VoxelData = new byte[this.VoxelData.Length];
+            target.VoxelDataIsPooled = false;
+        }
         Array.Copy(this.VoxelData, target.VoxelData, this.VoxelData.Length);
         
         // Copy SurfaceHeights
-        if (target.SurfaceHeights.Length != this.SurfaceHeights.Length)
-             target.SurfaceHeights = new int[this.SurfaceHeights.Length];
+        if (target.SurfaceHeights.Length < this.SurfaceHeights.Length)
+        {
+            target.SurfaceHeights = new int[this.SurfaceHeights.Length];
+        }
         Array.Copy(this.SurfaceHeights, target.SurfaceHeights, this.SurfaceHeights.Length);
         
         // Copy LightData
-        if (target.LightData.Length != this.LightData.Length)
-             target.LightData = new byte[this.LightData.Length];
+        if (target.LightData.Length < this.LightData.Length)
+        {
+            target.LightData = new byte[this.LightData.Length];
+            target.LightDataIsPooled = false;
+        }
         Array.Copy(this.LightData, target.LightData, this.LightData.Length);
 
         // Copy Biomes
         if (this.Biomes != null)
         {
-            if (target.Biomes == null || target.Biomes.Length != this.Biomes.Length)
+            if (target.Biomes == null || target.Biomes.Length < this.Biomes.Length)
                 target.Biomes = new BiomeId[this.Biomes.Length];
             Array.Copy(this.Biomes, target.Biomes, this.Biomes.Length);
         }

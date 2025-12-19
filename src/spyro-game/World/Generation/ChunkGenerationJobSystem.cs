@@ -182,33 +182,38 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                 else if (work.Type is GenerationJobType.Decoration or GenerationJobType.DecorationRepair)
                 {
                     // For decoration, we need the base terrain
-                    if (voxelCache.TryGetChunkData(work.ChunkIndex, out var baseData) && baseData != null)
+                    if (voxelCache.TryAcquireChunkData(work.ChunkIndex, out var baseLease))
                     {
-                        // Rent a NEW buffer
-                        writable = voxelCache.RentWritable(work.ChunkIndex);
-                        
-                        // Copy base data to writable
-                        baseData.CloneTo(writable);
-                        
-                        // Get Biome Data
-                        voxelCache.TryGetBiomeData(work.ChunkIndex, out var biomeData);
-                        
-                        // Decorate
-                        var terrainSw = Stopwatch.StartNew();
-                        result = generator.DecorateChunk(writable, biomeData, work.ChunkIndex);
-                        terrainSw.Stop();
-                        // We can record this as terrain generation time or separate metric
-                        metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
+                        using (baseLease)
+                        {
+                            var baseData = baseLease.Data;
 
-                        // Recalculate lighting? Trees cast shadows.
-                        var lightSw = Stopwatch.StartNew();
-                        LightingCalculator.CalculateLighting(writable);
-                        lightSw.Stop();
-                        metrics?.RecordLightCalculation(lightSw.Elapsed.TotalMilliseconds);
-                        
-                        // Store
-                        voxelCache.Store(writable);
-                        writable = null;
+                            // Rent a NEW buffer
+                            writable = voxelCache.RentWritable(work.ChunkIndex);
+
+                            // Copy base data to writable
+                            baseData.CloneTo(writable);
+
+                            // Get Biome Data
+                            voxelCache.TryGetBiomeData(work.ChunkIndex, out var biomeData);
+
+                            // Decorate
+                            var terrainSw = Stopwatch.StartNew();
+                            result = generator.DecorateChunk(writable, biomeData, work.ChunkIndex);
+                            terrainSw.Stop();
+                            // We can record this as terrain generation time or separate metric
+                            metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
+
+                            // Recalculate lighting? Trees cast shadows.
+                            var lightSw = Stopwatch.StartNew();
+                            LightingCalculator.CalculateLighting(writable);
+                            lightSw.Stop();
+                            metrics?.RecordLightCalculation(lightSw.Elapsed.TotalMilliseconds);
+
+                            // Store
+                            voxelCache.Store(writable);
+                            writable = null;
+                        }
                     }
                     else
                     {

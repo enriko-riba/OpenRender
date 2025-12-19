@@ -200,8 +200,9 @@ internal sealed class MobSceneNode : SceneNode
         {
             foreach (var cube in bone.Cubes)
             {
-                var min = cube.Origin;
-                var max = cube.Origin + cube.Size;
+                // Use ToGame for Origin (Z-up -> Y-up), but Identity for Size (Y-up -> Y-up).
+                var min = ToGame(cube.Origin);
+                var max = min + (cube.Size ?? Vector3.One);
 
                 modelBoundsMin = Vector3.ComponentMin(modelBoundsMin, min);
                 modelBoundsMax = Vector3.ComponentMax(modelBoundsMax, max);
@@ -238,11 +239,15 @@ internal sealed class MobSceneNode : SceneNode
 
         // Prefer the real loaded texture size over JSON metadata (keeps UVs correct even if the JSON width/height is stale).
         var diffuseTexture = material.Textures[(int)TextureType.Diffuse];
-        var texWidth = diffuseTexture?.Width ?? model.Texture.Width;
-        var texHeight = diffuseTexture?.Height ?? model.Texture.Height;
+        // Use the JSON model's texture size for UV normalization, as the UVs are authored relative to that scale.
+        // The actual texture might be higher resolution (e.g. x8), but the layout follows the JSON dimensions.
+        var texWidth = model.Texture.Width;
+        var texHeight = model.Texture.Height;
         
         // Precompute model-space pivots so we can compute local offsets.
-        var pivotByName = model.Bones.ToDictionary(b => b.Name, b => b.Pivot, StringComparer.OrdinalIgnoreCase);
+        // NOTE: We swap Y/Z for positions (Z-up -> Y-up) to match game,
+        // but we leave rotations as-is (assuming they are authored for the resulting axes).
+        var pivotByName = model.Bones.ToDictionary(b => b.Name, b => ToGame(b.Pivot), StringComparer.OrdinalIgnoreCase);
 
         // Build bone transform nodes.
         foreach (var bone in model.Bones)
@@ -253,7 +258,8 @@ internal sealed class MobSceneNode : SceneNode
                 parentPivot = p;
             }
 
-            var localPos = bone.Pivot - parentPivot;
+            var bonePivot = ToGame(bone.Pivot);
+            var localPos = bonePivot - parentPivot;
             var localRot = new Vector3(
                 MathHelper.DegreesToRadians(bone.Rotation.X),
                 MathHelper.DegreesToRadians(bone.Rotation.Y),
@@ -268,7 +274,7 @@ internal sealed class MobSceneNode : SceneNode
             boneNode.SetPosition(localPos);
             boneNode.SetRotation(localRot);
 
-            bonesByName[bone.Name] = new BoneRuntime(boneNode, localPos, localRot, bone.Pivot);
+            bonesByName[bone.Name] = new BoneRuntime(boneNode, localPos, localRot, bonePivot);
             allNodes.Add(boneNode);
         }
 
@@ -294,16 +300,7 @@ internal sealed class MobSceneNode : SceneNode
 
             foreach (var cube in bone.Cubes)
             {
-                EntityModelUvFaces? uvs = null;
-                if (cube.Uv?.Faces is not null)
-                {
-                    uvs = cube.Uv.Faces;
-                }
-                else if (cube.Uv?.Box is not null)
-                {
-                    uvs = EntityModelMeshBuilder.BuildBoxUvFaces(cube.Uv.Box);
-                }
-
+                var uvs = cube.Uv;
                 var faceTiles = cube.FaceTiles ?? atlasFaceTiles;
 
                 // If neither explicit UVs nor atlas tiles exist, there's nothing we can render for this cube.
@@ -320,7 +317,8 @@ internal sealed class MobSceneNode : SceneNode
                     IsBatchingAllowed = false,
                 };
 
-                pivotNode.SetPosition(cube.Pivot - runtime.ModelPivot);
+                var cubePivot = ToGame(cube.Pivot);
+                pivotNode.SetPosition(cubePivot - runtime.ModelPivot);
                 pivotNode.SetRotation(new Vector3(
                     MathHelper.DegreesToRadians(cube.Rotation.X),
                     MathHelper.DegreesToRadians(cube.Rotation.Y),
@@ -331,9 +329,11 @@ internal sealed class MobSceneNode : SceneNode
 
                 // Renderable cube mesh node.
                 // NOTE: each node needs its own Mesh instance because SceneNode.Invalidate mutates mesh.BoundingSphere.
+                // Use Identity for Size (Y-up JSON -> Y-up Mesh).
+                var cubeSize = cube.Size ?? Vector3.One;
                 var mesh = uvs is not null
-                    ? EntityModelMeshBuilder.BuildCubeMesh(cube.Size, uvs, texWidth, texHeight)
-                    : EntityModelMeshBuilder.BuildCubeMesh(cube.Size, faceTiles!, atlas!);
+                    ? EntityModelMeshBuilder.BuildCubeMesh(cubeSize, uvs, texWidth, texHeight)
+                    : EntityModelMeshBuilder.BuildCubeMesh(cubeSize, faceTiles!, atlas!);
                 var cubeNode = new NonRecursiveSceneNode(mesh, material)
                 {
                     IsVisible = true,
@@ -345,7 +345,8 @@ internal sealed class MobSceneNode : SceneNode
                     IsBatchingAllowed = false,
                 };
 
-                cubeNode.SetPosition(cube.Origin - cube.Pivot);
+                var cubeOrigin = ToGame(cube.Origin);
+                cubeNode.SetPosition(cubeOrigin - cubePivot);
                 cubeNode.SetRotation(Vector3.Zero);
                 cubeNode.SetScale(Vector3.One);
 
@@ -355,6 +356,8 @@ internal sealed class MobSceneNode : SceneNode
             }
         }
     }
+
+    private static Vector3 ToGame(Vector3 v) => v;
 
     private static float WrapAngleRadians(float radians)
     {

@@ -17,6 +17,9 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     private readonly ConcurrentDictionary<int, ChunkData> chunkBuffers = new();
     private readonly ConcurrentDictionary<int, ChunkBiomeData> chunkBiomes = new();
     private readonly ArrayPool<byte> voxelPool = pool ?? ArrayPool<byte>.Shared;
+    private readonly ConcurrentDictionary<int, object> chunkLocks = new();
+    private readonly ConcurrentDictionary<int, int> activeLeasesByChunk = new();
+    private readonly ConcurrentDictionary<int, ConcurrentQueue<ChunkData>> deferredReturnsByChunk = new();
     private long globalStoreVersion;
     private static readonly bool EnableVerboseLogging = false;
 
@@ -44,6 +47,92 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
     /// Retrieve voxel data for a chunk.
     /// </summary>
     public bool TryGetChunkData(int chunkIndex, out ChunkData? chunkData) => chunkBuffers.TryGetValue(chunkIndex, out chunkData);
+
+    private object GetChunkLock(int chunkIndex) => chunkLocks.GetOrAdd(chunkIndex, static _ => new object());
+
+    /// <summary>
+    /// Acquire a lease to safely use chunk data across threads.
+    /// While leased, pooled buffers for this chunk will not be returned to the pool.
+    /// </summary>
+    public bool TryAcquireChunkData(int chunkIndex, out ChunkDataLease lease)
+    {
+        var gate = GetChunkLock(chunkIndex);
+        lock (gate)
+        {
+            if (!chunkBuffers.TryGetValue(chunkIndex, out var data) || data == null)
+            {
+                lease = default;
+                return false;
+            }
+
+            _ = activeLeasesByChunk.AddOrUpdate(chunkIndex, 1, static (_, current) => current + 1);
+            lease = new ChunkDataLease(this, chunkIndex, data);
+            return true;
+        }
+    }
+
+    private void ReleaseChunkDataLease(int chunkIndex)
+    {
+        var gate = GetChunkLock(chunkIndex);
+        lock (gate)
+        {
+            if (!activeLeasesByChunk.TryGetValue(chunkIndex, out var current) || current <= 0)
+            {
+                return;
+            }
+
+            if (current == 1)
+            {
+                _ = activeLeasesByChunk.TryRemove(chunkIndex, out _);
+                FlushDeferredReturns_NoLock(chunkIndex);
+                return;
+            }
+
+            _ = activeLeasesByChunk.TryUpdate(chunkIndex, current - 1, current);
+        }
+    }
+
+    private void FlushDeferredReturns_NoLock(int chunkIndex)
+    {
+        if (!deferredReturnsByChunk.TryRemove(chunkIndex, out var queue) || queue == null)
+        {
+            return;
+        }
+
+        while (queue.TryDequeue(out var data))
+        {
+            if (data.VoxelData != null && data.VoxelDataIsPooled)
+            {
+                voxelPool.Return(data.VoxelData);
+            }
+
+            if (data.LightData != null && data.LightDataIsPooled)
+            {
+                voxelPool.Return(data.LightData);
+            }
+        }
+    }
+
+    private void ReturnOrDeferBuffers_NoLock(ChunkData data)
+    {
+        // If anyone is currently using this chunk's buffers, defer returning pooled arrays.
+        if (activeLeasesByChunk.TryGetValue(data.ChunkIndex, out var count) && count > 0)
+        {
+            var queue = deferredReturnsByChunk.GetOrAdd(data.ChunkIndex, static _ => new ConcurrentQueue<ChunkData>());
+            queue.Enqueue(data);
+            return;
+        }
+
+        if (data.VoxelData != null && data.VoxelDataIsPooled)
+        {
+            voxelPool.Return(data.VoxelData);
+        }
+
+        if (data.LightData != null && data.LightDataIsPooled)
+        {
+            voxelPool.Return(data.LightData);
+        }
+    }
 
     /// <summary>
     /// Get biome at a specific world position by looking up the chunk and local coordinates.
@@ -109,8 +198,14 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         data.VoxelData = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
         data.VoxelDataIsPooled = true;
 
+        // ArrayPool returns dirty buffers. Ensure any unwritten voxels default to Air (palette index 0).
+        Array.Clear(data.VoxelData, 0, VoxelHelper.ChunkVoxelCount);
+
         data.LightData = voxelPool.Rent(VoxelHelper.ChunkVoxelCount);
         data.LightDataIsPooled = true;
+
+        // Ensure light starts cleared (some call sites clear LightData, but not all).
+        Array.Clear(data.LightData, 0, VoxelHelper.ChunkVoxelCount);
         
         if (EnableVerboseLogging)
         {
@@ -133,23 +228,25 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         var version = Interlocked.Increment(ref globalStoreVersion);
         data.Version = version;
 
-        chunkBuffers.AddOrUpdate(
-            data.ChunkIndex,
-            data,
-            (_, existing) =>
+        var gate = GetChunkLock(data.ChunkIndex);
+        lock (gate)
+        {
+            if (chunkBuffers.TryGetValue(data.ChunkIndex, out var existing) && existing != null)
             {
-                // Return old buffer to pool
-                if (existing.VoxelData != null && existing.VoxelDataIsPooled)
-                {
-                    voxelPool.Return(existing.VoxelData);
-                }
+                chunkBuffers[data.ChunkIndex] = data;
+                ReturnOrDeferBuffers_NoLock(existing);
+            }
+            else
+            {
+                chunkBuffers[data.ChunkIndex] = data;
+            }
 
-                if (existing.LightData != null && existing.LightDataIsPooled)
-                {
-                    voxelPool.Return(existing.LightData);
-                }
-                return data;
-            });
+            // If no one is currently leasing this chunk, we can flush any deferred returns.
+            if (!activeLeasesByChunk.TryGetValue(data.ChunkIndex, out var leases) || leases <= 0)
+            {
+                FlushDeferredReturns_NoLock(data.ChunkIndex);
+            }
+        }
 
         if (EnableVerboseLogging)
         {
@@ -202,24 +299,25 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
         // Also remove biome data
         chunkBiomes.TryRemove(chunkIndex, out _);
 
-        if (chunkBuffers.TryRemove(chunkIndex, out var data))
+        var gate = GetChunkLock(chunkIndex);
+        lock (gate)
         {
-            if (EnableVerboseLogging)
+            if (chunkBuffers.TryRemove(chunkIndex, out var data) && data != null)
             {
-                Log.Debug($"VoxelCache: Release chunk={chunkIndex} version={data.Version}");
-            }
-            
-            if (data.VoxelData != null && data.VoxelDataIsPooled)
-            {
-                voxelPool.Return(data.VoxelData);
-            }
+                if (EnableVerboseLogging)
+                {
+                    Log.Debug($"VoxelCache: Release chunk={chunkIndex} version={data.Version}");
+                }
 
-            if (data.LightData != null && data.LightDataIsPooled)
-            {
-                voxelPool.Return(data.LightData);
+                ReturnOrDeferBuffers_NoLock(data);
+
+                if (!activeLeasesByChunk.TryGetValue(chunkIndex, out var leases) || leases <= 0)
+                {
+                    FlushDeferredReturns_NoLock(chunkIndex);
+                }
+
+                return true;
             }
-                
-            return true;
         }
 
         if (EnableVerboseLogging)
@@ -316,7 +414,23 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
                 return false;
             }
 
-            voxel = chunkData.GetBlock(x, y, z);
+            var idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
+            var voxels = chunkData.VoxelData;
+            if (voxels is null || (uint)idx >= (uint)voxels.Length)
+            {
+                voxel = BlockId.Air;
+                return false;
+            }
+
+            var paletteIndex = voxels[idx];
+            var palette = chunkData.Palette;
+            if (palette is null || (uint)paletteIndex >= (uint)palette.Length)
+            {
+                voxel = BlockId.Air;
+                return false;
+            }
+
+            voxel = palette[paletteIndex];
             return true;
         }
 
@@ -328,7 +442,7 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
                 return BlockId.Air;
             }
 
-            return chunkData.GetBlock(x, y, z);
+            return TryReadVoxel(x, y, z, out var voxel) ? voxel : BlockId.Air;
         }
 
         public uint ReadLight(int x, int y, int z)
@@ -338,7 +452,16 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
                 return 0;
             }
             int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
-            return chunkData.LightData[idx];
+
+            // Be defensive: corrupt/legacy chunks can have incorrectly sized LightData.
+            // Returning 0 is safe (dark) and avoids crashing the mesher.
+            var light = chunkData.LightData;
+            if (light is null || (uint)idx >= (uint)light.Length)
+            {
+                return 0;
+            }
+
+            return light[idx];
         }
 
         public bool IsWithinBounds(int x, int y, int z)
@@ -348,5 +471,25 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
                    y is >= 0 and < VoxelHelper.ChunkYSize &&
                    IsValid;
         }
+    }
+
+    /// <summary>
+    /// Lease object for safely using cached chunk data across threads.
+    /// </summary>
+    public readonly struct ChunkDataLease : IDisposable
+    {
+        private readonly ChunkVoxelDataCache? owner;
+        private readonly int chunkIndex;
+
+        public ChunkData Data { get; }
+
+        internal ChunkDataLease(ChunkVoxelDataCache owner, int chunkIndex, ChunkData data)
+        {
+            this.owner = owner;
+            this.chunkIndex = chunkIndex;
+            Data = data;
+        }
+
+        public void Dispose() => owner?.ReleaseChunkDataLease(chunkIndex);
     }
 }
