@@ -1,13 +1,26 @@
 using OpenTK.Mathematics;
+using SpyroGame.Server.Combat;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
 
 namespace SpyroGame.Server.Mobs;
 
+/// <summary>
+/// Output from AI tick - contains pending attacks that need to be processed.
+/// </summary>
+public readonly record struct MobAttackIntent(MobId MobId, PlayerId TargetPlayer);
+
 public sealed class MobAiSystem()
 {
+    /// <summary>
+    /// Stores attack intents generated during this tick for processing by combat system.
+    /// </summary>
+    public List<MobAttackIntent> PendingAttacks { get; } = [];
+
     public void Tick(double elapsedSeconds, MobManager mobManager, ReadOnlySpan<(PlayerId PlayerId, Vector3 Position)> players)
     {
+        PendingAttacks.Clear();
+
         foreach (var mob in mobManager.Mobs.Values)
         {
             UpdateMobAi(mob, elapsedSeconds, players);
@@ -19,6 +32,12 @@ public sealed class MobAiSystem()
         if (mob.IsDead) return;
 
         mob.AiTimer -= (float)elapsedSeconds;
+
+        // Tick combat cooldowns
+        if (mob.AttackCooldownRemaining > 0)
+            mob.AttackCooldownRemaining -= (float)elapsedSeconds;
+        if (mob.HurtTimeRemaining > 0)
+            mob.HurtTimeRemaining -= (float)elapsedSeconds;
 
         switch (mob.AiState)
         {
@@ -93,12 +112,18 @@ public sealed class MobAiSystem()
                         {
                             MoveTowards(mob, targetPos.Value, mob.Definition.RunSpeed);
                             
-                            // Attack logic (simple)
+                            // Attack when in range and cooldown is ready
                             if (distSq < mob.Definition.AttackRange * mob.Definition.AttackRange)
                             {
-                                // Attack! (Just stop moving for now)
+                                // Stop moving when attacking
                                 mob.Velocity.X = 0;
                                 mob.Velocity.Z = 0;
+
+                                // Queue attack if cooldown ready (CombatSystem will set the actual cooldown)
+                                if (mob.AttackCooldownRemaining <= 0 && mob.TargetPlayer.HasValue)
+                                {
+                                    PendingAttacks.Add(new MobAttackIntent(mob.Id, mob.TargetPlayer.Value));
+                                }
                             }
                         }
                     }
@@ -117,11 +142,12 @@ public sealed class MobAiSystem()
         }
         
         // Update Yaw - face the direction of movement
-        // Model forward is -Z, so add 180° to align visual with velocity
+        // Standard: atan2 gives angle where +Z is 0°, but model forward is -Z (OpenGL convention)
+        // YawOffsetDegrees allows per-mob correction for models with non-standard facing
         // Only update if moving with significant velocity to avoid jitter when stopping
         if (mob.Velocity.X * mob.Velocity.X + mob.Velocity.Z * mob.Velocity.Z > 0.25f)
         {
-            var targetYaw = MathHelper.RadiansToDegrees(MathF.Atan2(mob.Velocity.X, mob.Velocity.Z)) + 180f;
+            var targetYaw = MathHelper.RadiansToDegrees(MathF.Atan2(mob.Velocity.X, mob.Velocity.Z)) + mob.Definition.YawOffsetDegrees;
             
             // Smoothly interpolate yaw to avoid snapping
             var deltaYaw = targetYaw - mob.YawDegrees;

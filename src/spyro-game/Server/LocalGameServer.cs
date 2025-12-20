@@ -1,5 +1,6 @@
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
+using SpyroGame.Server.Combat;
 using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Commands;
@@ -62,6 +63,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             MaxSpawnAttemptsPerTick: 4));
     private readonly MobPhysicsSystem mobPhysicsSystem;
     private readonly MobAiSystem mobAiSystem;
+    private readonly CombatSystem combatSystem = new();
 
     private readonly Dictionary<PlayerId, Player> players = [];
     private readonly Dictionary<PlayerId, HashSet<int>> lastVisibleReadyChunksByPlayer = [];
@@ -106,6 +108,14 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     public void Submit(PlayerId playerId, PlaceBlockCommand command)
     {
         EnsurePlayer(playerId).TryPlaceBlock(command.GlobalPosition, command.Block);
+    }
+
+    public void SubmitAttack(PlayerId playerId, MobId targetMob)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+        if (!mobManager.Mobs.TryGetValue(targetMob, out var mob)) return;
+
+        combatSystem.ProcessPlayerAttackMob(player, mob, mobManager);
     }
 
     public void Tick(double elapsedSeconds)
@@ -267,6 +277,16 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             // Run AI and Physics
             mobAiSystem.Tick(elapsedSeconds, mobManager, playerPositions);
             mobPhysicsSystem.Tick(elapsedSeconds, mobManager);
+
+            // Process mob attacks on players
+            foreach (var intent in mobAiSystem.PendingAttacks)
+            {
+                if (mobManager.Mobs.TryGetValue(intent.MobId, out var mob) &&
+                    players.TryGetValue(intent.TargetPlayer, out var targetPlayer))
+                {
+                    combatSystem.ProcessMobAttackPlayer(mob, targetPlayer);
+                }
+            }
 
             ResolveMobVsPlayerCollisions(mobManager, players);
             ResolveMobVsMobCollisions(mobManager);

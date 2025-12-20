@@ -23,41 +23,45 @@ internal sealed class ChunkClimateCache
     /// <summary>Number of columns per chunk (16×16).</summary>
     public const int ColumnCount = VoxelHelper.ChunkSideSizeSquare;
 
+    // Padding to ensure SIMD operations don't read/write out of bounds
+    private const int SimdPadding = 32;
+    private const int BufferSize = ColumnCount + SimdPadding;
+
     // Pre-allocated arrays for 6 climate parameters (all in [-1, 1] range)
-    private readonly float[] _continentalness = new float[ColumnCount];
-    private readonly float[] _erosion = new float[ColumnCount];
-    private readonly float[] _peaksValleys = new float[ColumnCount];
-    private readonly float[] _temperature = new float[ColumnCount];
-    private readonly float[] _humidity = new float[ColumnCount];
-    private readonly float[] _weirdness = new float[ColumnCount];
-    private readonly float[] _aquiferNoise = new float[ColumnCount];  // Phase 3: Aquifer water level noise
+    private readonly float[] _continentalness = new float[BufferSize];
+    private readonly float[] _erosion = new float[BufferSize];
+    private readonly float[] _peaksValleys = new float[BufferSize];
+    private readonly float[] _temperature = new float[BufferSize];
+    private readonly float[] _humidity = new float[BufferSize];
+    private readonly float[] _weirdness = new float[BufferSize];
+    private readonly float[] _aquiferNoise = new float[BufferSize];  // Phase 3: Aquifer water level noise
 
     // Normalized versions [0, 1] for convenience
-    private readonly float[] _continentalness01 = new float[ColumnCount];
-    private readonly float[] _erosion01 = new float[ColumnCount];
-    private readonly float[] _peaksValleys01 = new float[ColumnCount];
-    private readonly float[] _temperature01 = new float[ColumnCount];
-    private readonly float[] _humidity01 = new float[ColumnCount];
-    private readonly float[] _weirdness01 = new float[ColumnCount];
-    private readonly float[] _aquiferNoise01 = new float[ColumnCount];  // Phase 3: Normalized aquifer noise
+    private readonly float[] _continentalness01 = new float[BufferSize];
+    private readonly float[] _erosion01 = new float[BufferSize];
+    private readonly float[] _peaksValleys01 = new float[BufferSize];
+    private readonly float[] _temperature01 = new float[BufferSize];
+    private readonly float[] _humidity01 = new float[BufferSize];
+    private readonly float[] _weirdness01 = new float[BufferSize];
+    private readonly float[] _aquiferNoise01 = new float[BufferSize];  // Phase 3: Normalized aquifer noise
 
     // Domain warp values (cached separately as they're used to warp other noise)
-    private readonly float[] _warpX = new float[ColumnCount];
-    private readonly float[] _warpZ = new float[ColumnCount];
+    private readonly float[] _warpX = new float[BufferSize];
+    private readonly float[] _warpZ = new float[BufferSize];
 
     // World coordinates for this chunk's columns
-    private readonly float[] _worldX = new float[ColumnCount];
-    private readonly float[] _worldZ = new float[ColumnCount];
+    private readonly float[] _worldX = new float[BufferSize];
+    private readonly float[] _worldZ = new float[BufferSize];
 
     // Scratch buffers for intermediate calculations (avoid allocations)
-    private readonly float[] _scratch1 = new float[ColumnCount];
-    private readonly float[] _scratch2 = new float[ColumnCount];
-    private readonly float[] _scratch3 = new float[ColumnCount];
+    private readonly float[] _scratch1 = new float[BufferSize];
+    private readonly float[] _scratch2 = new float[BufferSize];
+    private readonly float[] _scratch3 = new float[BufferSize];
     
     // Dedicated scratch buffers for SampleFbm2DBatched (separate from caller scratch buffers)
-    private readonly float[] _noiseScratchOctave = new float[ColumnCount];
-    private readonly float[] _noiseScratchX = new float[ColumnCount];
-    private readonly float[] _noiseScratchZ = new float[ColumnCount];
+    private readonly float[] _noiseScratchOctave = new float[BufferSize];
+    private readonly float[] _noiseScratchX = new float[BufferSize];
+    private readonly float[] _noiseScratchZ = new float[BufferSize];
 
     // Current chunk coordinates
     private int _chunkX;
@@ -464,7 +468,7 @@ internal sealed class ChunkClimateCache
         float lacunarity,
         Span<float> output)
     {
-        var length = output.Length;
+        var length = ColumnCount;
         output.Clear();
 
         var amplitude = 1f;

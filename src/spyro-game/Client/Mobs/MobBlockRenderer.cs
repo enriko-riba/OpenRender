@@ -1,6 +1,6 @@
 using OpenRender.SceneManagement;
-using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.State;
 
 namespace SpyroGame.Client.Mobs;
@@ -11,34 +11,34 @@ internal sealed class MobBlockRenderer
 
     private readonly Dictionary<MobId, MobSceneNode> nodesById = [];
 
+    /// <summary>
+    /// Get render scale from MobDefinition, with fallback for unknown kinds.
+    /// </summary>
     private static Vector3 GetMobScale(MobKind kind)
-        => kind switch
-        {
-            // Visual scale - independent of collision hitbox.
-            // Cow: narrow (X), tall (Y), long (Z) to match Minecraft proportions.
-            MobKind.Cow => new Vector3(0.6f, 1.4f, 1.5f),
-            MobKind.Pig => new Vector3(0.9f, 0.9f, 0.9f),
-            MobKind.Zombie => new Vector3(0.6f, 1.95f, 0.6f),
-            MobKind.Skeleton => new Vector3(0.6f, 1.99f, 0.6f),
-            _ => Vector3.One
-        };
+    {
+        var def = MobRegistry.Get(kind);
+        if (def is not null)
+            return new Vector3(def.RenderScaleX, def.RenderScaleY, def.RenderScaleZ);
+        return Vector3.One;
+    }
 
     public MobBlockRenderer(Scene scene)
     {
         this.scene = scene;
     }
 
+    /// <summary>
+    /// Get model and animation paths from MobDefinition, with fallback for unknown kinds.
+    /// </summary>
     private static (string ModelPath, string? AnimationPath) GetModelAndAnimation(MobKind kind)
-        => kind switch
-        {
-            MobKind.Cow => ("Resources/models/entity/cow.json", "Resources/animations/cow_walk.json"),
+    {
+        var def = MobRegistry.Get(kind);
+        if (def is not null && def.ModelPath is not null)
+            return (def.ModelPath, def.AnimationPath);
 
-            // TODO: move the rest to JSON models as we author them.
-            MobKind.Zombie or MobKind.Skeleton
-                => ("Resources/models/entity/simple_block_hostile.json", "Resources/animations/simple_walk.json"),
-
-            _ => ("Resources/models/entity/simple_block.json", "Resources/animations/simple_walk.json"),
-        };
+        // Fallback for unknown mob kinds
+        return ("Resources/models/entity/simple_block.json", "Resources/animations/simple_walk.json");
+    }
 
     public void ApplySnapshot(in MobStateSnapshot snapshot)
     {

@@ -13,6 +13,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Client;
+using SpyroGame.World.Registry;
 using SpyroGame.Client.Mobs;
 using SpyroGame.Client.Terrain;
 using SpyroGame.Shared.Commands;
@@ -590,7 +591,7 @@ internal class GameScene : Scene
                 // Predict locally for responsiveness: update inventory, collision, and picking immediately.
                 if (!picked.Block.IsAir())
                 {
-                    player.Inventory.AddItem(picked.Block);
+                    player.Inventory.AddItem((ItemId)picked.Block);
                     terrainSystem?.TryApplyPredictedBlockEdit(picked.GlobalPosition, BlockId.Air);
                     blockPickingService.Invalidate();
                     blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
@@ -602,20 +603,20 @@ internal class GameScene : Scene
             if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
             {
                 var item = player.Inventory.GetSelectedItem();
-                if (!item.IsEmpty)
+                if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
                 {
                     var hitNormal = blockPickingService.HitNormal;
                     var placePos = picked.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
 
                     // Predict locally: consume item + set voxel so the feedback is instant.
-                    if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, item.Block) == true)
+                    if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
                     {
                         player.Inventory.TryConsumeSelectedItem();
                         blockPickingService.Invalidate();
                         blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
                     }
 
-                    localClient.Send(new PlaceBlockCommand(placePos, item.Block));
+                    localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
                 }
             }
         }
@@ -835,7 +836,7 @@ internal class GameScene : Scene
             var isSelected = i == player.Inventory.SelectedSlot;
             var color = isSelected ? new Vector3(1, 1, 0) : new Vector3(0.7f, 0.7f, 0.7f);
 
-            var content = item.IsEmpty ? "Empty" : $"{item.Block} x{item.Count}";
+            var content = item.IsEmpty ? "Empty" : $"{item.Item} x{item.Count}";
             if (isSelected) content = $"> {content}";
 
             textRenderer.Render(content, 22, rightX, invStartY + i * invSlotHeight, color);

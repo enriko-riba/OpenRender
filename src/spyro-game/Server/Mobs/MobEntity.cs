@@ -44,6 +44,12 @@ public sealed class MobEntity
     public float AiTimer;
     public Vector3? WanderTarget;
 
+    // Combat State
+    /// <summary>Time remaining before mob can attack again.</summary>
+    public float AttackCooldownRemaining;
+    /// <summary>Time remaining in hurt animation / invulnerability.</summary>
+    public float HurtTimeRemaining;
+
     public MobSnapshot ToSnapshot()
         => new(
             Id: Id,

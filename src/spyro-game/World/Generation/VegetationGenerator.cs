@@ -126,12 +126,12 @@ internal sealed class VegetationGenerator(TerrainConfig config)
                 
             case VegetationGeneratorType.TreeBalloon:
                 // Oak/Birch style tree
-                PlaceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 4 + random.Next(3));
+                PlaceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 4 + random.Next(5));
                 break;
                 
             case VegetationGeneratorType.TreeCone:
                 // Spruce style tree
-                PlaceSpruceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 6 + random.Next(4));
+                PlaceSpruceTree(chunk, x, y, z, rule.MainBlock, rule.SecondaryBlock, 6 + random.Next(6));
                 break;
                 
             case VegetationGeneratorType.TreeJungle:

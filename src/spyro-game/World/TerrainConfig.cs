@@ -1054,7 +1054,7 @@ public sealed class BiomeDefinition
                 {
                     Vegetation =
                     [
-                        new() { Generator = VegetationGeneratorType.TreeJungle, MainBlock = BlockId.JungleLog, SecondaryBlock = BlockId.JungleLeaves, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
+                        new() { Generator = VegetationGeneratorType.TreeJungle, MainBlock = BlockId.JungleLog, SecondaryBlock = BlockId.JungleLeaves, Density = 0.03f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
                         new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.TallGrass, Density = 0.125f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
                         new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.GrassPatch, Density = 0.05f, AllowedSurfaceBlocks = [BlockId.Grass, BlockId.Dirt] },
                         new() { Generator = VegetationGeneratorType.Simple, MainBlock = BlockId.BlueOrchid, Density = 0.001f, AllowedSurfaceBlocks = [BlockId.Grass] },

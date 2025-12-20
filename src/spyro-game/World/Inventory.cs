@@ -1,14 +1,15 @@
 using System;
 using SpyroGame.Shared.State;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
 public struct InventoryItem
 {
-    public BlockId Block;
+    public ItemId Item;
     public int Count;
 
-    public bool IsEmpty => Count <= 0 || Block.IsAir();
+    public bool IsEmpty => Count <= 0 || Item == ItemId.Air;
 }
 
 public class Inventory
@@ -31,16 +32,21 @@ public class Inventory
     public Inventory()
     {
         // Start with fewer blocks to allow picking up new ones
-        AddItem(BlockId.Stone, 10);
-        AddItem(BlockId.Dirt, 10);
-        AddItem(BlockId.Grass, 10);
-        AddItem(BlockId.Cobblestone, 10);
-        AddItem(BlockId.OakLog, 10);
+        AddItem(ItemId.Stone, 10);
+        AddItem(ItemId.Dirt, 10);
+        AddItem(ItemId.Grass, 10);
+        AddItem(ItemId.Cobblestone, 10);
+        AddItem(ItemId.OakLog, 10);
         // Light source blocks for testing the new lighting system
-        AddItem(BlockId.Torch, 64);
-        AddItem(BlockId.Glowstone, 32);
-        AddItem(BlockId.Lantern, 16);
-        AddItem(BlockId.Glass, 32);
+        AddItem(ItemId.Torch, 64);
+        AddItem(ItemId.Glowstone, 32);
+        AddItem(ItemId.Lantern, 16);
+        AddItem(ItemId.Glass, 32);
+        
+        // Add some items
+        AddItem(ItemId.Stick, 5);
+        AddItem(ItemId.Apple, 3);
+        AddItem(ItemId.DiamondSword, 1);
     }
 
     public InventoryItem GetSelectedItem()
@@ -49,17 +55,21 @@ public class Inventory
         return slots[SelectedSlot];
     }
 
-    public void AddItem(BlockId block, int count = 1)
+    public void AddItem(ItemId item, int count = 1)
     {
-        if (block.IsAir()) return;
+        if (item == ItemId.Air) return;
+        
+        var itemDef = ItemRegistry.Items.TryGetValue(item, out var def) ? def : null;
+        if (itemDef == null) return;
+        
+        var maxStack = itemDef.MaxStackSize;
 
         // 1. Try to stack with existing items (Hotbar first, then Storage)
         for (var i = 0; i < SlotCount; i++)
         {
-            // Check if same block type (ignoring flags if they differ, but usually they shouldn't)
-            if (slots[i].Block.GetId() == block.GetId() && slots[i].Count < 64)
+            if (slots[i].Item == item && slots[i].Count < maxStack)
             {
-                var space = 64 - slots[i].Count;
+                var space = maxStack - slots[i].Count;
                 var toAdd = Math.Min(space, count);
                 slots[i].Count += toAdd;
                 count -= toAdd;
@@ -73,10 +83,11 @@ public class Inventory
         {
             if (slots[i].IsEmpty)
             {
-                slots[i].Block = block;
-                slots[i].Count = count; // Assuming count <= 64 for simplicity
+                slots[i].Item = item;
+                slots[i].Count = Math.Min(count, maxStack);
+                count -= slots[i].Count;
                 Version++;
-                return;
+                if (count <= 0) return;
             }
         }
     }
@@ -104,7 +115,7 @@ public class Inventory
         for (var i = 0; i < SlotCount; i++)
         {
             var it = slots[i];
-            result[i] = new InventoryItemSnapshot(it.Block, it.Count);
+            result[i] = new InventoryItemSnapshot(it.Item, it.Count);
         }
 
         return new InventorySnapshot(Version, result);
@@ -120,7 +131,7 @@ public class Inventory
 
         for (var i = 0; i < SlotCount; i++)
         {
-            slots[i].Block = src[i].Block;
+            slots[i].Item = src[i].Item;
             slots[i].Count = src[i].Count;
         }
 

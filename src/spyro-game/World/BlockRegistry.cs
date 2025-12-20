@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
@@ -33,87 +34,35 @@ public enum BlockRenderShape : byte
 }
 
 /// <summary>
-/// Block property flags for fast bitwise checks.
-/// </summary>
-[Flags]
-public enum BlockFlags : byte
-{
-    None = 0,
-    /// <summary>Blocks movement, needs faces rendered.</summary>
-    Solid = 1 << 0,
-    /// <summary>Blocks light, culls neighbor faces when adjacent.</summary>
-    Opaque = 1 << 1,
-    /// <summary>Water/lava flow behavior.</summary>
-    Liquid = 1 << 2,
-    /// <summary>Partial transparency (water, ice, leaves).</summary>
-    Translucent = 1 << 3,
-    /// <summary>Can be overwritten by other blocks (air, water, tall grass).</summary>
-    Replaceable = 1 << 4,
-    /// <summary>Emits light, rendered at full brightness.</summary>
-    Emissive = 1 << 5,
-    /// <summary>Is a tree with trunc and leaves.</summary>
-    Tree = 1 << 6,
-    /// <summary>Is vegetation.</summary>
-    Vegetation = 1 << 7,
-}
-
-/// <summary>
-/// Immutable properties for a block type.
-/// Combines both bitflags and extended properties in a single struct.
-/// </summary>
-/// <param name="Flags">Combined block property flags.</param>
-/// <param name="LightValue">Luminance emitted by the block (0-15).</param>
-/// <param name="LightFilter">How much light is diminished when passing through (0-15).</param>
-/// <param name="Render">How the GPU should render this block.</param>
-/// <param name="Shape">The geometric shape used for mesh generation.</param>
-public readonly record struct BlockProperties(
-    BlockFlags Flags,
-    byte LightValue,
-    byte LightFilter,
-    RenderMethod Render,
-    BlockRenderShape Shape = BlockRenderShape.FullCube)
-{
-    /// <summary>Default properties for unknown blocks (opaque solid).</summary>
-    public static readonly BlockProperties Default = new(
-        BlockFlags.Solid | BlockFlags.Opaque,
-        0, 15, RenderMethod.Opaque, BlockRenderShape.FullCube);
-
-    /// <summary>Properties for air (invisible, no collision).</summary>
-    public static readonly BlockProperties Air = new(
-        BlockFlags.Replaceable,
-        0, 0, RenderMethod.None, BlockRenderShape.None);
-
-    // Convenience flag checks
-    public bool IsSolid => (Flags & BlockFlags.Solid) != 0;
-    public bool IsOpaque => (Flags & BlockFlags.Opaque) != 0;
-    public bool IsLiquid => (Flags & BlockFlags.Liquid) != 0;
-    public bool IsTranslucent => (Flags & BlockFlags.Translucent) != 0;
-    public bool IsReplaceable => (Flags & BlockFlags.Replaceable) != 0;
-    public bool IsEmissive => (Flags & BlockFlags.Emissive) != 0;
-    public bool IsTree => (Flags & BlockFlags.Tree) != 0;
-    public bool IsVegetation => (Flags & BlockFlags.Vegetation) != 0;
-}
-
-/// <summary>
 /// Static registry providing fast O(1) lookup for all block properties.
-/// Uses a <see cref="FrozenDictionary{TKey, TValue}"/> for optimal runtime performance.
 /// </summary>
 public static class BlockRegistry
 {
-    private static readonly FrozenDictionary<ushort, BlockProperties> Properties;
+    public static FrozenDictionary<BlockId, Block> Blocks { get; private set; }
 
     static BlockRegistry()
     {
-        var builder = new Dictionary<ushort, BlockProperties>();
+        var builder = new Dictionary<BlockId, Block>();
+        RegisterBlocks(builder);
+        Blocks = builder.ToFrozenDictionary();
+    }
 
+    private static void RegisterBlocks(Dictionary<BlockId, Block> builder)
+    {
         // === Special ===
-        Register(builder, BlockId.Air, BlockProperties.Air);
-        Register(builder, BlockId.Water, new(
-            BlockFlags.Liquid | BlockFlags.Translucent | BlockFlags.Replaceable,
-            0, 2, RenderMethod.Blend));
-        Register(builder, BlockId.Lava, new(
-            BlockFlags.Liquid | BlockFlags.Emissive | BlockFlags.Replaceable,
-            15, 0, RenderMethod.Blend));
+        Register(builder, BlockId.Air, new Block(BlockId.Air) { 
+            IsSolid = false, IsOpaque = false, IsReplaceable = true, 
+            RenderMethod = RenderMethod.None, Shape = BlockRenderShape.None,
+            LightFilter = 0 // Fix: Air must not block light!
+        });
+        Register(builder, BlockId.Water, new Block(BlockId.Water) {
+            IsSolid = false, IsOpaque = false, IsLiquid = true, IsTranslucent = true, IsReplaceable = true,
+            LightFilter = 2, RenderMethod = RenderMethod.Blend
+        });
+        Register(builder, BlockId.Lava, new Block(BlockId.Lava) {
+            IsSolid = false, IsOpaque = false, IsLiquid = true, IsEmissive = true, IsReplaceable = true,
+            LightValue = 15, LightFilter = 0, RenderMethod = RenderMethod.Blend
+        });
 
         // === Stone Types ===
         RegisterOpaqueSolid(builder, BlockId.Stone);
@@ -130,6 +79,7 @@ public static class BlockRegistry
         RegisterOpaqueSolid(builder, BlockId.Mycelium);
         RegisterOpaqueSolid(builder, BlockId.CoarseDirt);
         RegisterOpaqueSolid(builder, BlockId.GrassH);
+
         // === Sand Types ===
         RegisterOpaqueSolid(builder, BlockId.Sand);
         RegisterOpaqueSolid(builder, BlockId.RedSand);
@@ -141,19 +91,23 @@ public static class BlockRegistry
         RegisterOpaqueSolid(builder, BlockId.Clay);
 
         // === Snow/Ice ===
-        Register(builder, BlockId.Snow, new(
-            BlockFlags.Solid | BlockFlags.Opaque,
-            0, 15, RenderMethod.Opaque));
+        Register(builder, BlockId.Snow, new Block(BlockId.Snow) {
+            IsSolid = true, IsOpaque = true,
+            LightValue = 0, LightFilter = 15, RenderMethod = RenderMethod.Opaque
+        });
         RegisterOpaqueSolid(builder, BlockId.SnowDirt);
-        Register(builder, BlockId.Ice, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, RenderMethod.Blend));
-        Register(builder, BlockId.PackedIce, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, RenderMethod.Blend));
-        Register(builder, BlockId.BlueIce, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
-            0, 1, RenderMethod.Blend));
+        Register(builder, BlockId.Ice, new Block(BlockId.Ice) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true,
+            LightFilter = 1, RenderMethod = RenderMethod.Blend
+        });
+        Register(builder, BlockId.PackedIce, new Block(BlockId.PackedIce) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true,
+            LightFilter = 1, RenderMethod = RenderMethod.Blend
+        });
+        Register(builder, BlockId.BlueIce, new Block(BlockId.BlueIce) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true,
+            LightFilter = 1, RenderMethod = RenderMethod.Blend
+        });
 
         // === Terracotta ===
         RegisterOpaqueSolid(builder, BlockId.Terracotta);
@@ -176,55 +130,68 @@ public static class BlockRegistry
         RegisterTree(builder, BlockId.SpruceLog);
         RegisterTree(builder, BlockId.JungleLog);
 
-        // === Leaves (translucent, alpha test) ===
+        // === Leaves ===
         RegisterLeaves(builder, BlockId.OakLeaves);
         RegisterLeaves(builder, BlockId.BirchLeaves);
         RegisterLeaves(builder, BlockId.SpruceLeaves);
         RegisterLeaves(builder, BlockId.JungleLeaves);
 
         // === Light Sources ===
-        Register(builder, BlockId.Torch, new(
-            BlockFlags.Emissive,
-            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
-        Register(builder, BlockId.WallTorch, new(
-            BlockFlags.Emissive,
-            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
-        Register(builder, BlockId.SoulTorch, new(
-            BlockFlags.Emissive,
-            10, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
-        Register(builder, BlockId.Glowstone, new(
-            BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, RenderMethod.Opaque));
-        Register(builder, BlockId.SeaLantern, new(
-            BlockFlags.Solid | BlockFlags.Translucent | BlockFlags.Emissive,
-            15, 1, RenderMethod.Blend));
-        Register(builder, BlockId.Lantern, new(
-            BlockFlags.Emissive,
-            15, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
-        Register(builder, BlockId.SoulLantern, new(
-            BlockFlags.Emissive,
-            10, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+        Register(builder, BlockId.Torch, new Block(BlockId.Torch) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 14, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
+        Register(builder, BlockId.WallTorch, new Block(BlockId.WallTorch) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 14, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
+        Register(builder, BlockId.SoulTorch, new Block(BlockId.SoulTorch) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 10, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
+        Register(builder, BlockId.Glowstone, new Block(BlockId.Glowstone) {
+            IsSolid = true, IsOpaque = true, IsEmissive = true,
+            LightValue = 15, LightFilter = 15, RenderMethod = RenderMethod.Opaque
+        });
+        Register(builder, BlockId.SeaLantern, new Block(BlockId.SeaLantern) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true, IsEmissive = true,
+            LightValue = 15, LightFilter = 1, RenderMethod = RenderMethod.Blend
+        });
+        Register(builder, BlockId.Lantern, new Block(BlockId.Lantern) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 15, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
+        Register(builder, BlockId.SoulLantern, new Block(BlockId.SoulLantern) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 10, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
         RegisterOpaqueSolid(builder, BlockId.RedstoneLamp);
-        Register(builder, BlockId.RedstoneLampOn, new(
-            BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, RenderMethod.Opaque));
-        Register(builder, BlockId.EndRod, new(
-            BlockFlags.Emissive,
-            14, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
-        Register(builder, BlockId.Shroomlight, new(
-            BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, RenderMethod.Opaque));
-        Register(builder, BlockId.JackOLantern, new(
-            BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Emissive,
-            15, 15, RenderMethod.Opaque));
-        Register(builder, BlockId.Campfire, new(
-            BlockFlags.Emissive,
-            15, 0, RenderMethod.AlphaTest));
-        Register(builder, BlockId.SoulCampfire, new(
-            BlockFlags.Emissive,
-            10, 0, RenderMethod.AlphaTest));
+        Register(builder, BlockId.RedstoneLampOn, new Block(BlockId.RedstoneLampOn) {
+            IsSolid = true, IsOpaque = true, IsEmissive = true,
+            LightValue = 15, LightFilter = 15, RenderMethod = RenderMethod.Opaque
+        });
+        Register(builder, BlockId.EndRod, new Block(BlockId.EndRod) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 14, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard
+        });
+        Register(builder, BlockId.Shroomlight, new Block(BlockId.Shroomlight) {
+            IsSolid = true, IsOpaque = true, IsEmissive = true,
+            LightValue = 15, LightFilter = 15, RenderMethod = RenderMethod.Opaque
+        });
+        Register(builder, BlockId.JackOLantern, new Block(BlockId.JackOLantern) {
+            IsSolid = true, IsOpaque = true, IsEmissive = true,
+            LightValue = 15, LightFilter = 15, RenderMethod = RenderMethod.Opaque
+        });
+        Register(builder, BlockId.Campfire, new Block(BlockId.Campfire) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 15, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest
+        });
+        Register(builder, BlockId.SoulCampfire, new Block(BlockId.SoulCampfire) {
+            IsSolid = false, IsOpaque = false, IsEmissive = true,
+            LightValue = 10, LightFilter = 0, RenderMethod = RenderMethod.AlphaTest
+        });
 
-        // === Glass (translucent, filter=0 for light) ===
+        // === Glass ===
         RegisterGlass(builder, BlockId.Glass);
         RegisterGlass(builder, BlockId.WhiteStainedGlass);
         RegisterGlass(builder, BlockId.OrangeStainedGlass);
@@ -242,10 +209,10 @@ public static class BlockRegistry
         RegisterGlass(builder, BlockId.GreenStainedGlass);
         RegisterGlass(builder, BlockId.RedStainedGlass);
         RegisterGlass(builder, BlockId.BlackStainedGlass);
-        // Tinted glass: blocks all light (filter=15) but is see-through
-        Register(builder, BlockId.TintedGlass, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
-            0, 15, RenderMethod.Blend));
+        Register(builder, BlockId.TintedGlass, new Block(BlockId.TintedGlass) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true,
+            LightFilter = 15, RenderMethod = RenderMethod.Blend
+        });
 
         // === Vegetation ===
         RegisterFlower(builder, BlockId.TallGrass);
@@ -271,64 +238,61 @@ public static class BlockRegistry
         RegisterFlower(builder, BlockId.Bamboo);
         RegisterFlower(builder, BlockId.GrassPatch);
 
-        // Cactus (Solid but not full cube in MC, treating as full cube opaque for now)
-        Register(builder, BlockId.Cactus, new(
-            BlockFlags.Solid | BlockFlags.Opaque,
-            0, 0, RenderMethod.AlphaTest)); // AlphaTest for spines if texture has them
-
-        Properties = builder.ToFrozenDictionary();
+        Register(builder, BlockId.Cactus, new Block(BlockId.Cactus) {
+            IsSolid = true, IsOpaque = true,
+            RenderMethod = RenderMethod.AlphaTest
+        });
     }
 
-    private static void Register(Dictionary<ushort, BlockProperties> builder, BlockId block, BlockProperties props)
-        => builder[(ushort)block] = props;
+    private static void Register(Dictionary<BlockId, Block> builder, BlockId blockId, Block block)
+        => builder[blockId] = block;
 
-    private static void RegisterOpaqueSolid(Dictionary<ushort, BlockProperties> builder, BlockId block)
-        => Register(builder, block, BlockProperties.Default);
+    private static void RegisterOpaqueSolid(Dictionary<BlockId, Block> builder, BlockId blockId)
+        => Register(builder, blockId, new Block(blockId)); // Default is Opaque Solid
 
-    private static void RegisterTree(Dictionary<ushort, BlockProperties> builder, BlockId block)
-        => Register(builder, block, new(
-        BlockFlags.Solid | BlockFlags.Opaque | BlockFlags.Tree,
-        0, 15, RenderMethod.Opaque, BlockRenderShape.FullCube));
+    private static void RegisterTree(Dictionary<BlockId, Block> builder, BlockId blockId)
+        => Register(builder, blockId, new Block(blockId) { IsTree = true });
 
-    private static void RegisterLeaves(Dictionary<ushort, BlockProperties> builder, BlockId block)
-        => Register(builder, block, new(
-            BlockFlags.Solid | BlockFlags.Tree,
-            0, 2, RenderMethod.AlphaTest));
+    private static void RegisterLeaves(Dictionary<BlockId, Block> builder, BlockId blockId)
+        => Register(builder, blockId, new Block(blockId) {
+            IsSolid = true, IsOpaque = false, IsTree = true,
+            LightFilter = 2, RenderMethod = RenderMethod.AlphaTest
+        });
 
-    private static void RegisterGlass(Dictionary<ushort, BlockProperties> builder, BlockId block)
-        => Register(builder, block, new(
-            BlockFlags.Solid | BlockFlags.Translucent,
-            0, 0, RenderMethod.Blend));
+    private static void RegisterGlass(Dictionary<BlockId, Block> builder, BlockId blockId)
+        => Register(builder, blockId, new Block(blockId) {
+            IsSolid = true, IsOpaque = false, IsTranslucent = true,
+            LightFilter = 0, RenderMethod = RenderMethod.Blend
+        });
 
-    private static void RegisterFlower(Dictionary<ushort, BlockProperties> builder, BlockId block)
-        => Register(builder, block, new(
-            BlockFlags.Replaceable // Can be washed away by water
-            | BlockFlags.Vegetation, 
-            0, 0, RenderMethod.AlphaTest, BlockRenderShape.CrossBillboard));
+    private static void RegisterFlower(Dictionary<BlockId, Block> builder, BlockId blockId)
+        => Register(builder, blockId, new Block(blockId) {
+            IsSolid = false, IsOpaque = false, IsReplaceable = true, IsVegetation = true,
+            RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard,
+            LightFilter = 0 // Vegetation allows light to pass through
+        });
 
     /// <summary>
-    /// Gets all properties for a block type.
+    /// Gets the block instance for the given ID.
     /// </summary>
-    public static BlockProperties GetProperties(BlockId block)
-        => Properties.TryGetValue((ushort)block, out var props) ? props : BlockProperties.Default;
+    public static Block Get(BlockId block) => Blocks.TryGetValue(block, out var b) ? b : Blocks[BlockId.Air];
 
     // === Fast property accessors ===
 
     /// <summary>Gets the light value (luminance) emitted by a block (0-15).</summary>
-    public static byte GetLightValue(BlockId block) => GetProperties(block).LightValue;
+    public static byte GetLightValue(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.LightValue : (byte)0;
 
     /// <summary>Gets the light filter (opacity) for a block (0-15).</summary>
-    public static byte GetLightFilter(BlockId block) => GetProperties(block).LightFilter;
+    public static byte GetLightFilter(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.LightFilter : (byte)15;
 
     /// <summary>Gets the render shape for a block.</summary>
-    public static BlockRenderShape GetRenderShape(BlockId block) => GetProperties(block).Shape;
+    public static BlockRenderShape GetRenderShape(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.Shape : BlockRenderShape.FullCube;
+
+    /// <summary>Gets the render method for a block.</summary>
+    public static RenderMethod GetRenderMethod(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.RenderMethod : RenderMethod.Opaque;
 
     /// <summary>Gets the effective light decay when light passes through a block.</summary>
-    public static int GetLightDecay(BlockId block)
-    {
-        var filter = GetLightFilter(block);
-        return filter >= 15 ? 15 : Math.Max(1, (int)filter);
-    }
+    public static int GetLightDecay(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.LightDecay : 15;
 
     /// <summary>Checks if a block completely blocks light (filter = 15).</summary>
     public static bool BlocksLight(BlockId block) => GetLightFilter(block) >= 15;
@@ -336,29 +300,29 @@ public static class BlockRegistry
     /// <summary>Checks if a block emits light (light value > 0).</summary>
     public static bool EmitsLight(BlockId block) => GetLightValue(block) > 0;
 
-    // === Flag accessors (delegate to properties) ===
+    // === Flag accessors ===
 
     /// <summary>Returns true if this block is solid.</summary>
-    public static bool IsSolid(BlockId block) => GetProperties(block).IsSolid;
+    public static bool IsSolid(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsSolid : true;
 
     /// <summary>Returns true if this block is opaque.</summary>
-    public static bool IsOpaque(BlockId block) => GetProperties(block).IsOpaque;
+    public static bool IsOpaque(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsOpaque : true;
 
     /// <summary>Returns true if this block is a liquid.</summary>
-    public static bool IsLiquid(BlockId block) => GetProperties(block).IsLiquid;
+    public static bool IsLiquid(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsLiquid : false;
 
     /// <summary>Returns true if this block is translucent.</summary>
-    public static bool IsTranslucent(BlockId block) => GetProperties(block).IsTranslucent;
+    public static bool IsTranslucent(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsTranslucent : false;
 
     /// <summary>Returns true if this block is replaceable.</summary>
-    public static bool IsReplaceable(BlockId block) => GetProperties(block).IsReplaceable;
+    public static bool IsReplaceable(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsReplaceable : false;
 
     /// <summary>Returns true if this block is emissive.</summary>
-    public static bool IsEmissive(BlockId block) => GetProperties(block).IsEmissive;
+    public static bool IsEmissive(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsEmissive : false;
 
-    /// <summary
-    public static bool IsTree(BlockId block) => GetProperties(block).IsTree;
+    /// <summary>Returns true if this block is tree.</summary>
+    public static bool IsTree(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsTree : false;
 
     /// <summary>Returns true if this block is vegetation.</summary>
-    public static bool IsVegetation(BlockId block) => GetProperties(block).IsVegetation;
+    public static bool IsVegetation(BlockId block) => Blocks.TryGetValue(block, out var b) ? b.IsVegetation : false;
 }

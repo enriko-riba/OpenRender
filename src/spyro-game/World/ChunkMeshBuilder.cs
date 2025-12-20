@@ -313,7 +313,7 @@ internal static class ChunkMeshBuilder
         
         // Only Blend needs translucent pass (Water, Stained Glass).
         // AlphaTest (Torches, Leaves) should be Opaque to write depth.
-        var renderMethod = BlockRegistry.GetProperties(block).Render;
+        var renderMethod = BlockRegistry.GetRenderMethod(block);
         return renderMethod is RenderMethod.Blend;
     }
 
@@ -356,8 +356,7 @@ internal static class ChunkMeshBuilder
             // If it's leaves (or any AlphaTest block), we want to see internal faces
             // because they have holes (cutout).
             // Glass/Water (Blend) should still cull.
-            var props = BlockRegistry.GetProperties(block);
-            if (props.Render == RenderMethod.AlphaTest)
+            if (BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest)
             {
                 return true;
             }
@@ -629,8 +628,7 @@ internal static class ChunkMeshBuilder
     /// </summary>
     private static uint PackVertexAttributes(BlockId block, uint light, BiomeId biome)
     {
-        var props = BlockRegistry.GetProperties(block);
-        var isAlphaTest = props.Render == RenderMethod.AlphaTest;
+        var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
 
         return (uint)block.GetId()
             | ((light & 0xFFu) << 10)

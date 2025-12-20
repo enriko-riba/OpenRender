@@ -5,6 +5,7 @@ using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Gameplay;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
@@ -67,10 +68,23 @@ public class Player
     // speed modifiers captured each Update() from KeyboardState
     private bool _isSprinting, _isCrouching;
 
+    // === Combat State ===
+    private float attackCooldownRemaining;
+    private float invulnerabilityRemaining;
+
     public PlayerAttributes Attributes { get; } = new();
 
     public BlockPickingService? BlockPickingService { get; set; }
 
+    /// <summary>
+    /// Whether the player is alive.
+    /// </summary>
+    public bool IsAlive => Attributes.IsAlive;
+
+    /// <summary>
+    /// Remaining invulnerability time after being hit.
+    /// </summary>
+    public float InvulnerabilityRemaining => invulnerabilityRemaining;
     public Player(ICamera camera, Vector3 position, VoxelWorld world, IBlockEditService? streamingManager = null)
     {
         this.camera = camera;
@@ -187,6 +201,12 @@ public class Player
         }
 
         Attributes.Tick(elapsedSeconds, new PlayerAttributeTickContext(isMoving, _isSprinting, IsGhostMode));
+
+        // Update combat cooldowns
+        if (attackCooldownRemaining > 0)
+            attackCooldownRemaining -= (float)elapsedSeconds;
+        if (invulnerabilityRemaining > 0)
+            invulnerabilityRemaining -= (float)elapsedSeconds;
 
         // NOTE: movement intent is a held state (WASD, sprint, crouch, ghost vertical).
         // It is updated when input state changes and must persist across ticks.
@@ -351,9 +371,12 @@ public class Player
         var item = Inventory.GetSelectedItem();
         if (item.IsEmpty) return;
 
-        var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
-        var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
-        TryPlaceBlock(placePos, item.Block);
+        if (ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
+        {
+            var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
+            var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+            TryPlaceBlock(placePos, blockItem.BlockId);
+        }
     }
 
     public void TryBreakBlock(Vector3i globalPosition)
@@ -369,7 +392,7 @@ public class Player
         if (existing.Value.Block.IsAir()) return;
 
         Log.Info($"Player breaking block at {globalPosition}");
-        Inventory.AddItem(existing.Value.Block);
+        Inventory.AddItem((ItemId)existing.Value.Block);
         streamingManager.ApplyBlockEdit(globalPosition, BlockId.Air, true);
     }
 
@@ -883,5 +906,43 @@ public class Player
         
         var block = world.GetBlockByPositionGlobalSafe(x, y, z);
         return block is not null && block.Value.IsSolid;
+    }
+
+    // === Combat Methods ===
+
+    /// <summary>
+    /// Check if the player can attack (cooldown expired).
+    /// </summary>
+    public bool CanAttack() => attackCooldownRemaining <= 0;
+
+    /// <summary>
+    /// Start attack cooldown based on weapon attack speed.
+    /// </summary>
+    /// <param name="attackSpeed">Attacks per second (e.g., 4.0 for fists, 1.6 for swords)</param>
+    public void StartAttackCooldown(float attackSpeed)
+    {
+        // Cooldown = 1 / attackSpeed seconds
+        attackCooldownRemaining = attackSpeed > 0 ? 1f / attackSpeed : 0.25f;
+    }
+
+    /// <summary>
+    /// Start invulnerability after being hit.
+    /// </summary>
+    public void StartInvulnerability(float seconds)
+    {
+        invulnerabilityRemaining = seconds;
+    }
+
+    /// <summary>
+    /// Apply knockback velocity to the player.
+    /// </summary>
+    public void ApplyKnockback(Vector3 horizontalKnockback, float verticalKnockback)
+    {
+        velocity.X += horizontalKnockback.X;
+        velocity.Z += horizontalKnockback.Z;
+        if (isGrounded || velocity.Y < verticalKnockback)
+        {
+            velocity.Y = verticalKnockback;
+        }
     }
 }

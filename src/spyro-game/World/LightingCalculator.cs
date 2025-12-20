@@ -66,7 +66,7 @@ public static class LightingCalculator
                         continue;
                     }
 
-                    var filter = BlockRegistry.GetProperties(block).LightFilter;
+                    var filter = BlockRegistry.GetLightFilter(block);
                     if (filter > 0 && currentLight > 0)
                     {
                         currentLight = Math.Max(0, currentLight - filter);
@@ -686,7 +686,7 @@ public static class LightingCalculator
         if (block.IsOpaque()) return;
 
         var neighborLight = GetSkyLight(chunk, index);
-        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        var decay = BlockRegistry.GetLightDecay(block);
         var newLight = parentLight - decay;
 
         if (newLight > neighborLight)
@@ -839,7 +839,7 @@ public static class LightingCalculator
         if (block.IsOpaque()) return;
 
         var neighborLight = GetBlockLight(chunk, index);
-        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(block).LightFilter);
+        var decay = BlockRegistry.GetLightDecay(block);
         var newLight = parentLight - decay;
 
         if (newLight > neighborLight)
@@ -1051,7 +1051,7 @@ public static class LightingCalculator
         var sourceLight = isSkyLight ? GetSkyLight(sourceChunk, sourceIndex) : GetBlockLight(sourceChunk, sourceIndex);
         var targetLight = isSkyLight ? GetSkyLight(targetChunk, targetIndex) : GetBlockLight(targetChunk, targetIndex);
 
-        var decay = Math.Max(1, (int)BlockRegistry.GetProperties(targetBlock).LightFilter);
+        var decay = BlockRegistry.GetLightDecay(targetBlock);
         var newLight = sourceLight - decay;
 
         if (newLight > targetLight)
@@ -1163,7 +1163,7 @@ public static class LightingCalculator
                     {
                         // Apply light filter for translucent blocks (water, ice, leaves, etc.)
                         // Air has filter=0 so no decay; water has filter=2 so decays
-                        var filter = BlockRegistry.GetProperties(block).LightFilter;
+                        var filter = BlockRegistry.GetLightFilter(block);
                         if (filter > 0 && currentLight > 0)
                         {
                             currentLight = Math.Max(0, currentLight - filter);
@@ -1305,7 +1305,7 @@ public static class LightingCalculator
         //   - Through translucent: apply filter
         // - Horizontal/upward OR from non-direct-sky source: normal decay of 1 per block
         int decay;
-        var blockFilter = (int)BlockRegistry.GetProperties(block).LightFilter;
+        var blockFilter = (int)BlockRegistry.GetLightFilter(block);
         
         if (isSkyLight && isVerticalDown && currentLight == MaxLight && skyVisibility != null && skyVisibility[sourceIndex] != 0)
         {

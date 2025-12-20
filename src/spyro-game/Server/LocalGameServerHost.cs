@@ -18,9 +18,9 @@ public sealed class LocalGameServerHost(
     private CancellationTokenSource? cts;
     private Task? loopTask;
 
-    public double TickRateHz { get; set; } = 60.0;
+    public double TickRateHz { get; set; } = 30.0;
 
-    private const int MaxChunkPayloadsPerTick = 16;
+    private const int MaxChunkPayloadsPerTick = 8;
 
     public void Start()
     {
@@ -208,6 +208,10 @@ public sealed class LocalGameServerHost(
             case ClientPlaceBlockMessage placeBlock:
                 if (placeBlock.PlayerId.Equals(playerId))
                     server.Submit(placeBlock.PlayerId, placeBlock.Command);
+                break;
+            case ClientAttackMobMessage attack:
+                if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
+                    gs.SubmitAttack(attack.PlayerId, attack.TargetMob);
                 break;
         }
     }

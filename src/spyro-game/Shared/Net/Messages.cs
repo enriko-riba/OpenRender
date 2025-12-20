@@ -11,6 +11,12 @@ public readonly record struct ClientInputMessage(PlayerId PlayerId, PlayerInputC
 public readonly record struct ClientBreakBlockMessage(PlayerId PlayerId, BreakBlockCommand Command) : IClientToServerMessage;
 public readonly record struct ClientPlaceBlockMessage(PlayerId PlayerId, PlaceBlockCommand Command) : IClientToServerMessage;
 
+/// <summary>
+/// Client requests an attack on a mob.
+/// Server validates reach, cooldown, line-of-sight, and applies damage.
+/// </summary>
+public readonly record struct ClientAttackMobMessage(PlayerId PlayerId, MobId TargetMob) : IClientToServerMessage;
+
 public readonly record struct ClientHelloMessage(PlayerId PlayerId) : IClientToServerMessage;
 
 public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSnapshot Snapshot) : IServerToClientMessage;
@@ -28,3 +34,4 @@ public readonly record struct ServerGameStartMessage(PlayerId PlayerId) : IServe
 /// This is intentionally opaque bytes so the transport remains decoupled from world/GL concerns.
 /// </summary>
 public readonly record struct ServerChunkPayloadMessage(PlayerId PlayerId, int ChunkIndex, byte[] Payload) : IServerToClientMessage;
+
