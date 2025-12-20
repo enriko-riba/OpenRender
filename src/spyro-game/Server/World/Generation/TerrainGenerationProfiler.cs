@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using OpenRender;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Performance profiler for terrain generation steps.

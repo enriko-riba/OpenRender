@@ -1,5 +1,6 @@
 using SpyroGame.Server.Streaming;
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 using System.IO.Compression;
 using Xunit;
 using static SpyroGame.Tests.Common.LightingTestHelpers;

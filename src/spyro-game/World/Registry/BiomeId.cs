@@ -1,4 +1,4 @@
-namespace SpyroGame.World;
+namespace SpyroGame.World.Registry;
 
 /// <summary>
 /// Biome identifiers. These map to BiomeDefinition entries in TerrainConfig.

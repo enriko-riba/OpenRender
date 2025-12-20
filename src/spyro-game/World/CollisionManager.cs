@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
@@ -287,5 +288,42 @@ public class CollisionManager
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Standard Ray-AABB intersection test.
+    /// </summary>
+    public static bool RayAabbIntersect(Vector3 origin, Vector3 direction, Vector3 min, Vector3 max, out float t)
+    {
+        t = 0;
+        var tMin = (min.X - origin.X) / direction.X;
+        var tMax = (max.X - origin.X) / direction.X;
+
+        if (tMin > tMax) (tMin, tMax) = (tMax, tMin);
+
+        var tyMin = (min.Y - origin.Y) / direction.Y;
+        var tyMax = (max.Y - origin.Y) / direction.Y;
+
+        if (tyMin > tyMax) (tyMin, tyMax) = (tyMax, tyMin);
+
+        if ((tMin > tyMax) || (tyMin > tMax)) return false;
+
+        if (tyMin > tMin) tMin = tyMin;
+        if (tyMax < tMax) tMax = tyMax;
+
+        var tzMin = (min.Z - origin.Z) / direction.Z;
+        var tzMax = (max.Z - origin.Z) / direction.Z;
+
+        if (tzMin > tzMax) (tzMin, tzMax) = (tzMax, tzMin);
+
+        if ((tMin > tzMax) || (tzMin > tMax)) return false;
+
+        if (tzMin > tMin) tMin = tzMin;
+        if (tzMax < tMax) tMax = tzMax;
+
+        if (tMax < 0) return false;
+
+        t = tMin;
+        return true;
     }
 }

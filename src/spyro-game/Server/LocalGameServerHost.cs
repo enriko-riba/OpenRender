@@ -18,9 +18,9 @@ public sealed class LocalGameServerHost(
     private CancellationTokenSource? cts;
     private Task? loopTask;
 
-    public double TickRateHz { get; set; } = 30.0;
+    public double TickRateHz { get; set; } = 20.0;
 
-    private const int MaxChunkPayloadsPerTick = 8;
+    private const int MaxChunkPayloadsPerTick = 4;
 
     public void Start()
     {

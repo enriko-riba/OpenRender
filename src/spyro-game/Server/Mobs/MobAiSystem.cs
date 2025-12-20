@@ -167,6 +167,13 @@ public sealed class MobAiSystem()
 
         foreach (var p in players)
         {
+            // Ignore dead players (assuming 0 HP means dead, though Player struct doesn't have HP here directly)
+            // The players span only has ID and Position. We need to check if the player is alive.
+            // However, the span is constructed in LocalGameServer.Tick from active players.
+            // We should probably filter dead players before passing them here, or pass the full Player object.
+            // For now, let's assume the caller filters or we need to access the player manager.
+            // But wait, MobAiSystem.Tick takes ReadOnlySpan<(PlayerId, Vector3)>.
+            
             var distSq = Vector3.DistanceSquared(mob.Position, p.Position);
             if (distSq < mob.Definition.AggroRange * mob.Definition.AggroRange)
             {

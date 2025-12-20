@@ -1,6 +1,7 @@
 using SpyroGame.World;
 using SpyroGame.Tests.Common;
 using Xunit;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Tests.BlockEdits;
 

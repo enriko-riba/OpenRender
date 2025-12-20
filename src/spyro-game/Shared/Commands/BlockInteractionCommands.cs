@@ -1,5 +1,5 @@
 using OpenTK.Mathematics;
-using SpyroGame.World;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Shared.Commands;
 

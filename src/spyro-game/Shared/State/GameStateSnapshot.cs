@@ -4,4 +4,5 @@ public readonly record struct GameStateSnapshot(
     ulong TickId,
     double ServerTimeSeconds,
     PlayerSnapshot Player,
-    ChunkDeltaSnapshot? ChunkDelta);
+    ChunkDeltaSnapshot? ChunkDelta,
+    DroppedItemSnapshot[]? DroppedItems = null);

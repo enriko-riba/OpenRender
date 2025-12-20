@@ -1,3 +1,4 @@
+using SpyroGame.World.Registry;
 using System;
 using System.Collections.Generic;
 

@@ -9,7 +9,7 @@ using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
-public class Player
+public class Player : ILootCollector
 {
     private const float HalfWidth = 0.3f; // Reduced slightly for better fit
     private const float Height = 1.7f;
@@ -115,6 +115,8 @@ public class Player
     internal Vector3 RequestedMovement { get; private set; }
     
     public Inventory Inventory { get; } = new();
+
+    public void AddItem(ItemId item, int count) => Inventory.AddItem(item, count);
 
     /// <summary>
     /// Applies client-produced input intent. This does not execute physics immediately.

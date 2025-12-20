@@ -2,13 +2,12 @@ using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.State;
+using SpyroGame.World;
 
 namespace SpyroGame.Client.Mobs;
 
-internal sealed class MobBlockRenderer
+internal sealed class MobBlockRenderer(Scene scene)
 {
-    private readonly Scene scene;
-
     private readonly Dictionary<MobId, MobSceneNode> nodesById = [];
 
     /// <summary>
@@ -20,11 +19,6 @@ internal sealed class MobBlockRenderer
         if (def is not null)
             return new Vector3(def.RenderScaleX, def.RenderScaleY, def.RenderScaleZ);
         return Vector3.One;
-    }
-
-    public MobBlockRenderer(Scene scene)
-    {
-        this.scene = scene;
     }
 
     /// <summary>
@@ -58,6 +52,14 @@ internal sealed class MobBlockRenderer
             }
 
             var scale = GetMobScale(mob.Kind);
+            
+            var def = MobRegistry.Get(mob.Kind);
+            if (def != null)
+            {
+                node.HitboxWidth = def.HitboxWidth;
+                node.HitboxHeight = def.HitboxHeight;
+            }
+
             node.ApplySnapshot(mob, scale);
         }
 
@@ -91,5 +93,39 @@ internal sealed class MobBlockRenderer
             var nodeToRemove = node;
             scene.AddAction(() => nodeToRemove.RemoveFromScene(scene));
         }
+    }
+
+    public bool Pick(Vector3 origin, Vector3 direction, float maxDistance, out MobId hitMobId, out float hitDistance, out MobKind hitMobKind)
+    {
+        hitMobId = default;
+        hitDistance = float.MaxValue;
+        hitMobKind = default;
+        var hit = false;
+
+        foreach (var kvp in nodesById)
+        {
+            var id = kvp.Key;
+            var node = kvp.Value;
+            
+            var pos = node.PhysicsPosition;
+            
+            // AABB Intersection
+            var halfW = node.HitboxWidth * 0.5f;
+            var min = pos + new Vector3(-halfW, 0, -halfW);
+            var max = pos + new Vector3(halfW, node.HitboxHeight, halfW);
+
+            if (CollisionManager.RayAabbIntersect(origin, direction, min, max, out var t))
+            {
+                if (t >= 0 && t <= maxDistance && t < hitDistance)
+                {
+                    hitDistance = t;
+                    hitMobId = id;
+                    hitMobKind = node.Kind; // Need to expose Kind on MobSceneNode
+                    hit = true;
+                }
+            }
+        }
+
+        return hit;
     }
 }

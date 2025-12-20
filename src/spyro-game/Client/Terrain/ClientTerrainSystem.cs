@@ -2,6 +2,7 @@ using OpenRender;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
 
 namespace SpyroGame.Client.Terrain;
@@ -471,7 +472,8 @@ public sealed class ClientTerrainSystem : IDisposable
         var faceCount = Math.Max(0, mesh.VisibleFaceCount);
         var waterFaceCount = Math.Clamp(mesh.WaterFaceCount, 0, faceCount);
         var translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, faceCount - waterFaceCount);
-        var opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount);
+        var alphaTestFaceCount = Math.Clamp(mesh.AlphaTestFaceCount, 0, faceCount - waterFaceCount - translucentFaceCount);
+        var opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount - alphaTestFaceCount);
         var vertexCount = faceCount * 4;
         var indexCount = faceCount * 6;
 
@@ -482,7 +484,8 @@ public sealed class ClientTerrainSystem : IDisposable
             vertexCount = faceCount * 4;
             waterFaceCount = Math.Clamp(mesh.WaterFaceCount, 0, faceCount);
             translucentFaceCount = Math.Clamp(mesh.TranslucentFaceCount, 0, Math.Max(0, faceCount - waterFaceCount));
-            opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount);
+            alphaTestFaceCount = Math.Clamp(mesh.AlphaTestFaceCount, 0, Math.Max(0, faceCount - waterFaceCount - translucentFaceCount));
+            opaqueFaceCount = Math.Max(0, faceCount - waterFaceCount - translucentFaceCount - alphaTestFaceCount);
         }
 
         var expectedVertexEntries = vertexCount * 2;
@@ -519,7 +522,7 @@ public sealed class ClientTerrainSystem : IDisposable
         }
 
         var slot = descriptor.CommandSlot >= 0 ? descriptor.CommandSlot : meshBuffers.AllocateCommandSlot();
-        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)waterFaceCount, (uint)translucentFaceCount);
+        WriteIndirectCommands(slot, mesh.ChunkIndex, vertexOffset, indexOffset, (uint)opaqueFaceCount, (uint)alphaTestFaceCount, (uint)waterFaceCount, (uint)translucentFaceCount);
 
         activeChunks[mesh.ChunkIndex] = new ChunkDescriptor
         {
@@ -551,7 +554,7 @@ public sealed class ClientTerrainSystem : IDisposable
         return true;
     }
 
-    private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint waterFaces, uint translucentFaces)
+    private void WriteIndirectCommands(int slot, int chunkIndex, int vertexOffset, int indexOffset, uint opaqueFaces, uint alphaTestFaces, uint waterFaces, uint translucentFaces)
     {
         if (meshBuffers == null || slot < 0)
         {
@@ -573,14 +576,19 @@ public sealed class ClientTerrainSystem : IDisposable
             firstIndex,
             baseVertex,
             0u,
-            waterFaces * 6u,
+            alphaTestFaces * 6u,
             1u,
             firstIndex + opaqueFaces * 6u,
             baseVertex,
             0u,
+            waterFaces * 6u,
+            1u,
+            firstIndex + (opaqueFaces + alphaTestFaces) * 6u,
+            baseVertex,
+            0u,
             translucentFaces * 6u,
             1u,
-            firstIndex + (opaqueFaces + waterFaces) * 6u,
+            firstIndex + (opaqueFaces + alphaTestFaces + waterFaces) * 6u,
             baseVertex,
             0u
         ];
@@ -592,7 +600,7 @@ public sealed class ClientTerrainSystem : IDisposable
         {
             fixed (uint* cmdPtr = command)
             {
-                GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 60), 60, (IntPtr)cmdPtr);
+                GL.NamedBufferSubData((int)meshBuffers.IndirectDrawBuffer, (IntPtr)(slot * 80), 80, (IntPtr)cmdPtr);
             }
         }
     }

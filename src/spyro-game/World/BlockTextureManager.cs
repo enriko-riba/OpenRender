@@ -1,5 +1,6 @@
 using OpenRender;
 using OpenTK.Graphics.OpenGL4;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
@@ -9,9 +10,7 @@ namespace SpyroGame.World;
 /// This replaces the per-biome texture system with a simpler BlockId-based approach.
 /// </summary>
 /// <remarks>
-/// Architecture (per MINECRAFT_TERRAIN_ARCHITECTURE.md):
 /// - Each block type has ONE 150×50 atlas with Top(0-49)|Bottom(50-99)|Side(100-149) regions
-/// - BlockId's lower 10 bits = texture array layer index
 /// - Biome determines which BlockId is placed, NOT which texture to use
 /// - Shader samples: texture(uBlockTextures, vec3(uv, blockId))
 /// </remarks>

@@ -1,3 +1,5 @@
+using SpyroGame.World.Registry;
+
 namespace SpyroGame.World;
 
 /// <summary>

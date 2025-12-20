@@ -62,5 +62,6 @@ public sealed class MobEntity
             MaxHealth: Definition.MaxHealth,
             Flags: (OnGround ? MobSnapshotFlags.OnGround : 0) |
                    (TargetPlayer.HasValue ? MobSnapshotFlags.Aggro : 0) |
-                   (IsDead ? MobSnapshotFlags.Dead : 0));
+                   (IsDead ? MobSnapshotFlags.Dead : 0) |
+                   (HurtTimeRemaining > 0 ? MobSnapshotFlags.Hurt : 0));
 }

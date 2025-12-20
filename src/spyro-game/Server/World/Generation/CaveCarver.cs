@@ -1,6 +1,8 @@
-using static SpyroGame.World.Generation.NoiseUtilities;
+using static SpyroGame.Server.World.Generation.NoiseUtilities;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Stage 5: Cave Carving System

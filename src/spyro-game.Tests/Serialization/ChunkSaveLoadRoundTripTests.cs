@@ -1,4 +1,5 @@
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 using System.Buffers;
 using System.IO.Compression;
 using Xunit;

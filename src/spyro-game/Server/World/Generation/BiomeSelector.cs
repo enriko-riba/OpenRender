@@ -1,4 +1,6 @@
-namespace SpyroGame.World;
+using SpyroGame.World.Registry;
+
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Minecraft-style biome selector using ONLY climate parameters (C/T/H/E/PV).

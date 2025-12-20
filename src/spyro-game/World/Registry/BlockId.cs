@@ -1,4 +1,4 @@
-namespace SpyroGame.World;
+namespace SpyroGame.World.Registry;
 
 /// <summary>
 /// Block identifier - a simple enum with unique IDs.
@@ -314,11 +314,9 @@ public static class BlockIdExtensions
         
         // Translucent blocks (glass, ice, water) are transparent
         if (block.IsTranslucent()) return true;
-        
+
         // Non-solid blocks (flowers, torches) are transparent
-        if (!block.IsSolid()) return true;
-        
-        return false;
+        return !block.IsSolid();
     }
 
     /// <summary>

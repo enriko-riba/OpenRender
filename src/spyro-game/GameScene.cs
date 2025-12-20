@@ -20,7 +20,7 @@ using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
-using SpyroGame.World.Generation;
+using SpyroGame.Server.World.Generation;
 
 namespace SpyroGame;
 
@@ -44,8 +44,12 @@ internal class GameScene : Scene
     private GameSession? session;
 
     private MobBlockRenderer? mobRenderer;
-
-    private PlayerId localPlayerId;
+    private Client.Rendering.DroppedItemRenderer? droppedItemRenderer;
+    private MobId? pickedMobId;
+    private float pickedMobDistance;
+    private MobKind pickedMobKind;
+    PlayerId localPlayerId;
+    private HotBar hotBar = default!;
 
     // Client-side view of server streaming state (chunk indices that are Ready).
     // This is the seam for future remote server chunk streaming.
@@ -60,7 +64,6 @@ internal class GameScene : Scene
     private PlayerInputState lastSentInputState;
     private bool hasSentInitialInputState;
 
-    private const int GameplayPrefetchMarginChunks = 2;
 
     private Vector2 mouseCenter;
     private Vector2 lastMousePosition;
@@ -230,8 +233,9 @@ internal class GameScene : Scene
 
         // Client-side mob renderer (single Corey-textured block per mob).
         mobRenderer ??= new MobBlockRenderer(this);
+        droppedItemRenderer ??= new Client.Rendering.DroppedItemRenderer(this);
 
-        // Add terrain renderer
+        // Add terrain rendererchunksperframe
         if (terrainRenderer != null)
         {
             // Use GPU terrain renderer from loading scene
@@ -240,15 +244,18 @@ internal class GameScene : Scene
             {
                 AddNode(terrainRenderer);
             }
-            Log.Info("GameScene: Using GPU terrain renderer");
         }
         else
         {
             // Fallback to old renderer (shouldn't happen in normal flow)
             // AddNode(world.ChunkRenderer);
-            Log.Warn("GameScene: No GPU terrain renderer, using fallback");
+            throw new ArgumentNullException("terrain renderer");
         }
 
+        hotBar = HotBar.Create(SceneManager.ClientSize.X / 2, SceneManager.ClientSize.Y - 50, 182 * 2, 22 * 2, Color4.AliceBlue);
+        hotBar.RenderGroup = RenderGroup.UI;
+        hotBar.Pivot = new(0.5f, 1.0f);
+        AddNode(hotBar);
         world!.Camera = camera!;
         camera!.Invalidate();
 
@@ -499,6 +506,12 @@ internal class GameScene : Scene
                 mobRenderer?.ApplySnapshot(latestMobSnap.Value);
             }
 
+            // Update dropped items
+            if (localClient.LastSnapshot.HasValue)
+            {
+                droppedItemRenderer?.Update(localClient.LastSnapshot.Value.DroppedItems, elapsedSeconds);
+            }
+
             // Smooth rendered position between server ticks.
             player.UpdateClientSmoothing(elapsedSeconds);
         }
@@ -582,41 +595,112 @@ internal class GameScene : Scene
             maxDistance: 5.0f
         );
 
-        // Handle interactions (Break/Place) with fresh picking data.
-        // Client determines target positions via picking; server executes edits.
-        if (localClient != null && blockPickingService?.PickedBlock is { } picked)
+        // Update mob picking
+        if (mobRenderer != null && camera != null)
         {
-            if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+            if (mobRenderer.Pick(camera.Position, camera.Front, 5.0f, out var id, out var dist, out var kind))
             {
-                // Predict locally for responsiveness: update inventory, collision, and picking immediately.
-                if (!picked.Block.IsAir())
-                {
-                    player.Inventory.AddItem((ItemId)picked.Block);
-                    terrainSystem?.TryApplyPredictedBlockEdit(picked.GlobalPosition, BlockId.Air);
-                    blockPickingService.Invalidate();
-                    blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
-                }
+                pickedMobId = id;
+                pickedMobDistance = dist;
+                pickedMobKind = kind;
+            }
+            else
+            {
+                pickedMobId = null;
+                pickedMobDistance = float.MaxValue;
+                pickedMobKind = MobKind.Unknown;
+            }
+        }
 
-                localClient.Send(new BreakBlockCommand(picked.GlobalPosition));
+        // Handle interactions (Break/Place/Attack) with fresh picking data.
+        // Client determines target positions via picking; server executes edits.
+        if (localClient != null)
+        {
+            var blockHit = blockPickingService?.PickedBlock is { } picked;
+            var blockDist = blockPickingService?.HitDistance ?? float.MaxValue;
+            var mobHit = pickedMobId.HasValue;
+            var mobDist = pickedMobDistance;
+
+            // Prioritize mob if hit and closer (or block not hit)
+            // User requested: "win over voxel picking as we don't care that much about voxels when hostale mobs are near"
+            // So we strictly prefer mob if it's closer.
+            
+            var prioritizeMob = false;
+            if (mobHit)
+            {
+                if (!blockHit)
+                {
+                    prioritizeMob = true;
+                }
+                else
+                {
+                    // Check if mob is hostile
+                    var isHostile = pickedMobKind == MobKind.Zombie || pickedMobKind == MobKind.Skeleton;
+                    
+                    // Check if block is non-solid (e.g. grass, flowers)
+                    var blockId = blockPickingService!.PickedBlock!.Value.Block;
+                    var isNonSolidBlock = false;
+                    if (BlockRegistry.Blocks.TryGetValue(blockId, out var blockDef))
+                    {
+                        isNonSolidBlock = !blockDef.IsSolid;
+                    }
+
+                    if (isHostile && isNonSolidBlock)
+                    {
+                        prioritizeMob = true; // Hostile priority over non-solid
+                    }
+                    else if (mobDist < blockDist)
+                    {
+                        prioritizeMob = true; // Standard closer check
+                    }
+                }
             }
 
-            if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
+            if (prioritizeMob)
             {
-                var item = player.Inventory.GetSelectedItem();
-                if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
+                if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
                 {
-                    var hitNormal = blockPickingService.HitNormal;
-                    var placePos = picked.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
-
-                    // Predict locally: consume item + set voxel so the feedback is instant.
-                    if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
+                    // Attack!
+                    localClient.SendAttack(pickedMobId!.Value);
+                    // Add a small cooldown or visual feedback here if needed
+                }
+            }
+            else if (blockHit)
+            {
+                var pickedBlock = blockPickingService!.PickedBlock!.Value;
+                
+                if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+                {
+                    // Predict locally for responsiveness: update inventory, collision, and picking immediately.
+                    if (!pickedBlock.Block.IsAir())
                     {
-                        player.Inventory.TryConsumeSelectedItem();
+                        player.Inventory.AddItem((ItemId)pickedBlock.Block);
+                        terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
                         blockPickingService.Invalidate();
                         blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
                     }
 
-                    localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
+                    localClient.Send(new BreakBlockCommand(pickedBlock.GlobalPosition));
+                }
+
+                if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
+                {
+                    var item = player.Inventory.GetSelectedItem();
+                    if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
+                    {
+                        var hitNormal = blockPickingService.HitNormal;
+                        var placePos = pickedBlock.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+
+                        // Predict locally: consume item + set voxel so the feedback is instant.
+                        if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
+                        {
+                            player.Inventory.TryConsumeSelectedItem();
+                            blockPickingService.Invalidate();
+                            blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                        }
+
+                        localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
+                    }
                 }
             }
         }
@@ -805,6 +889,13 @@ internal class GameScene : Scene
             WriteLine("", textColor);
         }
 
+        // Picked Mob
+        if (pickedMobId.HasValue)
+        {
+            WriteLine($"Picked Mob: ID={pickedMobId.Value.Value} Dist={pickedMobDistance:F1}", new Vector3(1.0f, 0.5f, 0.5f));
+            WriteLine("", textColor);
+        }
+
         // Controls below Picked Block (left side)
         WriteLine("Controls:", highlightColor);
         WriteLine("  WASD - Move", textColor);
@@ -886,19 +977,10 @@ internal class GameScene : Scene
     public override void Close()
     {
         try { localClient?.Stop(); } catch { }
+        droppedItemRenderer?.Dispose();
 
         world?.Close();
         base.Close();
-    }
-
-    /// <summary>
-    /// Generate surrounding chunk indices based on camera position and view distance.
-    /// IMPORTANT: Only returns chunks that have actually been generated/loaded.
-    /// </summary>
-    private int[] GenerateSurroundingChunkIndices()
-    {
-        if (camera == null) return [];
-        return [.. serverReadyChunkIndices];
     }
 
     private void ApplyChunkDelta(ulong tickId, Vector3 snapshotPlayerPosition, in ChunkDeltaSnapshot delta)
@@ -927,6 +1009,7 @@ internal class GameScene : Scene
         crosshair.SetPosition((clientSize - crosshair.Size) / 2);
         crosshair.Pivot = new(0.0f, 1.0f);
 
+        hotBar.SetPosition( new(clientSize.X / 2, clientSize.Y - 50));
         mouseCenter = clientSize / 2;
     }
 }

@@ -1,4 +1,5 @@
 using OpenRender;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.World;
 
@@ -25,6 +26,7 @@ internal static class ChunkMeshBuilder
     [ThreadStatic] private static List<uint>? t_translucentVertices;
     [ThreadStatic] private static List<uint>? t_translucentIndices;
     [ThreadStatic] private static List<uint>? t_waterIndices;
+    [ThreadStatic] private static List<uint>? t_alphaTestIndices;
     [ThreadStatic] private static List<uint>? t_cubeletIndices;
     
     // Performance optimization: Thread-local pooled dictionary for neighbor chunk cache
@@ -53,13 +55,14 @@ internal static class ChunkMeshBuilder
     /// <summary>
     /// Get or create thread-local pooled lists for mesh building.
     /// </summary>
-    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx, List<uint> waterIdx, List<uint> cubeletIdx) GetPooledLists()
+    private static (List<uint> opaqueVerts, List<uint> opaqueIdx, List<uint> transVerts, List<uint> transIdx, List<uint> waterIdx, List<uint> alphaTestIdx, List<uint> cubeletIdx) GetPooledLists()
     {
         t_opaqueVertices ??= new List<uint>(16384);
         t_opaqueIndices ??= new List<uint>(16384);
         t_translucentVertices ??= new List<uint>(2048);
         t_translucentIndices ??= new List<uint>(2048);
         t_waterIndices ??= new List<uint>(2048);
+        t_alphaTestIndices ??= new List<uint>(2048);
         t_cubeletIndices ??= new List<uint>(2048);
 
         // Clear for reuse
@@ -68,9 +71,10 @@ internal static class ChunkMeshBuilder
         t_translucentVertices.Clear();
         t_translucentIndices.Clear();
         t_waterIndices.Clear();
+        t_alphaTestIndices.Clear();
         t_cubeletIndices.Clear();
 
-        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices, t_cubeletIndices);
+        return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices, t_alphaTestIndices, t_cubeletIndices);
     }
 
     public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out CpuChunkMesh mesh)
@@ -100,7 +104,7 @@ internal static class ChunkMeshBuilder
         }
 
         // Performance optimization: Use thread-local pooled lists instead of allocating new ones
-        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, cubeletIndices) = GetPooledLists();
+        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, alphaTestIndices, cubeletIndices) = GetPooledLists();
         var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
         
         // Track maximum surface height across all columns for tighter frustum culling
@@ -142,10 +146,14 @@ internal static class ChunkMeshBuilder
                     var isTranslucent = IsTranslucent(block);
                     var isLiquid = block.IsLiquid();
                     var isWater = block.IsWater();
+                    var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
                     
                     var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
                     // Split translucent indices into Water and Other (Translucent)
-                    var targetIndexList = isTranslucent ? (isWater ? waterIndices : translucentIndices) : opaqueIndices;
+                    // Split opaque indices into Solid and AlphaTest (Leaves/Flowers)
+                    var targetIndexList = isTranslucent 
+                        ? (isWater ? waterIndices : translucentIndices) 
+                        : (isAlphaTest ? alphaTestIndices : opaqueIndices);
 
                     // Check if this block uses a special render shape
                     var renderShape = BlockRegistry.GetRenderShape(block);
@@ -239,24 +247,35 @@ internal static class ChunkMeshBuilder
         opaqueVertices.CopyTo(mergedVertices, 0);
         translucentVertices.CopyTo(mergedVertices, opaqueVertices.Count);
 
-        var mergedIndices = new uint[opaqueIndices.Count + waterIndices.Count + translucentIndices.Count];
+        var mergedIndices = new uint[opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count + translucentIndices.Count];
         opaqueIndices.CopyTo(mergedIndices, 0);
         
         var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
         
+        // Append AlphaTest indices (offset by opaque vertex count)
+        // These use the same vertices as opaque (opaqueVertices)
+        if (alphaTestIndices.Count > 0)
+        {
+            for (var i = 0; i < alphaTestIndices.Count; i++)
+            {
+                mergedIndices[opaqueIndices.Count + i] = alphaTestIndices[i];
+            }
+        }
+
         // Append Water indices (offset by opaque vertex count)
         if (waterIndices.Count > 0)
         {
+            var alphaTestOffset = opaqueIndices.Count + alphaTestIndices.Count;
             for (var i = 0; i < waterIndices.Count; i++)
             {
-                mergedIndices[opaqueIndices.Count + i] = waterIndices[i] + (uint)vertexOffset;
+                mergedIndices[alphaTestOffset + i] = waterIndices[i] + (uint)vertexOffset;
             }
         }
         
         // Append Translucent indices (offset by opaque vertex count)
         if (translucentIndices.Count > 0)
         {
-            var waterOffset = opaqueIndices.Count + waterIndices.Count;
+            var waterOffset = opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count;
             for (var i = 0; i < translucentIndices.Count; i++)
             {
                 mergedIndices[waterOffset + i] = translucentIndices[i] + (uint)vertexOffset;
@@ -276,6 +295,7 @@ internal static class ChunkMeshBuilder
         // Note: Indices are 6 per face (triangles)
         var waterFaceCount = waterIndices.Count / 6;
         var translucentFaceCount = translucentIndices.Count / 6;
+        var alphaTestFaceCount = alphaTestIndices.Count / 6;
         var cubeletFaceCount = cubeletIndices.Count / 6;
         // Total translucent faces tracked by sampler includes both water and other translucent
         // But we need to pass them separately to CpuChunkMesh
@@ -288,6 +308,7 @@ internal static class ChunkMeshBuilder
             faceCount,
             translucentFaceCount, // This is now just the non-water translucent faces
             waterFaceCount,       // New parameter
+            alphaTestFaceCount,   // New parameter
             Math.Max(maxSurfaceHeight + 1, VoxelHelper.WaterLevel + 1), // +1 for safety margin
             chunkView.Version,
             workItem.EnqueueId,

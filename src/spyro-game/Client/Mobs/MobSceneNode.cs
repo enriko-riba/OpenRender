@@ -35,6 +35,11 @@ internal sealed class MobSceneNode : SceneNode
     private float targetYawRadians;
     private bool hasYaw;
 
+    public float HitboxWidth { get; set; } = 0.6f;
+    public float HitboxHeight { get; set; } = 1.8f;
+    public MobKind Kind { get; private set; }
+    public Vector3 PhysicsPosition { get; private set; }
+
     public MobSceneNode(string modelPath, string? animationPath)
         : base(DummyMesh, Material.Default)
     {
@@ -70,6 +75,8 @@ internal sealed class MobSceneNode : SceneNode
 
     public void ApplySnapshot(in MobSnapshot mob, Vector3 scale)
     {
+        Kind = mob.Kind;
+        PhysicsPosition = mob.Position;
         estimatedSpeed = mob.Velocity.Length;
 
         // The snapshot position is the kinematic collider position; render should align the model's
@@ -108,9 +115,13 @@ internal sealed class MobSceneNode : SceneNode
         }
 
         var isDead = mob.Flags.HasFlag(MobSnapshotFlags.Dead);
+        var isHurt = mob.Flags.HasFlag(MobSnapshotFlags.Hurt);
+        var tint = isHurt ? new Vector3(1.0f, 0.5f, 0.5f) : Vector3.One;
+
         for (var i = 0; i < renderNodes.Count; i++)
         {
             renderNodes[i].IsVisible = !isDead;
+            renderNodes[i].Material.DiffuseColor = tint;
         }
     }
 

@@ -1,4 +1,3 @@
-using System;
 using SpyroGame.Shared.State;
 using SpyroGame.World.Registry;
 
@@ -9,7 +8,7 @@ public struct InventoryItem
     public ItemId Item;
     public int Count;
 
-    public bool IsEmpty => Count <= 0 || Item == ItemId.Air;
+    public readonly bool IsEmpty => Count <= 0 || Item == ItemId.Air;
 }
 
 public class Inventory
@@ -42,7 +41,7 @@ public class Inventory
         AddItem(ItemId.Glowstone, 32);
         AddItem(ItemId.Lantern, 16);
         AddItem(ItemId.Glass, 32);
-        
+
         // Add some items
         AddItem(ItemId.Stick, 5);
         AddItem(ItemId.Apple, 3);
@@ -58,10 +57,10 @@ public class Inventory
     public void AddItem(ItemId item, int count = 1)
     {
         if (item == ItemId.Air) return;
-        
+
         var itemDef = ItemRegistry.Items.TryGetValue(item, out var def) ? def : null;
         if (itemDef == null) return;
-        
+
         var maxStack = itemDef.MaxStackSize;
 
         // 1. Try to stack with existing items (Hotbar first, then Storage)

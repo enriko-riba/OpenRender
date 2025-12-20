@@ -24,4 +24,5 @@ public enum MobSnapshotFlags : ushort
     OnGround = 1 << 0,
     Aggro = 1 << 1,
     Dead = 1 << 2,
+    Hurt = 1 << 3,
 }

@@ -1,4 +1,5 @@
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Tests.AmbientOcclusion;
 

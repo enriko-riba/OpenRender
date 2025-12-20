@@ -1,4 +1,5 @@
 using OpenRender.Core.Rendering;
+using System.Runtime.InteropServices;
 using OpenTK.Mathematics;
 using SpyroGame.Server.Combat;
 using SpyroGame.Server.Mobs;
@@ -7,6 +8,7 @@ using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Server;
 
@@ -63,7 +65,8 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             MaxSpawnAttemptsPerTick: 4));
     private readonly MobPhysicsSystem mobPhysicsSystem;
     private readonly MobAiSystem mobAiSystem;
-    private readonly CombatSystem combatSystem = new();
+    private readonly SpyroGame.Server.Items.DroppedItemManager droppedItemManager = new();
+    private readonly CombatSystem combatSystem;
 
     private readonly Dictionary<PlayerId, Player> players = [];
     private readonly Dictionary<PlayerId, HashSet<int>> lastVisibleReadyChunksByPlayer = [];
@@ -87,6 +90,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
         mobPhysicsSystem = new MobPhysicsSystem(world);
         mobAiSystem = new MobAiSystem();
+        combatSystem = new CombatSystem(droppedItemManager);
     }
 
     public void Submit(PlayerId playerId, PlayerInputCommand input)
@@ -156,14 +160,19 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             anyReadyChunks.UnionWith(ready);
         }
 
-        var playerPositions = new (PlayerId PlayerId, Vector3 Position)[players.Count];
+        var playerPositions = new List<(PlayerId PlayerId, Vector3 Position)>(players.Count);
         {
-            var i = 0;
             foreach (var kvp in players)
             {
-                playerPositions[i++] = (kvp.Key, kvp.Value.Position);
+                // Only include alive players for mob targeting/spawning
+                if (kvp.Value.IsAlive)
+                {
+                    playerPositions.Add((kvp.Key, kvp.Value.Position));
+                }
             }
         }
+
+        var playerPositionsSpan = CollectionsMarshal.AsSpan(playerPositions);
 
         var readyChunkIndices = anyReadyChunks.Count > 0 ? anyReadyChunks.ToArray() : [];
 
@@ -192,7 +201,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 // - >128 blocks from any player => instant
                 // - 32..128 blocks => random chance over time
                 var minDistSq = float.PositiveInfinity;
-                foreach (var (_, p) in playerPositions)
+                foreach (var (_, p) in playerPositionsSpan)
                 {
                     var d = mob.Position - p;
                     var dsq = d.X * d.X + d.Y * d.Y + d.Z * d.Z;
@@ -259,7 +268,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 timeSnapshot,
                 world.Seed,
                 newlyReadyChunks?.ToArray() ?? [],
-                playerPositions,
+                playerPositionsSpan,
                 world,
                 streamingManager.VoxelCache,
                 mobManager);
@@ -269,14 +278,15 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 timeSnapshot,
                 world.Seed,
                 readyChunkIndices,
-                playerPositions,
+                playerPositionsSpan,
                 world,
                 streamingManager.VoxelCache,
                 mobManager);
 
             // Run AI and Physics
-            mobAiSystem.Tick(elapsedSeconds, mobManager, playerPositions);
+            mobAiSystem.Tick(elapsedSeconds, mobManager, playerPositionsSpan);
             mobPhysicsSystem.Tick(elapsedSeconds, mobManager);
+            droppedItemManager.Tick(elapsedSeconds, (pos) => world.GetBlockByPositionGlobalSafe(pos.X, pos.Y, pos.Z), players.Values);
 
             // Process mob attacks on players
             foreach (var intent in mobAiSystem.PendingAttacks)
@@ -697,7 +707,8 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             TickId: tickId,
             ServerTimeSeconds: serverTimeSeconds,
             Player: pSnap,
-            ChunkDelta: chunkDelta);
+            ChunkDelta: chunkDelta,
+            DroppedItems: droppedItemManager.GetSnapshots());
     }
 
     private static int GetChunkIndexFromWorldPos(in Vector3 worldPos)

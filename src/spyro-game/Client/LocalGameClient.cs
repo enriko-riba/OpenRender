@@ -90,6 +90,8 @@ public sealed class LocalGameClient(
 
     public void Send(PlaceBlockCommand command) => connection.Send(new ClientPlaceBlockMessage(playerId, command));
 
+    public void SendAttack(MobId targetMob) => connection.Send(new ClientAttackMobMessage(playerId, targetMob));
+
     public void Start()
     {
         lock (sync)

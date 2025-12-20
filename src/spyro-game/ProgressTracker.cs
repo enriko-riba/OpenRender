@@ -24,20 +24,17 @@ public class ProgressTracker
     {
         timer.Start();
     }
-    
+
     /// <summary>
     /// Add a progress operation with its weight (contribution to total 0-100% progress).
     /// </summary>
-    public void AddOperation(string name, float startPercent, float endPercent)
+    public void AddOperation(string name, float startPercent, float endPercent) => operations.Add(new ProgressOperation
     {
-        operations.Add(new ProgressOperation
-        {
-            Name = name,
-            StartPercent = startPercent,
-            EndPercent = endPercent
-        });
-    }
-    
+        Name = name,
+        StartPercent = startPercent,
+        EndPercent = endPercent
+    });
+
     /// <summary>
     /// Update current operation progress (0.0 to 1.0 within the operation's range).
     /// </summary>

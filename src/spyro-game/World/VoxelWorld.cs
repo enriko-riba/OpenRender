@@ -2,6 +2,7 @@ using OpenRender;
 using OpenRender.Core.Culling;
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
+using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
 
 namespace SpyroGame.World;

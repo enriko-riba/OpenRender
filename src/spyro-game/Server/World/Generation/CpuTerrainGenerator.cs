@@ -1,7 +1,10 @@
 using NoiseDotNet;
+using SpyroGame.World.Registry;
 using System.Numerics;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Fully CPU-based terrain generator that mirrors the GLSL pipeline.

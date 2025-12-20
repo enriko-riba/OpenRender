@@ -1,7 +1,10 @@
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
+using SpyroGame.World.Registry;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Generates color-coded biome maps for debugging terrain generation.

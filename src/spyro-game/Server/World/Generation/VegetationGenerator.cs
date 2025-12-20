@@ -1,6 +1,9 @@
+using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Handles the placement of vegetation (trees, flowers, grass, cacti) in generated chunks.

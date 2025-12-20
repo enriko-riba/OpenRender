@@ -1,7 +1,9 @@
 using NoiseDotNet;
 using System.Diagnostics;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Pre-allocated cache for climate noise values sampled once per chunk.

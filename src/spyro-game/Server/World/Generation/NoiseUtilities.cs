@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Common noise utility functions used across terrain generation.

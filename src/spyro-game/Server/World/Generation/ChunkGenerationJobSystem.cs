@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using OpenRender;
+using SpyroGame.World.Registry;
+using SpyroGame.Server.World;
+using SpyroGame.World;
 
-namespace SpyroGame.World.Generation;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Job system for CPU terrain generation using the ThreadPool.

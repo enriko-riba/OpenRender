@@ -1,4 +1,4 @@
-namespace SpyroGame.World;
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Configuration for terrain height shaping using Minecraft-style spline-based calculation.

@@ -3,6 +3,7 @@ using SpyroGame.Server;
 using SpyroGame.Server.Streaming;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Server.Mobs;
 
@@ -54,8 +55,9 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     // Hostile continuous spawning: attempt packs at a fixed cadence.
     // Spawning is "continuous" but should not be *high frequency*.
     // A high tick rate quickly slams into density caps and feels like instant overcrowding.
-    private const double HostileSpawnCycleSeconds = 0.5;
+    private const double HostileSpawnCycleSeconds = 1.0;
     private const int HostilePackAttemptsPerCyclePerPlayer = 1;
+    private const double HostileSpawnChancePerCycle = 0.25; // 25% chance per cycle per player
     private const int HostilePackSizeMin = 1;
     private const int HostilePackSizeMax = 3;
     private const float HostileMinSpawnRadiusBlocks = 24;
@@ -194,12 +196,24 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             var packAttemptsThisCycle = HostilePackAttemptsPerCyclePerPlayer * Math.Min(players.Length, 2);
             for (var attempt = 0; attempt < packAttemptsThisCycle; attempt++)
             {
+                if (Random.Shared.NextDouble() > HostileSpawnChancePerCycle)
+                {
+                    continue;
+                }
+
                 if (mobManager.Mobs.Count >= GlobalEntityHardCap)
                 {
                     return;
                 }
 
                 var playerPos = players[Random.Shared.Next(players.Length)].Position;
+
+                // Check if player is already overwhelmed (local density check around player)
+                if (GetHostileCountAround(mobManager, playerPos, HostileLocalDensityRadiusBlocks) >= CaveHostileDensityCap)
+                {
+                    continue;
+                }
+
                 if (!TryPickHostileSpawnAnchor(worldSeed, worldTime, playerPos, readyChunkIndices, world, voxelCache, isDaytime, out var anchorPos))
                 {
                     continue;
@@ -813,4 +827,16 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         return r < 0 ? r + mod : r;
     }
 
+    private static int GetHostileCountAround(MobManager mobManager, Vector3 pos, float radius)
+    {
+        var rSq = radius * radius;
+        var count = 0;
+        foreach (var mob in mobManager.Mobs.Values)
+        {
+            if (mob.Definition.Category != MobCategory.Hostile) continue;
+            var d = mob.Position - pos;
+            if (d.LengthSquared <= rSq) count++;
+        }
+        return count;
+    }
 }

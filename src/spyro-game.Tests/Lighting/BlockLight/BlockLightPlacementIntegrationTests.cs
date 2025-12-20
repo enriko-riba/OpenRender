@@ -1,4 +1,5 @@
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 using Xunit;
 using static SpyroGame.Tests.Common.LightingTestHelpers;
 

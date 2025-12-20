@@ -1,4 +1,7 @@
-namespace SpyroGame.World;
+using SpyroGame.World.Registry;
+using SpyroGame.Server.World.Generation;
+
+namespace SpyroGame.Server.World;
 
 /// <summary>
 /// Terrain configuration parameters bucket. Holds all tweakable parameters and small data tables

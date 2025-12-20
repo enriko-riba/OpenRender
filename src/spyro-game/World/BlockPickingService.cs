@@ -26,6 +26,7 @@ public class BlockPickingService
     // Cached result
     private BlockState? cachedPickedBlock = null;
     private Vector3 cachedHitNormal = Vector3.Zero;
+    private float cachedHitDistance = float.MaxValue;
     
     public BlockPickingService(CollisionManager collisionManager, VoxelTerrainRenderer terrainRenderer)
     {
@@ -42,6 +43,11 @@ public class BlockPickingService
     /// Normal of the face that was hit.
     /// </summary>
     public Vector3 HitNormal => cachedHitNormal;
+
+    /// <summary>
+    /// Distance to the hit point.
+    /// </summary>
+    public float HitDistance => cachedHitDistance;
 
     public void Invalidate()
     {
@@ -88,15 +94,17 @@ public class BlockPickingService
 
     private void DoPick(ICamera camera, float maxDistance)
     {
-        if (collisionManager.Raycast(camera.Position, camera.Front, maxDistance, out _, out var blockPos, out var normal, out var descriptor))
+        if (collisionManager.Raycast(camera.Position, camera.Front, maxDistance, out var hitPoint, out var blockPos, out var normal, out var descriptor))
         {
             cachedPickedBlock = new BlockState(blockPos, descriptor);
             cachedHitNormal = normal;
+            cachedHitDistance = Vector3.Distance(camera.Position, hitPoint);
         }
         else
         {
             cachedPickedBlock = null;
             cachedHitNormal = Vector3.Zero;
+            cachedHitDistance = float.MaxValue;
         }
 
         terrainRenderer?.PickedBlock = cachedPickedBlock;

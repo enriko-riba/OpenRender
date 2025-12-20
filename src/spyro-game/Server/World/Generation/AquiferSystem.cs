@@ -1,4 +1,8 @@
-namespace SpyroGame.World.Generation;
+using SpyroGame.World.Registry;
+using SpyroGame.Server.World;
+using SpyroGame.World;
+
+namespace SpyroGame.Server.World.Generation;
 
 /// <summary>
 /// Simplified aquifer system for water determination.

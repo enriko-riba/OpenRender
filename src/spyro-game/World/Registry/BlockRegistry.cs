@@ -1,7 +1,6 @@
 using System.Collections.Frozen;
-using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.World.Registry;
 
 /// <summary>
 /// Defines how the GPU should render a block.

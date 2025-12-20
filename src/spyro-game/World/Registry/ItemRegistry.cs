@@ -1,7 +1,6 @@
 using System.Collections.Frozen;
-using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.World.Registry;
 
 public static class ItemRegistry
 {

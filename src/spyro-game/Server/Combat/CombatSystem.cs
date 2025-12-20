@@ -2,7 +2,10 @@ using OpenTK.Mathematics;
 using SpyroGame.Server.Mobs;
 using SpyroGame.World.Registry;
 using SpyroGame.Shared.State;
+using SpyroGame.Server.Items;
+using OpenRender.Core;
 using SpyroGame.World;
+using OpenRender; // For Log
 
 namespace SpyroGame.Server.Combat;
 
@@ -17,7 +20,7 @@ namespace SpyroGame.Server.Combat;
 /// - Critical hits (falling + attacking = 1.5x damage)
 /// - Sweep attacks (swords can hit multiple mobs)
 /// </summary>
-public sealed class CombatSystem
+public sealed class CombatSystem(DroppedItemManager droppedItemManager)
 {
     // Minecraft constants
     public const float BasePlayerReach = 3.0f;        // Survival mode reach
@@ -41,11 +44,38 @@ public sealed class CombatSystem
         if (mob.IsDead)
             return CombatResult.Missed("Target is dead");
 
-        // Check reach distance
+        // Check invulnerability
+        if (mob.HurtTimeRemaining > 0)
+            return CombatResult.Missed("Target is invulnerable");
+
+        // Check reach distance (Ray-AABB intersection)
         var maxReach = isCreativeMode ? CreativePlayerReach : BasePlayerReach;
-        var distance = Vector3.Distance(player.Position, mob.Position);
-        if (distance > maxReach + mob.Definition.HitboxWidth * 0.5f)
-            return CombatResult.Missed("Out of reach");
+        
+        // Use player's eye position for raycast
+        // Player.Position is at feet. Eye height is ~1.62
+        var eyePos = player.Position + new Vector3(0, 1.62f, 0);
+        var lookDir = player.Direction; // Synced from client
+
+        var halfW = mob.Definition.HitboxWidth * 0.5f;
+        var min = mob.Position + new Vector3(-halfW, 0, -halfW);
+        var max = mob.Position + new Vector3(halfW, mob.Definition.HitboxHeight, halfW);
+
+        // Expand hitbox slightly for server-side leniency (latency/smoothing)
+        var leniency = 0.2f;
+        min -= new Vector3(leniency);
+        max += new Vector3(leniency);
+
+        if (!CollisionManager.RayAabbIntersect(eyePos, lookDir, min, max, out var t) || t > maxReach)
+        {
+            // Fallback: if raycast fails (e.g. due to slight desync), check simple distance
+            // but be stricter than before.
+            var distSq = Vector3.DistanceSquared(player.Position, mob.Position);
+            var maxDist = maxReach + mob.Definition.HitboxWidth; // generous
+            if (distSq > maxDist * maxDist)
+            {
+                return CombatResult.Missed("Out of reach");
+            }
+        }
 
         // Check attack cooldown
         if (!player.CanAttack())
@@ -67,6 +97,8 @@ public sealed class CombatSystem
         // Apply damage to mob (considering armor)
         var actualDamage = ApplyDamageToMob(mob, damage);
 
+        Log.Info($"[Combat] Player hit Mob {mob.Id} ({mob.Definition.Kind}). Dmg: {actualDamage:F1}. HP Left: {mob.Health:F1}/{mob.Definition.MaxHealth}");
+
         // Apply knockback
         ApplyKnockback(player.Position, mob);
 
@@ -80,10 +112,48 @@ public sealed class CombatSystem
         if (mob.IsDead)
         {
             mobManager.Remove(mob.Id);
-            // TODO: Generate drops and XP when loot system is integrated
+            HandleMobDrops(mob, player);
         }
 
         return new CombatResult(true, actualDamage, isCritical, mob.IsDead);
+    }
+
+    private void HandleMobDrops(MobEntity mob, Player killer)
+    {
+        if (mob.Definition.Drops == null) return;
+
+        foreach (var entry in mob.Definition.Drops.Entries)
+        {
+            if (Random.Shared.NextSingle() <= entry.Probability)
+            {
+                var count = Random.Shared.Next(entry.MinCount, entry.MaxCount + 1);
+                if (count <= 0) continue;
+
+                var distSq = Vector3.DistanceSquared(mob.Position, killer.Position);
+                if (distSq <= 2.0f * 2.0f)
+                {
+                    // Auto-collect
+                    killer.Inventory.AddItem(entry.Item, count);
+                    // TODO: Send notification to client "Picked up X Item"
+                    // Since we don't have a direct message channel for this yet, we'll log it server-side
+                    // and rely on inventory sync to show the item.
+                    // Ideally: connection.Send(new ServerChatMessage($"Picked up {count} {entry.Item}"));
+                    Log.Info($"[Loot] Auto-collected {count} {entry.Item} for Player");
+                }
+                else
+                {
+                    // Drop on ground
+                    // Add some random velocity
+                    var vel = new Vector3(
+                        (Random.Shared.NextSingle() - 0.5f) * 2.0f,
+                        3.0f, // Pop up
+                        (Random.Shared.NextSingle() - 0.5f) * 2.0f
+                    );
+                    droppedItemManager.Spawn(entry.Item, count, mob.Position + new Vector3(0, 0.5f, 0), vel);
+                    Log.Info($"[Loot] Dropped {count} {entry.Item} at {mob.Position}");
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -209,9 +279,11 @@ public sealed class CombatSystem
     /// </summary>
     private static float GetWeaponDamage(ItemId heldItem)
     {
-        // For now, all blocks deal fist damage.
-        // When item system is integrated, check ItemRegistry.
-        return BaseFistDamage;
+        return heldItem switch
+        {
+            ItemId.DiamondSword => 7.0f,
+            _ => BaseFistDamage
+        };
     }
 
     /// <summary>
@@ -219,8 +291,11 @@ public sealed class CombatSystem
     /// </summary>
     private static float GetAttackSpeed(ItemId heldItem)
     {
-        // Default attack speed (4 attacks per second baseline)
-        return 4.0f;
+        return heldItem switch
+        {
+            ItemId.DiamondSword => 1.6f,
+            _ => 4.0f
+        };
     }
 }
 

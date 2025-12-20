@@ -56,9 +56,9 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     public uint RenderedBlocks => commandCapacity;  // Now stores command count, not face count
 
     /// <summary>
-    /// Total draw call count (2 multi-draw indirect calls: Opaque + Transparent)
+    /// Total draw call count (4 multi-draw indirect calls: Opaque + AlphaTest + Water + Transparent)
     /// </summary>
-    public int DrawCallCount => commandCapacity > 0 ? 2 : 0;
+    public int DrawCallCount => commandCapacity > 0 ? 4 : 0;
 
     /// <summary>
     /// The currently picked/highlighted block (used for outlining/breaking).
@@ -339,10 +339,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             GL.PolygonMode(TriangleFace.FrontAndBack, PolygonMode.Line);
         }
         
+        // Disable culling for ALL passes to support double-sided leaves/vegetation
+        // This allows seeing the inside of leaf blocks through transparent sections
+        // GL.Disable(EnableCap.CullFace); // REMOVED: Now handled per-pass
+
         // 1. Draw Opaque (Command 1 of each pair)
-        // Stride = 3 * sizeof(DrawElementsIndirectCommand) = 3 * 5 * 4 = 60 bytes
+        // Stride = 4 * sizeof(DrawElementsIndirectCommand) = 4 * 5 * 4 = 80 bytes
         // Offset = 0
         GL.Disable(EnableCap.Blend); // Ensure blending is off for opaque pass
+        GL.Enable(EnableCap.CullFace); // Enable culling for solid blocks
         shader.SetInt("uIsCubeletPass", 0); // Ensure default state
         shader.SetInt("uRenderPass", 0); // Opaque pass - use alpha cutoff for AlphaTest blocks
         GL.MultiDrawElementsIndirect(
@@ -350,42 +355,56 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             DrawElementsType.UnsignedInt,
             IntPtr.Zero,
             drawCount,
-            60 // Stride
+            80 // Stride
         );
 
-        // 2. Draw Water (Command 2)
+        // 2. Draw AlphaTest (Command 2) - Leaves/Flowers
+        // Disable culling for double-sided foliage
+        GL.Disable(EnableCap.CullFace);
+        // Keep same shader state (RenderPass 0) as it handles alpha discard
+        
+        // Stride = 80 bytes
+        // Offset = 20 bytes
+        GL.MultiDrawElementsIndirect(
+            PrimitiveType.Triangles,
+            DrawElementsType.UnsignedInt,
+            (IntPtr)20,
+            drawCount,
+            80 // Stride
+        );
+
+        // 3. Draw Water (Command 3)
         // Enable blending and disable depth write (optional, but good for water)
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-        // Disable culling for thin translucent surfaces (water, leaves, glass)
-        GL.Disable(EnableCap.CullFace);
+        
         GL.DepthMask(false);
         GL.DepthFunc(DepthFunction.Lequal);
         GL.Enable(EnableCap.PolygonOffsetFill);
         GL.PolygonOffset(-0.5f, -1.0f);
         shader.SetInt("uRenderPass", 1); // Water pass - no alpha cutoff
 
-        // Stride = 60 bytes
-        // Offset = 20 bytes (start of second command)
-        GL.MultiDrawElementsIndirect(
-            PrimitiveType.Triangles,
-            DrawElementsType.UnsignedInt,
-            (IntPtr)20, // Offset to second command
-            drawCount,
-            60 // Stride
-        );
-
-        // 3. Draw Translucent (Command 3)
-        // Keep same state as Water (Blend, No Depth Write, No Cull)
-        shader.SetInt("uRenderPass", 2); // Translucent pass - no alpha cutoff (glass, ice)
-        // Stride = 60 bytes
+        // Stride = 80 bytes
         // Offset = 40 bytes (start of third command)
         GL.MultiDrawElementsIndirect(
             PrimitiveType.Triangles,
             DrawElementsType.UnsignedInt,
             (IntPtr)40, // Offset to third command
             drawCount,
-            60 // Stride
+            80 // Stride
+        );
+
+        // 4. Draw Translucent (Command 4)
+        // Keep same state as Water (Blend, No Depth Write, No Cull)
+        shader.SetInt("uRenderPass", 2); // Translucent pass - no alpha cutoff (glass, ice)
+        // Stride = 80 bytes
+        // Offset = 60 bytes (start of fourth command)
+        GL.MultiDrawElementsIndirect(
+            PrimitiveType.Triangles,
+            DrawElementsType.UnsignedInt,
+            (IntPtr)60, // Offset to fourth command
+            drawCount,
+            80 // Stride
         );
 
         // Restore state
@@ -465,8 +484,8 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Shared index buffer: always 6 indices * 4 bytes
         var indexBytes = 6 * sizeof(uint);
 
-        // Indirect draw commands: commandCapacity * 5 * sizeof(uint);
-        var indirectBytes = commandCapacity * 5 * sizeof(uint);
+        // Indirect draw commands: commandCapacity * 4 commands * 5 uints * sizeof(uint);
+        var indirectBytes = commandCapacity * 4 * 5 * sizeof(uint);
 
         return vertexBytes + indexBytes + indirectBytes;
     }
