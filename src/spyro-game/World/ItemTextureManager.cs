@@ -11,19 +11,22 @@ namespace SpyroGame.World;
 /// Manages item textures and materials.
 /// Loads textures for all ItemIds at startup and reports missing ones.
 /// </summary>
-public sealed class ItemTextureManager
+public static class ItemTextureManager
 {
-    private readonly Dictionary<ItemId, Material> materials = [];
-    private Material defaultMaterial = Material.Default;
+    private static readonly Dictionary<ItemId, Material> materials = [];
+    private static readonly Material defaultMaterial = Material.Default;
 
     private const string ItemTextureDir = "Resources/voxel/items";
     private const string BlockTextureDir = "Resources/voxel/blocks";
 
-    public void Initialize() => LoadItemMaterials();
+    static ItemTextureManager()
+    {
+        LoadItemMaterials();
+    }
 
     public static bool IsBlockItem(ItemId item) => ItemRegistry.Get(item) is BlockItem;
 
-    private void LoadItemMaterials()
+    private static void LoadItemMaterials()
     {
         var loadedCount = 0;
         var missingItems = new List<ItemId>();
@@ -85,7 +88,7 @@ public sealed class ItemTextureManager
         Log.Info($"ItemTextureManager: Loaded {loadedCount} item materials successfully");
     }
 
-    public Material GetMaterial(ItemId item) => materials.TryGetValue(item, out var mat) ? mat : defaultMaterial;
+    public static Material GetMaterial(ItemId item) => materials.TryGetValue(item, out var mat) ? mat : defaultMaterial;
 
     private static string GetTexturePathForItem(ItemId itemId)
     {

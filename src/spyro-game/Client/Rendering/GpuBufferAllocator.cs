@@ -2,7 +2,7 @@ using OpenRender;
 using OpenTK.Graphics.OpenGL4;
 using System.Runtime.CompilerServices;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Client.Rendering;
 
 /// <summary>
 /// Manages GPU buffer allocation and lifecycle for the streaming terrain system.

@@ -7,22 +7,11 @@ using SpyroGame.World;
 
 namespace SpyroGame.Client.Rendering;
 
-public sealed class DroppedItemRenderer : IDisposable
+public sealed class DroppedItemRenderer(Scene scene) : IDisposable
 {
-    private readonly Scene scene;
     private readonly Dictionary<int, SceneNode> itemNodes = [];
-    private readonly Mesh blockMesh;
-    private readonly Mesh flatItemMesh;
-    private readonly ItemTextureManager itemTextureManager;
-
-    public DroppedItemRenderer(Scene scene)
-    {
-        this.scene = scene;
-        blockMesh = CreateBlockMesh(0.25f);
-        flatItemMesh = CreateFlatItemMesh(0.25f);
-        itemTextureManager = new ItemTextureManager();
-        itemTextureManager.Initialize();
-    }
+    private readonly Mesh blockMesh = CreateBlockMesh(0.25f);
+    private readonly Mesh flatItemMesh = CreateFlatItemMesh(0.25f);
 
     public void Update(DroppedItemSnapshot[]? items, double elapsedSeconds)
     {
@@ -39,7 +28,7 @@ public sealed class DroppedItemRenderer : IDisposable
 
             if (!itemNodes.TryGetValue(item.Id, out var node))
             {
-                var material = itemTextureManager.GetMaterial(item.Item);
+                var material = ItemTextureManager.GetMaterial(item.Item);
                 var mesh = ItemTextureManager.IsBlockItem(item.Item) ? blockMesh : flatItemMesh;
 
                 node = new SceneNode(mesh, material)

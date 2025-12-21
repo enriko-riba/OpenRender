@@ -66,12 +66,12 @@ public class DroppedItemManager
                 // Simple sweep for collision
                 if (item.Velocity.Y < 0)
                 {
-                    int startY = (int)Math.Floor(item.Position.Y);
-                    int endY = (int)Math.Floor(nextPos.Y);
+                    var startY = (int)Math.Floor(item.Position.Y);
+                    var endY = (int)Math.Floor(nextPos.Y);
 
-                    bool hit = false;
+                    var hit = false;
                     // Check from start down to end
-                    for (int y = startY; y >= endY; y--)
+                    for (var y = startY; y >= endY; y--)
                     {
                         var blockPos = new Vector3i((int)Math.Floor(item.Position.X), y, (int)Math.Floor(item.Position.Z));
                         var block = blockProvider(blockPos);

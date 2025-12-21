@@ -26,9 +26,8 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
     private long buildCounter;
     private bool disposed;
 
-    // Thread-local generators to avoid contention on shared state
-    private readonly ThreadLocal<CpuTerrainGenerator> threadLocalGenerator;
-    private readonly ThreadLocal<long> threadLocalConfigVersion;
+    // Thread-local state to avoid contention and ensure config consistency
+    private readonly ThreadLocal<GeneratorState> threadLocalState;
 
     public ChunkGenerationJobSystem(ChunkVoxelDataCache voxelCache, TerrainConfig initialConfig, ChunkProcessingMetrics? metrics = null, int maxParallelism = 0)
     {
@@ -39,8 +38,15 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         // Use ProcessorCount but cap at a reasonable limit to avoid excessive parallelism
         this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount);
         
-        threadLocalGenerator = new ThreadLocal<CpuTerrainGenerator>(() => new CpuTerrainGenerator(config), trackAllValues: false);
-        threadLocalConfigVersion = new ThreadLocal<long>(() => configVersion, trackAllValues: false);
+        // Initialize thread-local state. 
+        // We capture version BEFORE config to ensure that if we get a newer config with an older version,
+        // the version check in ProcessWorkItem will trigger an update (safe redundancy).
+        threadLocalState = new ThreadLocal<GeneratorState>(() => 
+        {
+            var v = Volatile.Read(ref configVersion);
+            var c = config;
+            return new GeneratorState(new CpuTerrainGenerator(c), v);
+        }, trackAllValues: false);
 
         // Single dispatcher thread that batches and processes work
         dispatcherTask = Task.Factory.StartNew(
@@ -133,14 +139,15 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
     {
         try
         {
-            var generator = threadLocalGenerator.Value!;
+            var state = threadLocalState.Value!;
+            var generator = state.Generator;
             
             // Check if config needs update
             var currentVersion = Volatile.Read(ref configVersion);
-            if (currentVersion != threadLocalConfigVersion.Value)
+            if (currentVersion != state.Version)
             {
                 generator.UpdateConfig(config);
-                threadLocalConfigVersion.Value = currentVersion;
+                state.Version = currentVersion;
             }
 
             ChunkData? writable = null;
@@ -262,8 +269,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
             Log.Warn($"ChunkGenerationJobSystem dispose timed out: {ex.Message}");
         }
 
-        threadLocalGenerator.Dispose();
-        threadLocalConfigVersion.Dispose();
+        threadLocalState.Dispose();
         workQueue.Dispose();
         cancellationSource.Dispose();
     }
@@ -272,6 +278,11 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
 
     internal readonly record struct ChunkGenerationJobResult(int ChunkIndex, CpuTerrainGenerator.ChunkGenerationResult Generation, long EnqueueId, long BuildId, GenerationJobType Type);
 
+    private sealed class GeneratorState(CpuTerrainGenerator generator, long version)
+    {
+        public CpuTerrainGenerator Generator { get; } = generator;
+        public long Version { get; set; } = version;
+    }
 }
 
 internal enum GenerationJobType

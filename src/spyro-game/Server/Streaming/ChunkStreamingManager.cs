@@ -136,21 +136,15 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         lastChunkStateSaveUtc = DateTime.UtcNow;
     }
 
-    public void UpdatePlayer(PlayerId playerId, Vector3 position)
-    {
-        playerPositions[playerId] = position;
-    }
+    public void UpdatePlayer(PlayerId playerId, Vector3 position) => playerPositions[playerId] = position;
 
     /// <summary>
     /// Allocation-free check for whether a chunk is currently (1) desired by this player and (2) ready.
     /// Useful for filtering payload queues without constructing per-tick ready sets.
     /// </summary>
-    public bool IsChunkReadyForPlayer(PlayerId playerId, int chunkIndex)
-    {
-        return desiredChunksByPlayer.TryGetValue(playerId, out var desired)
+    public bool IsChunkReadyForPlayer(PlayerId playerId, int chunkIndex) => desiredChunksByPlayer.TryGetValue(playerId, out var desired)
             && desired.Contains(chunkIndex)
             && readyChunks.Contains(chunkIndex);
-    }
 
     /// <summary>
     /// Returns the subset of chunks that are (1) desired by this player and (2) ready.

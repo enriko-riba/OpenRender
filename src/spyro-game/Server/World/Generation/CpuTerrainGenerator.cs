@@ -9,7 +9,6 @@ namespace SpyroGame.Server.World.Generation;
 /// <summary>
 /// Fully CPU-based terrain generator that mirrors the GLSL pipeline.
 /// Produces voxel descriptors and collision spans for a chunk.
-/// Check the TERRAIN_ARCHITECTURE.md document for details.
 /// </summary>
 internal sealed class CpuTerrainGenerator
 {
@@ -20,7 +19,7 @@ internal sealed class CpuTerrainGenerator
     // Sparse 3D sampling constants (Minecraft-style optimization)
     // Sample every 4 blocks and trilinear interpolate for ~40x speedup
     private const int SparseStep = 4;
-    private const int SparseSamplesXZ = VoxelHelper.ChunkSideSize / SparseStep + 1; // 5 samples: 0,4,8,12,16
+    private const int SparseSamplesXZ = VoxelHelper.ChunkSideSize / SparseStep + 1;  // 5 samples: 0,4,8,12,16
     private const int SparseSamplesY = VoxelHelper.ChunkYSize / SparseStep + 1;      // 97 samples: 0,4,8,...,384
     private const int SparseSampleCount = SparseSamplesXZ * SparseSamplesXZ;         // 25 samples per Y slice
     private const int SparseVolumeSize = SparseSampleCount * SparseSamplesY;         // 25 * 97 = 2425 total

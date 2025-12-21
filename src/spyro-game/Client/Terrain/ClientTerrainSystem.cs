@@ -1,6 +1,7 @@
 using OpenRender;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using SpyroGame.Client.Rendering;
 using SpyroGame.World;
 using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
@@ -289,11 +290,9 @@ public sealed class ClientTerrainSystem : IDisposable
         return true;
     }
 
-    private void EnqueueCollisionRebuild(int chunkIndex)
-    {
+    private void EnqueueCollisionRebuild(int chunkIndex) =>
         // Restart rebuild from column 0 whenever new data arrives for this chunk.
         pendingCollisionRebuildNextColumnByChunk[chunkIndex] = 0;
-    }
 
     private static int[] GetCardinalNeighborChunkIndices(int chunkIndex)
     {
@@ -384,7 +383,7 @@ public sealed class ClientTerrainSystem : IDisposable
 
         // Rebuild a limited number of collision columns per frame to avoid hitching.
         // Collision is used for picking/interaction; being a few frames behind is OK.
-        ProcessCollisionRebuildBudget(maxColumnsPerFrame: 128);
+        ProcessCollisionRebuildBudget(maxColumnsPerFrame: 64);
     }
 
     private void ProcessCollisionRebuildBudget(int maxColumnsPerFrame)

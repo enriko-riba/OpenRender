@@ -30,7 +30,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         this.metrics = metrics;
         
         // Use ProcessorCount for parallelism
-        this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount);
+        this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount - 2);
 
         // Single dispatcher thread that batches and processes work
         dispatcherTask = Task.Factory.StartNew(
@@ -78,7 +78,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
 
     private void DispatcherLoop()
     {
-        const int batchSize = 32;
+        const int batchSize = 16;
         var batch = new List<ChunkMeshWorkItem>(batchSize);
 
         try

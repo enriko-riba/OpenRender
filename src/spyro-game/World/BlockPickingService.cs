@@ -1,5 +1,6 @@
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
+using SpyroGame.Client.Rendering;
 
 namespace SpyroGame.World;
 

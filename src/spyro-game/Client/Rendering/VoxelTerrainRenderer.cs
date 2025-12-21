@@ -5,8 +5,9 @@ using OpenRender.Core.Textures;
 using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
+using SpyroGame.World;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Client.Rendering;
 
 /// <summary>
 /// Manages rendering of CPU-generated voxel terrain.

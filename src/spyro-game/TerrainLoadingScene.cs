@@ -9,6 +9,7 @@ using SpyroGame.Shared.State;
 using SpyroGame.Shared.Input;
 using SpyroGame.World;
 using System.Diagnostics;
+using SpyroGame.Client.Rendering;
 
 namespace SpyroGame;
 

@@ -14,6 +14,7 @@ using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Client;
 using SpyroGame.Client.Mobs;
+using SpyroGame.Client.Rendering;
 using SpyroGame.Client.Terrain;
 using SpyroGame.Server.World.Generation;
 using SpyroGame.Shared.Commands;
@@ -251,8 +252,7 @@ internal class GameScene : Scene
         hotBar = HotBar.Create(
             SceneManager.ClientSize.X / 2,
             SceneManager.ClientSize.Y - HotBar.Height - 5,
-            player.Inventory,
-            Color4.BurlyWood);
+            player!.Inventory);
         AddNode(hotBar);
         world!.Camera = camera!;
         camera!.Invalidate();
