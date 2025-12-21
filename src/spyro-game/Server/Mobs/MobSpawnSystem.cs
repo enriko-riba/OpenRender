@@ -641,8 +641,9 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 continue;
             }
 
-            var light = GetSkyLight(chunkData, lx, y, lz);
-            if (light > 7)
+            var (sky, block) = GetLightLevels(chunkData, lx, y, lz);
+            // Must be dark to be a valid cave spawn (checking both sky and block light).
+            if (Math.Max(sky, block) > 7)
             {
                 continue;
             }
@@ -682,12 +683,14 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         // Check light
         var lx = Mod(x, VoxelHelper.ChunkSideSize);
         var lz = Mod(z, VoxelHelper.ChunkSideSize);
-        var rawSkyLight = GetSkyLight(chunkData, lx, y, lz);
+        var (sky, block) = GetLightLevels(chunkData, lx, y, lz);
 
         // Sky-light is a static precomputed value in our current lighting system.
         // At night the surface still has skyLight=15, but gameplay should treat it as dark.
         // So for *surface* spawns at night, consider sky light as 0 for the spawn rule.
-        var light = (!isDaytime && !isCaveSpawn) ? 0 : rawSkyLight;
+        // We must also consider block light (torches), which is valid regardless of time.
+        var effectiveSky = isDaytime ? sky : 0;
+        var light = Math.Max(effectiveSky, block);
 
         // Pick a mob that fits
         var candidates = MobRegistry.AllDefinitions
@@ -724,35 +727,35 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         return false;
     }
 
-    private static bool TryFindSpawnYInColumn(VoxelWorld world, int x, int z, int startY, int searchRadiusY, out int y)
+    private static (int Sky, int Block) GetLightLevels(ChunkData chunkData, int lx, int ly, int lz)
     {
-        y = 0;
-
-        var yMin = Math.Max(2, startY - Math.Max(0, searchRadiusY));
-        var yMax = Math.Min(VoxelHelper.ChunkYSize - 3, startY + Math.Max(0, searchRadiusY));
-
-        // Search downward first (more likely to find floor quickly), then upward.
-        for (var yy = startY; yy >= yMin; yy--)
-        {
-            if (IsValidSpawnSpot(world, x, yy, z))
-            {
-                y = yy;
-                return true;
-            }
-        }
-
-        for (var yy = startY + 1; yy <= yMax; yy++)
-        {
-            if (IsValidSpawnSpot(world, x, yy, z))
-            {
-                y = yy;
-                return true;
-            }
-        }
-
-        return false;
+        if (ly is < 0 or >= VoxelHelper.ChunkYSize) return (15, 0);
+        var index = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
+        if (index < 0 || index >= chunkData.LightData.Length) return (15, 0);
+        // Low nibble = sky light; high nibble = block light.
+        var val = chunkData.LightData[index];
+        return (val & 0xF, (val >> 4) & 0xF);
     }
+    private static (int Passive, int Hostile) CountByCategory(MobManager mobManager)
+    {
+        var passive = 0;
+        var hostile = 0;
 
+        foreach (var mob in mobManager.Mobs.Values)
+        {
+            switch (mob.Definition.Category)
+            {
+                case MobCategory.Passive:
+                    passive++;
+                    break;
+                case MobCategory.Hostile:
+                    hostile++;
+                    break;
+            }
+        }
+
+        return (passive, hostile);
+    }
     private static bool IsValidSpawnSpot(VoxelWorld world, int x, int y, int z)
     {
         // floor must be solid, spawn cell + head cell must be non-solid
@@ -784,43 +787,11 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             return x;
         }
     }
-
     private static float HashToYawDegrees(int seed, int chunkIndex)
     {
         var h = HashToUInt(seed, chunkIndex, salt: 1337);
         return (h % 360u);
     }
-
-    private static (int Passive, int Hostile) CountByCategory(MobManager mobManager)
-    {
-        var passive = 0;
-        var hostile = 0;
-
-        foreach (var mob in mobManager.Mobs.Values)
-        {
-            switch (mob.Definition.Category)
-            {
-                case MobCategory.Passive:
-                    passive++;
-                    break;
-                case MobCategory.Hostile:
-                    hostile++;
-                    break;
-            }
-        }
-
-        return (passive, hostile);
-    }
-
-    private static int GetSkyLight(ChunkData chunkData, int lx, int ly, int lz)
-    {
-        if (ly < 0 || ly >= VoxelHelper.ChunkYSize) return 15;
-        var index = lx + lz * VoxelHelper.ChunkSideSize + ly * VoxelHelper.ChunkSideSizeSquare;
-        if (index < 0 || index >= chunkData.LightData.Length) return 15;
-        // Low nibble = sky light; high nibble = block light.
-        return chunkData.LightData[index] & 0xF;
-    }
-
     private static int Mod(int value, int mod)
     {
         var r = value % mod;
