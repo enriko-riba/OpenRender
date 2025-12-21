@@ -35,4 +35,6 @@ public struct Rectangle : IEquatable<Rectangle>
         Width = left.Width + right.Width,
         Height = left.Height + right.Height
     };
+
+    public override string ToString() => $"({X},{Y}), [{Width}, {Height}]";
 }

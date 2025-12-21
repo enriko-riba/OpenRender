@@ -81,9 +81,9 @@ public class Scene
     /// Note: this is needed to correctly handle mutating scene state like node removals or additions, from code that gets executed inside <see cref="UpdateFrame"/>.
     /// </summary>
     /// <param name="action"></param>
-    public void AddAction(Action action) 
+    public void AddAction(Action action)
     {
-        lock (actionQueue) 
+        lock (actionQueue)
         {
             actionQueue.Add(action);
         }
@@ -99,7 +99,7 @@ public class Scene
     {
         if (index >= MaxLights) throw new ArgumentOutOfRangeException(nameof(index), $"Max lights supported is {MaxLights}");
         lights[index] = light;
-    }   
+    }
 
     /// <summary>
     /// Adds the given node to the scene.
@@ -113,6 +113,11 @@ public class Scene
         node.Scene = this; // Set the Scene reference for the added node
         node.OnResize(this, new(Width, Height));   //  trigger resize event
         renderer.AddNode(node);
+
+        foreach (var child in node.Children)
+        {
+            AddNode(child);
+        }
     }
 
     /// <summary>
@@ -135,7 +140,7 @@ public class Scene
         nodes.Clear();
         renderer.RemoveAllNodes();
     }
-        
+
     /// <summary>
     /// Returns the renderer used by the scene.
     /// </summary>
