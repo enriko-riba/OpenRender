@@ -452,26 +452,18 @@ public sealed class ChunkVoxelDataCache(ArrayPool<byte>? pool = null) : IDisposa
             {
                 return 0;
             }
-            int idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
+            var idx = y * VoxelHelper.ChunkSideSizeSquare + z * VoxelHelper.ChunkSideSize + x;
 
             // Be defensive: corrupt/legacy chunks can have incorrectly sized LightData.
             // Returning 0 is safe (dark) and avoids crashing the mesher.
             var light = chunkData.LightData;
-            if (light is null || (uint)idx >= (uint)light.Length)
-            {
-                return 0;
-            }
-
-            return light[idx];
+            return light is null || (uint)idx >= (uint)light.Length ? 0 : (uint)light[idx];
         }
 
-        public bool IsWithinBounds(int x, int y, int z)
-        {
-            return x is >= 0 and < VoxelHelper.ChunkSideSize &&
+        public bool IsWithinBounds(int x, int y, int z) => x is >= 0 and < VoxelHelper.ChunkSideSize &&
                    z is >= 0 and < VoxelHelper.ChunkSideSize &&
                    y is >= 0 and < VoxelHelper.ChunkYSize &&
                    IsValid;
-        }
     }
 
     /// <summary>

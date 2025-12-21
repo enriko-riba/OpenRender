@@ -1,6 +1,4 @@
 using SpyroGame.World.Registry;
-using System;
-using System.Collections.Generic;
 
 namespace SpyroGame.World;
 
@@ -46,7 +44,7 @@ public class ChunkData
     internal bool LightDataIsPooled;
 
     private int paletteCount;
-    
+
     /// <summary>
     /// Performance optimization: Reverse lookup from BlockId to palette index.
     /// Avoids O(n) linear search in GetOrAddPaletteEntry.
@@ -118,7 +116,7 @@ public class ChunkData
     public byte GetOrAddPaletteEntry(BlockId blockId)
     {
         var blockIdValue = blockId.GetId();
-        
+
         // O(1) lookup via reverse palette dictionary
         if (reversePalette.TryGetValue(blockIdValue, out var existingIndex))
         {
@@ -131,7 +129,7 @@ public class ChunkData
             // Fallback or error - for now just return 0 (Air) or last valid
             // In a real scenario we might need to handle palette overflow
             // But 128 unique blocks per chunk is extremely rare in Minecraft-like terrain
-            return 0; 
+            return 0;
         }
 
         if (paletteCount >= Palette.Length)
@@ -143,10 +141,10 @@ public class ChunkData
         Palette[paletteCount] = blockId;
         reversePalette[blockIdValue] = newIndex;
         paletteCount++;
-        
+
         return newIndex;
     }
-    
+
     /// <summary>
     /// Returns the active palette as an array (trimmed to actual count).
     /// </summary>
@@ -161,7 +159,7 @@ public class ChunkData
     {
         writer.Write(Version);
         writer.Write(ChunkIndex);
-        
+
         // Palette
         writer.Write(paletteCount);
         for (var i = 0; i < paletteCount; i++)
@@ -217,10 +215,10 @@ public class ChunkData
         {
             data.Palette = new BlockId[data.paletteCount];
         }
-        
+
         // Clear default palette (Air at 0) before reading
         data.reversePalette.Clear();
-        
+
         for (var i = 0; i < data.paletteCount; i++)
         {
             var blockId = (BlockId)reader.ReadUInt16();
@@ -233,7 +231,7 @@ public class ChunkData
         // But we trust the file to be consistent with itself.
         // If the file was saved with Grass at 0, then VoxelData 0 means Grass.
         // If the file was saved with Air at 0, then VoxelData 0 means Air.
-        
+
         // VoxelData
         // The on-disk format writes a length prefix. Older/corrupt files may have a different length;
         // keep runtime buffers at the expected size to avoid downstream out-of-range indexing.
@@ -367,7 +365,7 @@ public class ChunkData
         // This ensures that if the column is truly empty, we don't assume a block at 0.
         Array.Fill(SurfaceHeights, -1);
         var size = VoxelHelper.ChunkSideSize;
-        
+
         for (var z = 0; z < size; z++)
         {
             for (var x = 0; x < size; x++)
@@ -395,47 +393,47 @@ public class ChunkData
         if (target == null) throw new ArgumentNullException(nameof(target));
 
         // Copy Palette
-        if (target.Palette.Length < this.Palette.Length)
-            target.Palette = new BlockId[this.Palette.Length];
-        Array.Copy(this.Palette, target.Palette, this.Palette.Length);
-        target.paletteCount = this.paletteCount;
-        
+        if (target.Palette.Length < Palette.Length)
+            target.Palette = new BlockId[Palette.Length];
+        Array.Copy(Palette, target.Palette, Palette.Length);
+        target.paletteCount = paletteCount;
+
         // Copy Reverse Palette
         target.reversePalette.Clear();
-        foreach(var kvp in this.reversePalette)
+        foreach (var kvp in reversePalette)
         {
             target.reversePalette[kvp.Key] = kvp.Value;
         }
-        
+
         // Copy VoxelData
-        if (target.VoxelData.Length < this.VoxelData.Length)
+        if (target.VoxelData.Length < VoxelData.Length)
         {
-            target.VoxelData = new byte[this.VoxelData.Length];
+            target.VoxelData = new byte[VoxelData.Length];
             target.VoxelDataIsPooled = false;
         }
-        Array.Copy(this.VoxelData, target.VoxelData, this.VoxelData.Length);
-        
+        Array.Copy(VoxelData, target.VoxelData, VoxelData.Length);
+
         // Copy SurfaceHeights
-        if (target.SurfaceHeights.Length < this.SurfaceHeights.Length)
+        if (target.SurfaceHeights.Length < SurfaceHeights.Length)
         {
-            target.SurfaceHeights = new int[this.SurfaceHeights.Length];
+            target.SurfaceHeights = new int[SurfaceHeights.Length];
         }
-        Array.Copy(this.SurfaceHeights, target.SurfaceHeights, this.SurfaceHeights.Length);
-        
+        Array.Copy(SurfaceHeights, target.SurfaceHeights, SurfaceHeights.Length);
+
         // Copy LightData
-        if (target.LightData.Length < this.LightData.Length)
+        if (target.LightData.Length < LightData.Length)
         {
-            target.LightData = new byte[this.LightData.Length];
+            target.LightData = new byte[LightData.Length];
             target.LightDataIsPooled = false;
         }
-        Array.Copy(this.LightData, target.LightData, this.LightData.Length);
+        Array.Copy(LightData, target.LightData, LightData.Length);
 
         // Copy Biomes
-        if (this.Biomes != null)
+        if (Biomes != null)
         {
-            if (target.Biomes == null || target.Biomes.Length < this.Biomes.Length)
-                target.Biomes = new BiomeId[this.Biomes.Length];
-            Array.Copy(this.Biomes, target.Biomes, this.Biomes.Length);
+            if (target.Biomes == null || target.Biomes.Length < Biomes.Length)
+                target.Biomes = new BiomeId[Biomes.Length];
+            Array.Copy(Biomes, target.Biomes, Biomes.Length);
         }
     }
 }

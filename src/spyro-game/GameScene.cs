@@ -13,14 +13,14 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Client;
-using SpyroGame.World.Registry;
 using SpyroGame.Client.Mobs;
 using SpyroGame.Client.Terrain;
+using SpyroGame.Server.World.Generation;
 using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
-using SpyroGame.Server.World.Generation;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame;
 
@@ -48,7 +48,7 @@ internal class GameScene : Scene
     private MobId? pickedMobId;
     private float pickedMobDistance;
     private MobKind pickedMobKind;
-    PlayerId localPlayerId;
+    private PlayerId localPlayerId;
     private HotBar hotBar = default!;
 
     // Client-side view of server streaming state (chunk indices that are Ready).
@@ -217,8 +217,8 @@ internal class GameScene : Scene
 
         var clientSize = new Vector2(Width, Height);
         crosshair.SetScale(1);
-        crosshair.SetPosition((clientSize - crosshair.Size) / 2);
-        crosshair.Pivot = new(0.0f, 1.0f);
+        crosshair.SetPosition(clientSize / 2);
+        crosshair.Pivot = new(0.5f, 0.5f);
 
         // Setup day/night cycle and lighting
         dayNightCycle = new DayNightCycle(this);
@@ -238,8 +238,6 @@ internal class GameScene : Scene
         // Add terrain rendererchunksperframe
         if (terrainRenderer != null)
         {
-            // Use GPU terrain renderer from loading scene
-            // Note: Already added in SetupCpuTerrain, but check just in case
             if (terrainRenderer.Scene == null)
             {
                 AddNode(terrainRenderer);
@@ -247,14 +245,10 @@ internal class GameScene : Scene
         }
         else
         {
-            // Fallback to old renderer (shouldn't happen in normal flow)
-            // AddNode(world.ChunkRenderer);
             throw new ArgumentNullException("terrain renderer");
         }
 
-        hotBar = HotBar.Create(SceneManager.ClientSize.X / 2, SceneManager.ClientSize.Y - 50, 182 * 2, 22 * 2, Color4.AliceBlue);
-        hotBar.RenderGroup = RenderGroup.UI;
-        hotBar.Pivot = new(0.5f, 1.0f);
+        hotBar = HotBar.Create(SceneManager.ClientSize.X / 2, SceneManager.ClientSize.Y - HotBar.Height - 5, Color4.AliceBlue);        
         AddNode(hotBar);
         world!.Camera = camera!;
         camera!.Invalidate();
@@ -308,31 +302,6 @@ internal class GameScene : Scene
             }
         }
 
-        // Debug map hotkeys
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F6))
-        {
-            GenerateHeightDebugMap();
-        }
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F7))
-        {
-            GenerateBiomeDebugMap();
-        }
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F8))
-        {
-            GenerateClimateDebugMap(ClimateParameter.Continentalness);
-        }
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F9))
-        {
-            GenerateClimateDebugMap(ClimateParameter.Temperature);
-        }
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F10))
-        {
-            GenerateClimateDebugMap(ClimateParameter.Humidity);
-        }
-        if (SceneManager.KeyboardState.IsKeyPressed(Keys.F11))
-        {
-            GenerateClimateDebugMap(ClimateParameter.Erosion);
-        }
 
         // Update day/night cycle
         if (!hasAppliedServerWorldTime)
@@ -624,7 +593,7 @@ internal class GameScene : Scene
             // Prioritize mob if hit and closer (or block not hit)
             // User requested: "win over voxel picking as we don't care that much about voxels when hostale mobs are near"
             // So we strictly prefer mob if it's closer.
-            
+
             var prioritizeMob = false;
             if (mobHit)
             {
@@ -635,8 +604,8 @@ internal class GameScene : Scene
                 else
                 {
                     // Check if mob is hostile
-                    var isHostile = pickedMobKind == MobKind.Zombie || pickedMobKind == MobKind.Skeleton;
-                    
+                    var isHostile = pickedMobKind is MobKind.Zombie or MobKind.Skeleton;
+
                     // Check if block is non-solid (e.g. grass, flowers)
                     var blockId = blockPickingService!.PickedBlock!.Value.Block;
                     var isNonSolidBlock = false;
@@ -668,7 +637,7 @@ internal class GameScene : Scene
             else if (blockHit)
             {
                 var pickedBlock = blockPickingService!.PickedBlock!.Value;
-                
+
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
                 {
                     // Predict locally for responsiveness: update inventory, collision, and picking immediately.
@@ -773,11 +742,11 @@ internal class GameScene : Scene
         var clientActiveChunks = terrainSystem?.ActiveChunkCount ?? 0;
         var clientReadyChunks = terrainSystem?.ReadyChunkCount ?? 0;
         var clientPendingMeshes = terrainSystem?.PendingMeshCount ?? 0;
+        var visibleCullingChunks = 0;
 
         // UI-only frustum culling approximation for terrain.
         // Uses the set of Ready chunks (chunks that can actually render).
-        var totalCullingChunks = 0;
-        var visibleCullingChunks = 0;
+        int totalCullingChunks;
         if (terrainSystem != null && camera != null)
         {
             uiFrustum.Update(camera);
@@ -904,12 +873,6 @@ internal class GameScene : Scene
         WriteLine("  F - Toggle Ghost/Physics", textColor);
         WriteLine("  F3 - Toggle Biome Debug", textColor);
         WriteLine("  F5 - Toggle Wireframe", textColor);
-        WriteLine("  F6 - Generate Heightmap", textColor);
-        WriteLine("  F7 - Generate Biome Map", textColor);
-        WriteLine("  F8 - Generate Continentalness Map", textColor);
-        WriteLine("  F9 - Generate Temperature Map", textColor);
-        WriteLine("  F10 - Generate Humidity Map", textColor);
-        WriteLine("  F11 - Generate Erosion Map", textColor);
         WriteLine("  Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
 
@@ -951,29 +914,6 @@ internal class GameScene : Scene
         return biomeId.ToString();
     }
 
-    /// <summary>
-    /// Generate a biome debug map centered on the player's current position.
-    /// Creates a BMP file in the saves directory showing biome distribution.
-    /// </summary>
-    private const int DebugMapRadiusBlocks = 1536;
-    private const int DebugMapCellSizeBlocks = 2;
-    private const bool DebugMapMirrorX = true;
-
-    private static void GenerateBiomeDebugMap()
-    {
-        Log.Warn("Biome debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
-    }
-
-    private static void GenerateClimateDebugMap(ClimateParameter parameter)
-    {
-        Log.Warn("Climate debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
-    }
-
-    private static void GenerateHeightDebugMap()
-    {
-        Log.Warn("Height debug maps are unavailable in the decoupled pipeline (server owns terrain config)");
-    }
-
     public override void Close()
     {
         try { localClient?.Stop(); } catch { }
@@ -1006,10 +946,10 @@ internal class GameScene : Scene
 
         var clientSize = new Vector2(Width, Height);
         crosshair.SetScale(1);
-        crosshair.SetPosition((clientSize - crosshair.Size) / 2);
-        crosshair.Pivot = new(0.0f, 1.0f);
+        crosshair.SetPosition(clientSize / 2);
+        crosshair.Pivot = new(0.5f, 0.5f);
 
-        hotBar.SetPosition( new(clientSize.X / 2, clientSize.Y - 50));
+        hotBar.SetPosition(new(clientSize.X / 2, clientSize.Y - 5));
         mouseCenter = clientSize / 2;
     }
 }

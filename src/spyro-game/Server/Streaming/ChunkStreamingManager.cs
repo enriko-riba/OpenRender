@@ -1014,10 +1014,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         }
     }
 
-    private void MarkChunkChanged(int chunkIndex)
-    {
-        changedChunkIndices.Enqueue(chunkIndex);
-    }
+    private void MarkChunkChanged(int chunkIndex) => changedChunkIndices.Enqueue(chunkIndex);
 
     private void UpdateDesiredSets()
     {

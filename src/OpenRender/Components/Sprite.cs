@@ -200,7 +200,7 @@ public class Sprite : SceneNode
         Matrix4.Mult(offsetTranslationMatrix, transform.rotationMatrix, out var originRotationMatrix);
 
         Matrix4.Mult(transform.scaleMatrix, originRotationMatrix, out transform.worldMatrix);
-        Matrix4.CreateTranslation(transform.Position + spriteCenterOffset, out var translationMatrix);
+        Matrix4.CreateTranslation(transform.Position, out var translationMatrix);
         Matrix4.Mult(transform.worldMatrix, translationMatrix, out transform.worldMatrix);
 
         if (Parent is not null and Sprite)
