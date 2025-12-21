@@ -48,11 +48,7 @@ public class Inventory
         AddItem(ItemId.DiamondSword, 1);
     }
 
-    public InventoryItem GetSelectedItem()
-    {
-        if (SelectedSlot is < 0 or >= SlotCount) return default;
-        return slots[SelectedSlot];
-    }
+    public InventoryItem SelectedItem => slots[selectedSlot];
 
     public void AddItem(ItemId item, int count = 1)
     {

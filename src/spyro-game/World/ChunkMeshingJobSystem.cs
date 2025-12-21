@@ -14,7 +14,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
     private readonly ChunkVoxelDataCache voxelCache;
     private readonly ChunkProcessingMetrics? metrics;
     private readonly BlockingCollection<ChunkMeshWorkItem> workQueue = [];
-    private readonly ConcurrentQueue<CpuChunkMesh> completedMeshes = [];
+    private readonly ConcurrentQueue<ChunkMesh> completedMeshes = [];
     private readonly CancellationTokenSource cancellationSource = new();
     private readonly Task dispatcherTask;
     private readonly int maxParallelism;
@@ -69,7 +69,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         }
     }
 
-    public bool TryDequeueResult([NotNullWhen(true)] out CpuChunkMesh? mesh) => completedMeshes.TryDequeue(out mesh);
+    public bool TryDequeueResult([NotNullWhen(true)] out ChunkMesh? mesh) => completedMeshes.TryDequeue(out mesh);
 
     public void DrainPendingWorkItems()
     {

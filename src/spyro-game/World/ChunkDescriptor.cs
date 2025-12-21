@@ -102,28 +102,3 @@ public enum TerrainChunkState : byte
     /// </summary>
     Ready = 4
 }
-
-/// <summary>
-/// Extension methods for ChunkDescriptor
-/// </summary>
-public static class ChunkDescriptorExtensions
-{
-    /// <summary>
-    /// Check if chunk is ready for rendering
-    /// </summary>
-    public static bool IsReady(this ChunkDescriptor descriptor) 
-        => descriptor.State == TerrainChunkState.Ready;
-
-    /// <summary>
-    /// Check if chunk is currently processing (generating or meshing)
-    /// </summary>
-    public static bool IsInFlight(this ChunkDescriptor descriptor) 
-        => descriptor.State is TerrainChunkState.Generating or TerrainChunkState.Processing;
-    
-    /// <summary>
-    /// Check if chunk has voxel data available (HasTerrain or later states)
-    /// </summary>
-    public static bool HasVoxelData(this ChunkDescriptor descriptor)
-        => descriptor.State is TerrainChunkState.HasTerrain or TerrainChunkState.Processing 
-            or TerrainChunkState.Ready;
-}

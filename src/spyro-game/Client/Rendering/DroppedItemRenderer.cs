@@ -1,11 +1,9 @@
 using OpenRender.Core;
 using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
-using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
-using SpyroGame.World.Registry;
 
 namespace SpyroGame.Client.Rendering;
 
@@ -42,11 +40,13 @@ public sealed class DroppedItemRenderer : IDisposable
             if (!itemNodes.TryGetValue(item.Id, out var node))
             {
                 var material = itemTextureManager.GetMaterial(item.Item);
-                var mesh = itemTextureManager.IsBlockItem(item.Item) ? blockMesh : flatItemMesh;
-                
-                node = new SceneNode(mesh, material);
-                node.IsVisible = true;
-                
+                var mesh = ItemTextureManager.IsBlockItem(item.Item) ? blockMesh : flatItemMesh;
+
+                node = new SceneNode(mesh, material)
+                {
+                    IsVisible = true
+                };
+
                 scene.AddNode(node);
                 itemNodes[item.Id] = node;
             }
@@ -89,16 +89,13 @@ public sealed class DroppedItemRenderer : IDisposable
         itemNodes.Clear();
     }
 
-    public void Dispose()
-    {
-        Clear();
-    }
+    public void Dispose() => Clear();
 
     private static Mesh CreateBlockMesh(float size)
     {
         var h = size * 0.5f;
-        float t1 = 1.0f / 3.0f;
-        float t2 = 2.0f / 3.0f;
+        var t1 = 1.0f / 3.0f;
+        var t2 = 2.0f / 3.0f;
 
         // 6 faces * 4 verts = 24 vertices
         var vertices = new Vertex[]
@@ -151,7 +148,7 @@ public sealed class DroppedItemRenderer : IDisposable
     private static Mesh CreateFlatItemMesh(float size)
     {
         var h = size * 0.5f;
-        
+
         // Double-sided quad
         var vertices = new Vertex[]
         {

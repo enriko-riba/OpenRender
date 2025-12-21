@@ -248,7 +248,11 @@ internal class GameScene : Scene
             throw new ArgumentNullException("terrain renderer");
         }
 
-        hotBar = HotBar.Create(SceneManager.ClientSize.X / 2, SceneManager.ClientSize.Y - HotBar.Height - 5, Color4.AliceBlue);        
+        hotBar = HotBar.Create(
+            SceneManager.ClientSize.X / 2,
+            SceneManager.ClientSize.Y - HotBar.Height - 5,
+            player.Inventory,
+            Color4.BurlyWood);
         AddNode(hotBar);
         world!.Camera = camera!;
         camera!.Invalidate();
@@ -654,7 +658,7 @@ internal class GameScene : Scene
 
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
                 {
-                    var item = player.Inventory.GetSelectedItem();
+                    var item = player.Inventory.SelectedItem;
                     if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
                     {
                         var hitNormal = blockPickingService.HitNormal;

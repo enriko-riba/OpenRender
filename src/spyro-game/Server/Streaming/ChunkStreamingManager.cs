@@ -1,13 +1,12 @@
 using OpenRender;
 using OpenTK.Mathematics;
+using SpyroGame.Server.World;
+using SpyroGame.Server.World.Generation;
 using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
-using SpyroGame.Server.World;
-using SpyroGame.Server.World.Generation;
 using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
-using System.IO;
 using System.IO.Compression;
 using System.Text;
 
@@ -234,24 +233,24 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             {
                 chunkData.Serialize(writer);
 
-            // Optional biome payload (network-only).
-            // The client-side mesher/debug overlay needs per-column biome ids.
-            // In the client-server architecture ChunkBiomeData is owned by the server,
-            // so include a compact copy when available.
-            if (voxelCache.TryGetBiomeData(chunkIndex, out var biomeData) && biomeData != null)
-            {
-                const uint biomeMagic = 0x4D4F4942; // 'BIOM' in little-endian
-                const byte biomeVersion = 1;
-                writer.Write(biomeMagic);
-                writer.Write(biomeVersion);
-
-                // Only send per-column biome ids (16x16 = 256 bytes) to keep bandwidth low.
-                writer.Write(ChunkBiomeData.ColumnCount);
-                for (var i = 0; i < ChunkBiomeData.ColumnCount; i++)
+                // Optional biome payload (network-only).
+                // The client-side mesher/debug overlay needs per-column biome ids.
+                // In the client-server architecture ChunkBiomeData is owned by the server,
+                // so include a compact copy when available.
+                if (voxelCache.TryGetBiomeData(chunkIndex, out var biomeData) && biomeData != null)
                 {
-                    writer.Write((byte)biomeData.ColumnBiomes[i]);
+                    const uint biomeMagic = 0x4D4F4942; // 'BIOM' in little-endian
+                    const byte biomeVersion = 1;
+                    writer.Write(biomeMagic);
+                    writer.Write(biomeVersion);
+
+                    // Only send per-column biome ids (16x16 = 256 bytes) to keep bandwidth low.
+                    writer.Write(ChunkBiomeData.ColumnCount);
+                    for (var i = 0; i < ChunkBiomeData.ColumnCount; i++)
+                    {
+                        writer.Write((byte)biomeData.ColumnBiomes[i]);
+                    }
                 }
-            }
             }
 
             payload = ms.ToArray();
@@ -372,36 +371,36 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         try
         {
 
-        // Changing opacity can expose/block skylight and affect a larger volume.
-        if (oldIsOpaque != newIsOpaque)
-        {
-            return LightingCalculator.RecalculateLightingAroundBlock(
-                chunkIdx,
-                localX, localY, localZ,
-                GetChunkDataLeaseBacked);
-        }
+            // Changing opacity can expose/block skylight and affect a larger volume.
+            if (oldIsOpaque != newIsOpaque)
+            {
+                return LightingCalculator.RecalculateLightingAroundBlock(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    GetChunkDataLeaseBacked);
+            }
 
-        // Removing a light source: clear stale block light across chunk boundaries.
-        if (oldLightValue > 0 && newLightValue == 0)
-        {
-            return LightingCalculator.RemoveBlockLight(
-                chunkIdx,
-                localX, localY, localZ,
-                oldLightValue,
-                GetChunkDataLeaseBacked);
-        }
+            // Removing a light source: clear stale block light across chunk boundaries.
+            if (oldLightValue > 0 && newLightValue == 0)
+            {
+                return LightingCalculator.RemoveBlockLight(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    oldLightValue,
+                    GetChunkDataLeaseBacked);
+            }
 
-        // Placing a light source: propagate the new light across chunk boundaries.
-        if (newLightValue > 0)
-        {
-            return LightingCalculator.AddBlockLight(
-                chunkIdx,
-                localX, localY, localZ,
-                newLightValue,
-                GetChunkDataLeaseBacked);
-        }
+            // Placing a light source: propagate the new light across chunk boundaries.
+            if (newLightValue > 0)
+            {
+                return LightingCalculator.AddBlockLight(
+                    chunkIdx,
+                    localX, localY, localZ,
+                    newLightValue,
+                    GetChunkDataLeaseBacked);
+            }
 
-        return [];
+            return [];
         }
         finally
         {

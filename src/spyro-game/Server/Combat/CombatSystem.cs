@@ -82,7 +82,7 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
             return CombatResult.Missed("Attack on cooldown");
 
         // Get weapon damage
-        var selectedItem = player.Inventory.GetSelectedItem();
+        var selectedItem = player.Inventory.SelectedItem;
         var weaponDamage = GetWeaponDamage(selectedItem.Item);
         var attackSpeed = GetAttackSpeed(selectedItem.Item);
 

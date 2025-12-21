@@ -20,7 +20,7 @@ public sealed class ClientTerrainSystem : IDisposable
     private readonly ChunkVoxelDataCache voxelCache = new();
     private readonly ChunkMeshingJobSystem meshingJobs;
     private readonly Dictionary<int, ChunkDescriptor> activeChunks = [];
-    private readonly ConcurrentDictionary<int, CpuChunkMesh> pendingMeshes = new();
+    private readonly ConcurrentDictionary<int, ChunkMesh> pendingMeshes = new();
 
     // Collision rebuilding is CPU-expensive (256 columns per chunk). Do it incrementally to avoid frame hitches.
     private readonly Dictionary<int, int> pendingCollisionRebuildNextColumnByChunk = [];
@@ -456,7 +456,7 @@ public sealed class ClientTerrainSystem : IDisposable
         return diameter * diameter;
     }
 
-    private bool TryUploadCpuMesh(CpuChunkMesh mesh)
+    private bool TryUploadCpuMesh(ChunkMesh mesh)
     {
         if (meshBuffers == null || terrainRenderer == null)
         {

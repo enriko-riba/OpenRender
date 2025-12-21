@@ -77,7 +77,7 @@ internal static class ChunkMeshBuilder
         return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices, t_alphaTestIndices, t_cubeletIndices);
     }
 
-    public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out CpuChunkMesh mesh)
+    public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out ChunkMesh mesh)
     {
         mesh = null!;
 
@@ -300,7 +300,7 @@ internal static class ChunkMeshBuilder
         // Total translucent faces tracked by sampler includes both water and other translucent
         // But we need to pass them separately to CpuChunkMesh
         
-        mesh = new CpuChunkMesh(
+        mesh = new ChunkMesh(
             workItem.ChunkIndex,
             workItem.PlaceholderMask,
             mergedVertices,

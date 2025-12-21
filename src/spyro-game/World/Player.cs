@@ -370,7 +370,7 @@ public class Player : ILootCollector
         var pickedBlock = BlockPickingService?.PickedBlock;
         if (pickedBlock is null) return;
 
-        var item = Inventory.GetSelectedItem();
+        var item = Inventory.SelectedItem;
         if (item.IsEmpty) return;
 
         if (ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)

@@ -4,7 +4,7 @@ namespace SpyroGame.World;
 /// Represents the CPU-built mesh data for a single chunk prior to GPU upload.
 /// Stores packed vertex/index arrays that match the compacted format.
 /// </summary>
-public sealed record CpuChunkMesh(
+public sealed record ChunkMesh(
     int ChunkIndex,
     byte PlaceholderMask,
     uint[] VertexData,

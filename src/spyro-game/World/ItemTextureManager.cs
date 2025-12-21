@@ -19,12 +19,9 @@ public sealed class ItemTextureManager
     private const string ItemTextureDir = "Resources/voxel/items";
     private const string BlockTextureDir = "Resources/voxel/blocks";
 
-    public void Initialize()
-    {
-        LoadItemMaterials();
-    }
+    public void Initialize() => LoadItemMaterials();
 
-    public bool IsBlockItem(ItemId item) => ItemRegistry.Get(item) is BlockItem;
+    public static bool IsBlockItem(ItemId item) => ItemRegistry.Get(item) is BlockItem;
 
     private void LoadItemMaterials()
     {
@@ -88,10 +85,7 @@ public sealed class ItemTextureManager
         Log.Info($"ItemTextureManager: Loaded {loadedCount} item materials successfully");
     }
 
-    public Material GetMaterial(ItemId item)
-    {
-        return materials.TryGetValue(item, out var mat) ? mat : defaultMaterial;
-    }
+    public Material GetMaterial(ItemId item) => materials.TryGetValue(item, out var mat) ? mat : defaultMaterial;
 
     private static string GetTexturePathForItem(ItemId itemId)
     {
