@@ -36,7 +36,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         config = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
         
         // Use ProcessorCount but cap at a reasonable limit to avoid excessive parallelism
-        this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount);
+        this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount - 1);
         
         // Initialize thread-local state. 
         // We capture version BEFORE config to ensure that if we get a newer config with an older version,
@@ -66,8 +66,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
 
     public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockId>? blockIdEdits, GenerationJobType type = GenerationJobType.BaseTerrain)
     {
-        if (disposed)
-            throw new ObjectDisposedException(nameof(ChunkGenerationJobSystem));
+        ObjectDisposedException.ThrowIf(disposed, nameof(ChunkGenerationJobSystem));
 
         var enqueueId = Interlocked.Increment(ref enqueueCounter);
         var work = new GenerationWorkItem(chunkIndex, blockIdEdits, enqueueId, type);
