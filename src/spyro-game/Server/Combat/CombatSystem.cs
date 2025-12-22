@@ -4,8 +4,8 @@ using SpyroGame.World.Registry;
 using SpyroGame.Shared.State;
 using SpyroGame.Server.Items;
 using OpenRender.Core;
-using SpyroGame.World;
-using OpenRender; // For Log
+using OpenRender;
+using SpyroGame.Components; // For Log
 
 namespace SpyroGame.Server.Combat;
 

@@ -1,6 +1,7 @@
 using OpenTK.Mathematics;
+using SpyroGame.World;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 public readonly record struct KinematicCollider(float Radius, float Height, float StepHeight);
 

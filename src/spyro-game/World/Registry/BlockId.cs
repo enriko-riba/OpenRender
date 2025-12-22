@@ -28,6 +28,12 @@ public enum BlockId : ushort
     Water = 1,
     /// <summary>Lava block - liquid, emissive, replaceable.</summary>
     Lava = 2,
+    
+    /// <summary>
+    /// Special block ID used for the breaking animation overlay.
+    /// Not placed in the world, only used for texture storage.
+    /// </summary>
+    BlockBreak = 8,
 
     // --- Stone variants (3-9) ---
     /// <summary>Basic stone - solid, opaque.</summary>

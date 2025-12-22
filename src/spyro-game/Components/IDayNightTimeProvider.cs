@@ -2,7 +2,7 @@ using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
 using System;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 public interface IDayNightTimeProvider
 {

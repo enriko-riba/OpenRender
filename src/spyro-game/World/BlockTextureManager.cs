@@ -1,6 +1,7 @@
 using OpenRender;
 using OpenTK.Graphics.OpenGL4;
 using SpyroGame.World.Registry;
+using SixLabors.ImageSharp.Processing;
 
 namespace SpyroGame.World;
 
@@ -59,9 +60,9 @@ public sealed class BlockTextureManager : IDisposable
         // Create sampler with pixelated look (nearest filtering) and repeat wrap
         sampler = GL.GenSampler();
 
-        // Use NearestMipmapLinear to reduce aliasing/shimmering at distance while keeping pixelated look
-        GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.NearestMipmapLinear);
-        GL.SamplerParameter(sampler, SamplerParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
+        // Use LinearMipmapLinear to reduce aliasing/shimmering on vegetation
+        GL.SamplerParameter(sampler, SamplerParameterName.TextureMinFilter, (int)TextureMinFilter.LinearMipmapLinear);
+        GL.SamplerParameter(sampler, SamplerParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
         // Clamp the atlas to avoid wrap bleeding at UV edges (especially noticeable on cutout vegetation).
         GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
         GL.SamplerParameter(sampler, SamplerParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
@@ -105,9 +106,22 @@ public sealed class BlockTextureManager : IDisposable
         // Load default/fallback texture for missing blocks
         LoadFallbackTexture();
 
+        // Load outline texture into Air block (ID 0)
+        // This allows the shader to sample the outline from BlockId 0.
+        if (LoadBlockTexture(BlockId.Air, "Resources/gui/outline.png"))
+        {
+            loadedCount++;
+        }
+
+        // Load breaking animation texture into BlockBreak block (ID 8)
+        if (LoadBlockTexture(BlockId.BlockBreak, "Resources/gui/block-break.png"))
+        {
+            loadedCount++;
+        }
+
         // Get all block types (excluding Air which has no texture)
         var allBlockIds = Enum.GetValues<BlockId>()
-            .Where(b => b != BlockId.Air)
+            .Where(b => b != BlockId.Air && b != BlockId.BlockBreak)
             .ToList();
 
         foreach (var blockId in allBlockIds)
@@ -229,6 +243,9 @@ public sealed class BlockTextureManager : IDisposable
             var pixels = new byte[AtlasWidth * AtlasHeight * 4];
             image.CopyPixelDataTo(pixels);
 
+            // Dilate color into transparent regions to fix mipmap bleeding (dark edges/flickering)
+            DilateTransparentPixels(pixels, AtlasWidth, AtlasHeight);
+
             // Upload to texture array layer
             var layer = blockId.GetId();
             GL.BindTexture(TextureTarget.Texture2DArray, textureArray);
@@ -323,6 +340,64 @@ public sealed class BlockTextureManager : IDisposable
         {
             GL.DeleteSampler(sampler);
             sampler = 0;
+        }
+    }
+
+    /// <summary>
+    /// Iteratively dilates color from opaque pixels into transparent ones.
+    /// This prevents dark edge bleeding when mipmapping alpha-tested textures (vegetation).
+    /// </summary>
+    private void DilateTransparentPixels(byte[] pixels, int width, int height)
+    {
+        const int MaxIterations = 8; // Enough to cover a few pixels of padding
+        var changed = true;
+
+        for (var iter = 0; iter < MaxIterations && changed; iter++)
+        {
+            changed = false;
+            // Create a copy to read from so we don't bias direction
+            var source = (byte[])pixels.Clone();
+
+            for (var i = 0; i < pixels.Length; i += 4)
+            {
+                // If pixel is transparent (Alpha == 0)
+                if (source[i + 3] == 0)
+                {
+                    var r = 0;
+                    var g = 0;
+                    var b = 0;
+                    var count = 0;
+
+                    // Check 4 neighbors
+                    var x = (i / 4) % width;
+                    var y = (i / 4) / width;
+                    // Helper to check neighbor
+                    void Check(int idx)
+                    {
+                        if (source[idx + 3] > 0) // If neighbor has color (Alpha > 0)
+                        {
+                            r += source[idx];
+                            g += source[idx + 1];
+                            b += source[idx + 2];
+                            count++;
+                        }
+                    }
+
+                    if (x > 0) Check(i - 4);
+                    if (x < width - 1) Check(i + 4);
+                    if (y > 0) Check(i - width * 4);
+                    if (y < height - 1) Check(i + width * 4);
+
+                    if (count > 0)
+                    {
+                        pixels[i] = (byte)(r / count);
+                        pixels[i + 1] = (byte)(g / count);
+                        pixels[i + 2] = (byte)(b / count);
+                        pixels[i + 3] = 1; // Mark as filled but still transparent (1 < 127)
+                        changed = true;
+                    }
+                }
+            }
         }
     }
 }

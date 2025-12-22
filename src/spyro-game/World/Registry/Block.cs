@@ -19,6 +19,13 @@ public class Block(BlockId id)
     public virtual bool IsTree { get; init; } = false;
     public virtual bool IsVegetation { get; init; } = false;
 
+    /// <summary>
+    /// Hardness of the block. Determines how long it takes to break.
+    /// -1.0f means unbreakable (e.g. Bedrock).
+    /// Standard values: Dirt=0.5, Stone=1.5, Obsidian=50.
+    /// </summary>
+    public virtual float Hardness { get; init; } = 1.0f;
+
     public virtual byte LightValue { get; init; } = 0;
     public virtual byte LightFilter { get; init; } = 15; // Default opaque blocks light
     public virtual RenderMethod RenderMethod { get; init; } = RenderMethod.Opaque;

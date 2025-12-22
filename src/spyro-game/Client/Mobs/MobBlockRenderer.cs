@@ -1,8 +1,8 @@
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
+using SpyroGame.Components;
 using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.State;
-using SpyroGame.World;
 
 namespace SpyroGame.Client.Mobs;
 

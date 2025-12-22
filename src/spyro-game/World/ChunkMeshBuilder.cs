@@ -30,7 +30,7 @@ internal static class ChunkMeshBuilder
     [ThreadStatic] private static List<uint>? t_cubeletIndices;
     
     // Performance optimization: Thread-local pooled dictionary for neighbor chunk cache
-    [ThreadStatic] private static Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>? t_neighborCache;
+    [ThreadStatic] private static Dictionary<int, ChunkVoxelDataCache.ChunkDataLease>? t_neighborCache;
 
     private static readonly (int dx, int dy, int dz)[] FaceDirections =
     [
@@ -81,7 +81,8 @@ internal static class ChunkMeshBuilder
     {
         mesh = null!;
 
-        if (!cache.TryGetReadOnly(workItem.ChunkIndex, out var chunkView) || !chunkView.IsValid)
+        // Acquire lease for the center chunk to prevent buffer reuse during meshing
+        if (!cache.TryAcquireChunkData(workItem.ChunkIndex, out var centerLease))
         {
             // This can happen during streaming/unload when a chunk was enqueued for meshing
             // but got evicted from the voxel cache before the worker executed.
@@ -89,232 +90,243 @@ internal static class ChunkMeshBuilder
             return false;
         }
 
-        if (chunkView.ChunkIndex != workItem.ChunkIndex)
+        using (centerLease)
         {
-            Log.Error($"ChunkMeshBuilder: cache chunk mismatch (expected {workItem.ChunkIndex}, got {chunkView.ChunkIndex}) seq={workItem.EnqueueId} build={workItem.BuildId}");
-            return false;
-        }
+            var chunkView = new ChunkVoxelDataCache.ChunkVoxelDataView(centerLease.Data);
 
-        if (workItem.CacheVersion > 0 && chunkView.Version != workItem.CacheVersion)
-        {
-            if (VerboseBuilderLogging)
+            if (!chunkView.IsValid)
             {
-                Log.Debug($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+                return false;
             }
-        }
 
-        // Performance optimization: Use thread-local pooled lists instead of allocating new ones
-        var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, alphaTestIndices, cubeletIndices) = GetPooledLists();
-        var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
-        
-        // Track maximum surface height across all columns for tighter frustum culling
-        var maxSurfaceHeight = 0;
-
-        // Optimization: Iterate columns (X, Z) first, then Y up to surface height
-        // This allows us to skip the vast majority of air blocks above the terrain.
-        // While Y-inner loop has a larger stride (256 bytes), the massive reduction in iterations
-        // outweighs the cache locality cost.
-        for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
-        {
-            for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
+            if (chunkView.ChunkIndex != workItem.ChunkIndex)
             {
-                // Determine the maximum Y to check for this column
-                // We need to go up to the highest opaque block (SurfaceHeight)
-                // OR the water level (for ocean surfaces)
-                // Plus 1 to ensure we check the air block *above* the surface for face culling
-                // Plus extra safety margin to handle potential heightmap desync
-                var surfaceHeight = chunkView.GetSurfaceHeight(x, z);
-                var maxY = Math.Max(surfaceHeight + 2, VoxelHelper.WaterLevel + 1);
-                
-                // Track the maximum surface height for frustum culling optimization
-                if (surfaceHeight > maxSurfaceHeight)
+                Log.Error($"ChunkMeshBuilder: cache chunk mismatch (expected {workItem.ChunkIndex}, got {chunkView.ChunkIndex}) seq={workItem.EnqueueId} build={workItem.BuildId}");
+                return false;
+            }
+
+            if (workItem.CacheVersion > 0 && chunkView.Version != workItem.CacheVersion)
+            {
+                if (VerboseBuilderLogging)
                 {
-                    maxSurfaceHeight = surfaceHeight;
+                    Log.Debug($"ChunkMeshBuilder: version mismatch chunk={workItem.ChunkIndex} expected={workItem.CacheVersion} actual={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
                 }
-                
-                // Clamp to chunk bounds
-                maxY = Math.Min(maxY, VoxelHelper.ChunkYSize);
+            }
 
-                for (var y = 0; y < maxY; y++)
+            // Performance optimization: Use thread-local pooled lists instead of allocating new ones
+            var (opaqueVertices, opaqueIndices, translucentVertices, translucentIndices, waterIndices, alphaTestIndices, cubeletIndices) = GetPooledLists();
+            
+            using var sampler = new ChunkVoxelSampler(cache, chunkView, workItem);
+            
+            // Track maximum surface height across all columns for tighter frustum culling
+            var maxSurfaceHeight = 0;
+
+            // Optimization: Iterate columns (X, Z) first, then Y up to surface height
+            // This allows us to skip the vast majority of air blocks above the terrain.
+            // While Y-inner loop has a larger stride (256 bytes), the massive reduction in iterations
+            // outweighs the cache locality cost.
+            for (var z = 0; z < VoxelHelper.ChunkSideSize; z++)
+            {
+                for (var x = 0; x < VoxelHelper.ChunkSideSize; x++)
                 {
-                    var block = sampler.SampleBlock(x, y, z);
-                    if (!HasRenderableGeometry(block))
-                    {
-                        continue;
-                    }
-
-                    var isTranslucent = IsTranslucent(block);
-                    var isLiquid = block.IsLiquid();
-                    var isWater = block.IsWater();
-                    var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
+                    // Determine the maximum Y to check for this column
+                    // We need to go up to the highest opaque block (SurfaceHeight)
+                    // OR the water level (for ocean surfaces)
+                    // Plus 1 to ensure we check the air block *above* the surface for face culling
+                    // Plus extra safety margin to handle potential heightmap desync
+                    var surfaceHeight = chunkView.GetSurfaceHeight(x, z);
+                    var maxY = Math.Max(surfaceHeight + 2, VoxelHelper.WaterLevel + 1);
                     
-                    var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
-                    // Split translucent indices into Water and Other (Translucent)
-                    // Split opaque indices into Solid and AlphaTest (Leaves/Flowers)
-                    var targetIndexList = isTranslucent 
-                        ? (isWater ? waterIndices : translucentIndices) 
-                        : (isAlphaTest ? alphaTestIndices : opaqueIndices);
-
-                    // Check if this block uses a special render shape
-                    var renderShape = BlockRegistry.GetRenderShape(block);
-                    if (renderShape == BlockRenderShape.CrossBillboard)
+                    // Track the maximum surface height for frustum culling optimization
+                    if (surfaceHeight > maxSurfaceHeight)
                     {
-                        // Cross-billboard blocks always render (no face culling against neighbors)
-                        // Generates 8 vertices (4 per quad × 2 quads) and 24 indices (double-sided)
-                        // This equals 4 "faces" in the vertex/index counting system (24 indices ÷ 6 per face)
-                        AppendCrossBillboard(targetVertexList, targetIndexList, sampler, block, x, y, z);
-                        sampler.IncrementFaceCount(isTranslucent);
-                        sampler.IncrementFaceCount(isTranslucent);
-                        sampler.IncrementFaceCount(isTranslucent);
-                        sampler.IncrementFaceCount(isTranslucent); // 4 faces total for cross-billboard
-                        continue;
+                        maxSurfaceHeight = surfaceHeight;
                     }
-                    else if (renderShape == BlockRenderShape.Cubelet)
-                    {
-                        // Cubelet blocks (small 1/10th size cubes)
-                        // Always render all 6 faces (no culling against neighbors)
-                        // Use opaque vertices but separate index list
-                        AppendCubelet(opaqueVertices, cubeletIndices, sampler, block, x, y, z);
-                        // Increment face count (6 faces)
-                        for (var i = 0; i < 6; i++) sampler.IncrementFaceCount(false);
-                        continue;
-                    }
+                    
+                    // Clamp to chunk bounds
+                    maxY = Math.Min(maxY, VoxelHelper.ChunkYSize);
 
-                    for (uint face = 0; face < FaceDirections.Length; face++)
+                    for (var y = 0; y < maxY; y++)
                     {
-                        var (dx, dy, dz) = FaceDirections[(int)face];
-                        var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz, out var neighborMissing);
-                        if (isLiquid && neighborMissing)
-                        {
-                            // If the neighbor chunk isn't loaded/available yet, treating it as air causes
-                            // liquid side faces to be emitted at the streaming boundary. Because liquids are
-                            // blended (and not per-face sorted), these boundary "curtains" can accumulate and
-                            // show up as dark rectangular artifacts.
-                            //
-                            // Instead, treat missing neighbor data as "same liquid" so we cull those faces.
-                            neighborBlock = block;
-                        }
-                        
-                        // LIQUID FACE CULLING:
-                        // - Render top face (+Y) for water/lava surface ONLY when exposed to air/transparent
-                        // - Render side/bottom faces when neighbor is air OR transparent (glass, ice, etc.)
-                        // - Never render faces between two liquid blocks of the same type
-                        // - Never render faces against opaque solid blocks (hidden anyway)
-                        if (isLiquid)
-                        {
-                            //var isTopFace = face == 2; // +Y
-                            
-                            // Skip internal liquid-liquid faces (same liquid type)
-                            if (neighborBlock.IsLiquid() && neighborBlock == block)
-                            {
-                                continue;
-                            }
-                            
-                            // For ALL faces (including top), skip if neighbor is opaque solid
-                            // This prevents lava at Y=0 from rendering faces against bedrock at Y=1
-                            var neighborIsAir = neighborBlock.IsAir();
-                            var neighborIsTransparent = neighborBlock.IsTransparent();
-                            
-                            if (!neighborIsAir && !neighborIsTransparent)
-                            {
-                                continue;
-                            }
-                        }
-                        
-                        if (!ShouldEmitFace(block, neighborBlock))
+                        var block = sampler.SampleBlock(x, y, z);
+                        if (!HasRenderableGeometry(block))
                         {
                             continue;
                         }
 
-                        AppendFace(targetVertexList, targetIndexList, sampler, block, x, y, z, face);
-                        sampler.IncrementFaceCount(isTranslucent);
+                        var isTranslucent = IsTranslucent(block);
+                        var isLiquid = block.IsLiquid();
+                        var isWater = block.IsWater();
+                        var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
+                        
+                        var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
+                        // Split translucent indices into Water and Other (Translucent)
+                        // Split opaque indices into Solid and AlphaTest (Leaves/Flowers)
+                        var targetIndexList = isTranslucent 
+                            ? (isWater ? waterIndices : translucentIndices) 
+                            : (isAlphaTest ? alphaTestIndices : opaqueIndices);
+
+                        // Check if this block uses a special render shape
+                        var renderShape = BlockRegistry.GetRenderShape(block);
+                        if (renderShape == BlockRenderShape.CrossBillboard)
+                        {
+                            // Cross-billboard blocks always render (no face culling against neighbors)
+                            // Generates 8 vertices (4 per quad × 2 quads) and 24 indices (double-sided)
+                            // This equals 4 "faces" in the vertex/index counting system (24 indices ÷ 6 per face)
+                            AppendCrossBillboard(targetVertexList, targetIndexList, sampler, block, x, y, z);
+                            sampler.IncrementFaceCount(isTranslucent);
+                            sampler.IncrementFaceCount(isTranslucent);
+                            sampler.IncrementFaceCount(isTranslucent);
+                            sampler.IncrementFaceCount(isTranslucent); // 4 faces total for cross-billboard
+                            continue;
+                        }
+                        else if (renderShape == BlockRenderShape.Cubelet)
+                        {
+                            // Cubelet blocks (small 1/10th size cubes)
+                            // Always render all 6 faces (no culling against neighbors)
+                            // Use opaque vertices but separate index list
+                            AppendCubelet(opaqueVertices, cubeletIndices, sampler, block, x, y, z);
+                            // Increment face count (6 faces)
+                            for (var i = 0; i < 6; i++) sampler.IncrementFaceCount(false);
+                            continue;
+                        }
+
+                        for (uint face = 0; face < FaceDirections.Length; face++)
+                        {
+                            var (dx, dy, dz) = FaceDirections[(int)face];
+                            var neighborBlock = sampler.SampleBlock(x + dx, y + dy, z + dz, out var neighborMissing);
+                            if (isLiquid && neighborMissing)
+                            {
+                                // If the neighbor chunk isn't loaded/available yet, treating it as air causes
+                                // liquid side faces to be emitted at the streaming boundary. Because liquids are
+                                // blended (and not per-face sorted), these boundary "curtains" can accumulate and
+                                // show up as dark rectangular artifacts.
+                                //
+                                // Instead, treat missing neighbor data as "same liquid" so we cull those faces.
+                                neighborBlock = block;
+                            }
+                            
+                            // LIQUID FACE CULLING:
+                            // - Render top face (+Y) for water/lava surface ONLY when exposed to air/transparent
+                            // - Render side/bottom faces when neighbor is air OR transparent (glass, ice, etc.)
+                            // - Never render faces between two liquid blocks of the same type
+                            // - Never render faces against opaque solid blocks (hidden anyway)
+                            if (isLiquid)
+                            {
+                                //var isTopFace = face == 2; // +Y
+                                
+                                // Skip internal liquid-liquid faces (same liquid type)
+                                if (neighborBlock.IsLiquid() && neighborBlock == block)
+                                {
+                                    continue;
+                                }
+                                
+                                // For ALL faces (including top), skip if neighbor is opaque solid
+                                // This prevents lava at Y=0 from rendering faces against bedrock at Y=1
+                                var neighborIsAir = neighborBlock.IsAir();
+                                var neighborIsTransparent = neighborBlock.IsTransparent();
+                                
+                                if (!neighborIsAir && !neighborIsTransparent)
+                                {
+                                    continue;
+                                }
+                            }
+                            
+                            if (!ShouldEmitFace(block, neighborBlock))
+                            {
+                                continue;
+                            }
+
+                            AppendFace(targetVertexList, targetIndexList, sampler, block, x, y, z, face);
+                            sampler.IncrementFaceCount(isTranslucent);
+                        }
                     }
                 }
             }
-        }
-        var faceCount = sampler.FaceCount;
-        var faceExplosionThreshold = VoxelHelper.ChunkVoxelCount * 5;
-        if (faceCount > faceExplosionThreshold)
-        {
-            Log.Warn($"ChunkMeshBuilder: chunk {workItem.ChunkIndex} produced {faceCount} faces (>5x voxel count). Placeholder mask=0x{workItem.PlaceholderMask:X2}");
-        }
-        else if (faceCount == 0 && workItem.PlaceholderMask != 0)
-        {
-            Log.Debug($"ChunkMeshBuilder: chunk {workItem.ChunkIndex} built empty mesh with placeholder mask 0x{workItem.PlaceholderMask:X2} seq={workItem.EnqueueId} build={workItem.BuildId}");
-        }
-
-        var mergedVertices = new uint[opaqueVertices.Count + translucentVertices.Count];
-        opaqueVertices.CopyTo(mergedVertices, 0);
-        translucentVertices.CopyTo(mergedVertices, opaqueVertices.Count);
-
-        var mergedIndices = new uint[opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count + translucentIndices.Count];
-        opaqueIndices.CopyTo(mergedIndices, 0);
-        
-        var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
-        
-        // Append AlphaTest indices (offset by opaque vertex count)
-        // These use the same vertices as opaque (opaqueVertices)
-        if (alphaTestIndices.Count > 0)
-        {
-            for (var i = 0; i < alphaTestIndices.Count; i++)
+            var faceCount = sampler.FaceCount;
+            var faceExplosionThreshold = VoxelHelper.ChunkVoxelCount * 5;
+            if (faceCount > faceExplosionThreshold)
             {
-                mergedIndices[opaqueIndices.Count + i] = alphaTestIndices[i];
+                Log.Warn($"ChunkMeshBuilder: chunk {workItem.ChunkIndex} produced {faceCount} faces (>5x voxel count). Placeholder mask=0x{workItem.PlaceholderMask:X2}");
             }
-        }
-
-        // Append Water indices (offset by opaque vertex count)
-        if (waterIndices.Count > 0)
-        {
-            var alphaTestOffset = opaqueIndices.Count + alphaTestIndices.Count;
-            for (var i = 0; i < waterIndices.Count; i++)
+            else if (faceCount == 0 && workItem.PlaceholderMask != 0)
             {
-                mergedIndices[alphaTestOffset + i] = waterIndices[i] + (uint)vertexOffset;
+                Log.Debug($"ChunkMeshBuilder: chunk {workItem.ChunkIndex} built empty mesh with placeholder mask 0x{workItem.PlaceholderMask:X2} seq={workItem.EnqueueId} build={workItem.BuildId}");
             }
-        }
-        
-        // Append Translucent indices (offset by opaque vertex count)
-        if (translucentIndices.Count > 0)
-        {
-            var waterOffset = opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count;
-            for (var i = 0; i < translucentIndices.Count; i++)
+
+            var mergedVertices = new uint[opaqueVertices.Count + translucentVertices.Count];
+            opaqueVertices.CopyTo(mergedVertices, 0);
+            translucentVertices.CopyTo(mergedVertices, opaqueVertices.Count);
+
+            var mergedIndices = new uint[opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count + translucentIndices.Count];
+            opaqueIndices.CopyTo(mergedIndices, 0);
+            
+            var vertexOffset = opaqueVertices.Count / 2; // two uints per vertex
+            
+            // Append AlphaTest indices (offset by opaque vertex count)
+            // These use the same vertices as opaque (opaqueVertices)
+            if (alphaTestIndices.Count > 0)
             {
-                mergedIndices[waterOffset + i] = translucentIndices[i] + (uint)vertexOffset;
+                for (var i = 0; i < alphaTestIndices.Count; i++)
+                {
+                    mergedIndices[opaqueIndices.Count + i] = alphaTestIndices[i];
+                }
             }
+
+            // Append Water indices (offset by opaque vertex count)
+            if (waterIndices.Count > 0)
+            {
+                var alphaTestOffset = opaqueIndices.Count + alphaTestIndices.Count;
+                for (var i = 0; i < waterIndices.Count; i++)
+                {
+                    mergedIndices[alphaTestOffset + i] = waterIndices[i] + (uint)vertexOffset;
+                }
+            }
+            
+            // Append Translucent indices (offset by opaque vertex count)
+            if (translucentIndices.Count > 0)
+            {
+                var waterOffset = opaqueIndices.Count + alphaTestIndices.Count + waterIndices.Count;
+                for (var i = 0; i < translucentIndices.Count; i++)
+                {
+                    mergedIndices[waterOffset + i] = translucentIndices[i] + (uint)vertexOffset;
+                }
+            }
+
+            // Cubelet indices are no longer appended to the mesh
+            // This prevents them from being included in the total face count and rendered incorrectly
+
+
+            if (VerboseBuilderLogging)
+            {
+                Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
+            }
+
+            // Calculate face counts for CpuChunkMesh
+            // Note: Indices are 6 per face (triangles)
+            var waterFaceCount = waterIndices.Count / 6;
+            var translucentFaceCount = translucentIndices.Count / 6;
+            var alphaTestFaceCount = alphaTestIndices.Count / 6;
+            //var cubeletFaceCount = cubeletIndices.Count / 6;
+            // Total translucent faces tracked by sampler includes both water and other translucent
+            // But we need to pass them separately to CpuChunkMesh
+            
+            mesh = new ChunkMesh(
+                workItem.ChunkIndex,
+                workItem.PlaceholderMask,
+                mergedVertices,
+                mergedIndices,
+                faceCount,
+                translucentFaceCount, // This is now just the non-water translucent faces
+                waterFaceCount,       // New parameter
+                alphaTestFaceCount,   // New parameter
+                Math.Max(maxSurfaceHeight + 1, VoxelHelper.WaterLevel + 1), // +1 for safety margin
+                chunkView.Version,
+                workItem.EnqueueId,
+                workItem.BuildId);
+
+            return true;
         }
-
-        // Cubelet indices are no longer appended to the mesh
-        // This prevents them from being included in the total face count and rendered incorrectly
-
-
-        if (VerboseBuilderLogging)
-        {
-            Log.Debug($"ChunkMeshBuilder: chunk={workItem.ChunkIndex} faces={faceCount} translucentFaces={sampler.TranslucentFaceCount} mask=0x{workItem.PlaceholderMask:X2} cacheVer={chunkView.Version} seq={workItem.EnqueueId} build={workItem.BuildId}");
-        }
-
-        // Calculate face counts for CpuChunkMesh
-        // Note: Indices are 6 per face (triangles)
-        var waterFaceCount = waterIndices.Count / 6;
-        var translucentFaceCount = translucentIndices.Count / 6;
-        var alphaTestFaceCount = alphaTestIndices.Count / 6;
-        var cubeletFaceCount = cubeletIndices.Count / 6;
-        // Total translucent faces tracked by sampler includes both water and other translucent
-        // But we need to pass them separately to CpuChunkMesh
-        
-        mesh = new ChunkMesh(
-            workItem.ChunkIndex,
-            workItem.PlaceholderMask,
-            mergedVertices,
-            mergedIndices,
-            faceCount,
-            translucentFaceCount, // This is now just the non-water translucent faces
-            waterFaceCount,       // New parameter
-            alphaTestFaceCount,   // New parameter
-            Math.Max(maxSurfaceHeight + 1, VoxelHelper.WaterLevel + 1), // +1 for safety margin
-            chunkView.Version,
-            workItem.EnqueueId,
-            workItem.BuildId);
-
-        return true;
     }
 
     private static bool HasRenderableGeometry(BlockId block) => !block.IsAir();
@@ -658,12 +670,12 @@ internal static class ChunkMeshBuilder
             | (isAlphaTest ? (1u << 27) : 0u);
     }
 
-    private sealed class ChunkVoxelSampler
+    private sealed class ChunkVoxelSampler : IDisposable
     {
         private readonly ChunkVoxelDataCache cache;
         private readonly ChunkVoxelDataCache.ChunkVoxelDataView centerView;
         private readonly ChunkMeshingJobSystem.ChunkMeshWorkItem workItem;
-        private readonly Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView> neighborCache;
+        private readonly Dictionary<int, ChunkVoxelDataCache.ChunkDataLease> neighborCache;
         private readonly int chunkX;
         private readonly int chunkZ;
         private readonly ChunkBiomeData? biomeData;
@@ -678,9 +690,21 @@ internal static class ChunkMeshBuilder
             cache.TryGetBiomeData(workItem.ChunkIndex, out biomeData);
             
             // Use thread-static pooled dictionary to avoid allocation per mesh build
-            t_neighborCache ??= new Dictionary<int, ChunkVoxelDataCache.ChunkVoxelDataView>(8);
+            t_neighborCache ??= new Dictionary<int, ChunkVoxelDataCache.ChunkDataLease>(8);
             t_neighborCache.Clear();
             neighborCache = t_neighborCache;
+        }
+
+        public void Dispose()
+        {
+            if (neighborCache != null)
+            {
+                foreach (var lease in neighborCache.Values)
+                {
+                    lease.Dispose();
+                }
+                neighborCache.Clear();
+            }
         }
 
         public int GetChunkIndex() => workItem.ChunkIndex;
@@ -1230,16 +1254,17 @@ internal static class ChunkMeshBuilder
             }
 
             var neighborIndex = nChunkZ * VoxelHelper.WorldChunksXZ + nChunkX;
-            if (!neighborCache.TryGetValue(neighborIndex, out neighborView))
+            if (!neighborCache.TryGetValue(neighborIndex, out var lease))
             {
-                if (!cache.TryGetReadOnly(neighborIndex, out neighborView))
+                if (!cache.TryAcquireChunkData(neighborIndex, out lease))
                 {
                     return false;
                 }
 
-                neighborCache[neighborIndex] = neighborView;
+                neighborCache[neighborIndex] = lease;
             }
 
+            neighborView = new ChunkVoxelDataCache.ChunkVoxelDataView(lease.Data);
             return true;
         }
     }

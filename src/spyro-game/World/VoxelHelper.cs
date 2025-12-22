@@ -43,8 +43,6 @@ public static class VoxelHelper
     public const int ChunkVoxelCount = ChunkSideSizeSquare * ChunkYSize;
     public const int PackedChunkVoxelCount = ChunkVoxelCount; // 1 voxel per uint (UNPACKED)
 
-    // GPU Pipeline Constants (Phase 2-5)
-    public const int DEFAULT_MAX_CHUNKS_PER_BATCH = 64;
     public const int INITIAL_LOAD_BATCH_SIZE = 32; // Reduced batch size for initial load to avoid TDR
     public const int VERTEX_STRIDE_BYTES = 8; // Phase 5.2: Compressed vertex format (8 bytes)
 

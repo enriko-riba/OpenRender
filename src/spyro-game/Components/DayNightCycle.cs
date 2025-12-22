@@ -1,7 +1,7 @@
 ﻿using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
-using SpyroGame.World;
+using SpyroGame.Components;
 
 internal static class MathUtil
 {

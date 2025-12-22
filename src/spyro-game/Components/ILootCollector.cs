@@ -1,7 +1,7 @@
 using OpenTK.Mathematics;
 using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 public interface ILootCollector
 {

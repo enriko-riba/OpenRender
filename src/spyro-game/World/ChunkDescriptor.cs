@@ -56,8 +56,14 @@ public struct ChunkDescriptor
     /// </summary>
     public int MaxSurfaceHeight;
 
+    /// <summary>
+    /// The version of the voxel data that this mesh represents.
+    /// Used to synchronize updates between neighbors.
+    /// </summary>
+    public long MeshVersion;
+
     public override readonly string ToString() 
-        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, MaxY={MaxSurfaceHeight}";
+        => $"Chunk[{ChunkIndex}] State={State}, Faces={VisibleVoxelCount}, VtxOff={AtlasOffset}, IdxOff={IndexOffset}, MaxY={MaxSurfaceHeight}, Ver={MeshVersion}";
 }
 
 /// <summary>

@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using SpyroGame.Components;
 using SpyroGame.World;
 
 namespace SpyroGame.Server.Mobs;

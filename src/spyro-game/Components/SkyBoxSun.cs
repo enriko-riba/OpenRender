@@ -8,7 +8,7 @@ using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 internal class SkyBoxSun(IDayNightTimeProvider dayNightTimeProvider, Mesh mesh, Material material) : SceneNode(mesh, material, Vector3.Zero)
 {

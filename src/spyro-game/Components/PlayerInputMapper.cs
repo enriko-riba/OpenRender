@@ -2,7 +2,7 @@ using OpenTK.Mathematics;
 using OpenTK.Windowing.GraphicsLibraryFramework;
 using SpyroGame.Shared.Input;
 
-namespace SpyroGame.Client;
+namespace SpyroGame.Components;
 
 public static class PlayerInputMapper
 {

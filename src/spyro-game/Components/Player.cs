@@ -5,9 +5,10 @@ using SpyroGame.Shared.Abstractions;
 using SpyroGame.Shared.Gameplay;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
+using SpyroGame.World;
 using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 public class Player : ILootCollector
 {

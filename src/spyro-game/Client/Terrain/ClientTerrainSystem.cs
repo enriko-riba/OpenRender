@@ -2,6 +2,7 @@ using OpenRender;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.Client.Rendering;
+using SpyroGame.Components;
 using SpyroGame.World;
 using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
@@ -22,6 +23,7 @@ public sealed class ClientTerrainSystem : IDisposable
     private readonly ChunkMeshingJobSystem meshingJobs;
     private readonly Dictionary<int, ChunkDescriptor> activeChunks = [];
     private readonly ConcurrentDictionary<int, ChunkMesh> pendingMeshes = new();
+    private readonly HashSet<int> pendingChunkUpdates = [];
 
     // Collision rebuilding is CPU-expensive (256 columns per chunk). Do it incrementally to avoid frame hitches.
     private readonly Dictionary<int, int> pendingCollisionRebuildNextColumnByChunk = [];
@@ -67,7 +69,7 @@ public sealed class ClientTerrainSystem : IDisposable
             }
         }
 
-        return result.ToArray();
+        return [.. result];
     }
 
     public int ReadyChunkCount
@@ -186,26 +188,52 @@ public sealed class ClientTerrainSystem : IDisposable
             activeChunks[chunkIndex] = descriptor;
         }
 
-        // Enqueue CPU meshing.
-        // IMPORTANT: propagate boundary light so chunk-border faces don't go black when neighbors are present.
-        meshingJobs.Enqueue(chunkIndex, placeholderMask: 0, cacheVersion: version, propagateLight: true);
+        // Defer meshing to batch process
+        pendingChunkUpdates.Add(chunkIndex);
+    }
 
-        // When a chunk arrives, it can change lighting across borders.
-        // Re-mesh any already-present cardinal neighbors so seams resolve as streaming completes.
-        foreach (var neighborIdx in GetCardinalNeighborChunkIndices(chunkIndex))
+    public void ProcessPendingChunkUpdates()
+    {
+        if (pendingChunkUpdates.Count == 0)
         {
-            if (!activeChunks.ContainsKey(neighborIdx))
-            {
-                continue;
-            }
-
-            if (!voxelCache.TryGetVersion(neighborIdx, out var neighborVersion))
-            {
-                neighborVersion = 0;
-            }
-
-            meshingJobs.Enqueue(neighborIdx, placeholderMask: 0, cacheVersion: neighborVersion, propagateLight: true);
+            return;
         }
+
+        var neighborsToUpdate = new HashSet<int>();
+
+        foreach (var chunkIndex in pendingChunkUpdates)
+        {
+            // Enqueue the chunk itself
+            if (voxelCache.TryGetVersion(chunkIndex, out var version))
+            {
+                meshingJobs.Enqueue(chunkIndex, placeholderMask: 0, cacheVersion: version, propagateLight: true);
+            }
+
+            // Check neighbors
+            foreach (var neighborIdx in GetCardinalNeighborChunkIndices(chunkIndex))
+            {
+                // If neighbor is already in the primary update list, don't add it to secondary list
+                if (pendingChunkUpdates.Contains(neighborIdx))
+                {
+                    continue;
+                }
+
+                if (activeChunks.ContainsKey(neighborIdx))
+                {
+                    neighborsToUpdate.Add(neighborIdx);
+                }
+            }
+        }
+
+        foreach (var neighborIdx in neighborsToUpdate)
+        {
+            if (voxelCache.TryGetVersion(neighborIdx, out var version))
+            {
+                meshingJobs.Enqueue(neighborIdx, placeholderMask: 0, cacheVersion: version, propagateLight: true);
+            }
+        }
+
+        pendingChunkUpdates.Clear();
     }
 
     public bool TryApplyPredictedBlockEdit(Vector3i globalPosition, BlockId blockId)
@@ -270,6 +298,13 @@ public sealed class ClientTerrainSystem : IDisposable
             };
         }
 
+        // Mark as processing so neighbors know to wait
+        if (activeChunks.TryGetValue(chunkIndex, out var d))
+        {
+            d.State = TerrainChunkState.Processing;
+            activeChunks[chunkIndex] = d;
+        }
+
         meshingJobs.Enqueue(chunkIndex, placeholderMask: 0, cacheVersion: version, propagateLight: true);
 
         foreach (var neighborIdx in GetCardinalNeighborChunkIndices(chunkIndex))
@@ -282,6 +317,13 @@ public sealed class ClientTerrainSystem : IDisposable
             if (!voxelCache.TryGetVersion(neighborIdx, out var neighborVersion))
             {
                 neighborVersion = 0;
+            }
+
+            // Mark neighbor as processing too
+            if (activeChunks.TryGetValue(neighborIdx, out var nd))
+            {
+                nd.State = TerrainChunkState.Processing;
+                activeChunks[neighborIdx] = nd;
             }
 
             meshingJobs.Enqueue(neighborIdx, placeholderMask: 0, cacheVersion: neighborVersion, propagateLight: true);
@@ -306,7 +348,7 @@ public sealed class ClientTerrainSystem : IDisposable
         if (chunkZ > 0) results.Add(chunkIndex - VoxelHelper.WorldChunksXZ);
         if (chunkZ + 1 < VoxelHelper.WorldChunksXZ) results.Add(chunkIndex + VoxelHelper.WorldChunksXZ);
 
-        return results.ToArray();
+        return [.. results];
     }
 
     public void UnloadChunk(int chunkIndex)
@@ -372,6 +414,12 @@ public sealed class ClientTerrainSystem : IDisposable
             if (uploaded >= maxUploadsPerFrame)
             {
                 break;
+            }
+
+            // Prevent holes: if a neighbor is dirty but not yet ready to upload, wait.
+            if (ShouldDelayUploadForNeighbors(kvp.Value))
+            {
+                continue;
             }
 
             if (TryUploadCpuMesh(kvp.Value))
@@ -447,6 +495,43 @@ public sealed class ClientTerrainSystem : IDisposable
         voxelCache.Dispose();
         meshBuffers?.Dispose();
         terrainRenderer?.Dispose();
+    }
+
+    private bool ShouldDelayUploadForNeighbors(ChunkMesh mesh)
+    {
+        var chunkIndex = mesh.ChunkIndex;
+        var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
+        var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
+
+        // Check 4 neighbors
+        if (chunkX > 0 && IsNeighborDirty(chunkIndex - 1)) return true;
+        if (chunkX + 1 < VoxelHelper.WorldChunksXZ && IsNeighborDirty(chunkIndex + 1)) return true;
+        if (chunkZ > 0 && IsNeighborDirty(chunkIndex - VoxelHelper.WorldChunksXZ)) return true;
+        if (chunkZ + 1 < VoxelHelper.WorldChunksXZ && IsNeighborDirty(chunkIndex + VoxelHelper.WorldChunksXZ)) return true;
+
+        return false;
+    }
+
+    private bool IsNeighborDirty(int neighborIdx)
+    {
+        if (!activeChunks.TryGetValue(neighborIdx, out var desc)) return false;
+        
+        // If neighbor is not ready (e.g. processing/meshing), it's dirty.
+        if (desc.State != TerrainChunkState.Ready)
+        {
+             if (!pendingMeshes.ContainsKey(neighborIdx)) return true;
+        }
+
+        // If neighbor has newer data in cache than in mesh...
+        if (voxelCache.TryGetVersion(neighborIdx, out var cacheVer) && cacheVer > desc.MeshVersion)
+        {
+            // ...and the new mesh is NOT ready to upload yet -> we must wait.
+            if (!pendingMeshes.ContainsKey(neighborIdx))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int CalculateMaxViewChunksForRadius(int radius)
@@ -534,6 +619,7 @@ public sealed class ClientTerrainSystem : IDisposable
             GenerationStartFrame = 0,
             Fence = 0,
             MaxSurfaceHeight = mesh.MaxSurfaceHeight,
+            MeshVersion = mesh.CacheVersion,
         };
 
         if (oldFaceCount > 0)

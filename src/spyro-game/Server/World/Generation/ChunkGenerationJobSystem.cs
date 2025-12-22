@@ -1,9 +1,9 @@
+using OpenRender;
+using SpyroGame.World;
+using SpyroGame.World.Registry;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using OpenRender;
-using SpyroGame.World.Registry;
-using SpyroGame.Server.World;
-using SpyroGame.World;
+using System.Text.Json;
 
 namespace SpyroGame.Server.World.Generation;
 
@@ -33,15 +33,18 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
     {
         this.voxelCache = voxelCache ?? throw new ArgumentNullException(nameof(voxelCache));
         this.metrics = metrics;
-        config = initialConfig ?? throw new ArgumentNullException(nameof(initialConfig));
-        
+
+        // Clone the initial config to ensure we own a private snapshot.
+        // This prevents external mutations (like changing the seed on the main thread) from affecting us.
+        config = CloneConfig(initialConfig ?? throw new ArgumentNullException(nameof(initialConfig)));
+
         // Use ProcessorCount but cap at a reasonable limit to avoid excessive parallelism
         this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount - 1);
-        
+
         // Initialize thread-local state. 
         // We capture version BEFORE config to ensure that if we get a newer config with an older version,
         // the version check in ProcessWorkItem will trigger an update (safe redundancy).
-        threadLocalState = new ThreadLocal<GeneratorState>(() => 
+        threadLocalState = new ThreadLocal<GeneratorState>(() =>
         {
             var v = Volatile.Read(ref configVersion);
             var c = config;
@@ -60,8 +63,22 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
 
     public void UpdateConfig(TerrainConfig newConfig)
     {
-        config = newConfig ?? throw new ArgumentNullException(nameof(newConfig));
+        if (newConfig == null) throw new ArgumentNullException(nameof(newConfig));
+
+        // CRITICAL FIX: Clone the config to create an immutable snapshot for the workers.
+        // The caller (ChunkStreamingManager) mutates the config object in-place (e.g. setting Seed).
+        // Without cloning, running threads would see the seed change mid-generation, causing
+        // inconsistencies (e.g. Biomes using NewSeed vs Heights using OldSeed).
+        config = CloneConfig(newConfig);
         Interlocked.Increment(ref configVersion);
+    }
+
+    private static TerrainConfig CloneConfig(TerrainConfig source)
+    {
+        // Deep clone via JSON to ensure complete isolation.
+        // Since TerrainConfig is data-only and loaded from JSON, this is safe and robust.
+        var json = JsonSerializer.Serialize(source);
+        return JsonSerializer.Deserialize<TerrainConfig>(json)!;
     }
 
     public void Enqueue(int chunkIndex, IReadOnlyDictionary<int, BlockId>? blockIdEdits, GenerationJobType type = GenerationJobType.BaseTerrain)
@@ -70,7 +87,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
 
         var enqueueId = Interlocked.Increment(ref enqueueCounter);
         var work = new GenerationWorkItem(chunkIndex, blockIdEdits, enqueueId, type);
-        
+
         try
         {
             workQueue.Add(work, cancellationSource.Token);
@@ -140,7 +157,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         {
             var state = threadLocalState.Value!;
             var generator = state.Generator;
-            
+
             // Check if config needs update
             var currentVersion = Volatile.Read(ref configVersion);
             if (currentVersion != state.Version)
@@ -163,7 +180,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                     result = generator.GenerateBaseTerrain(work.ChunkIndex, writable, work.BlockIdEdits);
                     terrainSw.Stop();
                     metrics?.RecordTerrainGeneration(terrainSw.Elapsed.TotalMilliseconds);
-                    
+
                     // Record detailed terrain breakdown from profiler
                     var profiler = generator.Profiler;
                     metrics?.RecordTerrainBreakdown(
@@ -227,7 +244,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                     else
                     {
                         Log.Error($"Decoration failed: Base terrain missing for chunk {work.ChunkIndex}");
-                        return; 
+                        return;
                     }
                 }
 

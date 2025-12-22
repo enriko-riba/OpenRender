@@ -1,8 +1,8 @@
 using NoiseDotNet;
+using SpyroGame.Components;
+using SpyroGame.World;
 using SpyroGame.World.Registry;
 using System.Numerics;
-using SpyroGame.Server.World;
-using SpyroGame.World;
 
 namespace SpyroGame.Server.World.Generation;
 
@@ -45,16 +45,16 @@ internal sealed class CpuTerrainGenerator
         (1, 0), (-1, 0), (0, 1), (0, -1),
         (1, 1), (1, -1), (-1, 1), (-1, -1)
     ];
-    
+
     // SINGLE SOURCE OF TRUTH: Per-column water body info computed ONCE in PrepareChunkCaches
     // Used by both biome selection AND block generation for consistency
     private readonly WaterBodyInfo[] columnWaterBody = new WaterBodyInfo[ColumnCount];
-    
+
     // Beach system: distance to nearest ocean (in blocks) and noise-modulated beach threshold
     // For varying beach widths around oceans. Rivers/lakes use simple 1-block adjacency.
     private readonly float[] columnOceanDistance = new float[ColumnCount];
     private readonly float[] columnBeachThreshold = new float[ColumnCount];
-    
+
     private readonly float[] scratch2DA = new float[ColumnCount];
     private readonly float[] scratch2DB = new float[ColumnCount];
     private readonly float[] scratch2DC = new float[ColumnCount];
@@ -86,13 +86,13 @@ internal sealed class CpuTerrainGenerator
     // Phase 0 Infrastructure: Climate cache and performance profiling
     private readonly ChunkClimateCache climateCache = new();
     private readonly TerrainGenerationProfiler profiler = new();
-    
+
     // Stage 2: Biome-driven terrain density evaluation
     private TerrainDensityEvaluator densityEvaluator = null!;  // Set in UpdateConfig
-    
+
     // Stage 3: Deterministic aquifer system for water level lookup
     private AquiferSystem aquiferSystem = null!;  // Set in UpdateConfig
-    
+
     // Stage 5: Cave carving system with volume-based entrances
     private CaveCarver caveCarver = null!;  // Set in UpdateConfig
 
@@ -101,7 +101,7 @@ internal sealed class CpuTerrainGenerator
 
     // Reused working set for weighted biome blending (avoid per-chunk allocations)
     private readonly List<(BiomeDefinition Biome, float Weight)> weightedBiomes = new(8);
-    
+
     // Per-column biome definitions cache (avoids repeated lookups)
     private readonly BiomeDefinition?[] columnBiomes = new BiomeDefinition?[ColumnCount];
 
@@ -131,7 +131,7 @@ internal sealed class CpuTerrainGenerator
         {
             biomeById[biome.Id] = biome;
         }
-        
+
         climateCache.Invalidate();
     }
 
@@ -148,7 +148,7 @@ internal sealed class CpuTerrainGenerator
     public ChunkGenerationResult GenerateBaseTerrain(int chunkIndex, ChunkData chunkData, IReadOnlyDictionary<int, BlockId>? edits = null)
     {
         profiler.BeginStep(TerrainGenerationProfiler.Step.Total);
-        
+
         if (chunkData.VoxelData.Length < VoxelHelper.ChunkVoxelCount)
         {
             throw new ArgumentException($"Destination buffer must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(chunkData));
@@ -171,7 +171,7 @@ internal sealed class CpuTerrainGenerator
 
         profiler.EndStep(TerrainGenerationProfiler.Step.Total);
         profiler.FinalizeChunk();
-        
+
         return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
     }
 
@@ -185,7 +185,7 @@ internal sealed class CpuTerrainGenerator
 
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
-        
+
         // Use provided biome data, otherwise regenerate it from the climate cache
         currentChunkBiome = biomeData ?? new ChunkBiomeData();
         if (biomeData is null)
@@ -210,7 +210,7 @@ internal sealed class CpuTerrainGenerator
 
         profiler.EndStep(TerrainGenerationProfiler.Step.Total);
         profiler.FinalizeChunk();
-        
+
         return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
     }
 
@@ -231,7 +231,7 @@ internal sealed class CpuTerrainGenerator
         chunkData.GetOrAddPaletteEntry(BlockId.Air);
 
         profiler.BeginStep(TerrainGenerationProfiler.Step.BlockGeneration);
-        
+
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             var worldZ = chunkZ * VoxelHelper.ChunkSideSize + lz;
@@ -249,8 +249,34 @@ internal sealed class CpuTerrainGenerator
                 var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
                 biomeById.TryGetValue((int)biomeId, out var biomeDef);
 
-                for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+                // Optimization: Track state top-down to avoid redundant calculations
+                var densityAbove = -1.0f; // Assumed air above world top
+                var depthFromSurface = 0;
+                var surfaceHeight = -1;
+
+                // Iterate TOP-DOWN to track depth and surface state efficiently
+                for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
                 {
+                    // 1. Calculate 3D Density for THIS voxel
+                    // Optimization: If we are significantly above the base height + overhang range,
+                    // the density will definitely be negative (air).
+                    float density;
+                    if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
+                    {
+                        density = -1.0f;
+                    }
+                    else
+                    {
+                        density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
+                    }
+
+                    // Track surface height (highest non-air block)
+                    // Note: We check density >= 0 OR if it's a special bottom layer (bedrock/lava)
+                    if (surfaceHeight == -1 && (density >= 0f || y <= 1))
+                    {
+                        surfaceHeight = y;
+                    }
+
                     var block = GenerateBlock(
                         height,
                         y,
@@ -259,8 +285,11 @@ internal sealed class CpuTerrainGenerator
                         baseHeight,
                         continentalness01,
                         columnIndex,
-                        overhangSlice,
-                        biomeDef);
+                        biomeDef,
+                        density,
+                        densityAbove,
+                        depthFromSurface);
+
                     var localIndex = y * VoxelHelper.ChunkSideSizeSquare + columnIndex;
 
                     if (edits != null && edits.TryGetValue(localIndex, out var editedBlock))
@@ -271,11 +300,23 @@ internal sealed class CpuTerrainGenerator
                     // Palette lookup
                     var paletteIndex = chunkData.GetOrAddPaletteEntry(block);
                     chunkData.VoxelData[localIndex] = paletteIndex;
+
+                    // Update state for next iteration (y-1)
+                    // If current block is solid, depth increases. If air, depth resets.
+                    if (density >= 0f)
+                    {
+                        depthFromSurface++;
+                    }
+                    else
+                    {
+                        depthFromSurface = 0;
+                    }
+
+                    densityAbove = density;
                 }
-                
-                // Performance optimization: Compute surface height for this column (highest opaque block)
-                // This is used by lighting to quickly skip underground air columns
-                chunkData.SurfaceHeights[columnIndex] = ComputeSurfaceHeight(chunkData, lx, lz);
+
+                // Surface height is computed on-the-fly now
+                chunkData.SurfaceHeights[columnIndex] = surfaceHeight;
             }
         }
 
@@ -327,7 +368,7 @@ internal sealed class CpuTerrainGenerator
         return v.Equals("1", StringComparison.OrdinalIgnoreCase)
             || v.Equals("true", StringComparison.OrdinalIgnoreCase)
             || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
-    #endif
+#endif
     }
 
     private void RecordTerrainStatsIfEnabled(int chunkIndex, ChunkData chunkData)
@@ -574,7 +615,7 @@ internal sealed class CpuTerrainGenerator
         }
         profiler.EndStep(TerrainGenerationProfiler.Step.CollisionGeneration);
     }
-    
+
     /// <summary>
     /// Compute the surface height for a column (highest non-air block Y coordinate).
     /// Returns -1 if the column is entirely air.
@@ -603,7 +644,7 @@ internal sealed class CpuTerrainGenerator
         climateCache.SampleForChunk(chunkX, chunkZ, config);
         BuildColumnCoordinates(chunkX, chunkZ);
         profiler.EndStep(TerrainGenerationProfiler.Step.ClimateSampling);
-        
+
         // ============================================================
         // STAGE 1 (continued): Biome Selection BEFORE Height
         // ============================================================
@@ -612,7 +653,7 @@ internal sealed class CpuTerrainGenerator
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
         SelectBiomesFromClimate();
         profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
-        
+
         // ============================================================
         // STAGE 2: Biome-Driven Height Calculation
         // ============================================================
@@ -621,13 +662,13 @@ internal sealed class CpuTerrainGenerator
         profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
         BuildColumnHeightsFromBiomes();
         profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
-        
+
         // ============================================================
         // Water Body Detection
         // ============================================================
         // Compute water body info using heights and biomes
         BuildColumnWaterBodies();
-        
+
         // ============================================================
         // STAGE 5: 3D Noise for Caves/Overhangs
         // ============================================================
@@ -636,7 +677,7 @@ internal sealed class CpuTerrainGenerator
         BuildCaveMaskVolume();
         profiler.EndStep(TerrainGenerationProfiler.Step.Noise3DSampling);
     }
-    
+
     /// <summary>
     /// STAGE 1: Select biomes for each column using climate values.
     /// This happens BEFORE height calculation - biomes drive terrain shape.
@@ -647,20 +688,20 @@ internal sealed class CpuTerrainGenerator
     {
         // Initialize biome data structure
         currentChunkBiome ??= new ChunkBiomeData();
-        
+
         var cont01 = climateCache.Continentalness01;
         var temp01 = climateCache.Temperature01;
         var humid01 = climateCache.Humidity01;
         var erosion01 = climateCache.Erosion01;
         var pv01 = climateCache.PeaksValleys01;
-        
+
         // Copy climate values to local arrays for compatibility
         var cachedCont01 = climateCache.Continentalness01;
         var cachedErosion = climateCache.Erosion;
         var cachedPeaks = climateCache.PeaksValleys;
         var cachedWarpX = climateCache.WarpX;
         var cachedWarpZ = climateCache.WarpZ;
-        
+
         for (var i = 0; i < ColumnCount; i++)
         {
             columnContinentalness01[i] = cachedCont01[i];
@@ -670,7 +711,7 @@ internal sealed class CpuTerrainGenerator
             columnWarpX[i] = cachedWarpX[i];
             columnWarpZ[i] = cachedWarpZ[i];
         }
-        
+
         // Select biome for each column based on climate values ONLY
         // Note: We don't have height yet - biomes are selected from climate parameters
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
@@ -678,7 +719,7 @@ internal sealed class CpuTerrainGenerator
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
             {
                 var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                
+
                 // Select biome using ONLY climate parameters (Minecraft-style)
                 // Biome selection happens BEFORE height calculation - biomes DRIVE terrain shape
                 var biome = biomeSelector.Select(
@@ -687,9 +728,9 @@ internal sealed class CpuTerrainGenerator
                     humid01[columnIndex],
                     erosion01[columnIndex],
                     pv01[columnIndex]);
-                
+
                 currentChunkBiome.SetBiomeAt(lx, lz, biome);
-                
+
                 // Cache biome definition for height calculation
                 biomeById.TryGetValue((int)biome, out var biomeDef);
                 columnBiomes[columnIndex] = biomeDef;
@@ -741,7 +782,7 @@ internal sealed class CpuTerrainGenerator
             }
         }
     }
-    
+
     /// <summary>
     /// STAGE 2: Calculate terrain heights using biome properties.
     /// This is the core of the Minecraft-style pipeline - biomes DRIVE terrain shape.
@@ -753,13 +794,13 @@ internal sealed class CpuTerrainGenerator
         var shaping = config.TerrainShaping;
         var cachedErosion01 = climateCache.Erosion01;
         var cachedWeirdness = climateCache.Weirdness;
-        
+
         // Sample additional detail noise for cliffs (still needed for mountain detail)
         var xSpan = columnWorldX.AsSpan();
         var zSpan = columnWorldZ.AsSpan();
         SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, columnCliff);
-        
-       
+
+
         var temp01 = climateCache.Temperature01;
         var humid01 = climateCache.Humidity01;
         var pv01 = climateCache.PeaksValleys01;
@@ -774,14 +815,14 @@ internal sealed class CpuTerrainGenerator
             var absWeirdness = MathF.Abs(weirdness);
             var isOceanBiome = biome != null && (biome.Id == (int)BiomeId.Ocean || biome.Id == (int)BiomeId.DeepOcean);
             //var slopeValue = columnSlope[i];
-            
-            
+
+
             float baseHeight;
 
             // Macro elevation comes from the height spline (continentalness-driven).
             // Biome height is blended in to control local character (flat/jagged), not absolute elevation.
             var macroHeight = densityEvaluator.CalculateSplineHeight(cont01, pv01[i], erosion01, heightSpline);
-            
+
             if (biome != null)
             {
                 // Calculate 3D factor from weirdness + erosion
@@ -791,11 +832,11 @@ internal sealed class CpuTerrainGenerator
                 // This blends heights between ALL biomes (including Ocean->Beach) to avoid cliffs
                 baseHeight = 0f;
                 biomeSelector.SelectWeighted(
-                    cont01, 
-                    temp01[i], 
-                    humid01[i], 
-                    erosion01, 
-                    pv01[i], 
+                    cont01,
+                    temp01[i],
+                    humid01[i],
+                    erosion01,
+                    pv01[i],
                     weightedBiomes);
 
                 if (weightedBiomes.Count > 0)
@@ -832,20 +873,20 @@ internal sealed class CpuTerrainGenerator
                 var coastDist = (cont01 - terrainParams.OceanThreshold) / (1f - terrainParams.OceanThreshold);
                 var effectiveCoastDist = shaping.CoastDistanceBase + coastDist * shaping.CoastDistanceMultiplier;
                 var coastBlend = Smoothstep(terrainParams.OceanThreshold, terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth), cont01);
-                
+
                 // Weirdness terrain variety
                 // Multiply by coastBlend to ensure weirdness starts at 0 at the coast line
                 // This prevents the ~8 block jump where weirdness suddenly kicked in at 30% strength
-                var weirdnessInfluence = weirdness * shaping.WeirdnessAmplitude * 
+                var weirdnessInfluence = weirdness * shaping.WeirdnessAmplitude *
                     (shaping.WeirdnessInfluenceBase + roughness * shaping.WeirdnessInfluenceRoughness) * effectiveCoastDist * coastBlend;
-                
+
                 if (absWeirdness > shaping.ExtremeWeirdnessThreshold)
                 {
                     var extremeBoost = (absWeirdness - shaping.ExtremeWeirdnessThreshold) / (1f - shaping.ExtremeWeirdnessThreshold);
                     weirdnessInfluence += MathF.Sign(weirdness) * extremeBoost * shaping.ExtremeWeirdnessBoost * (shaping.WeirdnessRoughnessBase + roughness * shaping.WeirdnessRoughnessMultiplier);
                 }
                 baseHeight += weirdnessInfluence;
-                
+
                 var minLandHeight = VoxelHelper.WaterLevel + shaping.MinLandHeightOffset + coastDist * shaping.MinLandHeightCoastMultiplier;
                 var coastalMinHeight = Lerp(VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset), minLandHeight, coastBlend);
                 if (baseHeight < coastalMinHeight)
@@ -860,10 +901,10 @@ internal sealed class CpuTerrainGenerator
                 // Ocean columns ease into the shoreline instead of forming vertical cliffs
                 baseHeight = ApplyOceanShoreSmoothing(baseHeight, cont01, shaping);
             }
-            
+
             columnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
-            
+
             // Guard: land should not be BELOW sea level (but allow sea-level beaches).
             if (isLandColumn && rounded < (int)VoxelHelper.WaterLevel)
             {
@@ -902,7 +943,7 @@ internal sealed class CpuTerrainGenerator
         var beachHeight = VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset);
         return Lerp(beachHeight, baseHeight, blend);
     }
-    
+
     /// <summary>
     /// STAGE 3: Compute water body info for each column using the aquifer system.
     /// This is the SINGLE SOURCE OF TRUTH for water - used by both biome selection AND block generation.
@@ -920,7 +961,7 @@ internal sealed class CpuTerrainGenerator
     {
         var cont01 = climateCache.Continentalness01;
         var aquifer01 = climateCache.AquiferNoise01;
-        
+
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
@@ -929,7 +970,7 @@ internal sealed class CpuTerrainGenerator
                 var continentalness01 = cont01[columnIndex];
                 var terrainHeight = columnHeights[columnIndex];
                 var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
-                
+
                 // STAGE 3: Use aquifer system for deterministic water level lookup
                 columnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
                     biomeId,
@@ -938,7 +979,7 @@ internal sealed class CpuTerrainGenerator
                     aquifer01[columnIndex]);
             }
         }
-        
+
         ComputeOceanAdjacency();
 
         // Beach is a derived biome based on proximity to ocean water (not climate).
@@ -962,7 +1003,7 @@ internal sealed class CpuTerrainGenerator
         {
             columnOceanDistance[i] = columnWaterBody[i].IsOcean ? 0f : float.MaxValue;
         }
-        
+
         // Multi-pass flood fill to compute minimum distance to ocean
         // Each pass propagates distance from ocean outward
         var maxBeachSearchRadius = Math.Clamp((int)MathF.Ceiling(config.BeachMaxWidth), 1, VoxelHelper.ChunkSideSize - 1);
@@ -975,7 +1016,7 @@ internal sealed class CpuTerrainGenerator
                 {
                     var idx = lz * VoxelHelper.ChunkSideSize + lx;
                     var currentDist = columnOceanDistance[idx];
-                    
+
                     // Check 4 neighbors and update if shorter path found
                     if (lz > 0)
                     {
@@ -1017,12 +1058,12 @@ internal sealed class CpuTerrainGenerator
             }
             if (!changed) break; // Converged early
         }
-        
+
         // Compute per-column beach threshold using noise for organic coastlines
         // Beach appears where oceanDistance <= beachThreshold
         var baseBeachWidth = config.BeachMaxWidth;
         var beachNoiseStrength = config.BeachNoiseStrength;
-        
+
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
@@ -1030,11 +1071,11 @@ internal sealed class CpuTerrainGenerator
                 var idx = lz * VoxelHelper.ChunkSideSize + lx;
                 var wx = columnWorldX[idx];
                 var wz = columnWorldZ[idx];
-                
+
                 // Sample noise for beach width variation
                 // Use domain-warped noise for more organic shapes
                 var beachNoise = GetBeachNoise(wx, wz);
-                
+
                 // Beach threshold varies from ~1 block (minimum) to baseBeachWidth
                 // Noise modulates the width: high noise = wider beach, low noise = narrower
                 var t = Math.Clamp(0.5f + beachNoise * beachNoiseStrength, 0f, 1f);
@@ -1091,7 +1132,7 @@ internal sealed class CpuTerrainGenerator
             }
         }
     }
-    
+
     /// <summary>
     /// Sample beach width noise at a world position.
     /// Returns a value roughly in [-0.5, 0.5] range for modulating beach width.
@@ -1101,18 +1142,18 @@ internal sealed class CpuTerrainGenerator
     {
         var scale = config.BeachNoiseScale;
         var seed = terrainParams.Seed + 8500u;
-        
+
         // Apply domain warp for more organic shapes
         var warpX = ValueNoise2D(wx * scale * 0.7f, wz * scale * 0.7f, seed + 100u) * 20f;
         var warpZ = ValueNoise2D(wx * scale * 0.7f + 100f, wz * scale * 0.7f, seed + 200u) * 20f;
-        
+
         // Sample main beach noise with warped coordinates
         var noise = ValueNoise2D((wx + warpX) * scale, (wz + warpZ) * scale, seed);
-        
+
         // Return centered value
         return noise - 0.5f;
     }
-    
+
     /// <summary>
     /// Simple 2D value noise for beach width variation.
     /// </summary>
@@ -1120,24 +1161,24 @@ internal sealed class CpuTerrainGenerator
     {
         var xi = (int)MathF.Floor(x);
         var zi = (int)MathF.Floor(z);
-        
+
         var fx = x - xi;
         var fz = z - zi;
-        
+
         var c00 = Hash2D(xi, zi, seed);
         var c10 = Hash2D(xi + 1, zi, seed);
         var c01 = Hash2D(xi, zi + 1, seed);
         var c11 = Hash2D(xi + 1, zi + 1, seed);
-        
+
         var u = Fade(fx);
         var v = Fade(fz);
-        
+
         var x0 = Lerp(c00, c10, u);
         var x1 = Lerp(c01, c11, u);
-        
+
         return Lerp(x0, x1, v);
     }
-    
+
     /// <summary>
     /// Check if a column is within beach distance of ocean.
     /// Returns true if the column should be considered coastal (for Beach biome).
@@ -1184,13 +1225,13 @@ internal sealed class CpuTerrainGenerator
     {
         // Weirdness contribution: ramp from 0 at low |W| to 1 at high |W|
         var weirdnessFactor = Smoothstep(shaping.Weirdness3DThresholdLow, shaping.Weirdness3DThresholdHigh, absWeirdness);
-        
+
         // Erosion contribution: 1 at low erosion (rough terrain), 0 at high erosion (flat)
         var erosionFactor = 1f - Smoothstep(0f, shaping.Erosion3DThreshold, erosion01);
-        
+
         // Combined factor: both high weirdness AND low erosion needed for maximum 3D
         var rawFactor = weirdnessFactor * erosionFactor;
-        
+
         // Map to configured range [Min3DFactor, Max3DFactor]
         return Lerp(shaping.Min3DFactor, shaping.Max3DFactor, rawFactor);
     }
@@ -1207,7 +1248,7 @@ internal sealed class CpuTerrainGenerator
 
         var baseX = currentChunkX * VoxelHelper.ChunkSideSize;
         var baseZ = currentChunkZ * VoxelHelper.ChunkSideSize;
-        
+
         // Get Y-stretch factor for horizontal cave bias
         var spaghettiYStretch = config.Caves.SpaghettiYStretch;
 
@@ -1229,7 +1270,7 @@ internal sealed class CpuTerrainGenerator
         {
             var worldY = sy * SparseStep;
             var sliceOffset = sy * SparseSampleCount;
-            
+
             // HORIZONTAL CAVE BIAS: Stretch Y coordinate for spaghetti caves
             // This makes caves prefer horizontal tunnels over vertical shafts
             var stretchedY = worldY * spaghettiYStretch;
@@ -1291,22 +1332,22 @@ internal sealed class CpuTerrainGenerator
             Array.Clear(caveMaskVolume);
             return;
         }
-        
+
         // Build isLandColumn array for CaveCarver
         Span<bool> isLandColumn = stackalloc bool[ColumnCount];
         for (var i = 0; i < ColumnCount; i++)
         {
             isLandColumn[i] = !columnWaterBody[i].IsOcean;
         }
-        
+
         // Carve caves using the new improved system
         caveCarver.CarveChunk(
-            currentChunkX, 
-            currentChunkZ, 
-            columnHeightInts, 
+            currentChunkX,
+            currentChunkZ,
+            columnHeightInts,
             isLandColumn,
             GetSurfaceHeightFloat);
-        
+
         // Copy cave mask from CaveCarver to local buffer
         caveCarver.CaveMask.CopyTo(caveMaskVolume);
     }
@@ -1350,7 +1391,7 @@ internal sealed class CpuTerrainGenerator
                     // Cheese
                     var c0 = BilinearSample(sparseCheeseGrid, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
                     var c1 = BilinearSample(sparseCheeseGrid, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
-                    
+
                     // Spaghetti A
                     var sa0 = BilinearSample(sparseSpaghettiA, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
                     var sa1 = BilinearSample(sparseSpaghettiA, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
@@ -1657,26 +1698,13 @@ internal sealed class CpuTerrainGenerator
         return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
     }
 
-    private float GetSurfaceHeightFloat(int wx, int wz) 
-        => TryGetColumnIndex(wx, wz, out var columnIndex) ? columnHeights[columnIndex] 
+    private float GetSurfaceHeightFloat(int wx, int wz)
+        => TryGetColumnIndex(wx, wz, out var columnIndex) ? columnHeights[columnIndex]
             : GetHeight(new Vector2(wx, wz));
 
     /// <summary>
     /// Generate the block type for a voxel at the given world position.
-    /// Returns appropriate BlockId based on height, depth, biome, and cave systems.
-    /// Uses biome-specific blocks (SurfaceBlock, SubsurfaceBlock, DeepBlock) from BiomeDefinition.
-    /// 
-    /// FIXED: Surface detection now works with 3D terrain by checking if the block above is air,
-    /// rather than comparing y to 2D height. This correctly places grass/snow on overhangs.
-    /// 
-    /// SINGLE SOURCE OF TRUTH: Uses columnWaterBody[] for water body detection instead of
-    /// recalculating isOceanArea/isLakeArea. This ensures consistency with biome selection.
-    /// 
-    /// WATER PLACEMENT RULES:
-    /// - Water ONLY appears in columns where waterBody.HasWater is true (Ocean biomes only, lakes disabled)
-    /// - columnHasAdjacentOcean is ONLY used for Beach biome selection, NOT water block placement
-    /// - Caves are always dry - no water fills underground even if below global water level
-    /// - Non-water biomes never get water blocks, even when digging below Y=35
+    /// Optimized version that accepts pre-calculated density and depth state.
     /// </summary>
     private BlockId GenerateBlock(
         int height,
@@ -1686,14 +1714,14 @@ internal sealed class CpuTerrainGenerator
         float baseHeight,
         float continentalness01,
         int columnIndex,
-        Span<float> overhangSlice,
-        BiomeDefinition? biomeDef)
+        BiomeDefinition? biomeDef,
+        float density,
+        float densityAbove,
+        int depthFromSurface)
     {
         // === HARDCODED BOTTOM LAYERS ===
         // Y=0: Always lava (magma layer at the bottom of the world)
         // Y=1: Always bedrock (impenetrable foundation layer)
-        // These layers are ONLY visible when there's air above them (e.g., in deep caves).
-        // The mesh builder will cull faces between adjacent solid blocks automatically.
         if (y == 0)
         {
             return BlockId.Lava;
@@ -1704,22 +1732,9 @@ internal sealed class CpuTerrainGenerator
         }
 
         // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
-        // Water ONLY exists where the water body type explicitly says so (Ocean biomes)
         var waterBody = columnWaterBody[columnIndex];
         var hasWaterHere = waterBody.HasWater;
         var localWaterLevel = waterBody.WaterLevel;
-        
-        // Optimization: If we are significantly above the base height + overhang range,
-        // the density will definitely be negative (air).
-        // This avoids density calculations for the empty sky.
-        if (y > baseHeight + terrainParams.OverhangHeightRange + 16)
-        {
-            // Water ONLY in columns that have water body (Ocean biomes)
-            return hasWaterHere && y <= localWaterLevel ? BlockId.Water : BlockId.Air;
-        }
-
-        // 1. Calculate 3D Density for THIS voxel
-        var density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
 
         // 2. Density Check - If density is negative, it's air (or water in water body columns).
         if (density < 0f)
@@ -1734,49 +1749,34 @@ internal sealed class CpuTerrainGenerator
         if (isLand && y > 0 && caveMask[y] != 0)
         {
             // Cave carved this voxel - it becomes air
-            // CRITICAL: No water in carved caves, even if below global water level
-            // Caves are dry unless they breach into an ocean biome column
             return BlockId.Air;
         }
 
         // 4. Determine if this is a SURFACE block by checking if block above is air or carved by a cave
-        bool isSurface;
-        if (y < VoxelHelper.ChunkYSize - 1)
-        {
-            var densityAbove = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y + 1], y + 1, column3DFactor[columnIndex]);
-            var caveAbove = isLand && caveMask[y + 1] != 0;
-            isSurface = densityAbove < 0f || caveAbove;
-        }
-        else
-        {
-            isSurface = true;
-        }
+        // Use cached densityAbove to avoid re-calculation
+        var caveAbove = isLand && y < VoxelHelper.ChunkYSize - 1 && caveMask[y + 1] != 0;
+        var isSurface = densityAbove < 0f || caveAbove;
 
         // 5. Determine block type based on position and biome
         if (biomeDef == null)
         {
-            // Fallback for missing biome definition
             return isSurface ? BlockId.Grass : BlockId.Stone;
         }
 
-        // Underwater detection: A block is "underwater" only if THIS COLUMN has water
-        // AND the terrain surface is below the local water level
+        // Underwater detection
         var isUnderwater = hasWaterHere && height < localWaterLevel;
 
-        // Surface block - now correctly detected even on overhangs
+        // Surface block
         if (isSurface)
         {
             // CAVE FLOOR FIX: Deep cave floors get stone instead of biome grass
-            // This prevents grass from appearing on cave floors in complete darkness
             var depthBelowSurface = height - y;
             if (depthBelowSurface > config.Caves.CaveFloorDepthThreshold)
             {
-                // Deep underground cave floor - use stone instead of biome surface block
                 return BlockId.Stone;
             }
-            
-            // Coastal beach override: within variable beach width of ocean, above water, within shoreline range
-            // Note: Beach detection is distance-based for natural variation in beach width
+
+            // Coastal beach override
             var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
             return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
@@ -1784,45 +1784,25 @@ internal sealed class CpuTerrainGenerator
                 : isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
         }
 
-        // Subsurface blocks - check depth below the ACTUAL surface
-        // For 3D terrain, we need to find how far below the nearest surface we are
-        // Approximate by checking how many solid blocks are above us
-        var solidAboveCount = 0;
-        for (var checkY = y + 1; checkY < Math.Min(y + (int)terrainParams.SubsurfaceDepth + 2, VoxelHelper.ChunkYSize); checkY++)
-        {
-            var checkDensity = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[checkY], checkY, column3DFactor[columnIndex]);
-            if (checkDensity >= 0f)
-            {
-                solidAboveCount++;
-            }
-            else
-            {
-                break; // Found air, stop counting
-            }
-        }
-        
-        // If we're within subsurface depth of any surface above, use subsurface block
-        // This handles both regular terrain and overhangs
-        var effectiveDepth = solidAboveCount;
+        // Subsurface blocks - use tracked depthFromSurface
+        // This avoids the O(N) loop that was previously here
+        var effectiveDepth = depthFromSurface;
         if (effectiveDepth == 0)
         {
-            // We're right below a surface (the surface check above passed)
-            // Use traditional depth calculation as fallback
+            // Fallback if tracking failed (shouldn't happen with correct top-down logic)
             effectiveDepth = Math.Max(0, height - y);
         }
-        
+
         if (effectiveDepth <= terrainParams.SubsurfaceDepth)
         {
-            // CAVE SUBSURFACE FIX: Deep cave subsurface layers get stone/dirt instead of biome blocks
-            // This prevents SnowDirt from appearing deep inside caves in Alpine biomes
+            // CAVE SUBSURFACE FIX
             var depthBelowTerrainSurface = height - y;
             if (depthBelowTerrainSurface > config.Caves.CaveFloorDepthThreshold)
             {
-                // Deep underground - use generic subsurface (dirt) instead of biome-specific (e.g., SnowDirt)
                 return BlockId.Dirt;
             }
-            
-            // Beach subsurface: within beach distance of ocean, at beach height, not underwater
+
+            // Beach subsurface
             var isInBeachZone = IsWithinBeachDistance(columnIndex);
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
             return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
@@ -1901,7 +1881,7 @@ internal sealed class CpuTerrainGenerator
 
     /// <summary>
     /// 3D hash function for ore generation. Returns a value in [0,1).
- /// </summary>
+    /// </summary>
     private static float OreHash3D(int x, int y, int z, uint seed)
     {
         unchecked
@@ -1962,7 +1942,7 @@ internal sealed class CpuTerrainGenerator
             var mountainness = Smoothstep(shaping.OverhangStartThreshold, shaping.OverhangFullThreshold, tC);
             var heightFactor = 1f - MathF.Abs((sampleY - baseHeight) / terrainParams.OverhangFalloffRange);
             heightFactor = Math.Clamp(heightFactor, 0f, 1f);
-            
+
             // Phase 4: Modulate overhang amplitude by 3D factor
             // High |weirdness| + low erosion → factor3D near 1.0 → full overhang effect
             density += overhangNoise * terrainParams.OverhangAmplitude * shaping.OverhangMultiplier * mountainness * heightFactor * factor3D;
@@ -2004,13 +1984,13 @@ internal sealed class CpuTerrainGenerator
     {
         var caveParams = config.Caves;
         var freq = caveParams.EntranceNoiseFrequency;
-        
+
         // Use simple 2D value noise for entrance clustering
         // This creates blob-like entrance shapes on hillsides
         var nx = wx * freq;
         var nz = wz * freq;
         var seed = terrainParams.Seed + 7000u;
-        
+
         // Simple 2D value noise
         var xi = (int)MathF.Floor(nx);
         var zi = (int)MathF.Floor(nz);
@@ -2025,13 +2005,13 @@ internal sealed class CpuTerrainGenerator
 
         var u = Fade(fx);
         var v = Fade(fz);
-        
+
         var x0 = Lerp(c00, c10, u);
         var x1 = Lerp(c01, c11, u);
 
         return Lerp(x0, x1, v);
     }
-    
+
     /// <summary>
     /// 2D hash function for entrance noise. Returns a value in [0,1).
     /// </summary>
@@ -2047,7 +2027,7 @@ internal sealed class CpuTerrainGenerator
             return (h & 0x00FFFFFF) / 16777216f;
         }
     }
-    
+
     private float GetContinentalness(Vector2 p)
     {
         var warped = p * terrainParams.WarpScale;

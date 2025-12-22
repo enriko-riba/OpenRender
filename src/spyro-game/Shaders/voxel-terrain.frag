@@ -57,6 +57,14 @@ uniform int uIsUnderwater;
 uniform float uTime;
 uniform int uShowBiomes;
 
+// Picked block for outline/breaking
+uniform vec3 uPickedBlockPos;
+uniform int uOutlineBlockId; // -1 if disabled (e.g. for billboards or no selection)
+
+// Breaking animation
+uniform float uBreakingProgress;
+// uniform int uBreakingBlockId; // Removed, hardcoded to 8
+
 // Render pass indicator:
 // 0 = Opaque pass (use alpha cutoff for AlphaTest blocks like leaves)
 // 1 = Water pass (blend, no cutoff)
@@ -411,6 +419,53 @@ void main() {
     if (uShowBiomes == 1 && !isWater) {
         vec3 biomeColor = getBiomeDebugColor(vBiomeId);
         baseColor.rgb = mix(baseColor.rgb, biomeColor, clamp(vBiomeDebugTint, 0.0, 1.0));
+    }
+
+    // Picked Block Logic (Breaking + Outline)
+    // Check if we have any active effect (Outline or Breaking)
+    if (uOutlineBlockId >= 0 || uBreakingProgress > 0.0) {
+        // Calculate block position from fragment position and normal
+        // Nudge slightly inward to handle surface coordinates correctly
+        vec3 blockPos = floor(vWorldPos - N * 0.05);
+        
+        // Check if this fragment belongs to the picked block
+        if (distance(blockPos, uPickedBlockPos) < 0.1) {
+            
+            // 1. Breaking Animation Overlay (Applied FIRST)
+            if (uBreakingProgress > 0.0) {
+                // Sample breaking texture (Hardcoded ID 8)
+                vec4 breakTex = sampleBlockTexture(8u, vTexCoord, N, vFaceId);
+                
+                // Determine threshold based on progress
+                // 0-25%: sample only black pixels (0)
+                // 25-50%: sample pixels (61,61,61) or darker
+                // 50-75%: sample pixels (140,140,140) or darker
+                // > 75%: sample all pixels (175,175,175 or darker)
+                
+                float threshold = 0.0;
+                if (uBreakingProgress < 0.25) threshold = 0.01;       // Only black (0)
+                else if (uBreakingProgress < 0.50) threshold = 0.25;  // 61/255 ~= 0.24
+                else if (uBreakingProgress < 0.75) threshold = 0.56;  // 140/255 ~= 0.55
+                else threshold = 0.70;                                // 175/255 ~= 0.69
+                
+                // If pixel is darker than threshold, show it
+                // The texture is gray, so we can use red channel
+                if (breakTex.r <= threshold) {
+                    // Apply fixed dark gray color for cracks
+                    vec3 crackColor = vec3(0.1, 0.1, 0.1);
+                    baseColor.rgb = mix(baseColor.rgb, crackColor, breakTex.a);
+                }
+            }
+
+            // 2. Selection Outline Overlay (Applied SECOND)
+            if (uOutlineBlockId >= 0) {
+                // Sample outline texture
+                vec4 outlineColor = sampleBlockTexture(uint(uOutlineBlockId), vTexCoord, N, vFaceId);
+                
+                // Blend outline on top
+                baseColor.rgb = mix(baseColor.rgb, outlineColor.rgb, outlineColor.a);
+            }
+        }
     }
 
     // Lighting

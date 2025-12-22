@@ -16,7 +16,7 @@ using SpyroGame.Client;
 using SpyroGame.Client.Mobs;
 using SpyroGame.Client.Rendering;
 using SpyroGame.Client.Terrain;
-using SpyroGame.Server.World.Generation;
+using SpyroGame.Components;
 using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
@@ -77,6 +77,12 @@ internal class GameScene : Scene
     private SkyBoxSun skyBox = default!;
     private bool hasAppliedServerWorldTime;
     //private WaterNode waterNode = default!;
+
+    // Block breaking state
+    private Vector3i? breakingBlockPos;
+    private float breakingProgress;
+    private int lastSelectedSlot = -1;
+    private float breakCooldown;
 
     public GameScene(ITextRenderer textRenderer)
     {
@@ -554,6 +560,7 @@ internal class GameScene : Scene
                 }
             }
 
+            terrainSystem.ProcessPendingChunkUpdates();
             terrainSystem.UpdateUploads(maxUploadsPerFrame: 16);
         }
 
@@ -637,23 +644,124 @@ internal class GameScene : Scene
                     localClient.SendAttack(pickedMobId!.Value);
                     // Add a small cooldown or visual feedback here if needed
                 }
+
+                // Reset block breaking when interacting with mob
+                breakingBlockPos = null;
+                breakingProgress = 0;
             }
             else if (blockHit)
             {
                 var pickedBlock = blockPickingService!.PickedBlock!.Value;
 
-                if (SceneManager.MouseState.IsButtonPressed(MouseButton.Left))
+                // Check for slot change to reset progress
+                if (player.Inventory.SelectedSlot != lastSelectedSlot)
                 {
-                    // Predict locally for responsiveness: update inventory, collision, and picking immediately.
-                    if (!pickedBlock.Block.IsAir())
-                    {
-                        player.Inventory.AddItem((ItemId)pickedBlock.Block);
-                        terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
-                        blockPickingService.Invalidate();
-                        blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
-                    }
+                    breakingBlockPos = null;
+                    breakingProgress = 0;
+                    lastSelectedSlot = player.Inventory.SelectedSlot;
+                }
 
-                    localClient.Send(new BreakBlockCommand(pickedBlock.GlobalPosition));
+                // Decrement cooldown
+                if (breakCooldown > 0)
+                {
+                    breakCooldown -= (float)elapsedSeconds;
+                }
+
+                if (SceneManager.MouseState.IsButtonDown(MouseButton.Left))
+                {
+                    // Calculate potential damage for the target block
+                    var blockDef = BlockRegistry.Blocks.GetValueOrDefault(pickedBlock.Block);
+                    var hardness = blockDef?.Hardness ?? 1.0f;
+                    var item = player.Inventory.SelectedItem;
+                    var itemDef = ItemRegistry.Get(item.Item);
+                    var toolSpeed = itemDef.MiningSpeedMultiplier;
+
+                    // Damage per tick (20 ticks/sec)
+                    // Hardness 0 -> Instant break (damage = 1.0)
+                    // Hardness < 0 -> Unbreakable (damage = 0)
+                    var damagePerTick = 0.0f;
+                    if (hardness == 0) damagePerTick = 1.0f;
+                    else if (hardness > 0) damagePerTick = (toolSpeed / hardness) / 30.0f;
+
+                    // Check if we are continuing to break the same block
+                    if (breakingBlockPos.HasValue && breakingBlockPos.Value == pickedBlock.GlobalPosition)
+                    {
+                        // Continue breaking
+                        if (damagePerTick > 0)
+                        {
+                            // Apply damage scaled by time (20 ticks/sec)
+                            var ticksPassed = (float)(elapsedSeconds * 20.0);
+                            breakingProgress += damagePerTick * ticksPassed;
+                            
+                            if (breakingProgress >= 1.0f)
+                            {
+                                // Break the block!
+                                if (!pickedBlock.Block.IsAir())
+                                {
+                                    // Removed client-side inventory add to prevent desync.
+                                    // Inventory is now strictly server-authoritative via snapshots.
+                                    // player.Inventory.AddItem((ItemId)pickedBlock.Block);
+                                    
+                                    terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
+                                    blockPickingService.Invalidate();
+                                    blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                                }
+
+                                localClient.Send(new BreakBlockCommand(pickedBlock.GlobalPosition));
+                                
+                                // Reset
+                                breakingBlockPos = null;
+                                breakingProgress = 0;
+                                breakCooldown = 0.3f;
+
+                                // Set cooldown if not insta-mining
+                                // Insta-mining is when damagePerTick >= 1.0 (instant break)
+                                //if (damagePerTick < 1.0f)
+                                //{
+                                //    breakCooldown = 0.3f; // 6 ticks
+                                //}
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Start breaking new block
+                        // Respect cooldown unless insta-mining (damage >= 1.0)
+                        if (breakCooldown <= 0 || damagePerTick >= 1.0f)
+                        {
+                            breakingBlockPos = pickedBlock.GlobalPosition;
+                            breakingProgress = 0;
+                            
+                            // If insta-mine, we can apply damage immediately to break in this frame
+                            if (damagePerTick >= 1.0f)
+                            {
+                                // Break immediately
+                                if (!pickedBlock.Block.IsAir())
+                                {
+                                    // Removed client-side inventory add to prevent desync.
+                                    // player.Inventory.AddItem((ItemId)pickedBlock.Block);
+                                    
+                                    terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
+                                    blockPickingService.Invalidate();
+                                    blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                                }
+
+                                localClient.Send(new BreakBlockCommand(pickedBlock.GlobalPosition));
+                                
+                                // Reset
+                                breakingBlockPos = null;
+                                breakingProgress = 0;
+                                
+                                // No cooldown for insta-mine
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Button released
+                    breakingBlockPos = null;
+                    breakingProgress = 0;
                 }
 
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
@@ -675,6 +783,18 @@ internal class GameScene : Scene
                         localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
                     }
                 }
+            }
+            else
+            {
+                // No block hit
+                breakingBlockPos = null;
+                breakingProgress = 0;
+            }
+
+            // Update renderer visual state
+            if (terrainRenderer != null)
+            {
+                terrainRenderer.BreakingProgress = breakingProgress;
             }
         }
 
@@ -854,6 +974,11 @@ internal class GameScene : Scene
                 var biomeName = GetBiomeNameForBlock(b);
 
                 WriteLine($"  ({localPos.X},{localPos.Y},{localPos.Z})@{b.ChunkIndex} {b.Block} | {biomeName}", textColor);
+
+                if (breakingProgress > 0)
+                {
+                    WriteLine($"  Breaking: {breakingProgress * 100:F0}%", new Vector3(1.0f, 0.5f, 0.0f));
+                }
             }
             else
             {
@@ -877,7 +1002,7 @@ internal class GameScene : Scene
         WriteLine("  F - Toggle Ghost/Physics", textColor);
         WriteLine("  F3 - Toggle Biome Debug", textColor);
         WriteLine("  F5 - Toggle Wireframe", textColor);
-        WriteLine("  Left Click - Break Block", textColor);
+        WriteLine("  Hold Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
 
         // === RIGHT SIDE: Inventory ===

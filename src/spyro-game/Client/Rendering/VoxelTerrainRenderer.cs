@@ -6,6 +6,7 @@ using OpenRender.SceneManagement;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
 using SpyroGame.World;
+using SpyroGame.World.Registry;
 
 namespace SpyroGame.Client.Rendering;
 
@@ -66,6 +67,12 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
     /// Set externally by game logic (e.g., raycasting).
     /// </summary>
     public BlockState? PickedBlock { get; set; }
+
+    /// <summary>
+    /// Current breaking progress (0.0 to 1.0).
+    /// Used to render the cracking animation/overlay.
+    /// </summary>
+    public float BreakingProgress { get; set; }
 
     /// <summary>
     /// Whether the camera is currently submerged in water.
@@ -250,7 +257,20 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
 
         // Set uniforms
         outlineShader.SetMatrix4("uBlockTransform", ref transform);
+        
+        // Interpolate color based on breaking progress
+        // 0% -> Yellow (Selection)
+        // 0-100% -> Green to Red (Breaking)
         var color = outlineColor;
+        if (BreakingProgress > 0)
+        {
+            // Lerp from Green (0,1,0) to Red (1,0,0)
+            color = Vector3.Lerp(new Vector3(0, 1, 0), new Vector3(1, 0, 0), BreakingProgress);
+            
+            // Pulse thickness or scale slightly?
+            // For now just color change is enough feedback without textures.
+        }
+        
         outlineShader.SetVector3("uOutlineColor", ref color);
 
         // Render wireframe cube WITH depth test (so it respects solid geometry)
@@ -318,6 +338,37 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         shader.SetInt("uShowBiomes", ShowBiomes ? 1 : 0);
         shader.SetInt("uIsUnderwater", IsCameraUnderwater ? 1 : 0);
         shader.SetUInt("uWorldChunksXZ", (uint)VoxelHelper.WorldChunksXZ);
+
+        // Pass picked block info for outline overlay
+        if (PickedBlock.HasValue)
+        {
+            var pos = PickedBlock.Value.GlobalPosition;
+            var vecPos = new Vector3(pos.X, pos.Y, pos.Z);
+            shader.SetVector3("uPickedBlockPos", ref vecPos);
+            
+            // Check block shape to decide outline method
+            var blockDef = BlockRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
+            var isBillboard = blockDef?.Shape == BlockRenderShape.CrossBillboard;
+
+            if (isBillboard)
+            {
+                // Disable shader outline for billboards (looks bad)
+                shader.SetInt("uOutlineBlockId", -1);
+            }
+            else
+            {
+                // Use Air block (ID 0) for outline texture
+                shader.SetInt("uOutlineBlockId", 0);
+            }
+            
+            // Pass breaking progress (works for both billboards and cubes via shader)
+            shader.SetFloat("uBreakingProgress", BreakingProgress);
+        }
+        else
+        {
+            shader.SetInt("uOutlineBlockId", -1);
+            shader.SetFloat("uBreakingProgress", 0);
+        }
 
         // DEBUG: Verify buffer binding
         if (bufferManager!.IndirectDrawBuffer == 0)
@@ -422,7 +473,15 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         }
 
         // Render picked block outline (on top of terrain)
-        RenderPickedBlockOutline();
+        // Only render GL_LINES outline if shader outline is disabled (e.g. for billboards)
+        if (PickedBlock.HasValue)
+        {
+            var blockDef = BlockRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
+            if (blockDef?.Shape == BlockRenderShape.CrossBillboard)
+            {
+                RenderPickedBlockOutline();
+            }
+        }
 
         Log.CheckGlError();
     }

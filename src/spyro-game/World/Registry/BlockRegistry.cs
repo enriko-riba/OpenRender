@@ -64,30 +64,30 @@ public static class BlockRegistry
         });
 
         // === Stone Types ===
-        RegisterOpaqueSolid(builder, BlockId.Stone);
-        RegisterOpaqueSolid(builder, BlockId.Bedrock);
-        RegisterOpaqueSolid(builder, BlockId.Cobblestone);
-        RegisterOpaqueSolid(builder, BlockId.MossyCobblestone);
-        RegisterOpaqueSolid(builder, BlockId.Granite);
+        Register(builder, BlockId.Stone, new Block(BlockId.Stone) { Hardness = 1.5f });
+        Register(builder, BlockId.Bedrock, new Block(BlockId.Bedrock) { Hardness = -1.0f });
+        Register(builder, BlockId.Cobblestone, new Block(BlockId.Cobblestone) { Hardness = 2.0f });
+        Register(builder, BlockId.MossyCobblestone, new Block(BlockId.MossyCobblestone) { Hardness = 2.0f });
+        Register(builder, BlockId.Granite, new Block(BlockId.Granite) { Hardness = 1.5f });
 
         // === Dirt Types ===
-        RegisterOpaqueSolid(builder, BlockId.Dirt);
-        RegisterOpaqueSolid(builder, BlockId.Grass);
-        RegisterOpaqueSolid(builder, BlockId.GrassSnowy);
-        RegisterOpaqueSolid(builder, BlockId.Podzol);
-        RegisterOpaqueSolid(builder, BlockId.Mycelium);
-        RegisterOpaqueSolid(builder, BlockId.CoarseDirt);
-        RegisterOpaqueSolid(builder, BlockId.GrassH);
+        Register(builder, BlockId.Dirt, new Block(BlockId.Dirt) { Hardness = 0.5f });
+        Register(builder, BlockId.Grass, new Block(BlockId.Grass) { Hardness = 0.35f });
+        Register(builder, BlockId.GrassSnowy, new Block(BlockId.GrassSnowy) { Hardness = 0.6f });
+        Register(builder, BlockId.Podzol, new Block(BlockId.Podzol) { Hardness = 0.5f });
+        Register(builder, BlockId.Mycelium, new Block(BlockId.Mycelium) { Hardness = 0.6f });
+        Register(builder, BlockId.CoarseDirt, new Block(BlockId.CoarseDirt) { Hardness = 0.5f });
+        Register(builder, BlockId.GrassH, new Block(BlockId.GrassH) { Hardness = 0.35f });
 
         // === Sand Types ===
-        RegisterOpaqueSolid(builder, BlockId.Sand);
-        RegisterOpaqueSolid(builder, BlockId.RedSand);
-        RegisterOpaqueSolid(builder, BlockId.Sandstone);
-        RegisterOpaqueSolid(builder, BlockId.RedSandstone);
+        Register(builder, BlockId.Sand, new Block(BlockId.Sand) { Hardness = 0.4f });
+        Register(builder, BlockId.RedSand, new Block(BlockId.RedSand) { Hardness = 0.5f });
+        Register(builder, BlockId.Sandstone, new Block(BlockId.Sandstone) { Hardness = 0.8f });
+        Register(builder, BlockId.RedSandstone, new Block(BlockId.RedSandstone) { Hardness = 0.8f });
 
         // === Gravel/Clay ===
-        RegisterOpaqueSolid(builder, BlockId.Gravel);
-        RegisterOpaqueSolid(builder, BlockId.Clay);
+        Register(builder, BlockId.Gravel, new Block(BlockId.Gravel) { Hardness = 0.6f });
+        Register(builder, BlockId.Clay, new Block(BlockId.Clay) { Hardness = 0.6f });
 
         // === Snow/Ice ===
         Register(builder, BlockId.Snow, new Block(BlockId.Snow) {
@@ -210,7 +210,7 @@ public static class BlockRegistry
         RegisterGlass(builder, BlockId.BlackStainedGlass);
         Register(builder, BlockId.TintedGlass, new Block(BlockId.TintedGlass) {
             IsSolid = true, IsOpaque = false, IsTranslucent = true,
-            LightFilter = 15, RenderMethod = RenderMethod.Blend
+            LightFilter = 15, RenderMethod = RenderMethod.Blend, Hardness = 0.2f
         });
 
         // === Vegetation ===
@@ -239,7 +239,8 @@ public static class BlockRegistry
 
         Register(builder, BlockId.Cactus, new Block(BlockId.Cactus) {
             IsSolid = true, IsOpaque = true,
-            RenderMethod = RenderMethod.AlphaTest
+            RenderMethod = RenderMethod.AlphaTest,
+            Hardness = 0.3f
         });
     }
 
@@ -255,19 +256,22 @@ public static class BlockRegistry
     private static void RegisterLeaves(Dictionary<BlockId, Block> builder, BlockId blockId)
         => Register(builder, blockId, new Block(blockId) {
             IsSolid = true, IsOpaque = false, IsTree = true,
-            LightFilter = 2, RenderMethod = RenderMethod.AlphaTest
+            LightFilter = 2, RenderMethod = RenderMethod.AlphaTest,
+            Hardness = 0.1f
         });
 
     private static void RegisterGlass(Dictionary<BlockId, Block> builder, BlockId blockId)
         => Register(builder, blockId, new Block(blockId) {
             IsSolid = true, IsOpaque = false, IsTranslucent = true,
-            LightFilter = 0, RenderMethod = RenderMethod.Blend
+            LightFilter = 0, RenderMethod = RenderMethod.Blend,
+            Hardness = 0.2f
         });
 
     private static void RegisterFlower(Dictionary<BlockId, Block> builder, BlockId blockId)
         => Register(builder, blockId, new Block(blockId) {
             IsSolid = false, IsOpaque = false, IsReplaceable = true, IsVegetation = true,
             RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard,
+            Hardness = 0,
             LightFilter = 0 // Vegetation allows light to pass through
         });
 

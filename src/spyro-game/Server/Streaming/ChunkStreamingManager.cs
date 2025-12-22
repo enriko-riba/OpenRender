@@ -1,5 +1,6 @@
 using OpenRender;
 using OpenTK.Mathematics;
+using SpyroGame.Components;
 using SpyroGame.Server.World;
 using SpyroGame.Server.World.Generation;
 using SpyroGame.Shared.Abstractions;
@@ -1016,9 +1017,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             var desired = GetOrCreateDesiredSet(playerId);
             desired.Clear();
 
-            var centerIdx = VoxelHelper.GetChunkIndexFromPositionGlobal(pos);
-            var centerX = centerIdx % VoxelHelper.WorldChunksXZ;
-            var centerZ = centerIdx / VoxelHelper.WorldChunksXZ;
+            // Fix: Calculate center chunk coordinates directly from position to avoid wrapping/truncation issues
+            // with VoxelHelper.GetChunkIndexFromPositionGlobal when near world boundaries or using negative coordinates.
+            var centerX = (int)MathF.Floor(pos.X / VoxelHelper.ChunkSideSize);
+            var centerZ = (int)MathF.Floor(pos.Z / VoxelHelper.ChunkSideSize);
 
             var radius = Math.Clamp(VoxelHelper.MaxDistanceInChunks, 1, VoxelHelper.WorldChunksXZ - 1);
             var radiusSq = radius * radius;

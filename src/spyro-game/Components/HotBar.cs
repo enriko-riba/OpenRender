@@ -1,13 +1,11 @@
 ﻿using OpenRender.Components;
 using OpenRender.Core;
-using OpenRender.Core.Geometry;
-using OpenRender.Core.Rendering;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using SpyroGame.World;
 using SpyroGame.World.Registry;
 
-namespace SpyroGame;
+namespace SpyroGame.Components;
 
 internal class HotBar : Sprite
 {
@@ -50,7 +48,7 @@ internal class HotBar : Sprite
 
         activeSlotSprite = Sprite.Create("Resources/gui/hotbar_selection.png");
         activeSlotSprite.Size = new(22 * ScaleFactor);
-        activeSlotSprite.Pivot = new (0, 0);
+        activeSlotSprite.Pivot = new(0, 0);
         AddChild(activeSlotSprite);
     }
 
@@ -66,19 +64,19 @@ internal class HotBar : Sprite
                 continue;
             }
             slotSprites[i].IsVisible = true;
-            
+
             var mat = ItemTextureManager.GetMaterial(inventoryItem.Item);
             mat.Shader = slotSprites[i].Material.Shader;
             slotSprites[i].Material = mat;
-            
+
             var renderShape = BlockRenderShape.None;
             var item = ItemRegistry.Get(inventoryItem.Item);
             if (item is BlockItem blockItem)
             {
                 renderShape = BlockRegistry.GetRenderShape(blockItem.BlockId);
             }
-            
-            //  cross billboards use the simple atlas 3x2 frames layout but only the last frame in first row holds the texture
+
+            //  cross billboards use the simple atlas 3x1 frames layout but only the last frame holds the texture
             slotSprites[i].SourceRectangle = renderShape == BlockRenderShape.CrossBillboard
                 ? new Rectangle(100, 0, 50, 50)
                 : new Rectangle(0, 0, 50, 50);

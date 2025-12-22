@@ -1,7 +1,7 @@
 using SpyroGame.Shared.State;
 using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 public struct InventoryItem
 {

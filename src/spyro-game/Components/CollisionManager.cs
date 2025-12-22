@@ -1,7 +1,8 @@
 using OpenTK.Mathematics;
+using SpyroGame.World;
 using SpyroGame.World.Registry;
 
-namespace SpyroGame.World;
+namespace SpyroGame.Components;
 
 /// <summary>
 /// Represents a vertical span of blocks in a column.

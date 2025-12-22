@@ -31,7 +31,7 @@ public static class ItemRegistry
         // Register Pure Items
         Register(builder, ItemId.Stick);
         Register(builder, ItemId.Apple);
-        Register(builder, ItemId.DiamondSword);
+        builder[ItemId.DiamondSword] = new Item(ItemId.DiamondSword) { MiningSpeedMultiplier = 1.5f }; // Swords are slightly faster than hand
 
         Register(builder, ItemId.RawBeef);
         Register(builder, ItemId.Leather);

@@ -1,4 +1,5 @@
 using OpenTK.Mathematics;
+using SpyroGame.Components;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
 using SpyroGame.World.Registry;

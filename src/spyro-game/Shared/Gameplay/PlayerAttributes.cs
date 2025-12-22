@@ -1,8 +1,6 @@
-using System;
+using SpyroGame.Shared.State;
 
 namespace SpyroGame.Shared.Gameplay;
-
-using SpyroGame.Shared.State;
 
 /// <summary>
 /// Minecraft-style player attributes.

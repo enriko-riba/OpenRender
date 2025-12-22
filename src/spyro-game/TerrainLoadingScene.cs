@@ -4,12 +4,11 @@ using OpenRender.Core.Rendering.Text;
 using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using SpyroGame.Client;
+using SpyroGame.Client.Rendering;
 using SpyroGame.Client.Terrain;
-using SpyroGame.Shared.State;
 using SpyroGame.Shared.Input;
 using SpyroGame.World;
 using System.Diagnostics;
-using SpyroGame.Client.Rendering;
 
 namespace SpyroGame;
 
@@ -28,7 +27,7 @@ internal class TerrainLoadingScene : Scene
     private ClientTerrainSystem? terrainSystem;
     private VoxelTerrainRenderer? terrainRenderer;
 
-    private LocalGameClient localClient;
+    private readonly LocalGameClient localClient;
     private int appliedChunkPayloadCount;
 
     private readonly Vector3 textColor = Vector3.One;
@@ -78,7 +77,8 @@ internal class TerrainLoadingScene : Scene
             terrainSystem.InitializeGraphics();
             terrainRenderer = terrainSystem.TerrainRenderer;
             Log.Info("Client terrain system initialized");
-        }));
+        }
+        ));
 
         operationQueue.Enqueue(("Connect", () =>
         {
@@ -90,11 +90,12 @@ internal class TerrainLoadingScene : Scene
             localClient.SendInput(default(PlayerInputCommand));
 
             Log.Info("Session started; hello sent");
-        }));
+        }
+        ));
 
         Log.Info($"TerrainLoadingScene: Queued {operationQueue.Count} operations");
     }
-    
+
 
     public override void UpdateFrame(double elapsedSeconds)
     {
@@ -147,7 +148,7 @@ internal class TerrainLoadingScene : Scene
 
                 // Apply a limited number of chunk payloads per frame to keep the loading UI responsive.
                 var appliedThisFrame = 0;
-                const int MaxChunkPayloadsToApplyPerFrame = 8;
+                const int MaxChunkPayloadsToApplyPerFrame = 32;
                 while (appliedThisFrame < MaxChunkPayloadsToApplyPerFrame && localClient.TryDequeueChunkPayload(out var payload))
                 {
                     terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
@@ -155,7 +156,8 @@ internal class TerrainLoadingScene : Scene
                     appliedThisFrame++;
                 }
 
-                terrainSystem.UpdateUploads();
+                terrainSystem.ProcessPendingChunkUpdates();
+                terrainSystem.UpdateUploads(64);
 
                 var haveTargets = desired > 0;
                 var generationDone = haveTargets && ready >= desired;
@@ -250,7 +252,7 @@ internal class TerrainLoadingScene : Scene
 
         // Current Stage
         DrawText(currentStage, 20, progressColor);
-        
+
         // Detailed Status
         if (!string.IsNullOrEmpty(progressTracker.DetailedStatus))
         {
@@ -266,11 +268,11 @@ internal class TerrainLoadingScene : Scene
         var barText = "[" + new string('#', filledChars) + new string('_', emptyChars) + "]";
         var barSize = textRenderer.Measure(barText, 20);
         textRenderer.Render(barText, 20, leftMargin, currentY, progressColor);
-        
+
         // Render percentage to the right
         var percentText = $"{progressPercent}%";
         textRenderer.Render(percentText, 20, leftMargin + (int)barSize.Width + 20, currentY, textColor);
-        
+
         currentY += 24 + 10 + SectionGap;
 
         currentY += SectionGap;
