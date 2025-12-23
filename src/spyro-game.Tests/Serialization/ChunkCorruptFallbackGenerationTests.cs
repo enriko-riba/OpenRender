@@ -45,7 +45,7 @@ public class ChunkCorruptFallbackGenerationTests
             var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
             while (DateTime.UtcNow < deadline)
             {
-                mgr.Tick(0.016);
+                mgr.Tick();
 
                 if (mgr.IsChunkReadyForPlayer(playerId, neededChunkIdx))
                 {

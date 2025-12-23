@@ -89,7 +89,7 @@ internal sealed class CpuTerrainGenerator
 
         // 1. Generate base terrain voxels
         FillChunk(chunkIndex, chunkData, edits, ctx, chunkBiomeData);
-        
+
         // Safety: Recalculate surface heights from actual voxel data to ensure mesher accuracy
         // This handles edge cases where FillChunk's tracking might diverge from actual blocks
         chunkData.RecalculateSurfaceHeights();
@@ -218,8 +218,6 @@ internal sealed class CpuTerrainGenerator
                         y,
                         worldX,
                         worldZ,
-                        baseHeight,
-                        continentalness01,
                         columnIndex,
                         biomeDef,
                         density,
@@ -243,7 +241,7 @@ internal sealed class CpuTerrainGenerator
                     if (density >= 0f)
                     {
                         depthFromSurface++;
-                      }
+                    }
                     else
                     {
                         depthFromSurface = 0;
@@ -251,7 +249,7 @@ internal sealed class CpuTerrainGenerator
 
                     densityAbove = density;
                 }
-                
+
                 // Store computed surface height for this column
                 // This is critical for the mesher to know how high to iterate
                 chunkData.SurfaceHeights[columnIndex] = surfaceHeight >= 0 ? surfaceHeight : 0;
@@ -299,13 +297,13 @@ internal sealed class CpuTerrainGenerator
                     }
 
                     var currentSpanCount = localSpanCounts[columnIndex];
-                    
+
                     // Check if we can merge with the previous span
                     if (currentSpanCount > 0)
                     {
                         var prevPairIndex = (columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount - 1) * 2;
                         var prevTypeIndex = columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount - 1;
-                        
+
                         var prevEnd = localSpanPairs[prevPairIndex + 1];
                         var prevType = localSpanTypes[prevTypeIndex];
                         var currentType = chunkData.Palette[paletteIndex];
@@ -346,7 +344,7 @@ internal sealed class CpuTerrainGenerator
             {
                 var srcBaseIndex = i * ChunkCollisionData.MaxSpansPerColumn * 2;
                 var srcTypeBaseIndex = i * ChunkCollisionData.MaxSpansPerColumn;
-                
+
                 var dstIndex = i * ChunkCollisionData.MaxSpansPerColumn * 2;
                 var dstTypeIndex = i * ChunkCollisionData.MaxSpansPerColumn;
                 var collisionOffset = i * ChunkCollisionData.MaxSpansPerColumn;
@@ -357,11 +355,11 @@ internal sealed class CpuTerrainGenerator
                     var startY = localSpanPairs[srcBaseIndex + j * 2];
                     var endY = localSpanPairs[srcBaseIndex + j * 2 + 1];
                     var blockType = localSpanTypes[srcTypeBaseIndex + j];
-                    
+
                     spanPairs[dstIndex + j * 2] = startY;
                     spanPairs[dstIndex + j * 2 + 1] = endY;
                     spanTypes[dstTypeIndex + j] = blockType;
-                    
+
                     // Also populate ChunkCollisionData.Spans for CollisionManager
                     // Note: CollisionManager expects EndY to be INCLUSIVE, but we store it as EXCLUSIVE
                     // So we subtract 1 when storing to Spans
@@ -402,7 +400,7 @@ internal sealed class CpuTerrainGenerator
         // Calculate terrain height using biome properties (BaseHeight, HeightVariation, etc.)
         // Uses cached climate values (PV, Erosion) - NO re-sampling.
         profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
-        BuildColumnHeightsFromBiomes(ctx, chunkBiomeData);
+        BuildColumnHeightsFromBiomes(ctx);
         profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
 
         // ============================================================
@@ -469,7 +467,7 @@ internal sealed class CpuTerrainGenerator
     /// This keeps debug queries (interpolated climate) consistent with the actual generation
     /// pipeline, and avoids redundant noise sampling.
     /// </summary>
-    private void PopulateLegacyCellClimate(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
+    private static void PopulateLegacyCellClimate(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
         var temp01 = ctx.Temperature01;
         var humid01 = ctx.Humidity01;
@@ -506,7 +504,7 @@ internal sealed class CpuTerrainGenerator
     /// 
     /// Uses cached climate values (PV, Erosion) from Stage 1 - NO re-sampling.
     /// </summary>
-    private void BuildColumnHeightsFromBiomes(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
+    private void BuildColumnHeightsFromBiomes(GenerationContext ctx)
     {
         var shaping = config.TerrainShaping;
         var cachedErosion01 = ctx.Erosion01;
@@ -521,7 +519,7 @@ internal sealed class CpuTerrainGenerator
         var temp01 = ctx.Temperature01;
         var humid01 = ctx.Humidity01;
         var pv01 = ctx.PeaksValleys01;
-        
+
         // Reused working set for weighted biome blending (avoid per-chunk allocations)
         var weightedBiomes = new List<(BiomeDefinition Biome, float Weight)>(8);
 
@@ -823,7 +821,7 @@ internal sealed class CpuTerrainGenerator
     /// Check if a column is within beach distance of ocean.
     /// Returns true if the column should be considered coastal (for Beach biome).
     /// </summary>
-    private bool IsWithinBeachDistance(int columnIndex, GenerationContext ctx)
+    private static bool IsWithinBeachDistance(int columnIndex, GenerationContext ctx)
     {
         var distance = ctx.ColumnOceanDistance[columnIndex];
         var threshold = ctx.ColumnBeachThreshold[columnIndex];
@@ -1024,7 +1022,7 @@ internal sealed class CpuTerrainGenerator
         }
     }
 
-    private void SampleFbm2D(Span<float> xCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
+    private static void SampleFbm2D(Span<float> xCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
     {
         var length = destination.Length;
         destination.Clear();
@@ -1058,7 +1056,7 @@ internal sealed class CpuTerrainGenerator
         }
     }
 
-    private void SampleFbm3D(Span<float> xCoords, Span<float> yCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
+    private static void SampleFbm3D(Span<float> xCoords, Span<float> yCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
     {
         var length = destination.Length;
         destination.Clear();
@@ -1139,8 +1137,6 @@ internal sealed class CpuTerrainGenerator
         int y,
         int wx,
         int wz,
-        float baseHeight,
-        float continentalness01,
         int columnIndex,
         BiomeDefinition? biomeDef,
         float density,
@@ -1305,7 +1301,7 @@ internal sealed class CpuTerrainGenerator
         var warp = DomainWarp(p, terrainParams.Seed, ctx);
         var n = SampleFbm2DSingle(p + warp, config.PeaksValleys.BaseScale, terrainParams.Seed + 400u, config.PeaksValleys.Octaves, config.PeaksValleys.Persistence, config.PeaksValleys.Lacunarity, ctx);
         n = Math.Clamp(n * config.PeaksValleys.OutputScale, -1f, 1f);
-        
+
         if (config.PeaksValleys.UseRidged)
         {
             var ridge = 1f - MathF.Abs(n);
@@ -1315,9 +1311,9 @@ internal sealed class CpuTerrainGenerator
         return n * 0.5f + 0.5f;
     }
 
-    private Span<byte> GetColumnCaveMask(byte[] caveMaskVolume, int columnIndex)
+    private static Span<byte> GetColumnCaveMask(byte[] caveMaskVolume, int columnIndex)
         => caveMaskVolume.AsSpan(columnIndex * VoxelHelper.ChunkYSize, VoxelHelper.ChunkYSize);
-    
+
     #region Helpers
 
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
@@ -1375,7 +1371,7 @@ internal sealed class CpuTerrainGenerator
         return x0 + (x1 - x0) * tz;
     }
 
-    private bool TryGetColumnIndex(int wx, int wz, int chunkX, int chunkZ, out int columnIndex)
+    private static bool TryGetColumnIndex(int wx, int wz, int chunkX, int chunkZ, out int columnIndex)
     {
         var localX = wx - chunkX * VoxelHelper.ChunkSideSize;
         var localZ = wz - chunkZ * VoxelHelper.ChunkSideSize;
@@ -1620,6 +1616,7 @@ internal sealed class CpuTerrainGenerator
     byte[] SpanCounts,
     BlockId[] SpanTypes,
     ChunkBiomeData? BiomeData)
-{
-    public bool IsEmpty { get; init; } = false;
-}}
+    {
+        public bool IsEmpty { get; init; } = false;
+    }
+}

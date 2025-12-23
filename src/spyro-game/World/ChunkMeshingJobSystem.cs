@@ -43,9 +43,8 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         workerTasks = new Task[workerCount];
         for (var i = 0; i < workerCount; i++)
         {
-            var workerId = i;
             workerTasks[i] = Task.Factory.StartNew(
-                () => WorkerLoop(workerId),
+                WorkerLoop,
                 cancellationSource.Token,
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
@@ -85,7 +84,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         latestEnqueueByChunk.Clear();
     }
 
-    private void WorkerLoop(int workerId)
+    private void WorkerLoop()
     {
         try
         {

@@ -179,13 +179,7 @@ public sealed class ChunkProcessingMetrics
         UpdateAverage(blockGenSamples, blockGenCount, out var blockGenAvg);
         AvgBlockGenMs = blockGenAvg;
     }
-
-    /// <summary>Record a chunk reprocessing (neighbor update).</summary>
-    public void RecordReprocess()
-    {
-        chunksReprocessedThisInterval++;
-    }
-
+   
     /// <summary>Update per-second counters. Call once per frame with current time.</summary>
     public void Update(double currentTimeSeconds)
     {
@@ -212,12 +206,6 @@ public sealed class ChunkProcessingMetrics
             maxMeshBuildThisInterval = 0;
             lastResetTime = currentTimeSeconds;
         }
-    }
-
-    /// <summary>Get a formatted summary string for debug display.</summary>
-    public string GetSummary()
-    {
-        return $"Terrain:{AvgTerrainGenerationMs:F1}ms Light:{AvgLightCalculationMs:F1}ms Prop:{AvgLightPropagationMs:F1}ms Mesh:{AvgMeshBuildMs:F1}ms | Gen:{ChunksGeneratedPerSecond}/s Mesh:{ChunksMeshedPerSecond}/s Reproc:{ChunksReprocessedPerSecond}/s";
     }
 
     private static void UpdateAverage(double[] samples, int count, out double avg)

@@ -149,60 +149,27 @@ public sealed class ChunkBiomeData
         var index = GetCaveBiomeCellIndex(cellX, cellY, cellZ);
         CaveBiomeIds[index] = biome;
     }
-    
+
     /// <summary>
     /// Get the 3D cell index for cave biomes.
     /// Index = cellY * (GridSize * GridSize) + cellZ * GridSize + cellX
     /// </summary>
-    public static int GetCaveBiomeCellIndex(int cellX, int cellY, int cellZ)
-    {
-        return cellY * (GridSize * GridSize) + cellZ * GridSize + cellX;
-    }
-    
-    /// <summary>
-    /// Get cell coordinates from a 3D cave biome cell index.
-    /// </summary>
-    public static (int cellX, int cellY, int cellZ) GetCaveBiomeCellCoords(int cellIndex)
-    {
-        var cellY = cellIndex / (GridSize * GridSize);
-        var remainder = cellIndex % (GridSize * GridSize);
-        var cellZ = remainder / GridSize;
-        var cellX = remainder % GridSize;
-        return (cellX, cellY, cellZ);
-    }
-    
-    /// <summary>
-    /// Get interpolated temperature at a specific block position.
-    /// </summary>
-    public float GetTemperatureAt(int localX, int localZ)
-    {
-        return GetInterpolatedValue(Temperature, localX, localZ);
-    }
-    
-    /// <summary>
-    /// Get interpolated humidity at a specific block position.
-    /// </summary>
-    public float GetHumidityAt(int localX, int localZ)
-    {
-        return GetInterpolatedValue(Humidity, localX, localZ);
-    }
-    
+    public static int GetCaveBiomeCellIndex(int cellX, int cellY, int cellZ) => cellY * (GridSize * GridSize) + cellZ * GridSize + cellX;
+
+
     /// <summary>
     /// Get all interpolated climate values at a specific block position.
     /// Returns: (continentalness, temperature, humidity, erosion, peaksValleys)
     /// </summary>
-    public (float continentalness, float temperature, float humidity, float erosion, float peaksValleys) 
-        GetInterpolatedClimate(int localX, int localZ)
-    {
-        return (
+    public (float continentalness, float temperature, float humidity, float erosion, float peaksValleys)
+        GetInterpolatedClimate(int localX, int localZ) => (
             GetInterpolatedValue(Continentalness, localX, localZ),
             GetInterpolatedValue(Temperature, localX, localZ),
             GetInterpolatedValue(Humidity, localX, localZ),
             GetInterpolatedValue(Erosion, localX, localZ),
             GetInterpolatedValue(PeaksValleys, localX, localZ)
         );
-    }
-    
+
     /// <summary>
     /// Get the cell index for a local block position.
     /// </summary>
@@ -212,15 +179,7 @@ public sealed class ChunkBiomeData
         var cellZ = localZ / BlocksPerCell;
         return cellZ * GridSize + cellX;
     }
-    
-    /// <summary>
-    /// Get cell coordinates from cell index.
-    /// </summary>
-    public static (int cellX, int cellZ) GetCellCoords(int cellIndex)
-    {
-        return (cellIndex % GridSize, cellIndex / GridSize);
-    }
-    
+   
     /// <summary>
     /// Get raw (non-interpolated) climate data for a specific cell.
     /// </summary>
@@ -314,26 +273,7 @@ public sealed class ChunkBiomeData
         
         return [.. results];
     }
-    
-    /// <summary>
-    /// Get the blended temperature value at a position using K-nearest biome weights.
-    /// Useful for smooth climate transitions that affect block placement or rendering.
-    /// </summary>
-    public float GetBlendedTemperature(int localX, int localZ, int k = 3)
-    {
-        var weights = GetBiomeBlendWeights(localX, localZ, k);
-        var blended = 0f;
-        
-        foreach (var (_, weight) in weights)
-        {
-            // Use the cell's temperature weighted by blend weight
-            var cellIndex = GetCellIndex(localX, localZ);
-            blended += Temperature[cellIndex] * weight;
-        }
-        
-        return blended;
-    }
-    
+   
     /// <summary>
     /// Bilinear interpolation of a value at a block position.
     /// </summary>
@@ -396,7 +336,7 @@ public sealed class ChunkBiomeData
         foreach (var v in Weirdness) writer.Write(v);
     }
 
-    public static ChunkBiomeData Deserialize(System.IO.BinaryReader reader)
+    public static ChunkBiomeData Deserialize(BinaryReader reader)
     {
         var data = new ChunkBiomeData();
         

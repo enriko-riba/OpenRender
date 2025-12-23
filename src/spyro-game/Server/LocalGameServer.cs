@@ -1,6 +1,6 @@
 using OpenRender.Core.Rendering;
-using System.Runtime.InteropServices;
 using OpenTK.Mathematics;
+using SpyroGame.Components;
 using SpyroGame.Server.Combat;
 using SpyroGame.Server.Mobs;
 using SpyroGame.Shared.Abstractions;
@@ -8,8 +8,7 @@ using SpyroGame.Shared.Commands;
 using SpyroGame.Shared.Input;
 using SpyroGame.Shared.State;
 using SpyroGame.World;
-using SpyroGame.World.Registry;
-using SpyroGame.Components;
+using System.Runtime.InteropServices;
 
 namespace SpyroGame.Server;
 
@@ -50,7 +49,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     }
 
     private readonly VoxelWorld world;
-    private readonly SpyroGame.Server.Streaming.ChunkStreamingManager streamingManager;
+    private readonly Streaming.ChunkStreamingManager streamingManager;
     private readonly Vector3 spawnPosition;
 
     private ulong tickId;
@@ -97,26 +96,15 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         combatSystem = new CombatSystem(droppedItemManager);
     }
 
-    public void Submit(PlayerId playerId, PlayerInputCommand input)
-    {
-        EnsurePlayer(playerId).ApplyInput(input);
-    }
+    public void Submit(PlayerId playerId, PlayerInputCommand input) => EnsurePlayer(playerId).ApplyInput(input);
 
-    public void Connect(PlayerId playerId)
-    {
+    public void Connect(PlayerId playerId) =>
         // Creates the player immediately so streaming can start before first input.
         EnsurePlayer(playerId);
-    }
 
-    public void Submit(PlayerId playerId, BreakBlockCommand command)
-    {
-        EnsurePlayer(playerId).TryBreakBlock(command.GlobalPosition);
-    }
+    public void Submit(PlayerId playerId, BreakBlockCommand command) => EnsurePlayer(playerId).TryBreakBlock(command.GlobalPosition);
 
-    public void Submit(PlayerId playerId, PlaceBlockCommand command)
-    {
-        EnsurePlayer(playerId).TryPlaceBlock(command.GlobalPosition, command.Block);
-    }
+    public void Submit(PlayerId playerId, PlaceBlockCommand command) => EnsurePlayer(playerId).TryPlaceBlock(command.GlobalPosition, command.Block);
 
     public void SubmitAttack(PlayerId playerId, MobId targetMob)
     {
@@ -153,7 +141,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         }
 
         // Server is authoritative for terrain streaming/generation.
-        streamingManager.Tick(elapsedSeconds);
+        streamingManager.Tick();
 
         // Keep mobs scoped to the active (loaded/ready) region.
         // For Phase 1, we consider a mob active if its chunk is ready for ANY connected player.
@@ -507,21 +495,6 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     public bool TryGetLoadingProgress(PlayerId playerId, out LoadingProgressSnapshot progress)
         => streamingManager.TryGetLoadingProgress(playerId, out progress);
 
-    public bool TryGetInitialChunkStatus(PlayerId playerId, out int sent, out int target)
-    {
-        sent = 0;
-        target = 0;
-
-        if (!initialChunkTargetByPlayer.TryGetValue(playerId, out var t) || !initialChunksSentByPlayer.TryGetValue(playerId, out var s))
-        {
-            return false;
-        }
-
-        target = t.Count;
-        sent = s.Count;
-        return true;
-    }
-
     public bool ShouldSendGameStart(PlayerId playerId)
     {
         if (gameStartSent.Contains(playerId))
@@ -722,53 +695,5 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         var x = (int)MathF.Floor(worldPos.X);
         var z = (int)MathF.Floor(worldPos.Z);
         return VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(x, 0, z));
-    }
-
-    private static bool TryFindMobGroundY(VoxelWorld world, int wx, int wz, int startY, out int groundY)
-    {
-        groundY = 0;
-        const int maxScan = 48;
-        var yMin = Math.Max(0, startY - maxScan);
-
-        for (var y = startY; y >= yMin; y--)
-        {
-            var b = world.GetBlockByPositionGlobalSafe(wx, y, wz);
-            if (b is null) continue;
-
-            if (IsSuitableMobGround(b.Value.Block))
-            {
-                groundY = y;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static bool IsSuitableMobGround(BlockId block)
-    {
-        if (!block.IsSolid()) return false;
-        if (block.IsLiquid()) return false;
-        if (!block.IsOpaque()) return false;
-
-        return block is not (BlockId.OakLog or BlockId.BirchLog or BlockId.SpruceLog or BlockId.JungleLog)
-               and not (BlockId.OakLeaves or BlockId.BirchLeaves or BlockId.SpruceLeaves or BlockId.JungleLeaves);
-    }
-
-    private static bool HasMobHeadroom(VoxelWorld world, int wx, int spawnY, int wz)
-    {
-        var a0 = world.GetBlockByPositionGlobalSafe(wx, spawnY, wz);
-        if (a0 is not null && (!a0.Value.Block.IsReplaceable() || a0.Value.Block.IsLiquid()))
-        {
-            return false;
-        }
-
-        var a1 = world.GetBlockByPositionGlobalSafe(wx, spawnY + 1, wz);
-        if (a1 is not null && (!a1.Value.Block.IsReplaceable() || a1.Value.Block.IsLiquid()))
-        {
-            return false;
-        }
-
-        return true;
     }
 }

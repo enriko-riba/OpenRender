@@ -455,7 +455,7 @@ internal class GameScene : Scene
 
                 if (snap.ChunkDelta is { HasChanges: true } chunkDelta)
                 {
-                    ApplyChunkDelta(snap.TickId, snap.Player.Position, chunkDelta);
+                    ApplyChunkDelta(chunkDelta);
                 }
             }
 
@@ -600,7 +600,7 @@ internal class GameScene : Scene
         // Client determines target positions via picking; server executes edits.
         if (localClient != null)
         {
-            var blockHit = blockPickingService?.PickedBlock is { } picked;
+            var blockHit = blockPickingService?.PickedBlock is { };
             var blockDist = blockPickingService?.HitDistance ?? float.MaxValue;
             var mobHit = pickedMobId.HasValue;
             var mobDist = pickedMobDistance;
@@ -796,10 +796,7 @@ internal class GameScene : Scene
             }
 
             // Update renderer visual state
-            if (terrainRenderer != null)
-            {
-                terrainRenderer.BreakingProgress = breakingProgress;
-            }
+            terrainRenderer?.BreakingProgress = breakingProgress;
         }
 
         // Update terrain metrics counters (server generation + client meshing)
@@ -1080,7 +1077,7 @@ internal class GameScene : Scene
         base.Close();
     }
 
-    private void ApplyChunkDelta(ulong tickId, Vector3 snapshotPlayerPosition, in ChunkDeltaSnapshot delta)
+    private void ApplyChunkDelta(in ChunkDeltaSnapshot delta)
     {
         // Apply unloads first to keep sets consistent.
         foreach (var idx in delta.UnloadedChunkIndices)

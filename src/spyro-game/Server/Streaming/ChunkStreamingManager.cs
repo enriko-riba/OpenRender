@@ -261,7 +261,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     public bool TryDequeueChangedChunk(out int chunkIndex)
         => changedChunkIndices.TryDequeue(out chunkIndex);
 
-    public void Tick(double elapsedSeconds)
+    public void Tick()
     {
         UpdateDesiredSets();
         StartMissingGenerations();
@@ -610,7 +610,6 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
     private static bool TryValidateChunkState(ChunkData data, ChunkBiomeData? biomeData, int expectedChunkIdx, out string invalidReason)
     {
-        invalidReason = string.Empty;
 
         // Wrong-file guard: prevents loading a different chunk's data into this chunk index.
         if (data.ChunkIndex != expectedChunkIdx)
@@ -1287,15 +1286,9 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         return edits;
     }
 
-    private IReadOnlyDictionary<int, BlockId>? BuildBlockIdEdits(int chunkIdx)
-    {
-        if (!chunkEdits.TryGetValue(chunkIdx, out var edits) || edits.Count == 0)
-        {
-            return null;
-        }
-
-        return edits;
-    }
+    private Dictionary<int, BlockId>? BuildBlockIdEdits(int chunkIdx) => 
+        !chunkEdits.TryGetValue(chunkIdx, out var edits) || edits.Count == 0 ?
+        null : edits;
 
     private static TerrainConfig LoadTerrainConfig()
     {

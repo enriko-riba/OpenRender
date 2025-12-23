@@ -10,21 +10,9 @@ public static class VoxelHelper
     // Rendering far plane: should be slightly larger than max chunk distance
     // to avoid popping when chunks at the edge are culled
     // MaxDistanceInChunks * ChunkSideSize * 2 = 16 * 16 * 2 = 512 blocks
-    // Far plane should be ~600 to account for chunk height and diagonal distance
-    public const float FarPlane = 500f; // Was 430f
-    // Chunk loading distance: determines how far chunks are loaded/generated
-    // LOD 0 (Full detail): 0-16 chunks = 256 blocks = 256m
-    // LOD 1 (Medium): 16-32 chunks = 512m (future: half-res mesh)
-    // LOD 2 (Low): 32-64 chunks = 1024m = ~1km (future: impostor)
-    // 
-    // Current: No LOD system, so keep this small to avoid memory issues
-    // For kilometers view: implement LOD tiers (Phase 6)
+    public const float FarPlane = 400f; // Was 430f
+    
     public const int MaxDistanceInChunks = 16; // 16 chunks = 512m diameter (256m radius)
-
-    // Future LOD tiers (Phase 6):
-    // public const int LOD0_Distance = 16;  // Full detail
-    // public const int LOD1_Distance = 32;  // Half resolution
-    // public const int LOD2_Distance = 64;  // Quarter resolution / impostor
 
     public const int MaxPickingDistance = 3;
 
@@ -33,17 +21,11 @@ public static class VoxelHelper
     public const int ChunkYSize = 384;
 
     public const int WaterLevel = 35;
-    //public const float NoiseFrequency = 0.0012f;
-
     public const int ChunkSideSizeSquare = ChunkSideSize * ChunkSideSize;
-    public const int ChunkSizeXZMinusOne = ChunkSideSize - 1;
     public const int MaxBlockPositionXZ = WorldChunksXZ * ChunkSideSize - 1;
     public const int MaxBlockPositionY = ChunkYSize - 1;
-    public const int TotalChunks = WorldChunksXZ * WorldChunksXZ;
     public const int ChunkVoxelCount = ChunkSideSizeSquare * ChunkYSize;
-    public const int PackedChunkVoxelCount = ChunkVoxelCount; // 1 voxel per uint (UNPACKED)
 
-    public const int INITIAL_LOAD_BATCH_SIZE = 32; // Reduced batch size for initial load to avoid TDR
     public const int VERTEX_STRIDE_BYTES = 8; // Phase 5.2: Compressed vertex format (8 bytes)
 
    

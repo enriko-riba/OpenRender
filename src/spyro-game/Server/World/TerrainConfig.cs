@@ -513,41 +513,6 @@ public sealed class TerrainConfig
     public float[] BakeHeightSplineLut(int samples = 256)
         => HeightSpline.Bake(samples);
 
-    /// <summary>
-    /// Builds a 2D lookup table mapping (temperature, humidity) to biome IDs for GPU sampling.
-    /// Returns a row-major byte array where each pixel represents a biome ID.
-    /// NOTE: This LUT is used for land biomes only. Ocean biomes are filtered by continentalness
-    /// in the BiomeSelector, not by this LUT.
-    /// </summary>
-    /// <param name="resolution">Resolution of the LUT (both width and height). Default: 256x256.</param>
-    /// <returns>Byte array of size resolution² containing biome IDs (0-255).</returns>
-    public byte[] BuildBiomeIdLut(int resolution = 256)
-    {
-        if (resolution <= 1) resolution = 2;
-        var data = new byte[resolution * resolution];
-
-        // Filter to land biomes (continentalness > 0.45)
-        var landBiomes = Biomes.Where(b => b.Continentalness.Min >= 0.40f).ToList();
-
-        if (landBiomes.Count == 0)
-        {
-            Array.Fill(data, (byte)BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID);
-            return data;
-        }
-
-        for (var y = 0; y < resolution; y++)
-        {
-            var h = y / (float)(resolution - 1);
-            for (var x = 0; x < resolution; x++)
-            {
-                var t = x / (float)(resolution - 1);
-                var id = BiomeDefinition.SelectBestBiomeId(landBiomes, t, h);
-                if (id < 0) id = BiomeDefinition.DEFAULT_FALLBACK_BIOME_ID;
-                data[x + y * resolution] = (byte)landBiomes[id].Id;
-            }
-        }
-        return data;
-    }
 
     /// <summary>
     /// Packed terrain parameter block consumed by CPU generation (and the legacy SSBO upload path).
@@ -695,11 +660,6 @@ public struct SlopeRange
 /// </summary>
 public sealed class BiomeDefinition
 {
-    /// <summary>
-    /// Default fallback biome ID used when LUT sampling fails. Must match shader constant DEFAULT_FALLBACK_BIOME_ID.
-    /// </summary>
-    public const int DEFAULT_FALLBACK_BIOME_ID = (int)BiomeId.Plains;
-
     /// <summary>
     /// Gets or sets the unique biome identifier used in shaders and save files.
     /// Must be unique across all biome definitions.

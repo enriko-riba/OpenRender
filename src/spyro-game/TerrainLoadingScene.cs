@@ -6,7 +6,6 @@ using OpenTK.Mathematics;
 using SpyroGame.Client;
 using SpyroGame.Client.Rendering;
 using SpyroGame.Client.Terrain;
-using SpyroGame.Shared.Input;
 using SpyroGame.World;
 using System.Diagnostics;
 
@@ -87,7 +86,7 @@ internal class TerrainLoadingScene : Scene
             localClient.Connect();
 
             // Send one baseline input so the server has a known held-state, but do not rely on it for connect.
-            localClient.SendInput(default(PlayerInputCommand));
+            localClient.SendInput(default);
 
             Log.Info("Session started; hello sent");
         }
