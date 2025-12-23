@@ -90,9 +90,14 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
     private readonly TerrainConfig terrainConfig;
     private int generationSeed;
+    
+    private readonly ChunkProcessingMetrics processingMetrics = new();
 
     public CollisionManager CollisionManager { get; } = new();
     public ChunkVoxelDataCache VoxelCache => voxelCache;
+    
+    /// <summary>Gets the performance metrics for terrain generation.</summary>
+    public ChunkProcessingMetrics Metrics => processingMetrics;
 
     public ChunkStreamingManager(VoxelWorld world)
     {
@@ -100,7 +105,7 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
         terrainConfig = LoadTerrainConfig();
         voxelCache = new ChunkVoxelDataCache();
-        cpuGenerationJobs = new ChunkGenerationJobSystem(voxelCache, terrainConfig, metrics: null);
+        cpuGenerationJobs = new ChunkGenerationJobSystem(voxelCache, terrainConfig, processingMetrics);
 
         // Disk IO must not run on the tick thread; worker loops handle load/save.
         // Keep IO/decompression concurrency low to avoid starving the main/render thread.
@@ -1170,6 +1175,8 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 baseTerrainComplete.Add(result.ChunkIndex);
 
                 // Decoration uses cached base terrain + biome data.
+                // Ensure we don't lose the chunk if it's evicted before decoration runs.
+                // The job system will try to acquire the chunk data.
                 cpuGenerationJobs.Enqueue(result.ChunkIndex, blockIdEdits: null, GenerationJobType.Decoration);
                 continue;
             }

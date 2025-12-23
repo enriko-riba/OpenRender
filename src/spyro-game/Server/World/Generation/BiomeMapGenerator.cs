@@ -85,7 +85,7 @@ public static class BiomeMapGenerator
         //biomeSelector.UpdateConfig(config);
 
         using var image = new Image<Rgba32>(imageSize, imageSize);
-        var climateCache = new ChunkClimateCache();
+        using var ctx = new GenerationContext();
 
         OpenRender.Log.Info($"Generating downsampled biome map: {imageSize}x{imageSize} ({cellSize}x{cellSize} blocks/pixel) centered at ({centerX}, {centerZ})...");
 
@@ -109,16 +109,16 @@ public static class BiomeMapGenerator
                 var chunkX = startChunkX + cx;
                 var chunkZ = startChunkZ + cz;
 
-                climateCache.SampleForChunk(chunkX, chunkZ, config);
+                ClimateSampler.SampleForChunk(chunkX, chunkZ, config, ctx);
 
                 var chunkWorldX = chunkX * VoxelHelper.ChunkSideSize;
                 var chunkWorldZ = chunkZ * VoxelHelper.ChunkSideSize;
 
-                var cont01 = climateCache.Continentalness01;
-                var temp01 = climateCache.Temperature01;
-                var humid01 = climateCache.Humidity01;
-                var erosion01 = climateCache.Erosion01;
-                var pv01 = climateCache.PeaksValleys01;
+                var cont01 = ctx.Continentalness01;
+                var temp01 = ctx.Temperature01;
+                var humid01 = ctx.Humidity01;
+                var erosion01 = ctx.Erosion01;
+                var pv01 = ctx.PeaksValleys01;
 
                 // Process cells within this chunk
                 for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz += cellSize)
@@ -230,7 +230,7 @@ public static class BiomeMapGenerator
         //biomeSelector.UpdateConfig(config);
 
         using var image = new Image<Rgba32>(size, size);
-        var climateCache = new ChunkClimateCache();
+        using var ctx = new GenerationContext();
 
         OpenRender.Log.Info($"Generating full-res biome map: {size}x{size} centered at ({centerX}, {centerZ})...");
 
@@ -251,16 +251,16 @@ public static class BiomeMapGenerator
                 var chunkX = startChunkX + cx;
                 var chunkZ = startChunkZ + cz;
 
-                climateCache.SampleForChunk(chunkX, chunkZ, config);
+                ClimateSampler.SampleForChunk(chunkX, chunkZ, config, ctx);
 
                 var chunkWorldX = chunkX * VoxelHelper.ChunkSideSize;
                 var chunkWorldZ = chunkZ * VoxelHelper.ChunkSideSize;
 
-                var cont01 = climateCache.Continentalness01;
-                var temp01 = climateCache.Temperature01;
-                var humid01 = climateCache.Humidity01;
-                var erosion01 = climateCache.Erosion01;
-                var pv01 = climateCache.PeaksValleys01;
+                var cont01 = ctx.Continentalness01;
+                var temp01 = ctx.Temperature01;
+                var humid01 = ctx.Humidity01;
+                var erosion01 = ctx.Erosion01;
+                var pv01 = ctx.PeaksValleys01;
 
                 for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
                 {
@@ -341,7 +341,7 @@ public static class BiomeMapGenerator
         var startX = centerX - radiusBlocks;
         var startZ = centerZ - radiusBlocks;
 
-        var climateCache = new ChunkClimateCache();
+        using var ctx = new GenerationContext();
 
         using var image = new Image<Rgba32>(imageSize, imageSize);
 
@@ -358,20 +358,20 @@ public static class BiomeMapGenerator
                 var chunkX = startChunkX + cx;
                 var chunkZ = startChunkZ + cz;
 
-                climateCache.SampleForChunk(chunkX, chunkZ, config);
+                ClimateSampler.SampleForChunk(chunkX, chunkZ, config, ctx);
 
                 var chunkWorldX = chunkX * VoxelHelper.ChunkSideSize;
                 var chunkWorldZ = chunkZ * VoxelHelper.ChunkSideSize;
 
                 var values = parameter switch
                 {
-                    ClimateParameter.Continentalness => climateCache.Continentalness01,
-                    ClimateParameter.Temperature => climateCache.Temperature01,
-                    ClimateParameter.Humidity => climateCache.Humidity01,
-                    ClimateParameter.Erosion => climateCache.Erosion01,
-                    ClimateParameter.PeaksValleys => climateCache.PeaksValleys01,
-                    ClimateParameter.Weirdness => climateCache.Weirdness01,
-                    _ => climateCache.Continentalness01
+                    ClimateParameter.Continentalness => ctx.Continentalness01,
+                    ClimateParameter.Temperature => ctx.Temperature01,
+                    ClimateParameter.Humidity => ctx.Humidity01,
+                    ClimateParameter.Erosion => ctx.Erosion01,
+                    ClimateParameter.PeaksValleys => ctx.PeaksValleys01,
+                    ClimateParameter.Weirdness => ctx.Weirdness01,
+                    _ => ctx.Continentalness01
                 };
 
                 for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz += cellSize)
@@ -442,7 +442,7 @@ public static class BiomeMapGenerator
         var heightLut = config.BakeHeightSplineLut(256);
 
         var biomesById = config.Biomes.ToDictionary(b => (int)b.Id, b => b);
-        var climateCache = new ChunkClimateCache();
+        using var ctx = new GenerationContext();
 
         OpenRender.Log.Info($"Generating height map: {imageSize}x{imageSize} ({cellSize}x{cellSize} blocks/pixel) centered at ({centerX}, {centerZ})...");
 
@@ -461,16 +461,16 @@ public static class BiomeMapGenerator
                 var chunkX = startChunkX + cx;
                 var chunkZ = startChunkZ + cz;
 
-                climateCache.SampleForChunk(chunkX, chunkZ, config);
+                ClimateSampler.SampleForChunk(chunkX, chunkZ, config, ctx);
 
                 var chunkWorldX = chunkX * VoxelHelper.ChunkSideSize;
                 var chunkWorldZ = chunkZ * VoxelHelper.ChunkSideSize;
 
-                var cont01 = climateCache.Continentalness01;
-                var temp01 = climateCache.Temperature01;
-                var humid01 = climateCache.Humidity01;
-                var erosion01 = climateCache.Erosion01;
-                var pv01 = climateCache.PeaksValleys01;
+                var cont01 = ctx.Continentalness01;
+                var temp01 = ctx.Temperature01;
+                var humid01 = ctx.Humidity01;
+                var erosion01 = ctx.Erosion01;
+                var pv01 = ctx.PeaksValleys01;
 
                 for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz += cellSize)
                 {

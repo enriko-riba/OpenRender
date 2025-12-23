@@ -6,18 +6,25 @@ using System.Diagnostics.CodeAnalysis;
 namespace SpyroGame.World;
 
 /// <summary>
-/// Job system for CPU mesh building using the ThreadPool.
-/// Uses a single dispatcher thread to batch work items and process them via Parallel.ForEach.
+/// Job system for CPU mesh building using dedicated worker threads.
+/// Optimized for low-latency chunk streaming with deduplication.
 /// </summary>
 public sealed class ChunkMeshingJobSystem : IDisposable
 {
     private readonly ChunkVoxelDataCache voxelCache;
     private readonly ChunkProcessingMetrics? metrics;
-    private readonly BlockingCollection<ChunkMeshWorkItem> workQueue = [];
-    private readonly ConcurrentQueue<ChunkMesh> completedMeshes = [];
+    
+    // Use ConcurrentQueue + semaphore for lower overhead than BlockingCollection
+    private readonly ConcurrentQueue<ChunkMeshWorkItem> workQueue = new();
+    private readonly SemaphoreSlim workAvailable = new(0, int.MaxValue);
+    
+    // Deduplication: only keep latest enqueue for each chunk
+    private readonly ConcurrentDictionary<int, long> latestEnqueueByChunk = new();
+    
+    private readonly ConcurrentQueue<ChunkMesh> completedMeshes = new();
     private readonly CancellationTokenSource cancellationSource = new();
-    private readonly Task dispatcherTask;
-    private readonly int maxParallelism;
+    private readonly Task[] workerTasks;
+    private readonly int workerCount;
     private bool disposed;
     private long enqueueCounter;
     private long buildCounter;
@@ -29,15 +36,20 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         this.voxelCache = voxelCache ?? throw new ArgumentNullException(nameof(voxelCache));
         this.metrics = metrics;
         
-        // Use ProcessorCount for parallelism
-        this.maxParallelism = maxParallelism > 0 ? maxParallelism : Math.Max(1, Environment.ProcessorCount - 2);
-
-        // Single dispatcher thread that batches and processes work
-        dispatcherTask = Task.Factory.StartNew(
-            DispatcherLoop,
-            cancellationSource.Token,
-            TaskCreationOptions.LongRunning,
-            TaskScheduler.Default);
+        // Use dedicated worker threads for consistent throughput
+        // Leave 2 cores for main thread + generation
+        workerCount = maxParallelism > 0 ? maxParallelism : Math.Max(2, Environment.ProcessorCount - 2);
+        
+        workerTasks = new Task[workerCount];
+        for (var i = 0; i < workerCount; i++)
+        {
+            var workerId = i;
+            workerTasks[i] = Task.Factory.StartNew(
+                () => WorkerLoop(workerId),
+                cancellationSource.Token,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
     }
 
     public void Enqueue(int chunkIndex, byte placeholderMask, long cacheVersion, bool propagateLight = false)
@@ -48,24 +60,20 @@ public sealed class ChunkMeshingJobSystem : IDisposable
         var enqueueId = Interlocked.Increment(ref enqueueCounter);
         var effectiveVersion = cacheVersion <= 0 ? 0 : cacheVersion;
         
-        if (effectiveVersion == 0)
-        {
-            Log.Debug($"CpuMeshing: enqueue chunk={chunkIndex} without cache version (mask=0x{placeholderMask:X2}, seq={enqueueId})");
-        }
-        else
-        {
-            Log.Debug($"CpuMeshing: enqueue chunk={chunkIndex} mask=0x{placeholderMask:X2} cacheVer={effectiveVersion} seq={enqueueId} light={propagateLight}");
-        }
+        // Update latest enqueue for this chunk (deduplication)
+        latestEnqueueByChunk[chunkIndex] = enqueueId;
 
         var item = new ChunkMeshWorkItem(chunkIndex, placeholderMask, effectiveVersion, enqueueId, 0, propagateLight);
-
+        workQueue.Enqueue(item);
+        
+        // Signal that work is available
         try
         {
-            workQueue.Add(item, cancellationSource.Token);
+            workAvailable.Release();
         }
-        catch (OperationCanceledException)
+        catch (SemaphoreFullException)
         {
-            // System is shutting down; ignore new work.
+            // Queue is very full - this is fine, workers will catch up
         }
     }
 
@@ -73,57 +81,39 @@ public sealed class ChunkMeshingJobSystem : IDisposable
 
     public void DrainPendingWorkItems()
     {
-        while (workQueue.TryTake(out _, 0)) { }
+        while (workQueue.TryDequeue(out _)) { }
+        latestEnqueueByChunk.Clear();
     }
 
-    private void DispatcherLoop()
+    private void WorkerLoop(int workerId)
     {
-        const int batchSize = 16;
-        var batch = new List<ChunkMeshWorkItem>(batchSize);
-
         try
         {
             while (!cancellationSource.Token.IsCancellationRequested)
             {
-                batch.Clear();
-
-                // Wait for first item (blocking)
-                if (workQueue.TryTake(out var firstItem, 50, cancellationSource.Token))
+                // Wait for work with timeout to allow cancellation checks
+                if (!workAvailable.Wait(50, cancellationSource.Token))
+                    continue;
+                
+                // Dequeue work item
+                if (!workQueue.TryDequeue(out var item))
+                    continue;
+                
+                // Deduplication: skip if a newer enqueue exists for this chunk
+                if (latestEnqueueByChunk.TryGetValue(item.ChunkIndex, out var latestId) && 
+                    latestId > item.EnqueueId)
                 {
-                    batch.Add(firstItem);
-
-                    // Collect more items if available (non-blocking)
-                    while (batch.Count < batchSize && workQueue.TryTake(out var item))
-                    {
-                        batch.Add(item);
-                    }
-
-                    // Process batch in parallel using ThreadPool
-                    ProcessBatch(batch);
+                    // Skip stale work item - a newer request supersedes this one
+                    continue;
                 }
+                
+                // Process the item
+                ProcessMeshItem(item);
             }
         }
         catch (OperationCanceledException)
         {
             // Expected during shutdown.
-        }
-    }
-
-    private void ProcessBatch(List<ChunkMeshWorkItem> batch)
-    {
-        var options = new ParallelOptions
-        {
-            MaxDegreeOfParallelism = maxParallelism,
-            CancellationToken = cancellationSource.Token
-        };
-
-        try
-        {
-            Parallel.ForEach(batch, options, ProcessMeshItem);
-        }
-        catch (OperationCanceledException)
-        {
-            // Shutdown in progress.
         }
     }
 
@@ -180,12 +170,11 @@ public sealed class ChunkMeshingJobSystem : IDisposable
             return;
 
         disposed = true;
-        workQueue.CompleteAdding();
         cancellationSource.Cancel();
 
         try
         {
-            dispatcherTask.Wait(TimeSpan.FromSeconds(2));
+            Task.WaitAll(workerTasks, TimeSpan.FromSeconds(2));
         }
         catch (AggregateException ex)
         {
@@ -196,7 +185,7 @@ public sealed class ChunkMeshingJobSystem : IDisposable
             Log.Warn($"ChunkMeshingJobSystem dispose timed out: {ex.Message}");
         }
 
-        workQueue.Dispose();
+        workAvailable.Dispose();
         cancellationSource.Dispose();
     }
 

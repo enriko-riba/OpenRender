@@ -43,6 +43,9 @@ internal class GameScene : Scene
     private BlockPickingService? blockPickingService;
     private LocalGameClient? localClient;
     private GameSession? session;
+    
+    // Performance metrics from server terrain generation
+    private World.ChunkProcessingMetrics? terrainMetrics;
 
     private MobBlockRenderer? mobRenderer;
     private Client.Rendering.DroppedItemRenderer? droppedItemRenderer;
@@ -126,6 +129,7 @@ internal class GameScene : Scene
         this.session = session;
         localPlayerId = session.PlayerId;
         localClient = session.Client;
+        terrainMetrics = session.Metrics;
 
         // Reset input state tracking on scene (re)entry.
         hasSentInitialInputState = false;
@@ -798,6 +802,11 @@ internal class GameScene : Scene
             }
         }
 
+        // Update terrain metrics counters (server generation + client meshing)
+        var currentTime = SceneManager.Time;
+        terrainMetrics?.Update(currentTime);
+        terrainSystem?.MeshingMetrics.Update(currentTime);
+
         // Call base which updates all nodes
         base.UpdateFrame(elapsedSeconds);
     }
@@ -903,6 +912,25 @@ internal class GameScene : Scene
         WriteLine($"  Frustum: culled {culledCullingChunks:N0} | visible {visibleCullingChunks:N0} | total {totalCullingChunks:N0}", textColor);
         WriteLine($"  Client Chunks: active {clientActiveChunks:N0} | ready {clientReadyChunks:N0} | pending {clientPendingMeshes:N0}", textColor);
         WriteLine("", textColor);
+        
+        // Terrain Generation Metrics (server-side generation + client-side meshing)
+        var meshMetrics = terrainSystem?.MeshingMetrics;
+        if (terrainMetrics != null || meshMetrics != null)
+        {
+            WriteLine("Terrain Gen:", highlightColor);
+            if (terrainMetrics != null)
+            {
+                WriteLine($"  Gen: {terrainMetrics.AvgTerrainGenerationMs:F1}ms avg | {terrainMetrics.MaxTerrainGenerationMs:F1}ms max | {terrainMetrics.ChunksGeneratedPerSecond}/s", textColor);
+                WriteLine($"  Light: {terrainMetrics.AvgLightCalculationMs:F1}ms avg | {terrainMetrics.MaxLightCalculationMs:F1}ms max", textColor);
+                WriteLine($"  Breakdown: Clim {terrainMetrics.AvgClimateMs:F1} | 3D {terrainMetrics.AvgNoise3DMs:F1} | Bio {terrainMetrics.AvgBiomeMs:F1} | Blk {terrainMetrics.AvgBlockGenMs:F1}ms", textColor);
+            }
+            if (meshMetrics != null)
+            {
+                WriteLine($"  Mesh: {meshMetrics.AvgMeshBuildMs:F1}ms avg | {meshMetrics.MaxMeshBuildMs:F1}ms max | {meshMetrics.ChunksMeshedPerSecond}/s", textColor);
+                WriteLine($"  LightProp: {meshMetrics.AvgLightPropagationMs:F1}ms avg | {meshMetrics.MaxLightPropagationMs:F1}ms max", textColor);
+            }
+            WriteLine("", textColor);
+        }
 
         // Player Stats
         WriteLine("Player:", highlightColor);

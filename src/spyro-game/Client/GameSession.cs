@@ -13,12 +13,16 @@ public sealed class GameSession(
     VoxelWorld world,
     LocalGameClient client,
     LocalGameServerHost host,
-    PlayerId playerId)
+    PlayerId playerId,
+    LocalGameServer server)
 {
     public VoxelWorld World => world;
     public LocalGameClient Client => client;
     public LocalGameServerHost Host => host;
     public PlayerId PlayerId => playerId;
+    
+    /// <summary>Gets the performance metrics for terrain generation.</summary>
+    public ChunkProcessingMetrics? Metrics => server.Metrics;
 
     public void Start()
     {

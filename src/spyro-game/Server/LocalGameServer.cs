@@ -81,6 +81,9 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     // Used to detect newly-ready chunks (union across players) for deterministic per-chunk spawning.
     private readonly HashSet<int> lastAnyReadyChunks = [];
 
+    /// <summary>Gets the performance metrics for terrain generation/meshing.</summary>
+    public SpyroGame.World.ChunkProcessingMetrics? Metrics => streamingManager.Metrics;
+
     public LocalGameServer(VoxelWorld world, SpyroGame.Server.Streaming.ChunkStreamingManager streamingManager, Vector3 spawnPosition)
     {
         this.world = world;

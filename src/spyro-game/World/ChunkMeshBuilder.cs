@@ -162,12 +162,17 @@ internal static class ChunkMeshBuilder
                         var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
                         // Split translucent indices into Water and Other (Translucent)
                         // Split opaque indices into Solid and AlphaTest (Leaves/Flowers)
-                        var targetIndexList = isTranslucent 
-                            ? (isWater ? waterIndices : translucentIndices) 
-                            : (isAlphaTest ? alphaTestIndices : opaqueIndices);
-
                         // Check if this block uses a special render shape
                         var renderShape = BlockRegistry.GetRenderShape(block);
+                        var isBillboard = renderShape == BlockRenderShape.CrossBillboard;
+
+                        // Route billboards to Opaque queue (Pass 0) so they render with Culling ON.
+                        // This prevents z-fighting between the front/back faces of the billboard.
+                        // Leaves stay in AlphaTest queue (Pass 2) with Culling OFF to show inside faces.
+                        var targetIndexList = isTranslucent 
+                            ? (isWater ? waterIndices : translucentIndices) 
+                            : (isAlphaTest && !isBillboard ? alphaTestIndices : opaqueIndices);
+
                         if (renderShape == BlockRenderShape.CrossBillboard)
                         {
                             // Cross-billboard blocks always render (no face culling against neighbors)
@@ -316,7 +321,7 @@ internal static class ChunkMeshBuilder
                 workItem.PlaceholderMask,
                 mergedVertices,
                 mergedIndices,
-                faceCount,
+                opaqueIndices.Count / 6, // Explicitly use opaque count (includes billboards now)
                 translucentFaceCount, // This is now just the non-water translucent faces
                 waterFaceCount,       // New parameter
                 alphaTestFaceCount,   // New parameter

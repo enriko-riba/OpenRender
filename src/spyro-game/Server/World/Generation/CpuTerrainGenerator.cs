@@ -28,63 +28,10 @@ internal sealed class CpuTerrainGenerator
     private TerrainConfig.TerrainGenerationParams terrainParams;
     private readonly float[] heightSpline = new float[HeightSplineResolution];
 
-    private readonly float[] columnWorldX = new float[ColumnCount];
-    private readonly float[] columnWorldZ = new float[ColumnCount];
-    private readonly float[] columnContinentalness = new float[ColumnCount];
-    private readonly float[] columnContinentalness01 = new float[ColumnCount];
-    private readonly float[] columnErosion = new float[ColumnCount];
-    private readonly float[] columnPeaks = new float[ColumnCount];
-    private readonly float[] columnCliff = new float[ColumnCount];
-    private readonly float[] columnHeights = new float[ColumnCount];
-    private readonly int[] columnHeightInts = new int[ColumnCount];
-    private readonly float[] columnWarpX = new float[ColumnCount];
-    private readonly float[] columnWarpZ = new float[ColumnCount];
-    private readonly float[] column3DFactor = new float[ColumnCount];  // Phase 4: Weirdness-based 3D strength
-    private static readonly (int dx, int dz)[] EntranceNeighborOffsets =
-    [
-        (1, 0), (-1, 0), (0, 1), (0, -1),
-        (1, 1), (1, -1), (-1, 1), (-1, -1)
-    ];
-
-    // SINGLE SOURCE OF TRUTH: Per-column water body info computed ONCE in PrepareChunkCaches
-    // Used by both biome selection AND block generation for consistency
-    private readonly WaterBodyInfo[] columnWaterBody = new WaterBodyInfo[ColumnCount];
-
-    // Beach system: distance to nearest ocean (in blocks) and noise-modulated beach threshold
-    // For varying beach widths around oceans. Rivers/lakes use simple 1-block adjacency.
-    private readonly float[] columnOceanDistance = new float[ColumnCount];
-    private readonly float[] columnBeachThreshold = new float[ColumnCount];
-
-    private readonly float[] scratch2DA = new float[ColumnCount];
-    private readonly float[] scratch2DB = new float[ColumnCount];
-    private readonly float[] scratch2DC = new float[ColumnCount];
-    private readonly float[] scratch2DOutput = new float[ColumnCount];
-    private readonly float[] sampleScratch2D = new float[ColumnCount];
-
-    private readonly float[] cheeseVolume = new float[ColumnHeightWords];
-    private readonly float[] spaghettiVolume = new float[ColumnHeightWords];
-    private readonly float[] overhangVolume = new float[ColumnHeightWords];
-    private readonly byte[] caveMaskVolume = new byte[ColumnHeightWords];
-    private readonly float[] scratch3DOutput = new float[VoxelHelper.ChunkYSize];
-
-    // Sparse sampling buffers (reused each chunk)
-    private readonly float[] sparseSampleX = new float[SparseSampleCount];
-    private readonly float[] sparseSampleZ = new float[SparseSampleCount];
-    private readonly float[] sparseCheeseGrid = new float[SparseVolumeSize];
-    private readonly float[] sparseSpaghettiA = new float[SparseVolumeSize];
-    private readonly float[] sparseSpaghettiB = new float[SparseVolumeSize];
-    private readonly float[] sparseOverhangGrid = new float[SparseVolumeSize];
-    private readonly float[] sparseSliceScratch = new float[SparseSampleCount];
-
-    private int currentChunkX;
-    private int currentChunkZ;
-
     // Biome selection (Stage 1)
     private BiomeSelector biomeSelector = null!;  // Set in UpdateConfig
-    private ChunkBiomeData? currentChunkBiome;
 
-    // Phase 0 Infrastructure: Climate cache and performance profiling
-    private readonly ChunkClimateCache climateCache = new();
+    // Phase 0 Infrastructure: Performance profiling
     private readonly TerrainGenerationProfiler profiler = new();
 
     // Stage 2: Biome-driven terrain density evaluation
@@ -99,17 +46,8 @@ internal sealed class CpuTerrainGenerator
     // Cached biome definitions for fast lookups
     private readonly Dictionary<int, BiomeDefinition> biomeById = new(32);
 
-    // Reused working set for weighted biome blending (avoid per-chunk allocations)
-    private readonly List<(BiomeDefinition Biome, float Weight)> weightedBiomes = new(8);
-
-    // Per-column biome definitions cache (avoids repeated lookups)
-    private readonly BiomeDefinition?[] columnBiomes = new BiomeDefinition?[ColumnCount];
-
     /// <summary>Gets the performance profiler for terrain generation.</summary>
     public TerrainGenerationProfiler Profiler => profiler;
-
-    /// <summary>Gets the climate cache for the current chunk.</summary>
-    public ChunkClimateCache ClimateCache => climateCache;
 
     public CpuTerrainGenerator(TerrainConfig config) => UpdateConfig(config);
 
@@ -131,15 +69,7 @@ internal sealed class CpuTerrainGenerator
         {
             biomeById[biome.Id] = biome;
         }
-
-        climateCache.Invalidate();
     }
-
-    /// <summary>
-    /// Gets the biome data for the last generated chunk. 
-    /// Call after GenerateChunk to retrieve the biome grid.
-    /// </summary>
-    public ChunkBiomeData? GetLastChunkBiomeData() => currentChunkBiome;
 
     /// <summary>
     /// Generate base terrain voxels (Phase 1).
@@ -154,12 +84,15 @@ internal sealed class CpuTerrainGenerator
             throw new ArgumentException($"Destination buffer must contain at least {VoxelHelper.ChunkVoxelCount} voxels", nameof(chunkData));
         }
 
-        // Prepare a biome data container for this chunk.
-        // Stage 1 will populate both per-column biomes and the coarse climate grid.
-        currentChunkBiome = new ChunkBiomeData();
+        using var ctx = new GenerationContext();
+        var chunkBiomeData = new ChunkBiomeData();
 
         // 1. Generate base terrain voxels
-        FillChunk(chunkIndex, chunkData, edits);
+        FillChunk(chunkIndex, chunkData, edits, ctx, chunkBiomeData);
+        
+        // Safety: Recalculate surface heights from actual voxel data to ensure mesher accuracy
+        // This handles edge cases where FillChunk's tracking might diverge from actual blocks
+        chunkData.RecalculateSurfaceHeights();
 
         var collision = new ChunkCollisionData();
         var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
@@ -172,7 +105,7 @@ internal sealed class CpuTerrainGenerator
         profiler.EndStep(TerrainGenerationProfiler.Step.Total);
         profiler.FinalizeChunk();
 
-        return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
+        return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes, chunkBiomeData);
     }
 
     /// <summary>
@@ -187,11 +120,11 @@ internal sealed class CpuTerrainGenerator
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
 
         // Use provided biome data, otherwise regenerate it from the climate cache
-        currentChunkBiome = biomeData ?? new ChunkBiomeData();
+        var currentChunkBiome = biomeData ?? new ChunkBiomeData();
         if (biomeData is null)
         {
-            PrepareChunkCaches(chunkX, chunkZ);
-            SelectBiomesFromClimate();
+            using var ctx = new GenerationContext();
+            PrepareChunkCaches(chunkX, chunkZ, ctx, currentChunkBiome);
         }
 
         // 2. Place vegetation (trees, flowers, etc.)
@@ -199,6 +132,9 @@ internal sealed class CpuTerrainGenerator
         var vegetationGen = new VegetationGenerator(config);
         vegetationGen.DecorateChunk(chunkData, currentChunkBiome, chunkX, chunkZ);
         profiler.EndStep(TerrainGenerationProfiler.Step.Vegetation);
+
+        // Recalculate surface heights after decoration (trees may have raised the surface)
+        chunkData.RecalculateSurfaceHeights();
 
         var collision = new ChunkCollisionData();
         var spanPairs = new int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
@@ -211,20 +147,20 @@ internal sealed class CpuTerrainGenerator
         profiler.EndStep(TerrainGenerationProfiler.Step.Total);
         profiler.FinalizeChunk();
 
-        return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes);
+        return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes, currentChunkBiome);
     }
 
     private void FillChunk(
         int chunkIndex,
         ChunkData chunkData,
-        IReadOnlyDictionary<int, BlockId>? edits)
+        IReadOnlyDictionary<int, BlockId>? edits,
+        GenerationContext ctx,
+        ChunkBiomeData chunkBiomeData)
     {
         var chunkX = chunkIndex % VoxelHelper.WorldChunksXZ;
         var chunkZ = chunkIndex / VoxelHelper.WorldChunksXZ;
 
-        currentChunkX = chunkX;
-        currentChunkZ = chunkZ;
-        PrepareChunkCaches(chunkX, chunkZ);
+        PrepareChunkCaches(chunkX, chunkZ, ctx, chunkBiomeData);
 
         // Pre-cache common palette entries to avoid lookup overhead
         // Air is always index 0
@@ -239,14 +175,14 @@ internal sealed class CpuTerrainGenerator
             {
                 var worldX = chunkX * VoxelHelper.ChunkSideSize + lx;
                 var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                var height = columnHeightInts[columnIndex];
-                var baseHeight = columnHeights[columnIndex];
-                var continentalness01 = columnContinentalness01[columnIndex];
-                var overhangSlice = GetColumnVolumeSpan(overhangVolume, columnIndex);
+                var height = ctx.ColumnHeightInts[columnIndex];
+                var baseHeight = ctx.ColumnHeights[columnIndex];
+                var continentalness01 = ctx.Continentalness01[columnIndex];
+                var overhangSlice = GetColumnVolumeSpan(ctx.OverhangVolume, columnIndex);
 
                 // Optimization: Pre-calculate biome and slope for the column
                 // This avoids 384 lookups per column
-                var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
+                var biomeId = chunkBiomeData.GetBiomeAt(lx, lz);
                 biomeById.TryGetValue((int)biomeId, out var biomeDef);
 
                 // Optimization: Track state top-down to avoid redundant calculations
@@ -267,7 +203,7 @@ internal sealed class CpuTerrainGenerator
                     }
                     else
                     {
-                        density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, column3DFactor[columnIndex]);
+                        density = GetTerrainDensity(continentalness01, baseHeight, overhangSlice[y], y, ctx.Column3DFactor[columnIndex]);
                     }
 
                     // Track surface height (highest non-air block)
@@ -288,7 +224,8 @@ internal sealed class CpuTerrainGenerator
                         biomeDef,
                         density,
                         densityAbove,
-                        depthFromSurface);
+                        depthFromSurface,
+                        ctx);
 
                     var localIndex = y * VoxelHelper.ChunkSideSizeSquare + columnIndex;
 
@@ -306,7 +243,7 @@ internal sealed class CpuTerrainGenerator
                     if (density >= 0f)
                     {
                         depthFromSurface++;
-                    }
+                      }
                     else
                     {
                         depthFromSurface = 0;
@@ -314,238 +251,17 @@ internal sealed class CpuTerrainGenerator
 
                     densityAbove = density;
                 }
-
-                // Surface height is computed on-the-fly now
-                chunkData.SurfaceHeights[columnIndex] = surfaceHeight;
+                
+                // Store computed surface height for this column
+                // This is critical for the mesher to know how high to iterate
+                chunkData.SurfaceHeights[columnIndex] = surfaceHeight >= 0 ? surfaceHeight : 0;
             }
         }
 
         profiler.EndStep(TerrainGenerationProfiler.Step.BlockGeneration);
 
-#if DEBUG
-        RecordTerrainStatsIfEnabled(chunkIndex, chunkData);
-#endif
-
         // ChunkCollisionData.Spans populated inside TryCommitSpan
     }
-
-#if DEBUG
-    private static readonly object TerrainStatsLock = new();
-    private static readonly bool TerrainStatsEnabled = IsTerrainStatsEnabled();
-    private static int terrainStatsChunks;
-    private static int terrainStatsLastLoggedAt;
-    private static int terrainStatsGlobalMinSurface = int.MaxValue;
-    private static int terrainStatsGlobalMaxSurface = int.MinValue;
-    private static float terrainStatsGlobalMinBaseHeight = float.MaxValue;
-    private static float terrainStatsGlobalMaxBaseHeight = float.MinValue;
-    private static float terrainStatsGlobalMinContinentalness = float.MaxValue;
-    private static float terrainStatsGlobalMaxContinentalness = float.MinValue;
-    private static float terrainStatsGlobalMinContinentalness01 = float.MaxValue;
-    private static float terrainStatsGlobalMaxContinentalness01 = float.MinValue;
-    private static float terrainStatsGlobalMinTemperature01 = float.MaxValue;
-    private static float terrainStatsGlobalMaxTemperature01 = float.MinValue;
-    private static float terrainStatsGlobalMinHumidity01 = float.MaxValue;
-    private static float terrainStatsGlobalMaxHumidity01 = float.MinValue;
-    private static float terrainStatsGlobalMinErosion01 = float.MaxValue;
-    private static float terrainStatsGlobalMaxErosion01 = float.MinValue;
-    private static float terrainStatsGlobalMinPeaksValleys01 = float.MaxValue;
-    private static float terrainStatsGlobalMaxPeaksValleys01 = float.MinValue;
-    private static float terrainStatsGlobalMinWeirdness = float.MaxValue;
-    private static float terrainStatsGlobalMaxWeirdness = float.MinValue;
-    private static readonly int[] terrainStatsBiomeColumnCounts = new int[256];
-
-    private static bool IsTerrainStatsEnabled()
-    {
-#if !DEBUG
-        return false;
-#else
-        var v = Environment.GetEnvironmentVariable("SPYRO_TERRAIN_STATS");
-        if (string.IsNullOrWhiteSpace(v))
-        {
-            OpenRender.Log.Info("TerrainStats: disabled (set SPYRO_TERRAIN_STATS=1 to enable biome/height histograms)");
-            return false;
-        }
-        return v.Equals("1", StringComparison.OrdinalIgnoreCase)
-            || v.Equals("true", StringComparison.OrdinalIgnoreCase)
-            || v.Equals("yes", StringComparison.OrdinalIgnoreCase);
-#endif
-    }
-
-    private void RecordTerrainStatsIfEnabled(int chunkIndex, ChunkData chunkData)
-    {
-        if (!TerrainStatsEnabled) return;
-
-        var localMinSurface = int.MaxValue;
-        var localMaxSurface = int.MinValue;
-        for (var i = 0; i < chunkData.SurfaceHeights.Length; i++)
-        {
-            var h = chunkData.SurfaceHeights[i];
-            if (h < 0) continue;
-            if (h < localMinSurface) localMinSurface = h;
-            if (h > localMaxSurface) localMaxSurface = h;
-        }
-
-        if (localMinSurface == int.MaxValue)
-        {
-            // No solid blocks in this chunk (?)
-            return;
-        }
-
-        var localMinBaseHeight = float.MaxValue;
-        var localMaxBaseHeight = float.MinValue;
-        for (var i = 0; i < columnHeights.Length; i++)
-        {
-            var h = columnHeights[i];
-            if (h < localMinBaseHeight) localMinBaseHeight = h;
-            if (h > localMaxBaseHeight) localMaxBaseHeight = h;
-        }
-
-        var localMinCont = float.MaxValue;
-        var localMaxCont = float.MinValue;
-        for (var i = 0; i < columnContinentalness01.Length; i++)
-        {
-            var c = columnContinentalness01[i];
-            if (c < localMinCont) localMinCont = c;
-            if (c > localMaxCont) localMaxCont = c;
-        }
-
-        var localMinContRaw = float.MaxValue;
-        var localMaxContRaw = float.MinValue;
-        for (var i = 0; i < columnContinentalness.Length; i++)
-        {
-            var c = columnContinentalness[i];
-            if (c < localMinContRaw) localMinContRaw = c;
-            if (c > localMaxContRaw) localMaxContRaw = c;
-        }
-
-        var localMinTemp01 = float.MaxValue;
-        var localMaxTemp01 = float.MinValue;
-        var localMinHum01 = float.MaxValue;
-        var localMaxHum01 = float.MinValue;
-        var localMinErosion01 = float.MaxValue;
-        var localMaxErosion01 = float.MinValue;
-        var localMinPv01 = float.MaxValue;
-        var localMaxPv01 = float.MinValue;
-        var localMinWeird = float.MaxValue;
-        var localMaxWeird = float.MinValue;
-
-        var temp01 = climateCache.Temperature01;
-        var hum01 = climateCache.Humidity01;
-        var erosion01 = climateCache.Erosion01;
-        var pv01 = climateCache.PeaksValleys01;
-        var weird = climateCache.Weirdness;
-        for (var i = 0; i < temp01.Length; i++)
-        {
-            var t = temp01[i];
-            if (t < localMinTemp01) localMinTemp01 = t;
-            if (t > localMaxTemp01) localMaxTemp01 = t;
-
-            var h = hum01[i];
-            if (h < localMinHum01) localMinHum01 = h;
-            if (h > localMaxHum01) localMaxHum01 = h;
-
-            var e = erosion01[i];
-            if (e < localMinErosion01) localMinErosion01 = e;
-            if (e > localMaxErosion01) localMaxErosion01 = e;
-
-            var p = pv01[i];
-            if (p < localMinPv01) localMinPv01 = p;
-            if (p > localMaxPv01) localMaxPv01 = p;
-
-            var w = weird[i];
-            if (w < localMinWeird) localMinWeird = w;
-            if (w > localMaxWeird) localMaxWeird = w;
-        }
-
-        lock (TerrainStatsLock)
-        {
-            terrainStatsChunks++;
-
-            if (localMinSurface < terrainStatsGlobalMinSurface) terrainStatsGlobalMinSurface = localMinSurface;
-            if (localMaxSurface > terrainStatsGlobalMaxSurface) terrainStatsGlobalMaxSurface = localMaxSurface;
-            if (localMinBaseHeight < terrainStatsGlobalMinBaseHeight) terrainStatsGlobalMinBaseHeight = localMinBaseHeight;
-            if (localMaxBaseHeight > terrainStatsGlobalMaxBaseHeight) terrainStatsGlobalMaxBaseHeight = localMaxBaseHeight;
-            if (localMinContRaw < terrainStatsGlobalMinContinentalness) terrainStatsGlobalMinContinentalness = localMinContRaw;
-            if (localMaxContRaw > terrainStatsGlobalMaxContinentalness) terrainStatsGlobalMaxContinentalness = localMaxContRaw;
-            if (localMinCont < terrainStatsGlobalMinContinentalness01) terrainStatsGlobalMinContinentalness01 = localMinCont;
-            if (localMaxCont > terrainStatsGlobalMaxContinentalness01) terrainStatsGlobalMaxContinentalness01 = localMaxCont;
-            if (localMinTemp01 < terrainStatsGlobalMinTemperature01) terrainStatsGlobalMinTemperature01 = localMinTemp01;
-            if (localMaxTemp01 > terrainStatsGlobalMaxTemperature01) terrainStatsGlobalMaxTemperature01 = localMaxTemp01;
-            if (localMinHum01 < terrainStatsGlobalMinHumidity01) terrainStatsGlobalMinHumidity01 = localMinHum01;
-            if (localMaxHum01 > terrainStatsGlobalMaxHumidity01) terrainStatsGlobalMaxHumidity01 = localMaxHum01;
-            if (localMinErosion01 < terrainStatsGlobalMinErosion01) terrainStatsGlobalMinErosion01 = localMinErosion01;
-            if (localMaxErosion01 > terrainStatsGlobalMaxErosion01) terrainStatsGlobalMaxErosion01 = localMaxErosion01;
-            if (localMinPv01 < terrainStatsGlobalMinPeaksValleys01) terrainStatsGlobalMinPeaksValleys01 = localMinPv01;
-            if (localMaxPv01 > terrainStatsGlobalMaxPeaksValleys01) terrainStatsGlobalMaxPeaksValleys01 = localMaxPv01;
-            if (localMinWeird < terrainStatsGlobalMinWeirdness) terrainStatsGlobalMinWeirdness = localMinWeird;
-            if (localMaxWeird > terrainStatsGlobalMaxWeirdness) terrainStatsGlobalMaxWeirdness = localMaxWeird;
-
-            if (currentChunkBiome is not null)
-            {
-                for (var i = 0; i < currentChunkBiome.ColumnBiomes.Length; i++)
-                {
-                    var biome = (int)currentChunkBiome.ColumnBiomes[i];
-                    if ((uint)biome < (uint)terrainStatsBiomeColumnCounts.Length)
-                    {
-                        terrainStatsBiomeColumnCounts[biome]++;
-                    }
-                }
-            }
-
-            // Log periodically to avoid spam.
-            // 128 chunks ~= a few frames of streaming at startup.
-            if (terrainStatsChunks - terrainStatsLastLoggedAt < 128) return;
-            terrainStatsLastLoggedAt = terrainStatsChunks;
-
-            var top = new List<(BiomeId biome, int count)>(16);
-            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
-            {
-                var count = terrainStatsBiomeColumnCounts[i];
-                if (count <= 0) continue;
-                top.Add(((BiomeId)i, count));
-            }
-
-            top.Sort(static (a, b) => b.count.CompareTo(a.count));
-            if (top.Count > 8) top.RemoveRange(8, top.Count - 8);
-
-            var topText = string.Join(", ", top.Select(x => $"{x.biome}:{x.count}"));
-
-            long totalBiomeColumns = 0;
-            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
-            {
-                totalBiomeColumns += terrainStatsBiomeColumnCounts[i];
-            }
-
-            var histogram = new List<(BiomeId biome, int count)>(16);
-            for (var i = 0; i < terrainStatsBiomeColumnCounts.Length; i++)
-            {
-                var count = terrainStatsBiomeColumnCounts[i];
-                if (count <= 0) continue;
-                histogram.Add(((BiomeId)i, count));
-            }
-
-            histogram.Sort(static (a, b) => b.count.CompareTo(a.count));
-            var histText = string.Join(", ", histogram.Select(x =>
-            {
-                var pct = totalBiomeColumns > 0 ? (100.0 * x.count / totalBiomeColumns) : 0.0;
-                return $"{x.biome}:{x.count}({pct:F1}%)";
-            }));
-
-            OpenRender.Log.Info(
-                $"TerrainStats: chunks={terrainStatsChunks} water={VoxelHelper.WaterLevel} " +
-                $"surface[min,max]=[{terrainStatsGlobalMinSurface},{terrainStatsGlobalMaxSurface}] " +
-                $"baseHeight[min,max]=[{terrainStatsGlobalMinBaseHeight:F1},{terrainStatsGlobalMaxBaseHeight:F1}] " +
-                $"contRaw[min,max]=[{terrainStatsGlobalMinContinentalness:F2},{terrainStatsGlobalMaxContinentalness:F2}] " +
-                $"cont01[min,max]=[{terrainStatsGlobalMinContinentalness01:F2},{terrainStatsGlobalMaxContinentalness01:F2}] " +
-                $"temp01[min,max]=[{terrainStatsGlobalMinTemperature01:F2},{terrainStatsGlobalMaxTemperature01:F2}] " +
-                $"hum01[min,max]=[{terrainStatsGlobalMinHumidity01:F2},{terrainStatsGlobalMaxHumidity01:F2}] " +
-                $"erosion01[min,max]=[{terrainStatsGlobalMinErosion01:F2},{terrainStatsGlobalMaxErosion01:F2}] " +
-                $"pv01[min,max]=[{terrainStatsGlobalMinPeaksValleys01:F2},{terrainStatsGlobalMaxPeaksValleys01:F2}] " +
-                $"weird[min,max]=[{terrainStatsGlobalMinWeirdness:F2},{terrainStatsGlobalMaxWeirdness:F2}] " +
-                $"topBiomes=[{topText}] hist=[{histText}] (lastChunk={chunkIndex})");
-        }
-    }
-#endif
 
     private void GenerateCollisionData(
         ChunkData chunkData,
@@ -554,86 +270,113 @@ internal sealed class CpuTerrainGenerator
         BlockId[] spanTypes,
         byte[] spanCounts)
     {
-        profiler.BeginStep(TerrainGenerationProfiler.Step.CollisionGeneration);
+        // Initialize span counts to 0
+        Array.Clear(spanCounts, 0, VoxelHelper.ChunkSideSizeSquare);
 
-        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
+        // Note: We use local variables for span count and index to avoid bounds checks in the loop
+        // Allocate enough space for MaxSpansPerColumn per column
+        Span<byte> localSpanCounts = stackalloc byte[VoxelHelper.ChunkSideSizeSquare];
+        // 256 columns * 32 spans * 2 ints * 4 bytes = 64KB (safe for stack)
+        Span<int> localSpanPairs = stackalloc int[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn * 2];
+        Span<BlockId> localSpanTypes = stackalloc BlockId[VoxelHelper.ChunkSideSizeSquare * ChunkCollisionData.MaxSpansPerColumn];
+
+        // 1. Calculate initial spans from voxel data
+        for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
         {
-            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
+            for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
             {
-                var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
-                var spanBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn;
-                var pairBase = columnIndex * ChunkCollisionData.MaxSpansPerColumn * 2;
-                var spanCount = 0;
-                var inSpan = false;
-                var spanStart = 0;
-                var spanBlock = BlockId.Air;
-
-                for (var y = 0; y < VoxelHelper.ChunkYSize; y++)
+                for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
                 {
-                    var block = chunkData.GetBlock(lx, y, lz);
+                    var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
+                    var localIndex = y * VoxelHelper.ChunkSideSizeSquare + columnIndex;
 
-                    if (!block.IsAir())
+                    var paletteIndex = chunkData.VoxelData[localIndex];
+
+                    // Skip air blocks (assuming air is always index 0)
+                    if (paletteIndex == 0)
                     {
-                        if (!inSpan)
+                        continue;
+                    }
+
+                    var currentSpanCount = localSpanCounts[columnIndex];
+                    
+                    // Check if we can merge with the previous span
+                    if (currentSpanCount > 0)
+                    {
+                        var prevPairIndex = (columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount - 1) * 2;
+                        var prevTypeIndex = columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount - 1;
+                        
+                        var prevEnd = localSpanPairs[prevPairIndex + 1];
+                        var prevType = localSpanTypes[prevTypeIndex];
+                        var currentType = chunkData.Palette[paletteIndex];
+
+                        if (prevEnd == y && prevType == currentType)
                         {
-                            inSpan = true;
-                            spanStart = y;
-                            spanBlock = block;
-                        }
-                        else if (block != spanBlock)
-                        {
-                            if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanBlock, collision))
-                            {
-                                spanCount++;
-                            }
-                            spanStart = y;
-                            spanBlock = block;
+                            // Extend previous span
+                            localSpanPairs[prevPairIndex + 1] = y + 1;
+                            continue;
                         }
                     }
-                    else if (inSpan)
+
+                    // Start new span if we have space
+                    if (currentSpanCount < ChunkCollisionData.MaxSpansPerColumn)
                     {
-                        if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, y - 1, spanBlock, collision))
-                        {
-                            spanCount++;
-                        }
-                        inSpan = false;
+                        var basePairIndex = (columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount) * 2;
+                        var baseTypeIndex = columnIndex * ChunkCollisionData.MaxSpansPerColumn + currentSpanCount;
+
+                        localSpanPairs[basePairIndex] = y;
+                        localSpanPairs[basePairIndex + 1] = y + 1;
+                        localSpanTypes[baseTypeIndex] = chunkData.Palette[paletteIndex];
+
+                        // Increment span count for the column
+                        localSpanCounts[columnIndex]++;
                     }
                 }
-
-                if (inSpan)
-                {
-                    if (TryCommitSpan(columnIndex, spanBase, pairBase, spanTypes, spanPairs, spanCount, spanStart, VoxelHelper.ChunkYSize - 1, spanBlock, collision))
-                    {
-                        spanCount++;
-                    }
-                }
-
-                var recorded = (byte)Math.Min(spanCount, ChunkCollisionData.MaxSpansPerColumn);
-                spanCounts[columnIndex] = recorded;
-                collision.SpanCounts[columnIndex] = recorded;
             }
         }
-        profiler.EndStep(TerrainGenerationProfiler.Step.CollisionGeneration);
-    }
 
-    /// <summary>
-    /// Compute the surface height for a column (highest non-air block Y coordinate).
-    /// Returns -1 if the column is entirely air.
-    /// </summary>
-    private static int ComputeSurfaceHeight(ChunkData chunkData, int lx, int lz)
-    {
-        for (var y = VoxelHelper.ChunkYSize - 1; y >= 0; y--)
+        // 2. Copy local span data to output arrays AND ChunkCollisionData.Spans
+        for (var i = 0; i < VoxelHelper.ChunkSideSizeSquare; i++)
         {
-            var block = chunkData.GetBlock(lx, y, lz);
-            if (!block.IsAir())
+            var count = localSpanCounts[i];
+            spanCounts[i] = count;
+            collision.SpanCounts[i] = count;
+
+            if (count > 0)
             {
-                return y;
+                var srcBaseIndex = i * ChunkCollisionData.MaxSpansPerColumn * 2;
+                var srcTypeBaseIndex = i * ChunkCollisionData.MaxSpansPerColumn;
+                
+                var dstIndex = i * ChunkCollisionData.MaxSpansPerColumn * 2;
+                var dstTypeIndex = i * ChunkCollisionData.MaxSpansPerColumn;
+                var collisionOffset = i * ChunkCollisionData.MaxSpansPerColumn;
+
+                // Copy span pairs and types to output arrays
+                for (var j = 0; j < count; j++)
+                {
+                    var startY = localSpanPairs[srcBaseIndex + j * 2];
+                    var endY = localSpanPairs[srcBaseIndex + j * 2 + 1];
+                    var blockType = localSpanTypes[srcTypeBaseIndex + j];
+                    
+                    spanPairs[dstIndex + j * 2] = startY;
+                    spanPairs[dstIndex + j * 2 + 1] = endY;
+                    spanTypes[dstTypeIndex + j] = blockType;
+                    
+                    // Also populate ChunkCollisionData.Spans for CollisionManager
+                    // Note: CollisionManager expects EndY to be INCLUSIVE, but we store it as EXCLUSIVE
+                    // So we subtract 1 when storing to Spans
+                    collision.Spans[collisionOffset + j] = new ColumnSpan
+                    {
+                        StartY = (short)startY,
+                        EndY = (short)(endY - 1),  // Convert exclusive to inclusive
+                        Block = (ushort)blockType
+                    };
+                }
             }
         }
-        return -1; // Column is entirely air/transparent
     }
 
-    private void PrepareChunkCaches(int chunkX, int chunkZ)
+    private void PrepareChunkCaches(int chunkX, int chunkZ, GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
         // ============================================================
         // STAGE 1: Climate Sampling (Biome Assignment First)
@@ -641,8 +384,7 @@ internal sealed class CpuTerrainGenerator
         // Sample all climate noise ONCE using SIMD batching.
         // These cached values are used by BOTH biome selection AND height calculation.
         profiler.BeginStep(TerrainGenerationProfiler.Step.ClimateSampling);
-        climateCache.SampleForChunk(chunkX, chunkZ, config);
-        BuildColumnCoordinates(chunkX, chunkZ);
+        ClimateSampler.SampleForChunk(chunkX, chunkZ, config, ctx);
         profiler.EndStep(TerrainGenerationProfiler.Step.ClimateSampling);
 
         // ============================================================
@@ -651,7 +393,7 @@ internal sealed class CpuTerrainGenerator
         // Select biome for each column using climate values.
         // This is the CORRECT Minecraft order: biomes drive terrain shape.
         profiler.BeginStep(TerrainGenerationProfiler.Step.BiomeSelection);
-        SelectBiomesFromClimate();
+        SelectBiomesFromClimate(ctx, chunkBiomeData);
         profiler.EndStep(TerrainGenerationProfiler.Step.BiomeSelection);
 
         // ============================================================
@@ -660,21 +402,21 @@ internal sealed class CpuTerrainGenerator
         // Calculate terrain height using biome properties (BaseHeight, HeightVariation, etc.)
         // Uses cached climate values (PV, Erosion) - NO re-sampling.
         profiler.BeginStep(TerrainGenerationProfiler.Step.HeightCalculation);
-        BuildColumnHeightsFromBiomes();
+        BuildColumnHeightsFromBiomes(ctx, chunkBiomeData);
         profiler.EndStep(TerrainGenerationProfiler.Step.HeightCalculation);
 
         // ============================================================
         // Water Body Detection
         // ============================================================
         // Compute water body info using heights and biomes
-        BuildColumnWaterBodies();
+        BuildColumnWaterBodies(ctx, chunkBiomeData);
 
         // ============================================================
         // STAGE 5: 3D Noise for Caves/Overhangs
         // ============================================================
         profiler.BeginStep(TerrainGenerationProfiler.Step.Noise3DSampling);
-        BuildColumnVolumes();
-        BuildCaveMaskVolume();
+        BuildColumnVolumes(chunkX, chunkZ, ctx);
+        BuildCaveMaskVolume(chunkX, chunkZ, ctx);
         profiler.EndStep(TerrainGenerationProfiler.Step.Noise3DSampling);
     }
 
@@ -684,33 +426,13 @@ internal sealed class CpuTerrainGenerator
     /// 
     /// Uses cached climate values from ChunkClimateCache (no re-sampling).
     /// </summary>
-    private void SelectBiomesFromClimate()
+    private void SelectBiomesFromClimate(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
-        // Initialize biome data structure
-        currentChunkBiome ??= new ChunkBiomeData();
-
-        var cont01 = climateCache.Continentalness01;
-        var temp01 = climateCache.Temperature01;
-        var humid01 = climateCache.Humidity01;
-        var erosion01 = climateCache.Erosion01;
-        var pv01 = climateCache.PeaksValleys01;
-
-        // Copy climate values to local arrays for compatibility
-        var cachedCont01 = climateCache.Continentalness01;
-        var cachedErosion = climateCache.Erosion;
-        var cachedPeaks = climateCache.PeaksValleys;
-        var cachedWarpX = climateCache.WarpX;
-        var cachedWarpZ = climateCache.WarpZ;
-
-        for (var i = 0; i < ColumnCount; i++)
-        {
-            columnContinentalness01[i] = cachedCont01[i];
-            columnContinentalness[i] = climateCache.Continentalness[i];
-            columnErosion[i] = cachedErosion[i];
-            columnPeaks[i] = cachedPeaks[i];
-            columnWarpX[i] = cachedWarpX[i];
-            columnWarpZ[i] = cachedWarpZ[i];
-        }
+        var cont01 = ctx.Continentalness01;
+        var temp01 = ctx.Temperature01;
+        var humid01 = ctx.Humidity01;
+        var erosion01 = ctx.Erosion01;
+        var pv01 = ctx.PeaksValleys01;
 
         // Select biome for each column based on climate values ONLY
         // Note: We don't have height yet - biomes are selected from climate parameters
@@ -729,37 +451,32 @@ internal sealed class CpuTerrainGenerator
                     erosion01[columnIndex],
                     pv01[columnIndex]);
 
-                currentChunkBiome.SetBiomeAt(lx, lz, biome);
+                chunkBiomeData.SetBiomeAt(lx, lz, biome);
 
                 // Cache biome definition for height calculation
                 biomeById.TryGetValue((int)biome, out var biomeDef);
-                columnBiomes[columnIndex] = biomeDef;
+                ctx.ColumnBiomes[columnIndex] = biomeDef;
             }
         }
 
-        PopulateLegacyCellClimateFromCache();
+        PopulateLegacyCellClimate(ctx, chunkBiomeData);
     }
 
     /// <summary>
     /// Populate the 4x4 climate grid in <see cref="ChunkBiomeData"/> directly from the per-column
-    /// <see cref="ChunkClimateCache"/>.
+    /// climate data in <see cref="GenerationContext"/>.
     ///
     /// This keeps debug queries (interpolated climate) consistent with the actual generation
     /// pipeline, and avoids redundant noise sampling.
     /// </summary>
-    private void PopulateLegacyCellClimateFromCache()
+    private void PopulateLegacyCellClimate(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
-        if (currentChunkBiome == null)
-        {
-            return;
-        }
-
-        var temp01 = climateCache.Temperature01;
-        var humid01 = climateCache.Humidity01;
-        var cont = climateCache.Continentalness;
-        var erosion = climateCache.Erosion;
-        var pv = climateCache.PeaksValleys;
-        var weird = climateCache.Weirdness;
+        var temp01 = ctx.Temperature01;
+        var humid01 = ctx.Humidity01;
+        var cont = ctx.Continentalness;
+        var erosion = ctx.Erosion;
+        var pv = ctx.PeaksValleys;
+        var weird = ctx.Weirdness;
 
         for (var cellZ = 0; cellZ < ChunkBiomeData.GridSize; cellZ++)
         {
@@ -772,13 +489,13 @@ internal sealed class CpuTerrainGenerator
                 var lz = cellZ * ChunkBiomeData.BlocksPerCell + (ChunkBiomeData.BlocksPerCell / 2);
                 var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
 
-                currentChunkBiome.Temperature[cellIndex] = temp01[columnIndex];
-                currentChunkBiome.Humidity[cellIndex] = humid01[columnIndex];
-                currentChunkBiome.Continentalness[cellIndex] = cont[columnIndex];
-                currentChunkBiome.Erosion[cellIndex] = erosion[columnIndex];
-                currentChunkBiome.PeaksValleys[cellIndex] = pv[columnIndex];
-                currentChunkBiome.Weirdness[cellIndex] = weird[columnIndex];
-                currentChunkBiome.BiomeIds[cellIndex] = currentChunkBiome.GetBiomeAt(lx, lz);
+                chunkBiomeData.Temperature[cellIndex] = temp01[columnIndex];
+                chunkBiomeData.Humidity[cellIndex] = humid01[columnIndex];
+                chunkBiomeData.Continentalness[cellIndex] = cont[columnIndex];
+                chunkBiomeData.Erosion[cellIndex] = erosion[columnIndex];
+                chunkBiomeData.PeaksValleys[cellIndex] = pv[columnIndex];
+                chunkBiomeData.Weirdness[cellIndex] = weird[columnIndex];
+                chunkBiomeData.BiomeIds[cellIndex] = chunkBiomeData.GetBiomeAt(lx, lz);
             }
         }
     }
@@ -789,27 +506,30 @@ internal sealed class CpuTerrainGenerator
     /// 
     /// Uses cached climate values (PV, Erosion) from Stage 1 - NO re-sampling.
     /// </summary>
-    private void BuildColumnHeightsFromBiomes()
+    private void BuildColumnHeightsFromBiomes(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
         var shaping = config.TerrainShaping;
-        var cachedErosion01 = climateCache.Erosion01;
-        var cachedWeirdness = climateCache.Weirdness;
+        var cachedErosion01 = ctx.Erosion01;
+        var cachedWeirdness = ctx.Weirdness;
 
         // Sample additional detail noise for cliffs (still needed for mountain detail)
-        var xSpan = columnWorldX.AsSpan();
-        var zSpan = columnWorldZ.AsSpan();
-        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, columnCliff);
+        var xSpan = ctx.WorldX.AsSpan(0, ColumnCount);
+        var zSpan = ctx.WorldZ.AsSpan(0, ColumnCount);
+        SampleFbm2D(xSpan, zSpan, terrainParams.CliffFrequency, terrainParams.Seed + shaping.CliffNoiseSeedOffset, shaping.CliffNoiseOctaves, shaping.CliffNoisePersistence, shaping.CliffNoiseLacunarity, ctx.ColumnCliff.AsSpan(0, ColumnCount), ctx);
 
 
-        var temp01 = climateCache.Temperature01;
-        var humid01 = climateCache.Humidity01;
-        var pv01 = climateCache.PeaksValleys01;
+        var temp01 = ctx.Temperature01;
+        var humid01 = ctx.Humidity01;
+        var pv01 = ctx.PeaksValleys01;
+        
+        // Reused working set for weighted biome blending (avoid per-chunk allocations)
+        var weightedBiomes = new List<(BiomeDefinition Biome, float Weight)>(8);
 
         for (var i = 0; i < ColumnCount; i++)
         {
-            var biome = columnBiomes[i];
-            var cont01 = columnContinentalness01[i];
-            var pv = columnPeaks[i];
+            var biome = ctx.ColumnBiomes[i];
+            var cont01 = ctx.Continentalness01[i];
+            var pv = ctx.PeaksValleys[i];
             var erosion01 = cachedErosion01[i];
             var weirdness = cachedWeirdness[i];
             var absWeirdness = MathF.Abs(weirdness);
@@ -826,7 +546,7 @@ internal sealed class CpuTerrainGenerator
             if (biome != null)
             {
                 // Calculate 3D factor from weirdness + erosion
-                column3DFactor[i] = densityEvaluator.Calculate3DFactor(absWeirdness, erosion01);
+                ctx.Column3DFactor[i] = densityEvaluator.Calculate3DFactor(absWeirdness, erosion01);
 
                 // ALWAYS use weighted biome properties to calculate height
                 // This blends heights between ALL biomes (including Ocean->Beach) to avoid cliffs
@@ -859,7 +579,7 @@ internal sealed class CpuTerrainGenerator
             {
                 // Fallback to spline-based calculation
                 baseHeight = macroHeight;
-                column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
+                ctx.Column3DFactor[i] = Calculate3DFactor(absWeirdness, erosion01, shaping);
             }
 
             // Use continuous threshold for land/ocean distinction, ignoring hard biome classification.
@@ -902,46 +622,17 @@ internal sealed class CpuTerrainGenerator
                 baseHeight = ApplyOceanShoreSmoothing(baseHeight, cont01, shaping);
             }
 
-            columnHeights[i] = baseHeight;
+            ctx.ColumnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
 
             // Guard: land should not be BELOW sea level (but allow sea-level beaches).
             if (isLandColumn && rounded < (int)VoxelHelper.WaterLevel)
             {
                 rounded = (int)VoxelHelper.WaterLevel;
-                columnHeights[i] = rounded;
+                ctx.ColumnHeights[i] = rounded;
             }
-            columnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
+            ctx.ColumnHeightInts[i] = Math.Clamp(rounded, 0, VoxelHelper.ChunkYSize - 1);
         }
-    }
-
-    private float ApplyOceanShoreSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
-    {
-        var distanceToCoast = MathF.Max(0f, terrainParams.OceanThreshold - continentalness01);
-        var smoothingRange = Math.Max(0.0001f, shaping.UnderwaterCoastalSmoothingDistance);
-        var blend = 1f - Math.Clamp(distanceToCoast / smoothingRange, 0f, 1f);
-
-        var maxDepth = MathF.Max(0f, shaping.MaxOceanHeightOffset);
-        var depthBlend = Math.Clamp(distanceToCoast / (smoothingRange * 2f), 0f, 1f);
-        var shallowDepth = maxDepth * depthBlend;
-        var shallowTarget = VoxelHelper.WaterLevel - shallowDepth;
-
-        if (blend > 0f)
-        {
-            baseHeight = Lerp(baseHeight, shallowTarget, blend * blend);
-        }
-
-        var maxOceanHeight = VoxelHelper.WaterLevel - 0.05f;
-        return MathF.Min(baseHeight, maxOceanHeight);
-    }
-
-    private float ApplyCoastalLandSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
-    {
-        var coastStart = terrainParams.OceanThreshold;
-        var coastEnd = terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth);
-        var blend = Smoothstep(coastStart, coastEnd, continentalness01);
-        var beachHeight = VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset);
-        return Lerp(beachHeight, baseHeight, blend);
     }
 
     /// <summary>
@@ -957,10 +648,10 @@ internal sealed class CpuTerrainGenerator
     /// - Old system evaluated noise per-column creating random water patches
     /// - New aquifer system uses coherent noise regions for natural water bodies
     /// </summary>
-    private void BuildColumnWaterBodies()
+    private void BuildColumnWaterBodies(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
-        var cont01 = climateCache.Continentalness01;
-        var aquifer01 = climateCache.AquiferNoise01;
+        var cont01 = ctx.Continentalness01;
+        var aquifer01 = ctx.AquiferNoise01;
 
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
@@ -968,11 +659,11 @@ internal sealed class CpuTerrainGenerator
             {
                 var columnIndex = lz * VoxelHelper.ChunkSideSize + lx;
                 var continentalness01 = cont01[columnIndex];
-                var terrainHeight = columnHeights[columnIndex];
-                var biomeId = currentChunkBiome?.GetBiomeAt(lx, lz) ?? BiomeId.Plains;
+                var terrainHeight = ctx.ColumnHeights[columnIndex];
+                var biomeId = chunkBiomeData.GetBiomeAt(lx, lz);
 
                 // STAGE 3: Use aquifer system for deterministic water level lookup
-                columnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
+                ctx.ColumnWaterBody[columnIndex] = aquiferSystem.GetWaterBodyInfo(
                     biomeId,
                     terrainHeight,
                     continentalness01,
@@ -980,10 +671,10 @@ internal sealed class CpuTerrainGenerator
             }
         }
 
-        ComputeOceanAdjacency();
+        ComputeOceanAdjacency(ctx);
 
         // Beach is a derived biome based on proximity to ocean water (not climate).
-        ApplyBeachBiomeOverride();
+        ApplyBeachBiomeOverride(ctx, chunkBiomeData);
     }
 
     /// <summary>
@@ -996,12 +687,12 @@ internal sealed class CpuTerrainGenerator
     /// - Noise modulation for organic, irregular coastlines
     /// - Only ocean water creates wide beaches (rivers/lakes remain 1-block)
     /// </summary>
-    private void ComputeOceanAdjacency()
+    private void ComputeOceanAdjacency(GenerationContext ctx)
     {
         // Initialize distances: 0 for ocean, MaxValue for land
         for (var i = 0; i < ColumnCount; i++)
         {
-            columnOceanDistance[i] = columnWaterBody[i].IsOcean ? 0f : float.MaxValue;
+            ctx.ColumnOceanDistance[i] = ctx.ColumnWaterBody[i].IsOcean ? 0f : float.MaxValue;
         }
 
         // Multi-pass flood fill to compute minimum distance to ocean
@@ -1015,42 +706,42 @@ internal sealed class CpuTerrainGenerator
                 for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
                 {
                     var idx = lz * VoxelHelper.ChunkSideSize + lx;
-                    var currentDist = columnOceanDistance[idx];
+                    var currentDist = ctx.ColumnOceanDistance[idx];
 
                     // Check 4 neighbors and update if shorter path found
                     if (lz > 0)
                     {
-                        var neighborDist = columnOceanDistance[(lz - 1) * VoxelHelper.ChunkSideSize + lx];
+                        var neighborDist = ctx.ColumnOceanDistance[(lz - 1) * VoxelHelper.ChunkSideSize + lx];
                         if (neighborDist + 1f < currentDist)
                         {
-                            columnOceanDistance[idx] = neighborDist + 1f;
+                            ctx.ColumnOceanDistance[idx] = neighborDist + 1f;
                             changed = true;
                         }
                     }
                     if (lz < VoxelHelper.ChunkSideSize - 1)
                     {
-                        var neighborDist = columnOceanDistance[(lz + 1) * VoxelHelper.ChunkSideSize + lx];
+                        var neighborDist = ctx.ColumnOceanDistance[(lz + 1) * VoxelHelper.ChunkSideSize + lx];
                         if (neighborDist + 1f < currentDist)
                         {
-                            columnOceanDistance[idx] = neighborDist + 1f;
+                            ctx.ColumnOceanDistance[idx] = neighborDist + 1f;
                             changed = true;
                         }
                     }
                     if (lx > 0)
                     {
-                        var neighborDist = columnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx - 1)];
+                        var neighborDist = ctx.ColumnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx - 1)];
                         if (neighborDist + 1f < currentDist)
                         {
-                            columnOceanDistance[idx] = neighborDist + 1f;
+                            ctx.ColumnOceanDistance[idx] = neighborDist + 1f;
                             changed = true;
                         }
                     }
                     if (lx < VoxelHelper.ChunkSideSize - 1)
                     {
-                        var neighborDist = columnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx + 1)];
+                        var neighborDist = ctx.ColumnOceanDistance[lz * VoxelHelper.ChunkSideSize + (lx + 1)];
                         if (neighborDist + 1f < currentDist)
                         {
-                            columnOceanDistance[idx] = neighborDist + 1f;
+                            ctx.ColumnOceanDistance[idx] = neighborDist + 1f;
                             changed = true;
                         }
                     }
@@ -1069,8 +760,8 @@ internal sealed class CpuTerrainGenerator
             for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
             {
                 var idx = lz * VoxelHelper.ChunkSideSize + lx;
-                var wx = columnWorldX[idx];
-                var wz = columnWorldZ[idx];
+                var wx = ctx.WorldX[idx];
+                var wz = ctx.WorldZ[idx];
 
                 // Sample noise for beach width variation
                 // Use domain-warped noise for more organic shapes
@@ -1080,7 +771,7 @@ internal sealed class CpuTerrainGenerator
                 // Noise modulates the width: high noise = wider beach, low noise = narrower
                 var t = Math.Clamp(0.5f + beachNoise * beachNoiseStrength, 0f, 1f);
                 var threshold = 1f + (baseBeachWidth - 1f) * t;
-                columnBeachThreshold[idx] = Math.Clamp(threshold, 1f, baseBeachWidth);
+                ctx.ColumnBeachThreshold[idx] = Math.Clamp(threshold, 1f, baseBeachWidth);
             }
         }
     }
@@ -1090,13 +781,8 @@ internal sealed class CpuTerrainGenerator
     /// This prevents climate-only beach selection (which creates huge inland sand bands)
     /// and ensures beaches only appear near actual ocean columns.
     /// </summary>
-    private void ApplyBeachBiomeOverride()
+    private void ApplyBeachBiomeOverride(GenerationContext ctx, ChunkBiomeData chunkBiomeData)
     {
-        if (currentChunkBiome is null)
-        {
-            return;
-        }
-
         if (!biomeById.TryGetValue((int)BiomeId.Beach, out var beachDef))
         {
             return;
@@ -1112,142 +798,45 @@ internal sealed class CpuTerrainGenerator
             {
                 var idx = lz * VoxelHelper.ChunkSideSize + lx;
 
-                if (columnWaterBody[idx].IsOcean)
+                if (ctx.ColumnWaterBody[idx].IsOcean)
                 {
                     continue;
                 }
 
-                if (!IsWithinBeachDistance(idx))
+                if (!IsWithinBeachDistance(idx, ctx))
                 {
                     continue;
                 }
 
-                if (columnHeightInts[idx] > maxBeachSurfaceY)
+                if (ctx.ColumnHeightInts[idx] > maxBeachSurfaceY)
                 {
                     continue;
                 }
 
-                currentChunkBiome.SetBiomeAt(lx, lz, BiomeId.Beach);
-                columnBiomes[idx] = beachDef;
+                chunkBiomeData.SetBiomeAt(lx, lz, BiomeId.Beach);
+                ctx.ColumnBiomes[idx] = beachDef;
             }
         }
-    }
-
-    /// <summary>
-    /// Sample beach width noise at a world position.
-    /// Returns a value roughly in [-0.5, 0.5] range for modulating beach width.
-    /// Uses low-frequency noise with domain warp for organic, blobby coastline shapes.
-    /// </summary>
-    private float GetBeachNoise(float wx, float wz)
-    {
-        var scale = config.BeachNoiseScale;
-        var seed = terrainParams.Seed + 8500u;
-
-        // Apply domain warp for more organic shapes
-        var warpX = ValueNoise2D(wx * scale * 0.7f, wz * scale * 0.7f, seed + 100u) * 20f;
-        var warpZ = ValueNoise2D(wx * scale * 0.7f + 100f, wz * scale * 0.7f, seed + 200u) * 20f;
-
-        // Sample main beach noise with warped coordinates
-        var noise = ValueNoise2D((wx + warpX) * scale, (wz + warpZ) * scale, seed);
-
-        // Return centered value
-        return noise - 0.5f;
-    }
-
-    /// <summary>
-    /// Simple 2D value noise for beach width variation.
-    /// </summary>
-    private static float ValueNoise2D(float x, float z, uint seed)
-    {
-        var xi = (int)MathF.Floor(x);
-        var zi = (int)MathF.Floor(z);
-
-        var fx = x - xi;
-        var fz = z - zi;
-
-        var c00 = Hash2D(xi, zi, seed);
-        var c10 = Hash2D(xi + 1, zi, seed);
-        var c01 = Hash2D(xi, zi + 1, seed);
-        var c11 = Hash2D(xi + 1, zi + 1, seed);
-
-        var u = Fade(fx);
-        var v = Fade(fz);
-
-        var x0 = Lerp(c00, c10, u);
-        var x1 = Lerp(c01, c11, u);
-
-        return Lerp(x0, x1, v);
     }
 
     /// <summary>
     /// Check if a column is within beach distance of ocean.
     /// Returns true if the column should be considered coastal (for Beach biome).
     /// </summary>
-    private bool IsWithinBeachDistance(int columnIndex)
+    private bool IsWithinBeachDistance(int columnIndex, GenerationContext ctx)
     {
-        var distance = columnOceanDistance[columnIndex];
-        var threshold = columnBeachThreshold[columnIndex];
+        var distance = ctx.ColumnOceanDistance[columnIndex];
+        var threshold = ctx.ColumnBeachThreshold[columnIndex];
         return distance > 0f && distance <= threshold; // distance > 0 excludes ocean itself
     }
 
-    private void BuildColumnCoordinates(int chunkX, int chunkZ)
-    {
-        var baseX = chunkX * VoxelHelper.ChunkSideSize;
-        var baseZ = chunkZ * VoxelHelper.ChunkSideSize;
-        var idx = 0;
-        for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
-        {
-            var worldZ = baseZ + lz;
-            for (var lx = 0; lx < VoxelHelper.ChunkSideSize; lx++)
-            {
-                columnWorldX[idx] = baseX + lx;
-                columnWorldZ[idx] = worldZ;
-                idx++;
-            }
-        }
-    }
-
-    /// <summary>
-    /// Phase 4: Calculate the 3D factor from weirdness and erosion.
-    /// This determines how much 3D features (overhangs, arches, floating islands) affect terrain.
-    /// 
-    /// High |weirdness| + low erosion = dramatic 3D (factor close to 1.0)
-    /// Low |weirdness| + high erosion = pure 2D heightmap (factor close to Min3DFactor)
-    /// 
-    /// The factor is used to modulate overhang amplitude during terrain density calculation.
-    /// </summary>
-    /// <param name="absWeirdness">Absolute value of weirdness [0, 1].</param>
-    /// <param name="erosion01">Erosion normalized to [0, 1].</param>
-    /// <param name="shaping">Terrain shaping configuration.</param>
-    /// <returns>3D factor [Min3DFactor, Max3DFactor] that modulates overhang strength.</returns>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static float Calculate3DFactor(float absWeirdness, float erosion01, TerrainShapingConfig shaping)
-    {
-        // Weirdness contribution: ramp from 0 at low |W| to 1 at high |W|
-        var weirdnessFactor = Smoothstep(shaping.Weirdness3DThresholdLow, shaping.Weirdness3DThresholdHigh, absWeirdness);
-
-        // Erosion contribution: 1 at low erosion (rough terrain), 0 at high erosion (flat)
-        var erosionFactor = 1f - Smoothstep(0f, shaping.Erosion3DThreshold, erosion01);
-
-        // Combined factor: both high weirdness AND low erosion needed for maximum 3D
-        var rawFactor = weirdnessFactor * erosionFactor;
-
-        // Map to configured range [Min3DFactor, Max3DFactor]
-        return Lerp(shaping.Min3DFactor, shaping.Max3DFactor, rawFactor);
-    }
-
-    /// <summary>
-    /// Flatten a height value towards a target based on strength factor.
-    /// </summary>
-    private static float FlattenTowards(float height, float target, float strength) => Lerp(height, target, strength);
-
-    private void BuildColumnVolumes()
+    private void BuildColumnVolumes(int chunkX, int chunkZ, GenerationContext ctx)
     {
         // Minecraft-style optimization: sample noise at sparse intervals and trilinear interpolate.
         // This reduces 3D noise samples from 98,304 to 2,425 per noise type (~40x reduction).
 
-        var baseX = currentChunkX * VoxelHelper.ChunkSideSize;
-        var baseZ = currentChunkZ * VoxelHelper.ChunkSideSize;
+        var baseX = chunkX * VoxelHelper.ChunkSideSize;
+        var baseZ = chunkZ * VoxelHelper.ChunkSideSize;
 
         // Get Y-stretch factor for horizontal cave bias
         var spaghettiYStretch = config.Caves.SpaghettiYStretch;
@@ -1259,8 +848,8 @@ internal sealed class CpuTerrainGenerator
             var worldZ = baseZ + sz * SparseStep;
             for (var sx = 0; sx < SparseSamplesXZ; sx++)
             {
-                sparseSampleX[sparseIdx] = baseX + sx * SparseStep;
-                sparseSampleZ[sparseIdx] = worldZ;
+                ctx.SparseSampleX[sparseIdx] = baseX + sx * SparseStep;
+                ctx.SparseSampleZ[sparseIdx] = worldZ;
                 sparseIdx++;
             }
         }
@@ -1277,59 +866,59 @@ internal sealed class CpuTerrainGenerator
 
             // Cheese caves (unchanged - large chambers use normal Y)
             SampleValueNoiseSliceSparse(
-                sparseSliceScratch,
-                sparseSampleX.AsSpan(),
+                ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount),
+                ctx.SparseSampleX.AsSpan(0, SparseSampleCount),
                 worldY,
-                sparseSampleZ.AsSpan(),
+                ctx.SparseSampleZ.AsSpan(0, SparseSampleCount),
                 terrainParams.CheeseFrequency,
                 terrainParams.Seed + 300u,
                 octaves: 2, persistence: 0.6f, lacunarity: 1.9f);
-            sparseSliceScratch.AsSpan().CopyTo(sparseCheeseGrid.AsSpan(sliceOffset, SparseSampleCount));
+            ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount).CopyTo(ctx.SparseCheeseGrid.AsSpan(sliceOffset, SparseSampleCount));
 
             // Spaghetti tunnels with Y-stretch for horizontal bias
             SampleValueNoiseSliceSparse(
-                sparseSliceScratch,
-                sparseSampleX.AsSpan(),
+                ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount),
+                ctx.SparseSampleX.AsSpan(0, SparseSampleCount),
                 stretchedY,  // Use stretched Y for horizontal tendency
-                sparseSampleZ.AsSpan(),
+                ctx.SparseSampleZ.AsSpan(0, SparseSampleCount),
                 terrainParams.SpaghettiFrequency,
                 terrainParams.Seed + 400u,
                 octaves: 1, persistence: 1f, lacunarity: 2f);
-            sparseSliceScratch.AsSpan().CopyTo(sparseSpaghettiA.AsSpan(sliceOffset, SparseSampleCount));
+            ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount).CopyTo(ctx.SparseSpaghettiA.AsSpan(sliceOffset, SparseSampleCount));
 
             SampleValueNoiseSliceSparse(
-                sparseSliceScratch,
-                sparseSampleX.AsSpan(),
+                ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount),
+                ctx.SparseSampleX.AsSpan(0, SparseSampleCount),
                 stretchedY,  // Use stretched Y for horizontal tendency
-                sparseSampleZ.AsSpan(),
+                ctx.SparseSampleZ.AsSpan(0, SparseSampleCount),
                 terrainParams.SpaghettiFrequency,
                 terrainParams.Seed + 500u,
                 octaves: 1, persistence: 1f, lacunarity: 2f);
-            sparseSliceScratch.AsSpan().CopyTo(sparseSpaghettiB.AsSpan(sliceOffset, SparseSampleCount));
+            ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount).CopyTo(ctx.SparseSpaghettiB.AsSpan(sliceOffset, SparseSampleCount));
 
             // Overhangs (unchanged)
             SampleValueNoiseSliceSparse(
-                sparseSliceScratch,
-                sparseSampleX.AsSpan(),
+                ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount),
+                ctx.SparseSampleX.AsSpan(0, SparseSampleCount),
                 worldY,
-                sparseSampleZ.AsSpan(),
+                ctx.SparseSampleZ.AsSpan(0, SparseSampleCount),
                 terrainParams.OverhangFrequency,
                 terrainParams.Seed + 2000u,
                 octaves: 2, persistence: 0.55f, lacunarity: 2f);
-            sparseSliceScratch.AsSpan().CopyTo(sparseOverhangGrid.AsSpan(sliceOffset, SparseSampleCount));
+            ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount).CopyTo(ctx.SparseOverhangGrid.AsSpan(sliceOffset, SparseSampleCount));
         }
 
         // Trilinear interpolate sparse samples into full-resolution volumes
-        InterpolateSparseVolumes();
+        InterpolateSparseVolumes(ctx);
     }
 
-    private void BuildCaveMaskVolume()
+    private void BuildCaveMaskVolume(int chunkX, int chunkZ, GenerationContext ctx)
     {
         // Stage 5: Delegate cave carving to CaveCarver
         // This replaces the inline implementation with the improved volume-based entrance carving
         if (caveCarver == null)
         {
-            Array.Clear(caveMaskVolume);
+            Array.Clear(ctx.CaveMaskVolume);
             return;
         }
 
@@ -1337,25 +926,25 @@ internal sealed class CpuTerrainGenerator
         Span<bool> isLandColumn = stackalloc bool[ColumnCount];
         for (var i = 0; i < ColumnCount; i++)
         {
-            isLandColumn[i] = !columnWaterBody[i].IsOcean;
+            isLandColumn[i] = !ctx.ColumnWaterBody[i].IsOcean;
         }
 
         // Carve caves using the new improved system
         caveCarver.CarveChunk(
-            currentChunkX,
-            currentChunkZ,
-            columnHeightInts,
+            chunkX,
+            chunkZ,
+            ctx.ColumnHeightInts,
             isLandColumn,
-            GetSurfaceHeightFloat);
+            (wx, wz) => GetSurfaceHeightFloat(wx, wz, chunkX, chunkZ, ctx));
 
         // Copy cave mask from CaveCarver to local buffer
-        caveCarver.CaveMask.CopyTo(caveMaskVolume);
+        caveCarver.CaveMask.CopyTo(ctx.CaveMaskVolume);
     }
 
     /// <summary>
     /// Interpolate sparse 3D noise samples into full-resolution volumes using optimized linear interpolation.
     /// </summary>
-    private void InterpolateSparseVolumes()
+    private void InterpolateSparseVolumes(GenerationContext ctx)
     {
         var chunkY = VoxelHelper.ChunkYSize;
 
@@ -1389,20 +978,20 @@ internal sealed class CpuTerrainGenerator
 
                     // Compute values at the 4 corners of the current sparse Y segment
                     // Cheese
-                    var c0 = BilinearSample(sparseCheeseGrid, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
-                    var c1 = BilinearSample(sparseCheeseGrid, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
+                    var c0 = BilinearSample(ctx.SparseCheeseGrid, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
+                    var c1 = BilinearSample(ctx.SparseCheeseGrid, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
 
                     // Spaghetti A
-                    var sa0 = BilinearSample(sparseSpaghettiA, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
-                    var sa1 = BilinearSample(sparseSpaghettiA, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
+                    var sa0 = BilinearSample(ctx.SparseSpaghettiA, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
+                    var sa1 = BilinearSample(ctx.SparseSpaghettiA, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
 
                     // Spaghetti B
-                    var sb0 = BilinearSample(sparseSpaghettiB, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
-                    var sb1 = BilinearSample(sparseSpaghettiB, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
+                    var sb0 = BilinearSample(ctx.SparseSpaghettiB, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
+                    var sb1 = BilinearSample(ctx.SparseSpaghettiB, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
 
                     // Overhang
-                    var oh0 = BilinearSample(sparseOverhangGrid, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
-                    var oh1 = BilinearSample(sparseOverhangGrid, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
+                    var oh0 = BilinearSample(ctx.SparseOverhangGrid, yOffset0, idx00, idx10, idx01, idx11, tx, tz);
+                    var oh1 = BilinearSample(ctx.SparseOverhangGrid, yOffset1, idx00, idx10, idx01, idx11, tx, tz);
 
                     // Fill the dense voxels between sy and sy+1
                     var yBase = sy * SparseStep;
@@ -1416,7 +1005,7 @@ internal sealed class CpuTerrainGenerator
 
                         // Linear interpolate along Y
                         var cheeseSample = (Lerp(c0, c1, ty) * 2f - 1f) * terrainParams.CheeseAmplitude;
-                        cheeseVolume[sliceOffset] = Math.Clamp(cheeseSample, -1f, 1f);
+                        ctx.CheeseVolume[sliceOffset] = Math.Clamp(cheeseSample, -1f, 1f);
 
                         var n1 = (Lerp(sa0, sa1, ty) * 2f - 1f);
                         var n2 = (Lerp(sb0, sb1, ty) * 2f - 1f);
@@ -1425,88 +1014,24 @@ internal sealed class CpuTerrainGenerator
                         var ampT = (amp - 0.2f) / 3.8f;
                         var widthFactor = Lerp(2.8f, 1.1f, ampT);
                         var tunnelWidth = 1f - dist * widthFactor;
-                        spaghettiVolume[sliceOffset] = Math.Clamp(tunnelWidth, -1f, 1f);
+                        ctx.SpaghettiVolume[sliceOffset] = Math.Clamp(tunnelWidth, -1f, 1f);
 
                         var overhangSample = (Lerp(oh0, oh1, ty) * 2f - 1f) * terrainParams.OverhangAmplitude;
-                        overhangVolume[sliceOffset] = Math.Clamp(overhangSample, -1f, 1f);
+                        ctx.OverhangVolume[sliceOffset] = Math.Clamp(overhangSample, -1f, 1f);
                     }
                 }
             }
         }
     }
 
-    /// <summary>
-    /// Bilinear interpolation from 4 sparse grid corners on a single Y plane.
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static float BilinearSample(
-        float[] grid,
-        int yOffset,
-        int idx00, int idx10, int idx01, int idx11,
-        float tx, float tz)
-    {
-        var c00 = grid[yOffset + idx00];
-        var c10 = grid[yOffset + idx10];
-        var c01 = grid[yOffset + idx01];
-        var c11 = grid[yOffset + idx11];
-
-        var x0 = c00 + (c10 - c00) * tx;
-        var x1 = c01 + (c11 - c01) * tx;
-
-        return x0 + (x1 - x0) * tz;
-    }
-
-    private static void SampleValueNoiseSliceSparse(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
-    {
-        var count = destination.Length;
-        for (var i = 0; i < count; i++)
-        {
-            var amplitude = 1f;
-            var frequency = baseFrequency;
-            var accum = 0f;
-            var totalAmp = 0f;
-
-            for (var octave = 0; octave < octaves; octave++)
-            {
-                var sample = ValueNoise3D(xCoords[i] * frequency, yCoord * frequency, zCoords[i] * frequency, seed + (uint)(octave * 1013));
-                accum += sample * amplitude;
-                totalAmp += amplitude;
-                amplitude *= persistence;
-                frequency *= lacunarity;
-            }
-
-            destination[i] = totalAmp > 0f ? accum / totalAmp : 0f;
-        }
-    }
-
-    private static Span<float> GetColumnVolumeSpan(float[] volume, int columnIndex)
-        => volume.AsSpan(columnIndex * VoxelHelper.ChunkYSize, VoxelHelper.ChunkYSize);
-
-    private Span<byte> GetColumnCaveMask(int columnIndex)
-        => caveMaskVolume.AsSpan(columnIndex * VoxelHelper.ChunkYSize, VoxelHelper.ChunkYSize);
-
-    private bool TryGetColumnIndex(int wx, int wz, out int columnIndex)
-    {
-        var localX = wx - currentChunkX * VoxelHelper.ChunkSideSize;
-        var localZ = wz - currentChunkZ * VoxelHelper.ChunkSideSize;
-        if ((uint)localX < VoxelHelper.ChunkSideSize && (uint)localZ < VoxelHelper.ChunkSideSize)
-        {
-            columnIndex = localZ * VoxelHelper.ChunkSideSize + localX;
-            return true;
-        }
-
-        columnIndex = -1;
-        return false;
-    }
-
-    private void SampleFbm2D(Span<float> xCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination)
+    private void SampleFbm2D(Span<float> xCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
     {
         var length = destination.Length;
         destination.Clear();
         var amplitude = 1f;
         var frequency = baseFrequency;
         var totalAmplitude = 0f;
-        var scratch = sampleScratch2D.AsSpan(0, length);
+        var scratch = ctx.SampleScratch2D.AsSpan(0, length);
 
         for (var octave = 0; octave < octaves; octave++)
         {
@@ -1533,14 +1058,14 @@ internal sealed class CpuTerrainGenerator
         }
     }
 
-    private void SampleFbm3D(Span<float> xCoords, Span<float> yCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination)
+    private void SampleFbm3D(Span<float> xCoords, Span<float> yCoords, Span<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, Span<float> destination, GenerationContext ctx)
     {
         var length = destination.Length;
         destination.Clear();
         var amplitude = 1f;
         var frequency = baseFrequency;
         var totalAmplitude = 0f;
-        var scratch = scratch3DOutput.AsSpan(0, length);
+        var scratch = ctx.Scratch3DOutput.AsSpan(0, length);
 
         for (var octave = 0; octave < octaves; octave++)
         {
@@ -1577,18 +1102,18 @@ internal sealed class CpuTerrainGenerator
         }
     }
 
-    private float SampleFbm2DSingle(Vector2 p, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    private float SampleFbm2DSingle(Vector2 p, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, GenerationContext ctx)
     {
         Span<float> x = stackalloc float[1];
         Span<float> z = stackalloc float[1];
         Span<float> output = stackalloc float[1];
         x[0] = p.X;
         z[0] = p.Y;
-        SampleFbm2D(x, z, baseFrequency, seed, octaves, persistence, lacunarity, output);
+        SampleFbm2D(x, z, baseFrequency, seed, octaves, persistence, lacunarity, output, ctx);
         return output[0];
     }
 
-    private float SampleFbm3DSingle(Vector3 p, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    private float SampleFbm3DSingle(Vector3 p, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity, GenerationContext ctx)
     {
         Span<float> x = stackalloc float[1];
         Span<float> y = stackalloc float[1];
@@ -1597,8 +1122,430 @@ internal sealed class CpuTerrainGenerator
         x[0] = p.X;
         y[0] = p.Y;
         z[0] = p.Z;
-        SampleFbm3D(x, y, z, baseFrequency, seed, octaves, persistence, lacunarity, output);
+        SampleFbm3D(x, y, z, baseFrequency, seed, octaves, persistence, lacunarity, output, ctx);
         return output[0];
+    }
+
+    private float GetSurfaceHeightFloat(int wx, int wz, int chunkX, int chunkZ, GenerationContext ctx)
+        => TryGetColumnIndex(wx, wz, chunkX, chunkZ, out var columnIndex) ? ctx.ColumnHeights[columnIndex]
+            : GetHeight(new Vector2(wx, wz), ctx);
+
+    /// <summary>
+    /// Generate the block type for a voxel at the given world position.
+    /// Optimized version that accepts pre-calculated density and depth state.
+    /// </summary>
+    private BlockId GenerateBlock(
+        int height,
+        int y,
+        int wx,
+        int wz,
+        float baseHeight,
+        float continentalness01,
+        int columnIndex,
+        BiomeDefinition? biomeDef,
+        float density,
+        float densityAbove,
+        int depthFromSurface,
+        GenerationContext ctx)
+    {
+        // === HARDCODED BOTTOM LAYERS ===
+        // Y=0: Always lava (magma layer at the bottom of the world)
+        // Y=1: Always bedrock (impenetrable foundation layer)
+        if (y == 0)
+        {
+            return BlockId.Lava;
+        }
+        if (y == 1)
+        {
+            return BlockId.Bedrock;
+        }
+
+        // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
+        var waterBody = ctx.ColumnWaterBody[columnIndex];
+        var hasWaterHere = waterBody.HasWater;
+        var localWaterLevel = waterBody.WaterLevel;
+
+        // 2. Density Check - If density is negative, it's air (or water in water body columns).
+        if (density < 0f)
+        {
+            // Water fills air space ONLY in columns with water body
+            return hasWaterHere && y <= localWaterLevel ? BlockId.Water : BlockId.Air;
+        }
+
+        // Block is solid - check cave carving
+        var isLand = !waterBody.IsOcean;
+        var caveMask = GetColumnCaveMask(ctx.CaveMaskVolume, columnIndex);
+        if (isLand && y > 0 && caveMask[y] != 0)
+        {
+            // Cave carved this voxel - it becomes air
+            return BlockId.Air;
+        }
+
+        // 4. Determine if this is a SURFACE block by checking if block above is air or carved by a cave
+        // Use cached densityAbove to avoid re-calculation
+        var caveAbove = isLand && y < VoxelHelper.ChunkYSize - 1 && caveMask[y + 1] != 0;
+        var isSurface = densityAbove < 0f || caveAbove;
+
+        // 5. Determine block type based on position and biome
+        if (biomeDef == null)
+        {
+            return isSurface ? BlockId.Grass : BlockId.Stone;
+        }
+
+        // Underwater detection
+        var isUnderwater = hasWaterHere && height < localWaterLevel;
+
+        // Surface block
+        if (isSurface)
+        {
+            // CAVE FLOOR FIX: Deep cave floors get stone instead of biome grass
+            var depthBelowSurface = height - y;
+            if (depthBelowSurface > config.Caves.CaveFloorDepthThreshold)
+            {
+                return BlockId.Stone;
+            }
+
+            // Coastal beach override
+            var isInBeachZone = IsWithinBeachDistance(columnIndex, ctx);
+            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
+            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+                ? BlockId.Sand
+                : isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
+        }
+
+        // Subsurface blocks - use tracked depthFromSurface
+        // This avoids the O(N) loop that was previously here
+        var effectiveDepth = depthFromSurface;
+        if (effectiveDepth == 0)
+        {
+            // Fallback if tracking failed (shouldn't happen with correct top-down logic)
+            effectiveDepth = Math.Max(0, height - y);
+        }
+
+        if (effectiveDepth <= terrainParams.SubsurfaceDepth)
+        {
+            // CAVE SUBSURFACE FIX
+            var depthBelowTerrainSurface = height - y;
+            if (depthBelowTerrainSurface > config.Caves.CaveFloorDepthThreshold)
+            {
+                return BlockId.Dirt;
+            }
+
+            // Beach subsurface
+            var isInBeachZone = IsWithinBeachDistance(columnIndex, ctx);
+            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
+            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+                ? BlockId.Sand
+                : isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
+        }
+
+        // Deep blocks - try to generate ore in stone regions
+        var deepBlock = biomeDef.DeepBlock;
+        if (deepBlock == BlockId.Stone)
+        {
+            var oreBlock = TryGenerateOre(wx, y, wz);
+            if (oreBlock != BlockId.Air)
+            {
+                return oreBlock;
+            }
+        }
+
+        return deepBlock;
+    }
+
+    private float GetHeight(Vector2 p, GenerationContext ctx)
+    {
+        var continentalness = GetContinentalness(p, ctx);
+        var erosion = GetErosion(p, ctx);
+        var peaks = GetPeaksValleys(p, ctx);
+        var tC = continentalness * 0.5f + 0.5f;
+        var baseHeight = SampleHeightSpline(tC) + VoxelHelper.WaterLevel;
+
+        if (tC >= terrainParams.OceanThreshold)
+        {
+            var ruggedness = 1f - erosion * 0.5f - 0.5f;
+            baseHeight += peaks * 20f * ruggedness;
+
+            if (tC > terrainParams.MountainThreshold)
+            {
+                var cliffNoise = SampleFbm2DSingle(p, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f, ctx);
+                cliffNoise = MathF.Abs(cliffNoise);
+                var mountainness = Smoothstep(terrainParams.MountainThreshold, 0.95f, tC);
+                baseHeight += cliffNoise * terrainParams.CliffAmplitude * mountainness;
+            }
+        }
+
+        return baseHeight;
+    }
+
+    private Vector2 DomainWarp(Vector2 p, uint seed, GenerationContext ctx)
+    {
+        var qx = SampleFbm2DSingle(p, 1f, seed, 2, 0.5f, 2f, ctx);
+        var qy = SampleFbm2DSingle(p + new Vector2(5.2f, 1.3f), 1f, seed, 2, 0.5f, 2f, ctx);
+        var warp = new Vector2(qx, qy) * terrainParams.WarpStrength;
+        return warp;
+    }
+
+    private float GetContinentalness(Vector2 p, GenerationContext ctx)
+    {
+        var warp = DomainWarp(p, terrainParams.Seed, ctx);
+        var n = SampleFbm2DSingle(p + warp, config.Continentalness.BaseScale, terrainParams.Seed, config.Continentalness.Octaves, config.Continentalness.Persistence, config.Continentalness.Lacunarity, ctx);
+        return Math.Clamp(n * config.Continentalness.OutputScale, -1f, 1f);
+    }
+
+    private float GetErosion(Vector2 p, GenerationContext ctx)
+    {
+        var warp = DomainWarp(p, terrainParams.Seed, ctx);
+        var n = SampleFbm2DSingle(p + warp, config.Erosion.BaseScale, terrainParams.Seed + 200u, config.Erosion.Octaves, config.Erosion.Persistence, config.Erosion.Lacunarity, ctx);
+        return Math.Clamp(n * config.Erosion.OutputScale, -1f, 1f);
+    }
+
+    private float GetPeaksValleys(Vector2 p, GenerationContext ctx)
+    {
+        var warp = DomainWarp(p, terrainParams.Seed, ctx);
+        var n = SampleFbm2DSingle(p + warp, config.PeaksValleys.BaseScale, terrainParams.Seed + 400u, config.PeaksValleys.Octaves, config.PeaksValleys.Persistence, config.PeaksValleys.Lacunarity, ctx);
+        n = Math.Clamp(n * config.PeaksValleys.OutputScale, -1f, 1f);
+        
+        if (config.PeaksValleys.UseRidged)
+        {
+            var ridge = 1f - MathF.Abs(n);
+            ridge = Math.Clamp(ridge, 0f, 1f);
+            return MathF.Pow(ridge, Math.Max(0.01f, config.PeaksValleys.RidgeSharpness));
+        }
+        return n * 0.5f + 0.5f;
+    }
+
+    private Span<byte> GetColumnCaveMask(byte[] caveMaskVolume, int columnIndex)
+        => caveMaskVolume.AsSpan(columnIndex * VoxelHelper.ChunkYSize, VoxelHelper.ChunkYSize);
+    
+    #region Helpers
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float Smoothstep(float edge0, float edge1, float x)
+    {
+        if (Math.Abs(edge1 - edge0) < float.Epsilon)
+        {
+            return x >= edge1 ? 1f : 0f;
+        }
+
+        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    private static void SampleValueNoiseSliceSparse(Span<float> destination, ReadOnlySpan<float> xCoords, float yCoord, ReadOnlySpan<float> zCoords, float baseFrequency, uint seed, int octaves, float persistence, float lacunarity)
+    {
+        var count = destination.Length;
+        for (var i = 0; i < count; i++)
+        {
+            var amplitude = 1f;
+            var frequency = baseFrequency;
+            var accum = 0f;
+            var totalAmp = 0f;
+
+            for (var octave = 0; octave < octaves; octave++)
+            {
+                var sample = ValueNoise3D(xCoords[i] * frequency, yCoord * frequency, zCoords[i] * frequency, seed + (uint)(octave * 1013));
+                accum += sample * amplitude;
+                totalAmp += amplitude;
+                amplitude *= persistence;
+                frequency *= lacunarity;
+            }
+
+            destination[i] = totalAmp > 0f ? accum / totalAmp : 0f;
+        }
+    }
+
+    private static float BilinearSample(
+        float[] grid,
+        int yOffset,
+        int idx00, int idx10, int idx01, int idx11,
+        float tx, float tz)
+    {
+        var c00 = grid[yOffset + idx00];
+        var c10 = grid[yOffset + idx10];
+        var c01 = grid[yOffset + idx01];
+        var c11 = grid[yOffset + idx11];
+
+        var x0 = c00 + (c10 - c00) * tx;
+        var x1 = c01 + (c11 - c01) * tx;
+
+        return x0 + (x1 - x0) * tz;
+    }
+
+    private bool TryGetColumnIndex(int wx, int wz, int chunkX, int chunkZ, out int columnIndex)
+    {
+        var localX = wx - chunkX * VoxelHelper.ChunkSideSize;
+        var localZ = wz - chunkZ * VoxelHelper.ChunkSideSize;
+        if ((uint)localX < VoxelHelper.ChunkSideSize && (uint)localZ < VoxelHelper.ChunkSideSize)
+        {
+            columnIndex = localZ * VoxelHelper.ChunkSideSize + localX;
+            return true;
+        }
+
+        columnIndex = -1;
+        return false;
+    }
+
+    private BlockId TryGenerateOre(int wx, int y, int wz)
+    {
+        var oreTypes = config.Ores.OreTypes;
+        if (oreTypes == null || oreTypes.Count == 0)
+            return BlockId.Air;
+
+        var baseSeed = terrainParams.Seed + config.Ores.SeedOffset;
+
+        foreach (var oreDef in oreTypes)
+        {
+            var minY = oreDef.MinY < 0 ? VoxelHelper.WaterLevel + oreDef.MinY : oreDef.MinY;
+            var maxY = oreDef.MaxY < 0 ? VoxelHelper.WaterLevel + oreDef.MaxY : oreDef.MaxY;
+            var peakY = oreDef.PeakY < 0 ? VoxelHelper.WaterLevel + oreDef.PeakY : oreDef.PeakY;
+
+            if (y < minY || y > maxY)
+                continue;
+
+            var probability = oreDef.Rarity;
+            if (oreDef.DistributionType == OreDistribution.Triangle)
+            {
+                if (y <= peakY)
+                {
+                    var range = peakY - minY;
+                    probability *= range > 0 ? (y - minY) / (float)range : 1f;
+                }
+                else
+                {
+                    var range = maxY - peakY;
+                    probability *= range > 0 ? (maxY - y) / (float)range : 1f;
+                }
+            }
+
+            var oreSeed = baseSeed + (uint)oreDef.OreBlock.GetId();
+            var hash = OreHash3D(wx, y, wz, oreSeed);
+
+            if (hash < probability)
+            {
+                return oreDef.OreBlock;
+            }
+        }
+
+        return BlockId.Air;
+    }
+
+    private static float OreHash3D(int x, int y, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + y * 668265263 + z * 2147483647);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177u;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f;
+        }
+    }
+
+    private float SampleHeightSpline(float t)
+    {
+        var index = (int)(t * (HeightSplineResolution - 1));
+        index = Math.Clamp(index, 0, HeightSplineResolution - 1);
+        return heightSpline[index];
+    }
+
+    private static Span<float> GetColumnVolumeSpan(float[] volume, int columnIndex)
+        => volume.AsSpan(columnIndex * VoxelHelper.ChunkYSize, VoxelHelper.ChunkYSize);
+
+    private float GetTerrainDensity(float continentalness01, float baseHeight, float overhangNoise, float sampleY, float factor3D)
+    {
+        var tC = continentalness01;
+        var density = baseHeight - sampleY;
+        var shaping = config.TerrainShaping;
+
+        if (tC > shaping.OverhangStartThreshold &&
+            sampleY > baseHeight - terrainParams.OverhangDepthRange &&
+            sampleY < baseHeight + terrainParams.OverhangHeightRange)
+        {
+            var mountainness = Smoothstep(shaping.OverhangStartThreshold, shaping.OverhangFullThreshold, tC);
+            var heightFactor = 1f - MathF.Abs((sampleY - baseHeight) / terrainParams.OverhangFalloffRange);
+            heightFactor = Math.Clamp(heightFactor, 0f, 1f);
+
+            density += overhangNoise * terrainParams.OverhangAmplitude * shaping.OverhangMultiplier * mountainness * heightFactor * factor3D;
+        }
+
+        return density;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+    private static float Calculate3DFactor(float absWeirdness, float erosion01, TerrainShapingConfig shaping)
+    {
+        var weirdnessFactor = Smoothstep(shaping.Weirdness3DThresholdLow, shaping.Weirdness3DThresholdHigh, absWeirdness);
+        var erosionFactor = 1f - Smoothstep(0f, shaping.Erosion3DThreshold, erosion01);
+        var rawFactor = weirdnessFactor * erosionFactor;
+        return Lerp(shaping.Min3DFactor, shaping.Max3DFactor, rawFactor);
+    }
+
+    private float ApplyCoastalLandSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
+    {
+        var coastStart = terrainParams.OceanThreshold;
+        var coastEnd = terrainParams.OceanThreshold + Math.Max(0.01f, shaping.CoastalZoneWidth);
+        var blend = Smoothstep(coastStart, coastEnd, continentalness01);
+        var beachHeight = VoxelHelper.WaterLevel + MathF.Min(0.2f, shaping.BeachHeightOffset);
+        return Lerp(beachHeight, baseHeight, blend);
+    }
+
+    private float ApplyOceanShoreSmoothing(float baseHeight, float continentalness01, TerrainShapingConfig shaping)
+    {
+        var distanceToCoast = MathF.Max(0f, terrainParams.OceanThreshold - continentalness01);
+        var smoothingRange = Math.Max(0.0001f, shaping.UnderwaterCoastalSmoothingDistance);
+        var blend = 1f - Math.Clamp(distanceToCoast / smoothingRange, 0f, 1f);
+
+        var maxDepth = MathF.Max(0f, shaping.MaxOceanHeightOffset);
+        var depthBlend = Math.Clamp(distanceToCoast / (smoothingRange * 2f), 0f, 1f);
+        var shallowDepth = maxDepth * depthBlend;
+        var shallowTarget = VoxelHelper.WaterLevel - shallowDepth;
+
+        if (blend > 0f)
+        {
+            baseHeight = Lerp(baseHeight, shallowTarget, blend * blend);
+        }
+
+        var maxOceanHeight = VoxelHelper.WaterLevel - 0.05f;
+        return MathF.Min(baseHeight, maxOceanHeight);
+    }
+
+    private float GetBeachNoise(float wx, float wz)
+    {
+        var scale = config.BeachNoiseScale;
+        var seed = terrainParams.Seed + 8500u;
+
+        var warpX = ValueNoise2D(wx * scale * 0.7f, wz * scale * 0.7f, seed + 100u) * 20f;
+        var warpZ = ValueNoise2D(wx * scale * 0.7f + 100f, wz * scale * 0.7f, seed + 200u) * 20f;
+
+        var noise = ValueNoise2D((wx + warpX) * scale, (wz + warpZ) * scale, seed);
+
+        return noise - 0.5f;
+    }
+
+    private static float ValueNoise2D(float x, float z, uint seed)
+    {
+        var xi = (int)MathF.Floor(x);
+        var zi = (int)MathF.Floor(z);
+
+        var fx = x - xi;
+        var fz = z - zi;
+
+        var c00 = Hash2D(xi, zi, seed);
+        var c10 = Hash2D(xi + 1, zi, seed);
+        var c01 = Hash2D(xi, zi + 1, seed);
+        var c11 = Hash2D(xi + 1, zi + 1, seed);
+
+        var u = Fade(fx);
+        var v = Fade(fz);
+
+        var x0 = c00 + (c10 - c00) * u;
+        var x1 = c01 + (c11 - c01) * u;
+
+        return Lerp(x0, x1, v);
     }
 
     private static float ValueNoise3D(float x, float y, float z, uint seed)
@@ -1641,7 +1588,17 @@ internal sealed class CpuTerrainGenerator
         return t * t * t * (t * (t * 6f - 15f) + 10f);
     }
 
-    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
+    private static float Hash2D(int x, int z, uint seed)
+    {
+        unchecked
+        {
+            var h = (uint)(x * 374761393 + z * 668265263);
+            h ^= seed;
+            h = (h ^ (h >> 13)) * 1274126177;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFF) / 16777216f;
+        }
+    }
 
     private static float Hash3(int x, int y, int z, uint seed)
     {
@@ -1651,456 +1608,18 @@ internal sealed class CpuTerrainGenerator
             h ^= seed;
             h = (h ^ (h >> 13)) * 1274126177;
             h ^= h >> 16;
-            return (h & 0x00FFFFFF) / 16777216f; // [0,1)
-        }
-    }
-
-    private static bool TryCommitSpan(
-        int columnIndex,
-        int spanBase,
-        int pairBase,
-        BlockId[] spanTypes,
-        int[] spanPairs,
-        int spanIndex,
-        int startY,
-        int endY,
-        BlockId block,
-        ChunkCollisionData collision)
-    {
-        if (spanIndex >= ChunkCollisionData.MaxSpansPerColumn)
-        {
-            return false;
-        }
-
-        var spanId = spanBase + spanIndex;
-        var pairId = pairBase + spanIndex * 2;
-        spanTypes[spanId] = block;
-        spanPairs[pairId] = startY;
-        spanPairs[pairId + 1] = endY + 1; // store exclusive end for chunk consumption
-        var dstIndex = columnIndex * ChunkCollisionData.MaxSpansPerColumn + spanIndex;
-        collision.Spans[dstIndex] = new ColumnSpan
-        {
-            StartY = (short)startY,
-            EndY = (short)endY,
-            Block = (ushort)block  // Store full BlockId with flags
-        };
-        return true;
-    }
-
-    private int GenerateHeight(int wx, int wz)
-    {
-        if (TryGetColumnIndex(wx, wz, out var columnIndex))
-        {
-            return columnHeightInts[columnIndex];
-        }
-
-        var height = (int)MathF.Round(GetHeight(new Vector2(wx, wz)));
-        return Math.Clamp(height, 0, VoxelHelper.ChunkYSize - 1);
-    }
-
-    private float GetSurfaceHeightFloat(int wx, int wz)
-        => TryGetColumnIndex(wx, wz, out var columnIndex) ? columnHeights[columnIndex]
-            : GetHeight(new Vector2(wx, wz));
-
-    /// <summary>
-    /// Generate the block type for a voxel at the given world position.
-    /// Optimized version that accepts pre-calculated density and depth state.
-    /// </summary>
-    private BlockId GenerateBlock(
-        int height,
-        int y,
-        int wx,
-        int wz,
-        float baseHeight,
-        float continentalness01,
-        int columnIndex,
-        BiomeDefinition? biomeDef,
-        float density,
-        float densityAbove,
-        int depthFromSurface)
-    {
-        // === HARDCODED BOTTOM LAYERS ===
-        // Y=0: Always lava (magma layer at the bottom of the world)
-        // Y=1: Always bedrock (impenetrable foundation layer)
-        if (y == 0)
-        {
-            return BlockId.Lava;
-        }
-        if (y == 1)
-        {
-            return BlockId.Bedrock;
-        }
-
-        // SINGLE SOURCE OF TRUTH: Use cached water body info computed in BuildColumnWaterBodies()
-        var waterBody = columnWaterBody[columnIndex];
-        var hasWaterHere = waterBody.HasWater;
-        var localWaterLevel = waterBody.WaterLevel;
-
-        // 2. Density Check - If density is negative, it's air (or water in water body columns).
-        if (density < 0f)
-        {
-            // Water fills air space ONLY in columns with water body
-            return hasWaterHere && y <= localWaterLevel ? BlockId.Water : BlockId.Air;
-        }
-
-        // Block is solid - check cave carving
-        var isLand = !waterBody.IsOcean;
-        var caveMask = GetColumnCaveMask(columnIndex);
-        if (isLand && y > 0 && caveMask[y] != 0)
-        {
-            // Cave carved this voxel - it becomes air
-            return BlockId.Air;
-        }
-
-        // 4. Determine if this is a SURFACE block by checking if block above is air or carved by a cave
-        // Use cached densityAbove to avoid re-calculation
-        var caveAbove = isLand && y < VoxelHelper.ChunkYSize - 1 && caveMask[y + 1] != 0;
-        var isSurface = densityAbove < 0f || caveAbove;
-
-        // 5. Determine block type based on position and biome
-        if (biomeDef == null)
-        {
-            return isSurface ? BlockId.Grass : BlockId.Stone;
-        }
-
-        // Underwater detection
-        var isUnderwater = hasWaterHere && height < localWaterLevel;
-
-        // Surface block
-        if (isSurface)
-        {
-            // CAVE FLOOR FIX: Deep cave floors get stone instead of biome grass
-            var depthBelowSurface = height - y;
-            if (depthBelowSurface > config.Caves.CaveFloorDepthThreshold)
-            {
-                return BlockId.Stone;
-            }
-
-            // Coastal beach override
-            var isInBeachZone = IsWithinBeachDistance(columnIndex);
-            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
-                ? BlockId.Sand
-                : isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
-        }
-
-        // Subsurface blocks - use tracked depthFromSurface
-        // This avoids the O(N) loop that was previously here
-        var effectiveDepth = depthFromSurface;
-        if (effectiveDepth == 0)
-        {
-            // Fallback if tracking failed (shouldn't happen with correct top-down logic)
-            effectiveDepth = Math.Max(0, height - y);
-        }
-
-        if (effectiveDepth <= terrainParams.SubsurfaceDepth)
-        {
-            // CAVE SUBSURFACE FIX
-            var depthBelowTerrainSurface = height - y;
-            if (depthBelowTerrainSurface > config.Caves.CaveFloorDepthThreshold)
-            {
-                return BlockId.Dirt;
-            }
-
-            // Beach subsurface
-            var isInBeachZone = IsWithinBeachDistance(columnIndex);
-            var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
-                ? BlockId.Sand
-                : isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
-        }
-
-        // Deep blocks - try to generate ore in stone regions
-        var deepBlock = biomeDef.DeepBlock;
-        if (deepBlock == BlockId.Stone)
-        {
-            var oreBlock = TryGenerateOre(wx, y, wz);
-            if (oreBlock != BlockId.Air)
-            {
-                return oreBlock;
-            }
-        }
-
-        return deepBlock;
-    }
-
-    /// <summary>
-    /// Attempts to generate an ore at the specified world position.
-    /// Returns the ore BlockId if generated, otherwise Air (indicating no ore).
-    /// Uses Minecraft-style depth distribution with per-ore probability curves.
-    /// </summary>
-    private BlockId TryGenerateOre(int wx, int y, int wz)
-    {
-        var oreTypes = config.Ores.OreTypes;
-        if (oreTypes == null || oreTypes.Count == 0)
-            return BlockId.Air;
-
-        var baseSeed = terrainParams.Seed + config.Ores.SeedOffset;
-
-        // Check each ore type
-        foreach (var oreDef in oreTypes)
-        {
-            // Convert Y ranges relative to water level for negative values
-            var minY = oreDef.MinY < 0 ? VoxelHelper.WaterLevel + oreDef.MinY : oreDef.MinY;
-            var maxY = oreDef.MaxY < 0 ? VoxelHelper.WaterLevel + oreDef.MaxY : oreDef.MaxY;
-            var peakY = oreDef.PeakY < 0 ? VoxelHelper.WaterLevel + oreDef.PeakY : oreDef.PeakY;
-
-            // Check if within Y range
-            if (y < minY || y > maxY)
-                continue;
-
-            // Calculate spawn probability based on distribution type
-            var probability = oreDef.Rarity;
-            if (oreDef.DistributionType == OreDistribution.Triangle)
-            {
-                // Triangle distribution: peaks at PeakY, falls off linearly
-                if (y <= peakY)
-                {
-                    var range = peakY - minY;
-                    probability *= range > 0 ? (y - minY) / (float)range : 1f;
-                }
-                else
-                {
-                    var range = maxY - peakY;
-                    probability *= range > 0 ? (maxY - y) / (float)range : 1f;
-                }
-            }
-
-            // Use 3D hash for deterministic ore placement
-            var oreSeed = baseSeed + (uint)oreDef.OreBlock.GetId();
-            var hash = OreHash3D(wx, y, wz, oreSeed);
-
-            if (hash < probability)
-            {
-                return oreDef.OreBlock;
-            }
-        }
-
-        return BlockId.Air;
-    }
-
-    /// <summary>
-    /// 3D hash function for ore generation. Returns a value in [0,1).
-    /// </summary>
-    private static float OreHash3D(int x, int y, int z, uint seed)
-    {
-        unchecked
-        {
-            var h = (uint)(x * 374761393 + y * 668265263 + z * 2147483647);
-            h ^= seed;
-            h = (h ^ (h >> 13)) * 1274126177u;
-            h ^= h >> 16;
             return (h & 0x00FFFFFF) / 16777216f;
         }
-    }
-
-    #region Terrain Functions
-
-    private float GetHeight(Vector2 p)
-    {
-        var continentalness = GetContinentalness(p);
-        var erosion = GetErosion(p);
-        var peaks = GetPeaksValleys(p);
-        var tC = continentalness * 0.5f + 0.5f;
-        var baseHeight = SampleHeightSpline(tC) + VoxelHelper.WaterLevel;
-
-        if (tC >= terrainParams.OceanThreshold)
-        {
-            var ruggedness = 1f - erosion * 0.5f - 0.5f;
-            baseHeight += peaks * 20f * ruggedness;
-
-            if (tC > terrainParams.MountainThreshold)
-            {
-                var cliffNoise = SampleFbm2DSingle(p, terrainParams.CliffFrequency, terrainParams.Seed + 1500u, 4, 0.6f, 2.5f);
-                cliffNoise = MathF.Abs(cliffNoise);
-                var mountainness = Smoothstep(terrainParams.MountainThreshold, 0.95f, tC);
-                baseHeight += cliffNoise * terrainParams.CliffAmplitude * mountainness;
-            }
-        }
-
-        return baseHeight;
-    }
-
-    /// <summary>
-    /// Calculate terrain density for 3D terrain features (overhangs, arches).
-    /// Negative density = air, positive density = solid.
-    /// Phase 4: Uses 3D factor from weirdness to modulate overhang strength.
-    /// </summary>
-    private float GetTerrainDensity(float continentalness01, float baseHeight, float overhangNoise, float sampleY, float factor3D)
-    {
-        var tC = continentalness01;
-        var density = baseHeight - sampleY;
-        var shaping = config.TerrainShaping;
-
-        // Enable overhangs at LOWER continentalness for more dramatic terrain everywhere
-        // Overhangs appear in highlands and mountains, not just extreme mountains
-        if (tC > shaping.OverhangStartThreshold &&
-            sampleY > baseHeight - terrainParams.OverhangDepthRange &&
-            sampleY < baseHeight + terrainParams.OverhangHeightRange)
-        {
-            // Mountainness factor: gradual increase from start to full
-            var mountainness = Smoothstep(shaping.OverhangStartThreshold, shaping.OverhangFullThreshold, tC);
-            var heightFactor = 1f - MathF.Abs((sampleY - baseHeight) / terrainParams.OverhangFalloffRange);
-            heightFactor = Math.Clamp(heightFactor, 0f, 1f);
-
-            // Phase 4: Modulate overhang amplitude by 3D factor
-            // High |weirdness| + low erosion → factor3D near 1.0 → full overhang effect
-            density += overhangNoise * terrainParams.OverhangAmplitude * shaping.OverhangMultiplier * mountainness * heightFactor * factor3D;
-        }
-
-        return density;
-    }
-
-    /// <summary>
-    /// Calculate slope at a world position using consistent height sampling.
-    /// IMPORTANT: Uses GetHeight() for ALL samples (including in-chunk) to ensure
-    /// consistent height calculations at chunk boundaries. This fixes grid-pattern
-    /// cave artifacts caused by height discontinuities when slope was computed
-    /// using cached heights (from BuildColumnFieldCaches) for in-chunk positions
-    /// but GetHeight() for out-of-chunk positions.
-    /// </summary>
-    private float GetSlope(int wx, int wz)
-    {
-        // Use GetHeight() consistently for all samples to avoid discontinuities at chunk edges
-        // GetHeight() uses the simplified terrain formula, but it's consistent across all positions
-        var p = new Vector2(wx, wz);
-        var h0 = GetHeight(p);
-        var h1 = GetHeight(new Vector2(wx + 1, wz));
-        var h2 = GetHeight(new Vector2(wx, wz + 1));
-        var h3 = GetHeight(new Vector2(wx - 1, wz));
-        var h4 = GetHeight(new Vector2(wx, wz - 1));
-
-        var dx = Math.Max(Math.Abs(h1 - h0), Math.Abs(h3 - h0));
-        var dz = Math.Max(Math.Abs(h2 - h0), Math.Abs(h4 - h0));
-        return MathF.Sqrt(dx * dx + dz * dz);
-    }
-
-    /// <summary>
-    /// Sample entrance noise to create coherent, roundish cave entrance shapes.
-    /// Uses 2D noise so entrance shape is consistent across Y levels (like looking at a hillside).
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private float GetEntranceNoise(int wx, int wz)
-    {
-        var caveParams = config.Caves;
-        var freq = caveParams.EntranceNoiseFrequency;
-
-        // Use simple 2D value noise for entrance clustering
-        // This creates blob-like entrance shapes on hillsides
-        var nx = wx * freq;
-        var nz = wz * freq;
-        var seed = terrainParams.Seed + 7000u;
-
-        // Simple 2D value noise
-        var xi = (int)MathF.Floor(nx);
-        var zi = (int)MathF.Floor(nz);
-
-        var fx = nx - xi;
-        var fz = nz - zi;
-
-        var c00 = Hash2D(xi, zi, seed);
-        var c10 = Hash2D(xi + 1, zi, seed);
-        var c01 = Hash2D(xi, zi + 1, seed);
-        var c11 = Hash2D(xi + 1, zi + 1, seed);
-
-        var u = Fade(fx);
-        var v = Fade(fz);
-
-        var x0 = Lerp(c00, c10, u);
-        var x1 = Lerp(c01, c11, u);
-
-        return Lerp(x0, x1, v);
-    }
-
-    /// <summary>
-    /// 2D hash function for entrance noise. Returns a value in [0,1).
-    /// </summary>
-    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    private static float Hash2D(int x, int z, uint seed)
-    {
-        unchecked
-        {
-            var h = (uint)(x * 374761393 + z * 668265263);
-            h ^= seed;
-            h = (h ^ (h >> 13)) * 1274126177u;
-            h ^= h >> 16;
-            return (h & 0x00FFFFFF) / 16777216f;
-        }
-    }
-
-    private float GetContinentalness(Vector2 p)
-    {
-        var warped = p * terrainParams.WarpScale;
-        var warp = DomainWarp(warped, terrainParams.Seed);
-        return SampleFbm2DSingle(p + warp, terrainParams.ContinentalnessScale, terrainParams.Seed, 3, 0.5f, 2f);
-    }
-
-    private float GetErosion(Vector2 p)
-        => SampleFbm2DSingle(p, terrainParams.ErosionScale, terrainParams.Seed + 100u, 3, 0.5f, 2f);
-
-    private float GetPeaksValleys(Vector2 p)
-    {
-        var n = SampleFbm2DSingle(p, terrainParams.PeaksValleysScale, terrainParams.Seed + 200u, 3, 0.5f, 2f);
-        return 1f - MathF.Abs(n);
-    }
-
-    #endregion
-
-    #region Noise Helpers
-
-    private float SampleHeightSpline(float t)
-    {
-        t = Math.Clamp(t, 0f, 1f);
-        var scaled = t * (HeightSplineResolution - 1);
-        var i = (int)MathF.Floor(scaled);
-        var frac = scaled - i;
-        var a = heightSpline[i];
-        var b = heightSpline[Math.Min(i + 1, HeightSplineResolution - 1)];
-        return a + (b - a) * frac;
-    }
-
-    private static float Smoothstep(float edge0, float edge1, float x)
-    {
-        if (Math.Abs(edge1 - edge0) < float.Epsilon)
-        {
-            return x >= edge1 ? 1f : 0f;
-        }
-
-        var t = Math.Clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
-        return t * t * (3f - 2f * t);
-    }
-
-    private Vector2 DomainWarp(Vector2 p, uint seed)
-    {
-        var qx = SampleFbm2DSingle(p, 1f, seed, 2, 0.5f, 2f);
-        var qy = SampleFbm2DSingle(p + new Vector2(5.2f, 1.3f), 1f, seed, 2, 0.5f, 2f);
-        var warp = new Vector2(qx, qy) * terrainParams.WarpStrength;
-        return warp;
-    }
-
-    /// <summary>
-    /// Log performance statistics for terrain generation.
-    /// Call periodically (e.g., every 100 chunks or on demand via F3 key).
-    /// </summary>
-    public void LogPerformanceStats()
-    {
-        profiler.LogStatistics();
-#if DEBUG
-        if (climateCache.IsValid)
-        {
-            OpenRender.Log.Debug($"ClimateCache last sample time: {climateCache.LastSampleTimeMs:F2}ms");
-        }
-#endif
     }
 
     #endregion
 
     internal readonly record struct ChunkGenerationResult(
-        ChunkCollisionData Collision,
-        int[] SpanPairs,
-        byte[] SpanCounts,
-        BlockId[] SpanTypes)
-    {
-        public bool IsEmpty { get; init; } = false;
-    }
-}
+    ChunkCollisionData Collision,
+    int[] SpanPairs,
+    byte[] SpanCounts,
+    BlockId[] SpanTypes,
+    ChunkBiomeData? BiomeData)
+{
+    public bool IsEmpty { get; init; } = false;
+}}

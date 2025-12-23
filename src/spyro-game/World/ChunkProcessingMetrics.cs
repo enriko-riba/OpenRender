@@ -2,7 +2,7 @@ namespace SpyroGame.World;
 
 /// <summary>
 /// Tracks performance metrics for chunk processing operations.
-/// Uses rolling averages for timing data.
+/// Provides rolling averages, per-second max values, and throughput counters.
 /// </summary>
 public sealed class ChunkProcessingMetrics
 {
@@ -41,23 +41,41 @@ public sealed class ChunkProcessingMetrics
     private int biomeCount;
     private int blockGenCount;
 
-    // Per-second counters
+    // Per-second counters and max tracking
     private int chunksGeneratedThisInterval;
     private int chunksMeshedThisInterval;
     private int chunksReprocessedThisInterval;
     private double lastResetTime;
+    
+    // Max values this interval (reset every second)
+    private double maxTerrainGenThisInterval;
+    private double maxLightCalcThisInterval;
+    private double maxLightPropThisInterval;
+    private double maxMeshBuildThisInterval;
 
     /// <summary>Average terrain generation time in milliseconds.</summary>
     public double AvgTerrainGenerationMs { get; private set; }
+    
+    /// <summary>Max terrain generation time in the last second.</summary>
+    public double MaxTerrainGenerationMs { get; private set; }
 
     /// <summary>Average light calculation time in milliseconds.</summary>
     public double AvgLightCalculationMs { get; private set; }
+    
+    /// <summary>Max light calculation time in the last second.</summary>
+    public double MaxLightCalculationMs { get; private set; }
 
     /// <summary>Average light propagation time in milliseconds.</summary>
     public double AvgLightPropagationMs { get; private set; }
+    
+    /// <summary>Max light propagation time in the last second.</summary>
+    public double MaxLightPropagationMs { get; private set; }
 
     /// <summary>Average mesh build time in milliseconds.</summary>
     public double AvgMeshBuildMs { get; private set; }
+    
+    /// <summary>Max mesh build time in the last second.</summary>
+    public double MaxMeshBuildMs { get; private set; }
     
     /// <summary>Average climate sampling time in milliseconds (part of terrain gen).</summary>
     public double AvgClimateMs { get; private set; }
@@ -87,6 +105,9 @@ public sealed class ChunkProcessingMetrics
         terrainGenIndex = (terrainGenIndex + 1) % SampleSize;
         terrainGenCount = Math.Min(terrainGenCount + 1, SampleSize);
         chunksGeneratedThisInterval++;
+        
+        if (ms > maxTerrainGenThisInterval) maxTerrainGenThisInterval = ms;
+        
         UpdateAverage(terrainGenSamples, terrainGenCount, out var avg);
         AvgTerrainGenerationMs = avg;
     }
@@ -97,6 +118,9 @@ public sealed class ChunkProcessingMetrics
         lightCalcSamples[lightCalcIndex] = ms;
         lightCalcIndex = (lightCalcIndex + 1) % SampleSize;
         lightCalcCount = Math.Min(lightCalcCount + 1, SampleSize);
+        
+        if (ms > maxLightCalcThisInterval) maxLightCalcThisInterval = ms;
+        
         UpdateAverage(lightCalcSamples, lightCalcCount, out var avg);
         AvgLightCalculationMs = avg;
     }
@@ -107,6 +131,9 @@ public sealed class ChunkProcessingMetrics
         lightPropSamples[lightPropIndex] = ms;
         lightPropIndex = (lightPropIndex + 1) % SampleSize;
         lightPropCount = Math.Min(lightPropCount + 1, SampleSize);
+        
+        if (ms > maxLightPropThisInterval) maxLightPropThisInterval = ms;
+        
         UpdateAverage(lightPropSamples, lightPropCount, out var avg);
         AvgLightPropagationMs = avg;
     }
@@ -118,8 +145,11 @@ public sealed class ChunkProcessingMetrics
         meshBuildIndex = (meshBuildIndex + 1) % SampleSize;
         meshBuildCount = Math.Min(meshBuildCount + 1, SampleSize);
         chunksMeshedThisInterval++;
+        
+        if (ms > maxMeshBuildThisInterval) maxMeshBuildThisInterval = ms;
+        
         UpdateAverage(meshBuildSamples, meshBuildCount, out var avg);
-        //AvgMeshBuildMs = avg;
+        AvgMeshBuildMs = avg;
     }
     
     /// <summary>Record terrain generation breakdown stats.</summary>
@@ -161,13 +191,25 @@ public sealed class ChunkProcessingMetrics
     {
         if (currentTimeSeconds - lastResetTime >= ResetIntervalSeconds)
         {
+            // Commit per-second stats
             ChunksGeneratedPerSecond = chunksGeneratedThisInterval;
             ChunksMeshedPerSecond = chunksMeshedThisInterval;
             ChunksReprocessedPerSecond = chunksReprocessedThisInterval;
+            
+            // Commit max values from this interval
+            MaxTerrainGenerationMs = maxTerrainGenThisInterval;
+            MaxLightCalculationMs = maxLightCalcThisInterval;
+            MaxLightPropagationMs = maxLightPropThisInterval;
+            MaxMeshBuildMs = maxMeshBuildThisInterval;
 
+            // Reset for next interval
             chunksGeneratedThisInterval = 0;
             chunksMeshedThisInterval = 0;
             chunksReprocessedThisInterval = 0;
+            maxTerrainGenThisInterval = 0;
+            maxLightCalcThisInterval = 0;
+            maxLightPropThisInterval = 0;
+            maxMeshBuildThisInterval = 0;
             lastResetTime = currentTimeSeconds;
         }
     }

@@ -20,6 +20,7 @@ namespace SpyroGame.Client.Terrain;
 public sealed class ClientTerrainSystem : IDisposable
 {
     private readonly ChunkVoxelDataCache voxelCache = new();
+    private readonly ChunkProcessingMetrics meshingMetrics = new();
     private readonly ChunkMeshingJobSystem meshingJobs;
     private readonly Dictionary<int, ChunkDescriptor> activeChunks = [];
     private readonly ConcurrentDictionary<int, ChunkMesh> pendingMeshes = new();
@@ -32,6 +33,9 @@ public sealed class ClientTerrainSystem : IDisposable
     private VoxelTerrainRenderer? terrainRenderer;
 
     public CollisionManager CollisionManager { get; } = new();
+    
+    /// <summary>Gets the performance metrics for client-side meshing.</summary>
+    public ChunkProcessingMetrics MeshingMetrics => meshingMetrics;
 
     public int ActiveChunkCount => activeChunks.Count;
     public int PendingMeshCount => pendingMeshes.Count;
@@ -91,7 +95,7 @@ public sealed class ClientTerrainSystem : IDisposable
 
     public ClientTerrainSystem()
     {
-        meshingJobs = new ChunkMeshingJobSystem(voxelCache);
+        meshingJobs = new ChunkMeshingJobSystem(voxelCache, meshingMetrics);
     }
 
     public VoxelTerrainRenderer TerrainRenderer

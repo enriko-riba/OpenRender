@@ -20,11 +20,11 @@ public struct ColumnSpan
 
 public class ChunkCollisionData
 {
-    public const int ColumnsPerChunk = 16 * 16;
+    public const int ColumnsPerChunk = VoxelHelper.ChunkSideSize * VoxelHelper.ChunkSideSize;
     // NOTE: 16 is too low once you have caves/overhangs/vegetation in the same column.
     // When a column exceeds this span budget, collision/picking can miss blocks ("holes"),
     // which matches the reported "fall through a single column" symptom.
-    public const int MaxSpansPerColumn = 64;
+    public const int MaxSpansPerColumn = 32;
 
     // Flattened array of spans for all columns
     // Indexing: columnIdx * MaxSpansPerColumn + spanIdx

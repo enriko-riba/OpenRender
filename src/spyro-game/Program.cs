@@ -57,7 +57,7 @@ var server = new LocalGameServer(world, serverStreamer, spawnPosition: new Vecto
 // Server is GL-free; it can tick safely on its own host thread.
 var serverHost = new LocalGameServerHost(server, serverConn, localPlayerId);
 var localClient = new LocalGameClient(clientConn, localPlayerId);
-var session = new GameSession(world, localClient, serverHost, localPlayerId);
+var session = new GameSession(world, localClient, serverHost, localPlayerId, server);
 
 // Create GameScene (will receive terrain from loading scene)
 var gameScene = new GameScene(tr2)

@@ -190,10 +190,9 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
                         profiler.GetLastMs(TerrainGenerationProfiler.Step.BlockGeneration));
 
                     // Store biome data alongside voxels
-                    var biomeData = generator.GetLastChunkBiomeData();
-                    if (biomeData != null)
+                    if (result.BiomeData != null)
                     {
-                        voxelCache.StoreBiomeData(work.ChunkIndex, biomeData);
+                        voxelCache.StoreBiomeData(work.ChunkIndex, result.BiomeData);
                     }
 
                     // Time lighting calculation
@@ -259,7 +258,7 @@ internal sealed class ChunkGenerationJobSystem : IDisposable
         }
         catch (Exception ex)
         {
-            Log.Error($"CpuGeneration: failed chunk {work.ChunkIndex}: {ex.Message}");
+            Log.Error($"CpuGeneration: failed chunk {work.ChunkIndex}: {ex}");
         }
     }
 
