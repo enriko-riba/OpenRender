@@ -150,6 +150,25 @@ internal sealed class CpuTerrainGenerator
         return new ChunkGenerationResult(collision, spanPairs, spanCounts, spanTypes, currentChunkBiome);
     }
 
+    /// <summary>
+    /// Fills a chunk with terrain voxels using a column-first iteration strategy.
+    /// 
+    /// <para><b>Performance Optimizations:</b></para>
+    /// <list type="bullet">
+    ///   <item>Column-first (X,Z outer, Y inner) iteration to maximize cache locality for per-column data</item>
+    ///   <item>Top-down Y iteration to track surface depth without O(N) lookups per voxel</item>
+    ///   <item>Early-exit density calculation for voxels significantly above terrain height</item>
+    ///   <item>Pre-cached biome, water body, and beach zone data per column (avoids 384× lookups)</item>
+    ///   <item>Palette-based voxel storage to reduce memory bandwidth</item>
+    /// </list>
+    /// 
+    /// <para><b>Complexity:</b> O(256 columns × ~height voxels) where height is terrain-dependent.</para>
+    /// </summary>
+    /// <param name="chunkIndex">The chunk's linear index in the world grid.</param>
+    /// <param name="chunkData">Output chunk data to populate with voxels.</param>
+    /// <param name="edits">Optional player block edits to apply on top of generated terrain.</param>
+    /// <param name="ctx">Generation context containing pre-computed climate and noise data.</param>
+    /// <param name="chunkBiomeData">Output biome data for this chunk.</param>
     private void FillChunk(
         int chunkIndex,
         ChunkData chunkData,
@@ -168,6 +187,14 @@ internal sealed class CpuTerrainGenerator
 
         profiler.BeginStep(TerrainGenerationProfiler.Step.BlockGeneration);
 
+        // Pre-cache beach zone status for all 256 columns to avoid repeated lookups in inner Y loop
+        // This saves ~384 IsWithinBeachDistance calls per column (surface + subsurface layers)
+        Span<bool> columnIsBeachZone = stackalloc bool[ColumnCount];
+        for (var i = 0; i < ColumnCount; i++)
+        {
+            columnIsBeachZone[i] = IsWithinBeachDistance(i, ctx);
+        }
+
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {
             var worldZ = chunkZ * VoxelHelper.ChunkSideSize + lz;
@@ -180,10 +207,11 @@ internal sealed class CpuTerrainGenerator
                 var continentalness01 = ctx.Continentalness01[columnIndex];
                 var overhangSlice = GetColumnVolumeSpan(ctx.OverhangVolume, columnIndex);
 
-                // Optimization: Pre-calculate biome and slope for the column
+                // Optimization: Pre-calculate biome and beach zone for the column
                 // This avoids 384 lookups per column
                 var biomeId = chunkBiomeData.GetBiomeAt(lx, lz);
                 biomeById.TryGetValue((int)biomeId, out var biomeDef);
+                var isBeachZone = columnIsBeachZone[columnIndex];
 
                 // Optimization: Track state top-down to avoid redundant calculations
                 var densityAbove = -1.0f; // Assumed air above world top
@@ -223,6 +251,7 @@ internal sealed class CpuTerrainGenerator
                         density,
                         densityAbove,
                         depthFromSurface,
+                        isBeachZone,
                         ctx);
 
                     var localIndex = y * VoxelHelper.ChunkSideSizeSquare + columnIndex;
@@ -939,9 +968,33 @@ internal sealed class CpuTerrainGenerator
         caveCarver.CaveMask.CopyTo(ctx.CaveMaskVolume);
     }
 
+
     /// <summary>
-    /// Interpolate sparse 3D noise samples into full-resolution volumes using optimized linear interpolation.
+    /// Interpolates sparse 3D noise samples into full-resolution volumes using trilinear interpolation.
+    /// 
+    /// <para><b>Algorithm:</b> For each voxel in the 16×16×384 chunk:</para>
+    /// <list type="number">
+    ///   <item>Find the 8 surrounding sparse samples (2×2×2 corners of the containing cell)</item>
+    ///   <item>Bilinearly interpolate the 4 XZ corners at both Y levels</item>
+    ///   <item>Linearly interpolate between the two Y levels</item>
+    /// </list>
+    /// 
+    /// <para><b>Performance Notes:</b></para>
+    /// <list type="bullet">
+    ///   <item>Processes 4 noise types (cheese, spaghetti A/B, overhang) per voxel</item>
+    ///   <item>XZ indices and bilinear weights are computed once per column</item>
+    ///   <item>Y interpolation weights are computed once per 4-voxel segment</item>
+    ///   <item>Inner loop (dy) has only 4 iterations, limiting vectorization benefit</item>
+    /// </list>
+    /// 
+    /// <para><b>Output Volumes:</b></para>
+    /// <list type="bullet">
+    ///   <item>CheeseVolume: Large cave chambers (applied directly)</item>
+    ///   <item>SpaghettiVolume: Tunnel width from distance field of two noise channels</item>
+    ///   <item>OverhangVolume: 3D terrain detail for cliff/overhang features</item>
+    /// </list>
     /// </summary>
+    /// <param name="ctx">Generation context containing sparse samples and output volumes.</param>
     private void InterpolateSparseVolumes(GenerationContext ctx)
     {
         var chunkY = VoxelHelper.ChunkYSize;
@@ -1129,9 +1182,39 @@ internal sealed class CpuTerrainGenerator
             : GetHeight(new Vector2(wx, wz), ctx);
 
     /// <summary>
-    /// Generate the block type for a voxel at the given world position.
-    /// Optimized version that accepts pre-calculated density and depth state.
+    /// Generates the block type for a single voxel based on terrain density, biome, and position.
+    /// 
+    /// <para><b>Performance Characteristics:</b></para>
+    /// <list type="bullet">
+    ///   <item>Called ~98,304 times per chunk (16×16×384 voxels)</item>
+    ///   <item>Uses pre-computed density and depth state passed from FillChunk (avoids re-calculation)</item>
+    ///   <item>Beach zone status pre-cached per column to avoid repeated distance checks</item>
+    ///   <item>Ore generation uses fast hash instead of noise sampling</item>
+    /// </list>
+    /// 
+    /// <para><b>Block Selection Priority:</b></para>
+    /// <list type="number">
+    ///   <item>Y=0: Lava (world bottom)</item>
+    ///   <item>Y=1: Bedrock (impenetrable layer)</item>
+    ///   <item>Negative density: Air or Water (if in water body)</item>
+    ///   <item>Cave mask set: Air (carved cave)</item>
+    ///   <item>Surface block: Biome surface or Sand (beach)</item>
+    ///   <item>Subsurface: Biome subsurface or Sand (beach)</item>
+    ///   <item>Deep: Stone with potential ore generation</item>
+    /// </list>
     /// </summary>
+    /// <param name="height">Pre-computed integer terrain height for this column.</param>
+    /// <param name="y">Current Y coordinate being generated.</param>
+    /// <param name="wx">World X coordinate.</param>
+    /// <param name="wz">World Z coordinate.</param>
+    /// <param name="columnIndex">Linear index of the column (0-255).</param>
+    /// <param name="biomeDef">Cached biome definition for this column (may be null).</param>
+    /// <param name="density">Pre-computed terrain density at this voxel.</param>
+    /// <param name="densityAbove">Density of the voxel above (for surface detection).</param>
+    /// <param name="depthFromSurface">Tracked depth below surface (for subsurface layers).</param>
+    /// <param name="isBeachZone">Pre-cached flag indicating if column is within beach distance.</param>
+    /// <param name="ctx">Generation context with cached column data.</param>
+    /// <returns>The block type to place at this voxel position.</returns>
     private BlockId GenerateBlock(
         int height,
         int y,
@@ -1142,6 +1225,7 @@ internal sealed class CpuTerrainGenerator
         float density,
         float densityAbove,
         int depthFromSurface,
+        bool isBeachZone,
         GenerationContext ctx)
     {
         // === HARDCODED BOTTOM LAYERS ===
@@ -1201,10 +1285,9 @@ internal sealed class CpuTerrainGenerator
                 return BlockId.Stone;
             }
 
-            // Coastal beach override
-            var isInBeachZone = IsWithinBeachDistance(columnIndex, ctx);
+            // Coastal beach override - use pre-cached beach zone status
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+            return !isUnderwater && isBeachZone && atBeachHeight && !hasWaterHere
                 ? BlockId.Sand
                 : isUnderwater ? biomeDef.UnderwaterSurfaceBlock : biomeDef.SurfaceBlock;
         }
@@ -1227,10 +1310,9 @@ internal sealed class CpuTerrainGenerator
                 return BlockId.Dirt;
             }
 
-            // Beach subsurface
-            var isInBeachZone = IsWithinBeachDistance(columnIndex, ctx);
+            // Beach subsurface - use pre-cached beach zone status
             var atBeachHeight = y >= VoxelHelper.WaterLevel && y <= VoxelHelper.WaterLevel + terrainParams.ShorelineRange;
-            return !isUnderwater && isInBeachZone && atBeachHeight && !hasWaterHere
+            return !isUnderwater && isBeachZone && atBeachHeight && !hasWaterHere
                 ? BlockId.Sand
                 : isUnderwater ? biomeDef.UnderwaterSubsurfaceBlock : biomeDef.SubsurfaceBlock;
         }

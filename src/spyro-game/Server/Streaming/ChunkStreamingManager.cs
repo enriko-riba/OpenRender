@@ -153,9 +153,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     public void UpdatePlayer(PlayerId playerId, Vector3 position) => playerPositions[playerId] = position;
 
     /// <summary>
-    /// Allocation-free check for whether a chunk is currently (1) desired by this player OR lingering, and (2) ready.
+    /// Allocation-free check for whether a chunk is currently (1) desired by this player and (2) ready.
     /// Useful for filtering payload queues without constructing per-tick ready sets.
-    /// Lingering chunks (pending eviction with grace period) are included to prevent client-side pop-in/pop-out.
+    /// Note: Lingering chunks (pending eviction) are NOT included - they stay in server memory
+    /// but are not reported as visible to avoid blocking new chunk generation priority.
     /// </summary>
     public bool IsChunkReadyForPlayer(PlayerId playerId, int chunkIndex)
     {
@@ -165,18 +166,14 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
         }
 
         // Chunk is ready. Check if it's desired by this player.
-        if (desiredChunksByPlayer.TryGetValue(playerId, out var desired) && desired.Contains(chunkIndex))
-        {
-            return true;
-        }
-
-        // Also include lingering chunks (pending eviction) to prevent pop-in/pop-out.
-        return pendingEvictionTimestamps.ContainsKey(chunkIndex);
+        return desiredChunksByPlayer.TryGetValue(playerId, out var desired) && desired.Contains(chunkIndex);
     }
 
     /// <summary>
-    /// Returns the subset of chunks that are (1) desired by this player OR lingering, and (2) ready.
-    /// Lingering chunks (pending eviction with grace period) are included to prevent client-side pop-in/pop-out.
+    /// Returns the subset of chunks that are (1) desired by this player and (2) ready.
+    /// Note: Lingering chunks (pending eviction) are NOT included in client visibility -
+    /// they remain in server memory to avoid regeneration if the player returns,
+    /// but the client should stream in new chunks in the direction of travel.
     /// </summary>
     public HashSet<int> GetReadyChunksForPlayer(PlayerId playerId)
     {
@@ -191,16 +188,6 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 {
                     result.Add(idx);
                 }
-            }
-        }
-
-        // Also add lingering chunks (pending eviction) that are still ready.
-        // This prevents pop-in/pop-out when players move near chunk boundaries.
-        foreach (var idx in pendingEvictionTimestamps.Keys)
-        {
-            if (readyChunks.Contains(idx))
-            {
-                result.Add(idx);
             }
         }
 

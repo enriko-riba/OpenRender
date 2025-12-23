@@ -77,6 +77,30 @@ internal static class ChunkMeshBuilder
         return (t_opaqueVertices, t_opaqueIndices, t_translucentVertices, t_translucentIndices, t_waterIndices, t_alphaTestIndices, t_cubeletIndices);
     }
 
+    /// <summary>
+    /// Builds a renderable mesh from chunk voxel data using visibility culling and face generation.
+    /// 
+    /// <para><b>Mesh Construction Pipeline:</b></para>
+    /// <list type="number">
+    ///   <item>Acquire lease for center chunk data to prevent buffer reuse during meshing</item>
+    ///   <item>Iterate columns (X,Z) then Y up to surface height (skips air above terrain)</item>
+    ///   <item>For each non-air block, check 6 face directions for visibility</item>
+    ///   <item>Generate vertices with packed position, AO, light, and block attributes</item>
+    ///   <item>Split indices into opaque, alpha-test, water, and translucent draw calls</item>
+    /// </list>
+    /// 
+    /// <para><b>Performance Optimizations:</b></para>
+    /// <list type="bullet">
+    ///   <item>Thread-local pooled lists to avoid allocations per mesh</item>
+    ///   <item>Surface height tracking to skip empty air above terrain</item>
+    ///   <item>9-sample neighborhood caching for AO/light calculation</item>
+    ///   <item>Neighbor chunk caching to reduce repeated lookups</item>
+    /// </list>
+    /// </summary>
+    /// <param name="workItem">Work item containing chunk index, placeholder mask, and version info.</param>
+    /// <param name="cache">Voxel data cache for accessing chunk and neighbor data.</param>
+    /// <param name="mesh">Output mesh containing vertices, indices, and face counts.</param>
+    /// <returns>True if mesh was successfully built, false if chunk data was unavailable.</returns>
     public static bool TryBuild(ChunkMeshingJobSystem.ChunkMeshWorkItem workItem, ChunkVoxelDataCache cache, out ChunkMesh mesh)
     {
         mesh = null!;
@@ -920,10 +944,33 @@ internal static class ChunkMeshBuilder
         }
 
         /// <summary>
-        /// Performance-optimized method to compute light and AO for all 4 corners of a face.
-        /// Instead of 4 corners × 4 samples = 16 lookups, we sample the 9-block neighborhood once
-        /// and compute all corner values from those cached samples.
+        /// Computes ambient occlusion and smooth lighting for all 4 corners of a face in a single pass.
+        /// 
+        /// <para><b>Optimization:</b> Instead of 4 corners × 4 samples = 16 lookups, this method
+        /// samples the 9-block neighborhood once and derives all corner values from those cached samples.
+        /// This reduces voxel lookups by ~44% per face.</para>
+        /// 
+        /// <para><b>AO Calculation (Minecraft-style):</b></para>
+        /// <list type="bullet">
+        ///   <item>For each corner, check 3 adjacent blocks: side1, side2, and diagonal corner</item>
+        ///   <item>If both sides are opaque, corner gets maximum occlusion (AO=0)</item>
+        ///   <item>Otherwise, AO = 3 - (number of opaque neighbors)</item>
+        ///   <item>Output range: 1-4 (shader expects this range)</item>
+        /// </list>
+        /// 
+        /// <para><b>Light Smoothing:</b></para>
+        /// <list type="bullet">
+        ///   <item>Average sky light and block light separately across valid neighbors</item>
+        ///   <item>Corner light is excluded if both adjacent sides are opaque (light can't reach)</item>
+        ///   <item>Missing neighbor data (DisabledLightValue) is excluded from average</item>
+        /// </list>
         /// </summary>
+        /// <param name="face">Face index (0-5 for ±X, ±Y, ±Z).</param>
+        /// <param name="x">Block X coordinate (local to chunk).</param>
+        /// <param name="y">Block Y coordinate.</param>
+        /// <param name="z">Block Z coordinate (local to chunk).</param>
+        /// <param name="ao">Output span for 4 corner AO values (1-4 range).</param>
+        /// <param name="light">Output span for 4 corner packed light values (sky | block &lt;&lt; 4).</param>
         public void ComputeFaceLightingAndAO(uint face, int x, int y, int z, Span<uint> ao, Span<uint> light)
         {
             var (nx, ny, nz) = FaceDirections[(int)face];
