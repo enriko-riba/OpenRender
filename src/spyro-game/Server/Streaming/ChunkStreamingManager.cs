@@ -48,6 +48,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private const int MaxChunkStateSaveResultsToApplyPerTick = 8;
     private const int MaxChunkStateLoadRequestsEnqueuedPerTick = 8;
 
+    // Eviction grace period: chunks outside visible range linger before actual eviction.
+    // This prevents rapid load/unload cycles when players move near chunk boundaries.
+    private const double ChunkEvictionGracePeriodSeconds = 5.0;
+
     private readonly VoxelWorld world;
     private readonly ChunkVoxelDataCache voxelCache;
     private readonly ChunkGenerationJobSystem cpuGenerationJobs;
@@ -77,6 +81,10 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
 
     // Monotonic counter for per-chunk edits so we can safely "bake" edits into full saves.
     private readonly Dictionary<int, long> chunkEditsVersion = [];
+
+    // Tracks chunks pending eviction with their marked-for-removal timestamp.
+    // Chunks linger for ChunkEvictionGracePeriodSeconds before actual eviction.
+    private readonly Dictionary<int, DateTime> pendingEvictionTimestamps = [];
 
     private readonly BlockingCollection<ChunkStateLoadRequest> chunkStateLoadQueue = new(boundedCapacity: 2048);
     private readonly ConcurrentQueue<ChunkStateLoadResult> chunkStateLoadResults = new();
@@ -145,25 +153,50 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     public void UpdatePlayer(PlayerId playerId, Vector3 position) => playerPositions[playerId] = position;
 
     /// <summary>
-    /// Allocation-free check for whether a chunk is currently (1) desired by this player and (2) ready.
+    /// Allocation-free check for whether a chunk is currently (1) desired by this player OR lingering, and (2) ready.
     /// Useful for filtering payload queues without constructing per-tick ready sets.
+    /// Lingering chunks (pending eviction with grace period) are included to prevent client-side pop-in/pop-out.
     /// </summary>
-    public bool IsChunkReadyForPlayer(PlayerId playerId, int chunkIndex) => desiredChunksByPlayer.TryGetValue(playerId, out var desired)
-            && desired.Contains(chunkIndex)
-            && readyChunks.Contains(chunkIndex);
+    public bool IsChunkReadyForPlayer(PlayerId playerId, int chunkIndex)
+    {
+        if (!readyChunks.Contains(chunkIndex))
+        {
+            return false;
+        }
+
+        // Chunk is ready. Check if it's desired by this player.
+        if (desiredChunksByPlayer.TryGetValue(playerId, out var desired) && desired.Contains(chunkIndex))
+        {
+            return true;
+        }
+
+        // Also include lingering chunks (pending eviction) to prevent pop-in/pop-out.
+        return pendingEvictionTimestamps.ContainsKey(chunkIndex);
+    }
 
     /// <summary>
-    /// Returns the subset of chunks that are (1) desired by this player and (2) ready.
+    /// Returns the subset of chunks that are (1) desired by this player OR lingering, and (2) ready.
+    /// Lingering chunks (pending eviction with grace period) are included to prevent client-side pop-in/pop-out.
     /// </summary>
     public HashSet<int> GetReadyChunksForPlayer(PlayerId playerId)
     {
-        if (!desiredChunksByPlayer.TryGetValue(playerId, out var desired))
+        var result = new HashSet<int>();
+
+        // Add desired chunks that are ready.
+        if (desiredChunksByPlayer.TryGetValue(playerId, out var desired))
         {
-            return [];
+            foreach (var idx in desired)
+            {
+                if (readyChunks.Contains(idx))
+                {
+                    result.Add(idx);
+                }
+            }
         }
 
-        var result = new HashSet<int>();
-        foreach (var idx in desired)
+        // Also add lingering chunks (pending eviction) that are still ready.
+        // This prevents pop-in/pop-out when players move near chunk boundaries.
+        foreach (var idx in pendingEvictionTimestamps.Keys)
         {
             if (readyChunks.Contains(idx))
             {
@@ -1207,17 +1240,46 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
     private void EvictUnreferencedChunks()
     {
         var needed = GetUnionDesired();
+        var now = DateTime.UtcNow;
 
         var evictionSnapshotsThisTick = 0;
 
-        // Evict chunks not needed by any player.
+        // First pass: clear pending eviction for chunks that are needed again.
+        // This handles the case where a chunk was marked for eviction but re-entered the desired set.
+        foreach (var idx in pendingEvictionTimestamps.Keys.ToArray())
+        {
+            if (needed.Contains(idx))
+            {
+                pendingEvictionTimestamps.Remove(idx);
+            }
+        }
+
+        // Second pass: process ready chunks for potential eviction.
         foreach (var idx in readyChunks.ToArray())
         {
             if (needed.Contains(idx))
             {
+                // Chunk is needed; ensure no pending eviction timestamp.
+                pendingEvictionTimestamps.Remove(idx);
                 continue;
             }
 
+            // Chunk is not needed. Check if it's already marked for eviction.
+            if (!pendingEvictionTimestamps.TryGetValue(idx, out var markedTime))
+            {
+                // First time seeing this chunk as unreferenced; mark it with current timestamp.
+                pendingEvictionTimestamps[idx] = now;
+                continue;
+            }
+
+            // Check if grace period has expired.
+            if ((now - markedTime).TotalSeconds < ChunkEvictionGracePeriodSeconds)
+            {
+                // Grace period not yet expired; keep the chunk around.
+                continue;
+            }
+
+            // Grace period expired; proceed with actual eviction.
             // Never block on disk IO here. If dirty, enqueue a save snapshot (budgeted) before eviction.
             var isDirty = false;
             lock (chunkStateSaveLock)
@@ -1246,6 +1308,8 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
                 }
             }
 
+            // Actually evict the chunk.
+            pendingEvictionTimestamps.Remove(idx);
             readyChunks.Remove(idx);
             voxelCache.TryRelease(idx);
             CollisionManager.RemoveChunkData(idx);

@@ -70,6 +70,7 @@ internal sealed class GenerationContext : IDisposable
     
     // Sparse Sampling Buffers
     public readonly float[] SparseSampleX = ArrayPool<float>.Shared.Rent(SparseSampleCount);
+    public readonly float[] SparseSampleY = ArrayPool<float>.Shared.Rent(SparseSampleCount);
     public readonly float[] SparseSampleZ = ArrayPool<float>.Shared.Rent(SparseSampleCount);
     public readonly float[] SparseCheeseGrid;
     public readonly float[] SparseSpaghettiA;
@@ -171,6 +172,7 @@ internal sealed class GenerationContext : IDisposable
         ArrayPool<byte>.Shared.Return(CaveMaskVolume);
         
         ArrayPool<float>.Shared.Return(SparseSampleX);
+        ArrayPool<float>.Shared.Return(SparseSampleY);
         ArrayPool<float>.Shared.Return(SparseSampleZ);
         ArrayPool<float>.Shared.Return(SparseCheeseGrid);
         ArrayPool<float>.Shared.Return(SparseSpaghettiA);
