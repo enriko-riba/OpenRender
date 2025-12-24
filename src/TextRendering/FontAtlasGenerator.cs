@@ -54,7 +54,7 @@ public sealed class FontAtlasGenerator
         fontAtlas.LineHeight = charHeight;
         fontAtlas.CharacterFrameSize = new Vector2i(charWidth + Padding, charHeight + Padding);
 
-        var image = new Image<Rgba32>(sizeW, sizeH);        
+        var image = new Image<Rgba32>(sizeW, sizeH);
         image.Mutate(ctx => ctx.BackgroundColor(backgroundColor.ToImageSharpColor()));
 
         var currentRow = 0;
@@ -139,11 +139,11 @@ public sealed class FontAtlasGenerator
                 UvMaxX = uvMaxX,
                 UvMaxY = uvMaxY,
             };
-            
+
             // Extract kerning information for common character pairs
             // SixLabors.Fonts doesn't directly expose kerning, so we measure it
             gi.KerningPairs = ExtractKerningPairs(text[j], font, style);
-            
+
             textureX += fontAtlas.CharWidth + Padding;
             rto.Origin = new System.Numerics.Vector2(textureX, drawY);
             fontAtlas.Glyphs.Add(text[j], gi);
@@ -158,7 +158,7 @@ public sealed class FontAtlasGenerator
     private static Dictionary<char, float>? ExtractKerningPairs(char baseChar, Font font, TextOptions style)
     {
         // Common characters that frequently have kerning adjustments
-        var testChars = new[] { 
+        var testChars = new[] {
             'A', 'V', 'W', 'Y', 'T', 'P', 'F', 'L', 'a', 'v', 'w', 'y', 't', 'p', 'f', 'l',
             'o', 'e', 'c', '.', ',', '-', '\''
         };

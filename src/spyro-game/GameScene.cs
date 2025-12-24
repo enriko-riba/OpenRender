@@ -43,16 +43,16 @@ internal class GameScene : Scene
     private BlockPickingService? blockPickingService;
     private LocalGameClient? localClient;
     private GameSession? session;
+    private PlayerId localPlayerId;
     
     // Performance metrics from server terrain generation
-    private World.ChunkProcessingMetrics? terrainMetrics;
+    private ChunkProcessingMetrics? terrainMetrics;
 
     private MobBlockRenderer? mobRenderer;
-    private Client.Rendering.DroppedItemRenderer? droppedItemRenderer;
+    private DroppedItemRenderer? droppedItemRenderer;
     private MobId? pickedMobId;
     private float pickedMobDistance;
     private MobKind pickedMobKind;
-    private PlayerId localPlayerId;
     private HotBar hotBar = default!;
 
     // Client-side view of server streaming state (chunk indices that are Ready).
@@ -259,10 +259,13 @@ internal class GameScene : Scene
             throw new ArgumentNullException("terrain renderer");
         }
 
+        var fnt = FontAtlasGenerator.Create("Resources/mcr.ttf", HotBar.FontSize, new(0, 0, 0, 0.5f));
+        var tr = new TextRenderer(TextRenderer.CreateTextRenderingProjection(SceneManager.ClientSize.X, SceneManager.ClientSize.Y), fnt);
         hotBar = HotBar.Create(
             SceneManager.ClientSize.X / 2,
             SceneManager.ClientSize.Y - HotBar.Height - 5,
-            player!.Inventory);
+            player!.Inventory,
+            tr);
         AddNode(hotBar);
         world!.Camera = camera!;
         camera!.Invalidate();
@@ -1029,26 +1032,6 @@ internal class GameScene : Scene
         WriteLine("  F5 - Toggle Wireframe", textColor);
         WriteLine("  Hold Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
-
-        // === RIGHT SIDE: Inventory ===
-        const int rightMargin = 300;
-        var rightX = Width - rightMargin;
-        const int invSlotHeight = 30;
-        var invTotalHeight = Inventory.HotbarSize * invSlotHeight;
-        var invStartY = (Height - invTotalHeight) - 250;
-
-        // Inventory Display - centered vertically on right side
-        for (var i = 0; i < Inventory.HotbarSize; i++)
-        {
-            var item = player.Inventory.GetItem(i);
-            var isSelected = i == player.Inventory.SelectedSlot;
-            var color = isSelected ? new Vector3(1, 1, 0) : new Vector3(0.7f, 0.7f, 0.7f);
-
-            var content = item.IsEmpty ? "Empty" : $"{item.Item} x{item.Count}";
-            if (isSelected) content = $"> {content}";
-
-            textRenderer.Render(content, 22, rightX, invStartY + i * invSlotHeight, color);
-        }
     }
 
     /// <summary>
