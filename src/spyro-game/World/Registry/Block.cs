@@ -31,6 +31,12 @@ public class Block(BlockId id)
     public virtual RenderMethod RenderMethod { get; init; } = RenderMethod.Opaque;
     public virtual BlockRenderShape Shape { get; init; } = BlockRenderShape.FullCube;
 
+    /// <summary>
+    /// Loot table defining what items drop when this block is broken.
+    /// Default is to drop the block itself as an item.
+    /// </summary>
+    public virtual LootTable LootTable { get; init; } = LootTable.Self;
+
     // Helper for light decay
     public int LightDecay => LightFilter >= 15 ? 15 : Math.Max(1, (int)LightFilter);
 }

@@ -10,6 +10,7 @@ public interface IServerToClientMessage;
 public readonly record struct ClientInputMessage(PlayerId PlayerId, PlayerInputCommand Input) : IClientToServerMessage;
 public readonly record struct ClientBreakBlockMessage(PlayerId PlayerId, BreakBlockCommand Command) : IClientToServerMessage;
 public readonly record struct ClientPlaceBlockMessage(PlayerId PlayerId, PlaceBlockCommand Command) : IClientToServerMessage;
+public readonly record struct ClientEatFoodMessage(PlayerId PlayerId, EatFoodCommand Command) : IClientToServerMessage;
 
 /// <summary>
 /// Client requests an attack on a mob.

@@ -48,12 +48,15 @@ internal class GameScene : Scene
     // Performance metrics from server terrain generation
     private ChunkProcessingMetrics? terrainMetrics;
 
+
     private MobBlockRenderer? mobRenderer;
     private DroppedItemRenderer? droppedItemRenderer;
     private MobId? pickedMobId;
     private float pickedMobDistance;
     private MobKind pickedMobKind;
     private HotBar hotBar = default!;
+    private InventorySprite inventorySprite = default!;
+    private StatusBar statusBar = default!;
 
     // Client-side view of server streaming state (chunk indices that are Ready).
     // This is the seam for future remote server chunk streaming.
@@ -267,6 +270,16 @@ internal class GameScene : Scene
             player!.Inventory,
             tr);
         AddNode(hotBar);
+
+        // Create status bar (health and hunger display)
+        statusBar = StatusBar.Create(player.Attributes, SceneManager.ClientSize.X, SceneManager.ClientSize.Y);
+        statusBar.IsVisible = true;
+        AddNode(statusBar);
+
+        inventorySprite = InventorySprite.Create(player.Inventory, tr);
+        inventorySprite.SetPosition(new Vector2(SceneManager.ClientSize.X / 2f, SceneManager.ClientSize.Y / 2f));
+        AddNode(inventorySprite);
+
         world!.Camera = camera!;
         camera!.Invalidate();
 
@@ -287,7 +300,7 @@ internal class GameScene : Scene
             return;
         }
 
-        if (SceneManager.CursorState != CursorState.Grabbed)
+        if (!inventorySprite.IsOpen && SceneManager.CursorState != CursorState.Grabbed)
         {
             SceneManager.CursorState = CursorState.Grabbed;
         }
@@ -295,8 +308,36 @@ internal class GameScene : Scene
         // Exit on Esc key
         if (SceneManager.KeyboardState.IsKeyDown(Keys.Escape))
         {
+            if (inventorySprite.IsOpen)
+            {
+                inventorySprite.IsOpen = false;
+                hotBar.IsVisible = true;
+                statusBar.IsVisible = true;
+                crosshair.IsVisible = true;
+                return;
+            }
             SceneManager.Close();
             return;
+        }
+
+        // Toggle Inventory
+        if (SceneManager.KeyboardState.IsKeyPressed(Keys.I))
+        {
+            inventorySprite.IsOpen = !inventorySprite.IsOpen;
+            hotBar.IsVisible = !inventorySprite.IsOpen;
+            statusBar.IsVisible = !inventorySprite.IsOpen;
+            crosshair.IsVisible = !inventorySprite.IsOpen;
+            
+            if (inventorySprite.IsOpen)
+            {
+            SceneManager.CursorState = CursorState.Normal;
+            }
+        }
+
+        // Process inventory input if open, but DON'T skip the rest of the update
+        if (inventorySprite.IsOpen)
+        {
+            inventorySprite.ProcessInput(SceneManager.MouseState, SceneManager.KeyboardState);
         }
 
         // Toggle Biome Debug (F3)
@@ -363,47 +404,51 @@ internal class GameScene : Scene
             }
         }
 
-        // Gather mouse look delta first so the simulation tick uses current view.
-        // When cursor is grabbed, MouseState.Position may remain constant; use MouseState.Delta instead.
+        // Skip player movement input when inventory is open
         var lookDelta = Vector2.Zero;
-        const float mouseSensitivity = 0.05f;
-        if (SceneManager.CursorState == CursorState.Grabbed)
+        if (!inventorySprite.IsOpen)
         {
-            // Preserve previous behavior: we previously used (lastPos - currentPos), i.e. negative of typical delta.
-            var mouseDelta = SceneManager.MouseState.Delta;
-            if (mouseDelta.LengthSquared > 0)
+            // Gather mouse look delta first so the simulation tick uses current view.
+            // When cursor is grabbed, MouseState.Position may remain constant; use MouseState.Delta instead.
+            const float mouseSensitivity = 0.05f;
+            if (SceneManager.CursorState == CursorState.Grabbed)
             {
-                lookDelta = -mouseDelta * mouseSensitivity;
-            }
-        }
-        else
-        {
-            var mousePos = SceneManager.MouseState.Position;
-            var posDelta = lastMousePosition - mousePos;
-            lastMousePosition = mousePos;
-
-            if (posDelta.LengthSquared > 0)
-            {
-                lookDelta = posDelta * mouseSensitivity;
-
-                // Re-center mouse when near edge
-                if (mousePos.X < 100 || mousePos.Y < 100 ||
-                    mousePos.X > Width - 100 || mousePos.Y > Height - 100)
+                // Preserve previous behavior: we previously used (lastPos - currentPos), i.e. negative of typical delta.
+                var mouseDelta = SceneManager.MouseState.Delta;
+                if (mouseDelta.LengthSquared > 0)
                 {
-                    SceneManager.MousePosition = mouseCenter;
-                    lastMousePosition = mouseCenter;
+                    lookDelta = -mouseDelta * mouseSensitivity;
                 }
             }
-        }
+            else
+            {
+                var mousePos = SceneManager.MouseState.Position;
+                var posDelta = lastMousePosition - mousePos;
+                lastMousePosition = mousePos;
 
-        // Apply look rotation locally for rendering/picking. The same look delta is also sent
-        // to the authoritative server; keeping the client camera in sync prevents WASD from
-        // feeling "sideways" relative to the visible camera direction.
-        if (camera != null && lookDelta != Vector2.Zero)
-        {
-            const float lookRotationSpeed = 10.0f; // Must match Player.RotationSpeed semantics.
-            camera.AddRotation(lookDelta.X * lookRotationSpeed, lookDelta.Y * lookRotationSpeed, 0);
-            camera.Invalidate();
+                if (posDelta.LengthSquared > 0)
+                {
+                    lookDelta = posDelta * mouseSensitivity;
+
+                    // Re-center mouse when near edge
+                    if (mousePos.X < 100 || mousePos.Y < 100 ||
+                        mousePos.X > Width - 100 || mousePos.Y > Height - 100)
+                    {
+                        SceneManager.MousePosition = mouseCenter;
+                        lastMousePosition = mouseCenter;
+                    }
+                }
+            }
+
+            // Apply look rotation locally for rendering/picking. The same look delta is also sent
+            // to the authoritative server; keeping the client camera in sync prevents WASD from
+            // feeling "sideways" relative to the visible camera direction.
+            if (camera != null && lookDelta != Vector2.Zero)
+            {
+                const float lookRotationSpeed = 10.0f; // Must match Player.RotationSpeed semantics.
+                camera.AddRotation(lookDelta.X * lookRotationSpeed, lookDelta.Y * lookRotationSpeed, 0);
+                camera.Invalidate();
+            }
         }
 
         // Client sends input only on change; server runs independently; client applies latest received snapshot.
@@ -601,7 +646,8 @@ internal class GameScene : Scene
 
         // Handle interactions (Break/Place/Attack) with fresh picking data.
         // Client determines target positions via picking; server executes edits.
-        if (localClient != null)
+        // Skip when inventory is open
+        if (localClient != null && !inventorySprite.IsOpen)
         {
             var blockHit = blockPickingService?.PickedBlock is { };
             var blockDist = blockPickingService?.HitDistance ?? float.MaxValue;
@@ -700,14 +746,18 @@ internal class GameScene : Scene
                             var ticksPassed = (float)(elapsedSeconds * 20.0);
                             breakingProgress += damagePerTick * ticksPassed;
                             
-                            if (breakingProgress >= 1.0f)
+                        if (breakingProgress >= 1.0f)
                             {
                                 // Break the block!
                                 if (!pickedBlock.Block.IsAir())
                                 {
-                                    // Removed client-side inventory add to prevent desync.
-                                    // Inventory is now strictly server-authoritative via snapshots.
-                                    // player.Inventory.AddItem((ItemId)pickedBlock.Block);
+                                    // Use loot table to determine drops (client is authoritative for inventory)
+                                    var brokenBlockDef = BlockRegistry.Get(pickedBlock.Block);
+                                    var lootDrops = brokenBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
+                                    foreach (var (droppedItem, dropCount) in lootDrops)
+                                    {
+                                        player.Inventory.AddItem(droppedItem, dropCount);
+                                    }
                                     
                                     terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
                                     blockPickingService.Invalidate();
@@ -745,8 +795,13 @@ internal class GameScene : Scene
                                 // Break immediately
                                 if (!pickedBlock.Block.IsAir())
                                 {
-                                    // Removed client-side inventory add to prevent desync.
-                                    // player.Inventory.AddItem((ItemId)pickedBlock.Block);
+                                    // Use loot table to determine drops (client is authoritative for inventory)
+                                    var instaBlockDef = BlockRegistry.Get(pickedBlock.Block);
+                                    var instaDrops = instaBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
+                                    foreach (var (droppedItem, dropCount) in instaDrops)
+                                    {
+                                        player.Inventory.AddItem(droppedItem, dropCount);
+                                    }
                                     
                                     terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
                                     blockPickingService.Invalidate();
@@ -774,26 +829,44 @@ internal class GameScene : Scene
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
                 {
                     var item = player.Inventory.SelectedItem;
-                    if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
+                    if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef))
                     {
-                        var hitNormal = blockPickingService.HitNormal;
-                        var placePos = pickedBlock.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
-
-                        // Predict locally: consume item + set voxel so the feedback is instant.
-                        if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
+                        if (itemDef is BlockItem blockItem)
                         {
-                            player.Inventory.TryConsumeSelectedItem();
-                            blockPickingService.Invalidate();
-                            blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
-                        }
+                            // Place block
+                            var hitNormal = blockPickingService.HitNormal;
+                            var placePos = pickedBlock.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
 
-                        localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
+                            // Predict locally: consume item + set voxel so the feedback is instant.
+                            if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
+                            {
+                                player.Inventory.TryConsumeSelectedItem();
+                                blockPickingService.Invalidate();
+                                blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
+                            }
+
+                            localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
+                        }
+                        else if (itemDef is FoodItem foodItem)
+                        {
+                            // Consume food
+                            TryConsumeFood(foodItem);
+                        }
                     }
                 }
             }
             else
             {
-                // No block hit
+                // No block hit - but still allow eating food
+                if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
+                {
+                    var item = player.Inventory.SelectedItem;
+                    if (!item.IsEmpty && ItemRegistry.GetFood(item.Item) is { } foodItem)
+                    {
+                        TryConsumeFood(foodItem);
+                    }
+                }
+
                 breakingBlockPos = null;
                 breakingProgress = 0;
             }
@@ -1048,7 +1121,27 @@ internal class GameScene : Scene
 
         var biomeId = terrainSystem.GetBiomeAtWorldPos(worldX, worldZ);
 
+
+
+
         return biomeId.ToString();
+    }
+
+    /// <summary>
+    /// Sends an EatFoodCommand to the server to consume the selected food item.
+    /// The server handles validation and state updates.
+    /// </summary>
+    private void TryConsumeFood(FoodItem foodItem)
+    {
+        // Check if we can eat (client-side check for immediate feedback)
+        // The server will do authoritative validation
+        if (player.Attributes.Food >= player.Attributes.MaxFood && !foodItem.CanAlwaysEat)
+        {
+            return; // Hunger is full, can't eat
+        }
+
+        // Send command to server - server handles consumption
+        localClient?.Send(new EatFoodCommand());
     }
 
     public override void Close()
@@ -1087,6 +1180,7 @@ internal class GameScene : Scene
         crosshair.Pivot = new(0.5f, 0.5f);
 
         hotBar.SetPosition(new(clientSize.X / 2, clientSize.Y - 5));
+        statusBar?.UpdatePosition(Width, Height);
         mouseCenter = clientSize / 2;
     }
 }

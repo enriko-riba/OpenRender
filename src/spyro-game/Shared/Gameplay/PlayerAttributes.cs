@@ -95,15 +95,18 @@ public sealed class PlayerAttributes
         if (!IsAlive) return;
 
         // Exhaustion from activity (server-authoritative later)
+        // Increased rates for more noticeable hunger mechanics:
+        // - Walking: ~100 seconds to lose 1 food point
+        // - Sprinting: ~20 seconds to lose 1 food point  
         if (!ctx.IsGhostMode)
         {
             if (ctx.IsSprinting && ctx.IsMoving)
             {
-                AddExhaustion(0.10f * (float)dtSeconds);
+                AddExhaustion(0.20f * (float)dtSeconds); // Sprint exhaustion
             }
             else if (ctx.IsMoving)
             {
-                AddExhaustion(0.02f * (float)dtSeconds);
+                AddExhaustion(0.04f * (float)dtSeconds); // Walk exhaustion
             }
         }
 
@@ -138,6 +141,30 @@ public sealed class PlayerAttributes
         {
             starvationAccumulatorSeconds = 0;
         }
+    }
+
+    /// <summary>
+    /// Attempts to consume food, restoring hunger and saturation.
+    /// </summary>
+    /// <param name="nutrition">Amount of hunger to restore (half-drumsticks).</param>
+    /// <param name="saturation">Amount of saturation to restore.</param>
+    /// <param name="canAlwaysEat">If true, can eat even when hunger is full.</param>
+    /// <returns>True if food was consumed, false if hunger was full and canAlwaysEat is false.</returns>
+    public bool ConsumeFood(int nutrition, float saturation, bool canAlwaysEat = false)
+    {
+        // Can't eat if hunger is full (unless canAlwaysEat is true)
+        if (Food >= MaxFood && !canAlwaysEat)
+        {
+            return false;
+        }
+
+        // Restore hunger
+        Food = Math.Clamp(Food + nutrition, 0, MaxFood);
+
+        // Restore saturation (capped at current food level in vanilla Minecraft)
+        Saturation = Math.Clamp(Saturation + saturation, 0, Food);
+
+        return true;
     }
 
     public PlayerAttributesSnapshot ToSnapshot() => new(

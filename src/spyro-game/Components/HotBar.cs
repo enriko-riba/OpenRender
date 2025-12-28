@@ -22,14 +22,33 @@ internal class HotBar : Sprite
 
     private readonly Inventory inventory;
     private readonly Sprite[] slotSprites = new Sprite[Slots];
+    private readonly ItemId[] lastDisplayedItems;
     private readonly Sprite activeSlotSprite = default!;
     private readonly ITextRenderer textRenderer;
+    private int lastInventoryVersion = -1;
+
+    /// <summary>
+    /// Gets or sets visibility for the hotbar and all its children.
+    /// </summary>
+    public new bool IsVisible
+    {
+        get => base.IsVisible;
+        set
+        {
+            base.IsVisible = value;
+            foreach (var child in Children)
+            {
+                child.IsVisible = value;
+            }
+        }
+    }
 
     public static HotBar Create(int x, int y, Inventory inventory, ITextRenderer textRenderer)
     {
         var (mesh, material) = Sprite.CreateMeshAndMaterial("Resources/gui/hotbar.png");
         return new HotBar(mesh, material, x, y, inventory, textRenderer);
     }
+
 
     public HotBar(
         Mesh mesh,
@@ -44,6 +63,12 @@ internal class HotBar : Sprite
         Size = new Vector2i(Width, Height);
         Pivot = new(0.5f, 1.0f);
 
+        // Initialize lastDisplayedItems with a sentinel value to force first update
+        lastDisplayedItems = new ItemId[Slots];
+        for (var i = 0; i < Slots; i++)
+        {
+            lastDisplayedItems[i] = (ItemId)ushort.MaxValue; // Invalid sentinel value
+        }
 
         for (var i = 0; i < Slots; i++)
         {
@@ -64,8 +89,23 @@ internal class HotBar : Sprite
         AddChild(overlay);
     }
 
+
     public override void OnUpdate(Scene scene, double elapsed)
     {
+        // Don't update if the hotbar is hidden (e.g., inventory is open)
+        if (!base.IsVisible) return;
+
+        // Check if inventory changed - if so, force refresh of all items
+        if (lastInventoryVersion != inventory.Version)
+        {
+            lastInventoryVersion = inventory.Version;
+            // Reset all tracked items to force material recreation
+            for (var i = 0; i < Slots; i++)
+            {
+                lastDisplayedItems[i] = (ItemId)ushort.MaxValue;
+            }
+        }
+
         //  for each item in inventory slots 0-9 render the item in the corresponding hotbar slot
         for (var i = 0; i < Slots; i++)
         {
@@ -73,13 +113,18 @@ internal class HotBar : Sprite
             if (inventoryItem.IsEmpty)
             {
                 slotSprites[i].IsVisible = false;
+                lastDisplayedItems[i] = ItemId.Air;
                 continue;
             }
             slotSprites[i].IsVisible = true;
 
-            var mat = ItemTextureManager.GetMaterial(inventoryItem.Item);
-            mat.Shader = slotSprites[i].Material.Shader;
-            slotSprites[i].Material = mat;
+            // Only update material if the item changed (creates new material with unique ID)
+            if (lastDisplayedItems[i] != inventoryItem.Item)
+            {
+                lastDisplayedItems[i] = inventoryItem.Item;
+                var shader = slotSprites[i].Material.Shader;
+                slotSprites[i].Material = ItemTextureManager.CreateMaterialForItem(inventoryItem.Item, shader);
+            }
 
             var renderShape = BlockRenderShape.None;
             var item = ItemRegistry.Get(inventoryItem.Item);
@@ -207,6 +252,4 @@ internal class HotBar : Sprite
             hotBar.RenderItemCounts(textRenderer);
         }
     }
-
 }
-

@@ -106,6 +106,12 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
     public void Submit(PlayerId playerId, PlaceBlockCommand command) => EnsurePlayer(playerId).TryPlaceBlock(command.GlobalPosition, command.Block);
 
+    public void Submit(PlayerId playerId, EatFoodCommand command)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+        player.TryEatFood();
+    }
+
     public void SubmitAttack(PlayerId playerId, MobId targetMob)
     {
         if (!players.TryGetValue(playerId, out var player)) return;

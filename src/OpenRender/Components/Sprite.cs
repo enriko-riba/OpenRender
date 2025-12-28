@@ -157,6 +157,16 @@ public class Sprite : SceneNode
     public void GetPosition(out Vector2 position) => position = new Vector2(transform.Position.X, transform.Position.Y);
 
     /// <summary>
+    /// Gets the sprites world position.
+    /// </summary>
+    /// <param name="position"></param>
+    public void GetWorldPosition(out Vector2 position)
+    {
+        GetWorldMatrix(out var m);
+        position = m.Row3.Xy;
+    }
+
+    /// <summary>
     /// <inheritdoc/>
     /// Updating the scale will also update the sprite size.
     /// Note: sprites are 2D objects so the Z component is ignored.

@@ -278,7 +278,10 @@ public class Player : ILootCollector
         }
 
         Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
-        Inventory.ApplySnapshot(snapshot.Inventory);
+        // Note: Inventory.ApplySnapshot is intentionally NOT called here.
+        // The client is authoritative for inventory state during gameplay.
+        // Server snapshots would overwrite user's drag-and-drop changes.
+        // TODO: Implement proper inventory sync commands when needed.
         Attributes.ApplySnapshot(snapshot.Attributes);
 
         // The client does not run authoritative physics; keep diagnostics derived from the
@@ -394,8 +397,20 @@ public class Player : ILootCollector
         if (!existing.HasValue) return;
         if (existing.Value.Block.IsAir()) return;
 
-        Log.Info($"Player breaking block at {globalPosition}");
-        Inventory.AddItem((ItemId)existing.Value.Block);
+        var blockId = existing.Value.Block;
+        Log.Info($"Player breaking block {blockId} at {globalPosition}");
+        
+        // Get the block definition and its loot table
+        var blockDef = BlockRegistry.Get(blockId);
+        var drops = blockDef.LootTable.GenerateDrops(blockId);
+
+        // Add dropped items to inventory
+        foreach (var (item, count) in drops)
+        {
+            Inventory.AddItem(item, count);
+            Log.Info($"  Dropped: {item} x{count}");
+        }
+
         streamingManager.ApplyBlockEdit(globalPosition, BlockId.Air, true);
     }
 
@@ -408,6 +423,14 @@ public class Player : ILootCollector
         if (targetBlock.HasValue && !targetBlock.Value.Block.IsReplaceable())
         {
             return;
+        }
+
+        // Check if there's a solid cardinal neighbor to place against
+        // Blocks can only be placed if adjacent to at least one solid block
+        var hasSolidNeighbor = HasSolidCardinalNeighbor(placePos);
+        if (!hasSolidNeighbor)
+        {
+            return; // Can't place block in mid-air
         }
 
         // Check if player is occupying the space (simple AABB check)
@@ -435,6 +458,62 @@ public class Player : ILootCollector
         Log.Info($"Player placing block {blockId} at {placePos}");
         streamingManager.ApplyBlockEdit(placePos, blockId, isBreaking: false);
         Inventory.TryConsumeSelectedItem();
+    }
+
+    /// <summary>
+    /// Checks if any cardinal neighbor (±X, ±Y, ±Z) is a solid block.
+    /// </summary>
+    private bool HasSolidCardinalNeighbor(Vector3i pos)
+    {
+        // Check all 6 cardinal directions
+        Vector3i[] neighbors =
+        [
+            new(pos.X - 1, pos.Y, pos.Z),
+            new(pos.X + 1, pos.Y, pos.Z),
+            new(pos.X, pos.Y - 1, pos.Z),
+            new(pos.X, pos.Y + 1, pos.Z),
+            new(pos.X, pos.Y, pos.Z - 1),
+            new(pos.X, pos.Y, pos.Z + 1)
+        ];
+
+        foreach (var neighbor in neighbors)
+        {
+            var block = world.GetBlockByPositionGlobalSafe(neighbor.X, neighbor.Y, neighbor.Z);
+            if (block.HasValue && block.Value.IsSolid)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to eat food from the currently selected hotbar slot.
+    /// Server-authoritative: consumes the item and restores hunger/saturation.
+    /// </summary>
+    public bool TryEatFood()
+    {
+        var selectedItem = Inventory.SelectedItem;
+        if (selectedItem.IsEmpty) return false;
+
+        var foodItem = ItemRegistry.GetFood(selectedItem.Item);
+        if (foodItem == null) return false;
+
+        // Try to consume the food (checks if hunger is full)
+        var consumed = Attributes.ConsumeFood(
+            foodItem.Nutrition,
+            foodItem.SaturationRestored,
+            foodItem.CanAlwaysEat);
+
+        if (consumed)
+        {
+            Inventory.TryConsumeSelectedItem();
+            Log.Info($"Player ate {foodItem.Name}: +{foodItem.Nutrition} hunger, +{foodItem.SaturationRestored:F1} saturation");
+            return true;
+        }
+
+        return false;
     }
     #endregion
 

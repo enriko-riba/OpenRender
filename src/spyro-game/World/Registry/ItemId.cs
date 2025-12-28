@@ -117,4 +117,13 @@ public enum ItemId : ushort
     RottenFlesh = 1013,
     Bone = 1014,
     Arrow = 1015,
+
+    // Saplings (from breaking leaves)
+    OakSapling = 1020,
+    BirchSapling = 1021,
+    SpruceSapling = 1022,
+    JungleSapling = 1023,
+
+    // Seeds and plant drops
+    WheatSeeds = 1030,
 }

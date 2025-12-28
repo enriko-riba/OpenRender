@@ -254,11 +254,38 @@ public static class BlockRegistry
         => Register(builder, blockId, new Block(blockId) { IsTree = true });
 
     private static void RegisterLeaves(Dictionary<BlockId, Block> builder, BlockId blockId)
-        => Register(builder, blockId, new Block(blockId) {
+    {
+        // Determine which sapling this leaf type drops
+        var saplingId = blockId switch
+        {
+            BlockId.OakLeaves => ItemId.OakSapling,
+            BlockId.BirchLeaves => ItemId.BirchSapling,
+            BlockId.SpruceLeaves => ItemId.SpruceSapling,
+            BlockId.JungleLeaves => ItemId.JungleSapling,
+            _ => ItemId.OakSapling
+        };
+
+        // Oak leaves also have a chance to drop apples
+        var isOak = blockId == BlockId.OakLeaves;
+
+        LootEntry[] drops = isOak
+            ? [
+                new LootEntry(saplingId, 1, 1, 0.05f),    // 5% chance for sapling
+                new LootEntry(ItemId.Stick, 1, 2, 0.02f), // 2% chance for 1-2 sticks
+                new LootEntry(ItemId.Apple, 1, 1, 0.005f) // 0.5% chance for apple
+              ]
+            : [
+                new LootEntry(saplingId, 1, 1, 0.05f),    // 5% chance for sapling
+                new LootEntry(ItemId.Stick, 1, 2, 0.02f)  // 2% chance for 1-2 sticks
+              ];
+
+        Register(builder, blockId, new Block(blockId) {
             IsSolid = true, IsOpaque = false, IsTree = true,
             LightFilter = 2, RenderMethod = RenderMethod.AlphaTest,
-            Hardness = 0.1f
+            Hardness = 0.1f,
+            LootTable = LootTable.WithChanceDrops(drops)
         });
+    }
 
     private static void RegisterGlass(Dictionary<BlockId, Block> builder, BlockId blockId)
         => Register(builder, blockId, new Block(blockId) {
@@ -268,12 +295,22 @@ public static class BlockRegistry
         });
 
     private static void RegisterFlower(Dictionary<BlockId, Block> builder, BlockId blockId)
-        => Register(builder, blockId, new Block(blockId) {
+    {
+        // Tall grass has a chance to drop wheat seeds
+        var isTallGrass = blockId is BlockId.TallGrass or BlockId.GrassPatch;
+
+        var lootTable = isTallGrass
+            ? LootTable.WithChanceDrops(new LootEntry(ItemId.WheatSeeds, 1, 1, 0.125f)) // 12.5% chance
+            : LootTable.Nothing; // Flowers drop nothing
+
+        Register(builder, blockId, new Block(blockId) {
             IsSolid = false, IsOpaque = false, IsReplaceable = true, IsVegetation = true,
             RenderMethod = RenderMethod.AlphaTest, Shape = BlockRenderShape.CrossBillboard,
             Hardness = 0,
-            LightFilter = 0 // Vegetation allows light to pass through
+            LightFilter = 0, // Vegetation allows light to pass through
+            LootTable = lootTable
         });
+    }
 
     /// <summary>
     /// Gets the block instance for the given ID.

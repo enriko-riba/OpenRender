@@ -209,6 +209,10 @@ public sealed class LocalGameServerHost(
                 if (placeBlock.PlayerId.Equals(playerId))
                     server.Submit(placeBlock.PlayerId, placeBlock.Command);
                 break;
+            case ClientEatFoodMessage eatFood:
+                if (eatFood.PlayerId.Equals(playerId))
+                    server.Submit(eatFood.PlayerId, eatFood.Command);
+                break;
             case ClientAttackMobMessage attack:
                 if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
                     gs.SubmitAttack(attack.PlayerId, attack.TargetMob);

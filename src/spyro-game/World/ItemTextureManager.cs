@@ -1,5 +1,6 @@
 using OpenRender;
 using OpenRender.Core;
+using OpenRender.Core.Rendering;
 using OpenRender.Core.Textures;
 using OpenTK.Graphics.OpenGL4;
 using OpenTK.Mathematics;
@@ -130,5 +131,58 @@ public static class ItemTextureManager
         }
 
         return result.ToString();
+    }
+
+
+    /// <summary>
+    /// Creates a new material for the sprite by copying texture handles from the item material.
+    /// This creates a new material with a unique ID to ensure proper renderer caching.
+    /// </summary>
+    /// <param name="item">The item whose textures should be used.</param>
+    /// <param name="shader">The shader to use for the new material.</param>
+    /// <returns>A new Material instance with the item's textures and the provided shader.</returns>
+    public static Material CreateMaterialForItem(ItemId item, Shader shader)
+    {
+        var sourceMaterial = GetMaterial(item);
+        
+        // Create a new material with unique ID
+        // Clone the TextureDescriptors array to avoid sharing references
+        TextureDescriptor[]? clonedDescriptors = null;
+        if (sourceMaterial.TextureDescriptors != null && sourceMaterial.TextureDescriptors.Length > 0)
+        {
+            clonedDescriptors = [.. sourceMaterial.TextureDescriptors];
+        }
+        
+        var material = Material.Create(
+            shader,
+            clonedDescriptors,
+            sourceMaterial.DiffuseColor,
+            sourceMaterial.EmissiveColor,
+            sourceMaterial.SpecularColor,
+            sourceMaterial.Shininess,
+            sourceMaterial.DetailTextureScaleFactor,
+            sourceMaterial.DetailTextureBlendFactor
+        );
+        
+        return material;
+    }
+
+    /// <summary>
+    /// Applies the textures from an item to a sprite's existing material.
+    /// Note: Due to renderer caching, this may not take effect until the material ID changes.
+    /// Consider using CreateMaterialForItem for reliable texture updates.
+    /// </summary>
+    /// <param name="item">The item whose textures should be applied.</param>
+    /// <param name="targetMaterial">The sprite's material that will receive the textures.</param>
+    public static void ApplyItemTextures(ItemId item, Material targetMaterial)
+    {
+        var sourceMaterial = GetMaterial(item);
+        
+        // Copy texture handles from source to target (preserving target's shader)
+        for (var i = 0; i < Material.MaxTextures; i++)
+        {
+            targetMaterial.Textures[i] = sourceMaterial.Textures[i];
+            targetMaterial.BindlessTextureHandles[i] = sourceMaterial.BindlessTextureHandles[i];
+        }
     }
 }
