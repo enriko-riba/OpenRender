@@ -10,6 +10,7 @@ public interface IGameServer
     void Submit(PlayerId playerId, BreakBlockCommand command);
     void Submit(PlayerId playerId, PlaceBlockCommand command);
     void Submit(PlayerId playerId, EatFoodCommand command);
+    void Submit(PlayerId playerId, InventoryMoveCommand command);
 
     void Tick(double elapsedSeconds);
 

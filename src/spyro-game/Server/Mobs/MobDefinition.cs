@@ -63,7 +63,7 @@ public sealed record DropTable(params DropEntry[] Entries);
 /// A single drop entry: item, count range, and probability.
 /// </summary>
 public sealed record DropEntry(
-    ItemId Item,
+    GameObjectId Item,
     int MinCount,
     int MaxCount,
     float Probability = 1.0f);

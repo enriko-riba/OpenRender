@@ -1,4 +1,4 @@
-﻿using OpenRender;
+using OpenRender;
 using OpenRender.Core.Rendering;
 using OpenTK.Mathematics;
 using SpyroGame.Shared.Abstractions;
@@ -31,7 +31,7 @@ public class Player : ILootCollector
     private const float JumpHorizontalDamping = 0.4f;
 
     // StepHeight is for small ledges/slabs; full-block elevation changes are handled via auto-jump.
-    public KinematicCollider Collider => new(Radius: HalfWidth, Height: Height, StepHeight: 0.6f);
+    public static KinematicCollider Collider => new(Radius: HalfWidth, Height: Height, StepHeight: 0.6f);
 
     private static readonly Vector3[] bottomCornerOffsets = [
         new Vector3(-HalfWidth, 0, -HalfWidth), // northwest
@@ -117,7 +117,7 @@ public class Player : ILootCollector
     
     public Inventory Inventory { get; } = new();
 
-    public void AddItem(ItemId item, int count) => Inventory.AddItem(item, count);
+    public void AddItem(GameObjectId item, int count) => Inventory.AddItem(item, count);
 
     /// <summary>
     /// Applies client-produced input intent. This does not execute physics immediately.
@@ -278,10 +278,9 @@ public class Player : ILootCollector
         }
 
         Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
-        // Note: Inventory.ApplySnapshot is intentionally NOT called here.
-        // The client is authoritative for inventory state during gameplay.
-        // Server snapshots would overwrite user's drag-and-drop changes.
-        // TODO: Implement proper inventory sync commands when needed.
+        // Apply inventory snapshot from server. The ApplySnapshot method checks IsUserEditing
+        // internally, so drag-and-drop changes are protected when the inventory UI is open.
+        Inventory.ApplySnapshot(snapshot.Inventory);
         Attributes.ApplySnapshot(snapshot.Attributes);
 
         // The client does not run authoritative physics; keep diagnostics derived from the
@@ -377,11 +376,11 @@ public class Player : ILootCollector
         var item = Inventory.SelectedItem;
         if (item.IsEmpty) return;
 
-        if (ItemRegistry.Items.TryGetValue(item.Item, out var itemDef) && itemDef is BlockItem blockItem)
+        if (GameContentRegistry.TryGet(item.Item, out var itemDef) && itemDef is Block block)
         {
             var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
             var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
-            TryPlaceBlock(placePos, blockItem.BlockId);
+            TryPlaceBlock(placePos, block.BlockId);
         }
     }
 
@@ -401,11 +400,11 @@ public class Player : ILootCollector
         Log.Info($"Player breaking block {blockId} at {globalPosition}");
         
         // Get the block definition and its loot table
-        var blockDef = BlockRegistry.Get(blockId);
+        var blockDef = GameContentRegistry.GetBlock(blockId);
         var drops = blockDef.LootTable.GenerateDrops(blockId);
 
         // Add dropped items to inventory
-        foreach (var (item, count) in drops)
+        foreach ((GameObjectId item, int count) in drops)
         {
             Inventory.AddItem(item, count);
             Log.Info($"  Dropped: {item} x{count}");
@@ -497,7 +496,7 @@ public class Player : ILootCollector
         var selectedItem = Inventory.SelectedItem;
         if (selectedItem.IsEmpty) return false;
 
-        var foodItem = ItemRegistry.GetFood(selectedItem.Item);
+        var foodItem = GameContentRegistry.GetFood(selectedItem.Item);
         if (foodItem == null) return false;
 
         // Try to consume the food (checks if hunger is full)

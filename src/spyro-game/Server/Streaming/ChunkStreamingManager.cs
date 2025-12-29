@@ -383,8 +383,8 @@ public sealed class ChunkStreamingManager : IDisposable, IBlockEditService
             return lease.Data;
         }
 
-        var oldLightValue = BlockRegistry.GetLightValue(oldBlock);
-        var newLightValue = BlockRegistry.GetLightValue(newBlock);
+        var oldLightValue = GameContentRegistry.GetLightValue(oldBlock);
+        var newLightValue = GameContentRegistry.GetLightValue(newBlock);
         var oldIsOpaque = oldBlock.IsOpaque();
         var newIsOpaque = newBlock.IsOpaque();
 

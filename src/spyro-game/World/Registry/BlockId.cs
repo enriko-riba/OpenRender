@@ -267,43 +267,43 @@ public static class BlockIdExtensions
     /// <summary>
     /// Returns true if this block is solid (blocks movement, needs faces rendered).
     /// </summary>
-    public static bool IsSolid(this BlockId block) => BlockRegistry.IsSolid(block);
+    public static bool IsSolid(this BlockId block) => GameContentRegistry.IsSolid(block);
 
     /// <summary>
     /// Returns true if this block is opaque (blocks light, culls neighbor faces).
     /// </summary>
-    public static bool IsOpaque(this BlockId block) => BlockRegistry.IsOpaque(block);
+    public static bool IsOpaque(this BlockId block) => GameContentRegistry.IsOpaque(block);
 
     /// <summary>
     /// Returns true if this block is a liquid (water, lava).
     /// </summary>
-    public static bool IsLiquid(this BlockId block) => BlockRegistry.IsLiquid(block);
+    public static bool IsLiquid(this BlockId block) => GameContentRegistry.IsLiquid(block);
 
     /// <summary>
     /// Returns true if this block is translucent (partial transparency).
     /// </summary>
-    public static bool IsTranslucent(this BlockId block) => BlockRegistry.IsTranslucent(block);
+    public static bool IsTranslucent(this BlockId block) => GameContentRegistry.IsTranslucent(block);
 
     /// <summary>
     /// Returns true if this block can be replaced by other blocks (air, water, tall grass).
     /// </summary>
-    public static bool IsReplaceable(this BlockId block) => BlockRegistry.IsReplaceable(block);
+    public static bool IsReplaceable(this BlockId block) => GameContentRegistry.IsReplaceable(block);
 
     /// <summary>
     /// Returns true if this block is emissive (glows).
     /// </summary>
-    public static bool IsEmissive(this BlockId block) => BlockRegistry.IsEmissive(block);
+    public static bool IsEmissive(this BlockId block) => GameContentRegistry.IsEmissive(block);
 
     /// <summary>
     /// Returns true if this block is tree.
     /// </summary>
-    public static bool IsTree(this BlockId block) => BlockRegistry.IsTree(block);
+    public static bool IsTree(this BlockId block) => GameContentRegistry.IsTree(block);
 
     /// <summary>
     /// Returns true if this block is vegetation (plants, flowers, grass).
     /// </summary>
     /// <returns></returns>
-    public static bool IsVegetation(this BlockId block) => BlockRegistry.IsVegetation(block);
+    public static bool IsVegetation(this BlockId block) => GameContentRegistry.IsVegetation(block);
 
     /// <summary>
     /// Returns true if this block is transparent (can be seen through).

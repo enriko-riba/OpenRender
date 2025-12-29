@@ -649,6 +649,10 @@ internal sealed class CpuTerrainGenerator
                 baseHeight = ApplyOceanShoreSmoothing(baseHeight, cont01, shaping);
             }
 
+            // CRITICAL: Clamp baseHeight to valid range to prevent solid pillars
+            // Unclamped heights > ChunkYSize would cause density > 0 for entire column
+            baseHeight = Math.Clamp(baseHeight, 0f, VoxelHelper.ChunkYSize - 1);
+            
             ctx.ColumnHeights[i] = baseHeight;
             var rounded = (int)MathF.Round(baseHeight);
 

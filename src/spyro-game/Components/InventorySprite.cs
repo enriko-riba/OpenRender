@@ -1,3 +1,4 @@
+using OpenRender;
 using OpenRender.Components;
 using OpenRender.Core;
 using OpenRender.Core.Rendering;
@@ -6,6 +7,7 @@ using OpenRender.SceneManagement;
 using OpenTK.Mathematics;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.GraphicsLibraryFramework;
+using SpyroGame.Shared.Commands;
 using SpyroGame.World;
 using SpyroGame.World.Registry;
 
@@ -30,13 +32,19 @@ internal class InventorySprite : Sprite
 
     private readonly Inventory inventory;
     private readonly Sprite[] slotSprites = new Sprite[Inventory.SlotCount];
-    private readonly ItemId[] lastDisplayedItems = new ItemId[Inventory.SlotCount];
+    private readonly GameObjectId[] lastDisplayedItems = new GameObjectId[Inventory.SlotCount];
 
     private InventoryItem heldItem;
     private int dragSourceSlot = -1; // Track where the drag started
-    private ItemId lastHeldItemId = ItemId.Air;
+    private GameObjectId lastHeldItemId = GameObjectId.Air;
     private readonly Sprite heldItemSprite;
     private int lastInventoryVersion = -1;
+
+    /// <summary>
+    /// Called when an inventory move operation is performed.
+    /// The callback should send the move command to the server.
+    /// </summary>
+    public Action<InventoryMoveCommand>? OnInventoryMove { get; set; }
 
     public bool IsOpen
     {
@@ -44,6 +52,9 @@ internal class InventorySprite : Sprite
         set
         {
             IsVisible = value;
+            
+            // Protect inventory from server sync while user is editing
+            inventory.IsUserEditing = value;
             
             foreach (var child in Children)
             {
@@ -74,7 +85,7 @@ internal class InventorySprite : Sprite
                     }
                     heldItem = default;
                     dragSourceSlot = -1;
-                    lastHeldItemId = ItemId.Air;
+                    lastHeldItemId = GameObjectId.Air;
                 }
                 
                 // Force HotBar to refresh all items
@@ -178,24 +189,26 @@ internal class InventorySprite : Sprite
             if (item.IsEmpty)
             {
                 sprite.IsVisible = false;
-                lastDisplayedItems[i] = ItemId.Air;
+                lastDisplayedItems[i] = GameObjectId.Air;
             }
             else
             {
                 sprite.IsVisible = true;
                 
+                // Update material only when item type changes
                 if (lastDisplayedItems[i] != item.Item)
                 {
                     lastDisplayedItems[i] = item.Item;
                     var shader = sprite.Material.Shader;
-                    sprite.Material = ItemTextureManager.CreateMaterialForItem(item.Item, shader);
+                    var newMaterial = ItemTextureManager.CreateMaterialForItem(item.Item, shader);
+                    sprite.Material = newMaterial;
                 }
 
                 var renderShape = BlockRenderShape.None;
-                var itemDef = ItemRegistry.Get(item.Item);
-                if (itemDef is BlockItem blockItem)
+                var itemDef = GameContentRegistry.Get(item.Item);
+                if (itemDef is Block blockItem)
                 {
-                    renderShape = BlockRegistry.GetRenderShape(blockItem.BlockId);
+                    renderShape = GameContentRegistry.GetRenderShape(blockItem.BlockId);
                 }
 
                 sprite.SourceRectangle = renderShape == BlockRenderShape.CrossBillboard
@@ -234,7 +247,7 @@ internal class InventorySprite : Sprite
         else
         {
             heldItemSprite.IsVisible = false;
-            lastHeldItemId = ItemId.Air;
+            lastHeldItemId = GameObjectId.Air;
         }
 
         if (mouse.IsButtonPressed(MouseButton.Left))
@@ -386,6 +399,9 @@ internal class InventorySprite : Sprite
         var hotbarItem = new InventoryItem { Item = heldItem.Item, Count = 1 };
         inventory.SetItem(slotIndex, hotbarItem);
 
+        // Send move command to server (source -> hotbar slot, count = 1)
+        OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
+
         // Return remaining items to source slot or inventory
         heldItem.Count--;
         if (heldItem.Count > 0)
@@ -419,13 +435,17 @@ internal class InventorySprite : Sprite
         {
             // Place entire held stack in empty storage slot - move operation
             inventory.SetItem(slotIndex, heldItem);
+            
+            // Send move command to server
+            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, -1));
+            
             heldItem = default;
             dragSourceSlot = -1;
         }
         else if (slotItem.Item == heldItem.Item)
         {
             // Same item - merge stacks
-            var itemDef = ItemRegistry.Get(slotItem.Item);
+            var itemDef = GameContentRegistry.Get(slotItem.Item);
             var maxStack = itemDef.MaxStackSize;
             var space = maxStack - slotItem.Count;
 
@@ -435,6 +455,9 @@ internal class InventorySprite : Sprite
                 slotItem.Count += toAdd;
                 heldItem.Count -= toAdd;
                 inventory.SetItem(slotIndex, slotItem);
+                
+                // Send move command to server
+                OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, toAdd));
             }
 
             // Always end drag operation for merge - remaining items stay in source slot
@@ -458,6 +481,9 @@ internal class InventorySprite : Sprite
             // Different items - swap and END drag operation
             var previousItem = slotItem;
             inventory.SetItem(slotIndex, heldItem);
+            
+            // Send move command to server (swap = move entire stack)
+            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, -1));
             
             // Return the swapped item to the original source slot
             if (dragSourceSlot >= 0 && inventory.GetItem(dragSourceSlot).IsEmpty)
@@ -526,7 +552,7 @@ internal class InventorySprite : Sprite
         else if (slotItem.Item == heldItem.Item)
         {
             // Same item - add 1 if not at max stack
-            var itemDef = ItemRegistry.Get(slotItem.Item);
+            var itemDef = GameContentRegistry.Get(slotItem.Item);
             if (slotItem.Count < itemDef.MaxStackSize)
             {
                 slotItem.Count++;
@@ -548,6 +574,7 @@ internal class InventorySprite : Sprite
         }
     }
 
+
     /// <summary>
     /// Checks if an item can be returned to inventory (has space).
     /// </summary>
@@ -555,9 +582,7 @@ internal class InventorySprite : Sprite
     {
         if (item.IsEmpty) return true;
 
-        var itemDef = ItemRegistry.Items.TryGetValue(item.Item, out var def) ? def : null;
-        if (itemDef == null) return false;
-
+        var itemDef = GameContentRegistry.Get(item.Item);
         var maxStack = itemDef.MaxStackSize;
         var remaining = item.Count;
 
@@ -607,18 +632,15 @@ internal class InventorySprite : Sprite
                 continue;
             }
 
-            // Only show count for storage slots with more than 1 item
-            if (item.Count > 1)
-            {
-                var rect = GetSlotScreenRectangle(i);
-                var text = item.Count.ToString();
-                var measure = textRenderer.Measure(text, FontSize);
+            // Show count for all storage slots (count >= 1)
+            var rect = GetSlotScreenRectangle(i);
+            var text = item.Count.ToString();
+            var measure = textRenderer.Measure(text, FontSize);
 
-                var x = rect.X + rect.Width - measure.Width - OverlayPadding;
-                var y = rect.Y + rect.Height - measure.Height - OverlayPadding;
+            var x = rect.X + rect.Width - measure.Width - OverlayPadding;
+            var y = rect.Y + rect.Height - measure.Height - OverlayPadding;
 
-                textRenderer.Render(text, FontSize, x, y, CountColor);
-            }
+            textRenderer.Render(text, FontSize, x, y, CountColor);
         }
 
         // Render held item count

@@ -468,4 +468,326 @@ public class InventoryTests
     }
 
     #endregion
+
+    #region TryMoveItem Tests (Server-side inventory move validation)
+
+    [Fact]
+    public void TryMoveItem_ToEmptySlot_ShouldMoveEntireStack()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
+
+        var result = inventory.TryMoveItem(9, 10);
+
+        Assert.True(result);
+        Assert.True(inventory.GetItem(9).IsEmpty);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(32, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToEmptySlot_WithPartialCount_ShouldMoveSpecifiedAmount()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
+
+        var result = inventory.TryMoveItem(9, 10, 10);
+
+        Assert.True(result);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(9).Item);
+        Assert.Equal(22, inventory.GetItem(9).Count); // 32 - 10
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(10, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToSameItemSlot_ShouldStack()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 30 });
+
+        var result = inventory.TryMoveItem(9, 10);
+
+        Assert.True(result);
+        Assert.True(inventory.GetItem(9).IsEmpty);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(50, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToSameItemSlot_WhenTargetFull_ShouldPartialStack()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 50 });
+
+        var result = inventory.TryMoveItem(9, 10);
+
+        Assert.True(result);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(9).Item);
+        Assert.Equal(6, inventory.GetItem(9).Count); // 20 - 14 (only 14 fit)
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(64, inventory.GetItem(10).Count); // Full stack
+    }
+
+    [Fact]
+    public void TryMoveItem_ToSameItemSlot_WhenTargetAlreadyFull_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 64 });
+
+        var result = inventory.TryMoveItem(9, 10);
+
+        Assert.False(result);
+        // Both slots should be unchanged
+        Assert.Equal(20, inventory.GetItem(9).Count);
+        Assert.Equal(64, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToDifferentItemSlot_ShouldSwap()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Dirt, Count = 30 });
+
+        var result = inventory.TryMoveItem(9, 10);
+
+        Assert.True(result);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(9).Item);
+        Assert.Equal(30, inventory.GetItem(9).Count);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(20, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToDifferentItemSlot_WithPartialCount_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Dirt, Count = 30 });
+
+        // Partial move to different item slot doesn't make sense - should fail
+        var result = inventory.TryMoveItem(9, 10, 10);
+
+        Assert.False(result);
+        // Both slots should be unchanged
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(9).Item);
+        Assert.Equal(20, inventory.GetItem(9).Count);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(10).Item);
+        Assert.Equal(30, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_FromEmptySlot_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+
+        var result = inventory.TryMoveItem(9, 10); // Slot 9 is empty
+
+        Assert.False(result);
+        Assert.True(inventory.GetItem(9).IsEmpty);
+        Assert.Equal(20, inventory.GetItem(10).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_ToSameSlot_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+
+        var result = inventory.TryMoveItem(9, 9);
+
+        Assert.False(result);
+        Assert.Equal(20, inventory.GetItem(9).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_WithInvalidSourceSlot_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+
+        var result = inventory.TryMoveItem(-1, 10);
+        Assert.False(result);
+
+        result = inventory.TryMoveItem(100, 10);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void TryMoveItem_WithInvalidTargetSlot_ShouldFail()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+
+        var result = inventory.TryMoveItem(9, -1);
+        Assert.False(result);
+
+        result = inventory.TryMoveItem(9, 100);
+        Assert.False(result);
+    }
+
+    [Fact]
+    public void TryMoveItem_ShouldIncrementVersion()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 20 });
+        var versionBefore = inventory.Version;
+
+        inventory.TryMoveItem(9, 10);
+
+        Assert.True(inventory.Version > versionBefore);
+    }
+
+    [Fact]
+    public void TryMoveItem_WhenFails_ShouldNotIncrementVersion()
+    {
+        var inventory = CreateEmptyInventory();
+        var versionBefore = inventory.Version;
+
+        inventory.TryMoveItem(9, 10); // Source is empty, should fail
+
+        Assert.Equal(versionBefore, inventory.Version);
+    }
+
+    [Fact]
+    public void TryMoveItem_StorageToHotbar_ShouldWork()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(15, new InventoryItem { Item = GameObjectId.DiamondSword, Count = 1 });
+
+        var result = inventory.TryMoveItem(15, 0); // Storage slot 15 to hotbar slot 0
+
+        Assert.True(result);
+        Assert.True(inventory.GetItem(15).IsEmpty);
+        Assert.Equal(GameObjectId.DiamondSword, inventory.GetItem(0).Item);
+        Assert.Equal(1, inventory.GetItem(0).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_HotbarToStorage_ShouldWork()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+
+        var result = inventory.TryMoveItem(0, 15); // Hotbar slot 0 to storage slot 15
+
+        Assert.True(result);
+        Assert.True(inventory.GetItem(0).IsEmpty);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(15).Item);
+        Assert.Equal(1, inventory.GetItem(15).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_HotbarSwap_ShouldWork()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+        inventory.SetItem(5, new InventoryItem { Item = GameObjectId.Dirt, Count = 1 });
+
+        var result = inventory.TryMoveItem(0, 5);
+
+        Assert.True(result);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(0).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(5).Item);
+    }
+
+    [Fact]
+    public void TryMoveItem_WithCountGreaterThanAvailable_ShouldMoveOnlyAvailable()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 10 });
+
+        var result = inventory.TryMoveItem(9, 10, 50); // Try to move 50 but only 10 available
+
+        Assert.True(result);
+        Assert.True(inventory.GetItem(9).IsEmpty); // All moved
+        Assert.Equal(10, inventory.GetItem(10).Count); // Only 10 available
+    }
+
+    #endregion
+
+    #region ExecuteHotbarDrop Tests (Storage to Hotbar with stacking)
+
+    [Fact]
+    public void TryMoveItem_StorageToHotbarWithExistingItem_ShouldReturnToStorageAndStack()
+    {
+        var inventory = CreateEmptyInventory();
+        // Setup: Sword in storage slot 15, Glass in hotbar slot 8, Glass stack in storage slot 20
+        inventory.SetItem(15, new InventoryItem { Item = GameObjectId.DiamondSword, Count = 1 });
+        inventory.SetItem(8, new InventoryItem { Item = GameObjectId.Glass, Count = 1 });
+        inventory.SetItem(20, new InventoryItem { Item = GameObjectId.Glass, Count = 31 });
+
+        // Move sword from storage to hotbar slot 8
+        var result = inventory.TryMoveItem(15, 8, 1);
+
+        Assert.True(result);
+        // Hotbar slot 8 should now have sword
+        Assert.Equal(GameObjectId.DiamondSword, inventory.GetItem(8).Item);
+        Assert.Equal(1, inventory.GetItem(8).Count);
+        // Source slot should be empty
+        Assert.True(inventory.GetItem(15).IsEmpty);
+        // Glass should be stacked: 31 + 1 = 32
+        Assert.Equal(GameObjectId.Glass, inventory.GetItem(20).Item);
+        Assert.Equal(32, inventory.GetItem(20).Count);
+    }
+
+    [Fact]
+    public void TryMoveItem_StorageToHotbar_ShouldRemoveDuplicatesFromOtherHotbarSlots()
+    {
+        var inventory = CreateEmptyInventory();
+        // Setup: Stone in storage, same Stone already in hotbar slot 3
+        inventory.SetItem(15, new InventoryItem { Item = GameObjectId.Stone, Count = 5 });
+        inventory.SetItem(3, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+
+        // Move stone from storage to hotbar slot 0
+        var result = inventory.TryMoveItem(15, 0, 1);
+
+        Assert.True(result);
+        // Hotbar slot 0 should have stone
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(0).Item);
+        Assert.Equal(1, inventory.GetItem(0).Count);
+        // Hotbar slot 3 should be empty (duplicate removed)
+        Assert.True(inventory.GetItem(3).IsEmpty);
+        // Remaining items should be returned to storage
+        // Original source had 5, moved 1 to hotbar, duplicate 1 returned = 5 total in storage
+        var totalInStorage = 0;
+        for (var i = Components.Inventory.HotbarSize; i < Components.Inventory.SlotCount; i++)
+        {
+            if (inventory.GetItem(i).Item == GameObjectId.Stone)
+            {
+                totalInStorage += inventory.GetItem(i).Count;
+            }
+        }
+        Assert.Equal(5, totalInStorage); // 4 remaining + 1 from duplicate
+    }
+
+    [Fact]
+    public void TryMoveItem_StorageToEmptyHotbar_ShouldPlaceOneItem()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(15, new InventoryItem { Item = GameObjectId.Stone, Count = 10 });
+
+        var result = inventory.TryMoveItem(15, 0, 1);
+
+        Assert.True(result);
+        // Hotbar slot should have exactly 1 item
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(0).Item);
+        Assert.Equal(1, inventory.GetItem(0).Count);
+        // Remaining 9 should be back in storage (source slot was cleared, items returned)
+        var storageCount = 0;
+        for (var i = Components.Inventory.HotbarSize; i < Components.Inventory.SlotCount; i++)
+        {
+            if (inventory.GetItem(i).Item == GameObjectId.Stone)
+            {
+                storageCount += inventory.GetItem(i).Count;
+            }
+        }
+        Assert.Equal(9, storageCount);
+    }
+
+    #endregion
 }

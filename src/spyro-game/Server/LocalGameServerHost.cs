@@ -213,6 +213,10 @@ public sealed class LocalGameServerHost(
                 if (eatFood.PlayerId.Equals(playerId))
                     server.Submit(eatFood.PlayerId, eatFood.Command);
                 break;
+            case ClientInventoryMoveMessage invMove:
+                if (invMove.PlayerId.Equals(playerId))
+                    server.Submit(invMove.PlayerId, invMove.Command);
+                break;
             case ClientAttackMobMessage attack:
                 if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
                     gs.SubmitAttack(attack.PlayerId, attack.TargetMob);

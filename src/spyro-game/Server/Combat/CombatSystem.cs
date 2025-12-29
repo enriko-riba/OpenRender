@@ -200,7 +200,7 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
     /// Apply damage to a mob, considering armor.
     /// Returns actual damage dealt.
     /// </summary>
-    private float ApplyDamageToMob(MobEntity mob, float damage)
+    private static float ApplyDamageToMob(MobEntity mob, float damage)
     {
         // Minecraft armor formula: damage = damage * (1 - min(20, armor) / 25)
         var armorReduction = MathF.Min(20f, mob.Definition.ArmorPoints) / 25f;
@@ -221,7 +221,7 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
     /// <summary>
     /// Apply damage to a player.
     /// </summary>
-    private float ApplyDamageToPlayer(Player player, float damage)
+    private static float ApplyDamageToPlayer(Player player, float damage)
     {
         // TODO: Consider player armor when implemented
         var actualDamage = (int)MathF.Ceiling(damage);
@@ -232,7 +232,7 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
     /// <summary>
     /// Apply knockback to a mob from an attack.
     /// </summary>
-    private void ApplyKnockback(Vector3 attackerPosition, MobEntity mob)
+    private static void ApplyKnockback(Vector3 attackerPosition, MobEntity mob)
     {
         var direction = mob.Position - attackerPosition;
         direction.Y = 0;
@@ -277,23 +277,26 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
     /// <summary>
     /// Get weapon damage from held item.
     /// </summary>
-    private static float GetWeaponDamage(ItemId heldItem)
+    private static float GetWeaponDamage(GameObjectId heldItem)
     {
-        return heldItem switch
+        // Check if it's a tool and get attack damage
+        var tool = GameContentRegistry.GetTool(heldItem);
+        if (tool != null)
         {
-            ItemId.DiamondSword => 7.0f,
-            _ => BaseFistDamage
-        };
+            return tool.AttackDamage;
+        }
+
+        return BaseFistDamage;
     }
 
     /// <summary>
     /// Get attack speed from held item.
     /// </summary>
-    private static float GetAttackSpeed(ItemId heldItem)
+    private static float GetAttackSpeed(GameObjectId heldItem)
     {
         return heldItem switch
         {
-            ItemId.DiamondSword => 1.6f,
+            GameObjectId.DiamondSword => 1.6f,
             _ => 4.0f
         };
     }

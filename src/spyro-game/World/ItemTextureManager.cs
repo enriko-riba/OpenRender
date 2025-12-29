@@ -9,79 +9,120 @@ using SpyroGame.World.Registry;
 namespace SpyroGame.World;
 
 /// <summary>
-/// Manages item textures and materials.
-/// Loads textures for all ItemIds at startup and reports missing ones.
+/// Manages item textures and materials for rendering items in inventory, hotbar, and world.
+/// Uses GameObject.TexturePath when available, falls back to convention-based paths.
 /// </summary>
 public static class ItemTextureManager
 {
-    private static readonly Dictionary<ItemId, Material> materials = [];
+    private static readonly Dictionary<GameObjectId, TextureDescriptor> descriptors = [];
+    private static readonly Dictionary<(GameObjectId Id, int ShaderId), Material> materials = [];
     private static readonly Material defaultMaterial = Material.Default;
+    private static Shader? spriteShader;
+    private static bool initialized;
 
-    private const string ItemTextureDir = "Resources/voxel/items";
-    private const string BlockTextureDir = "Resources/voxel/blocks";
-
-    static ItemTextureManager()
+    /// <summary>
+    /// Initializes the texture manager. Must be called after GL context is ready.
+    /// </summary>
+    public static void Initialize()
     {
-        LoadItemMaterials();
+        if (initialized) return;
+        initialized = true;
+        
+        spriteShader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
+        LoadItemDescriptors();
     }
 
-    public static bool IsBlockItem(ItemId item) => ItemRegistry.Get(item) is BlockItem;
+    /// <summary>
+    /// Checks if the given item is a block.
+    /// </summary>
+    public static bool IsBlockItem(GameObjectId item) => GameContentRegistry.IsBlock(item);
 
-    private static void LoadItemMaterials()
+    /// <summary>
+    /// Gets the material for rendering an item.
+    /// </summary>
+    public static Material GetMaterial(GameObjectId item) =>
+        materials.TryGetValue((item, 0), out var mat) ? mat : defaultMaterial;
+
+    /// <summary>
+    /// Creates a new material for a sprite by copying texture handles from the item material.
+    /// Creates a new material with a unique ID to ensure proper renderer caching.
+    /// </summary>
+    /// <param name="item">The item whose textures should be used.</param>
+    /// <param name="shader">The shader to use for the new material.</param>
+    /// <returns>A new Material instance with the item's textures and the provided shader.</returns>
+    public static Material CreateMaterialForItem(GameObjectId item, Shader shader)
     {
-        var loadedCount = 0;
-        var missingItems = new List<ItemId>();
-
-        var allItemIds = Enum.GetValues<ItemId>()
-            .Where(i => i != ItemId.Air)
-            .ToList();
-
-        foreach (var itemId in allItemIds)
+        // Ensure initialized (late init if Initialize() wasn't called)
+        if (!initialized)
         {
-            var texturePath = GetTexturePathForItem(itemId);
+            Initialize();
+        }
+        
+        // Always use the sprite shader because Sprite.OnDraw sets sprite-specific uniforms
+        // (sourceFrame, tint) that must exist in the program.
+        shader = spriteShader!;
 
-            if (File.Exists(texturePath))
-            {
-                try
-                {
-                    var descriptor = new TextureDescriptor(
-                        texturePath,
-                        MinFilter: TextureMinFilter.Nearest,
-                        MagFilter: TextureMagFilter.Nearest,
-                        TextureWrapS: TextureWrapMode.ClampToEdge,
-                        TextureWrapT: TextureWrapMode.ClampToEdge
-                    );
-
-                    // Create material
-                    // Pass null for shader as DroppedItemRenderer seems to handle it (or uses default)
-                    var material = Material.Create(
-                        shader: null!, 
-                        textureDescriptor: descriptor, 
-                        diffuseColor: Vector3.One
-                    );
-
-                    materials[itemId] = material;
-                    loadedCount++;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error($"ItemTextureManager: Failed to create material for {itemId}: {ex.Message}");
-                    missingItems.Add(itemId);
-                }
-            }
-            else
-            {
-                missingItems.Add(itemId);
-            }
+        var key = (item, shader.Handle);
+        if (materials.TryGetValue(key, out var existing))
+        {
+            return existing;
         }
 
-        // Log warnings for missing textures
-        if (missingItems.Count > 0)
+        if (!descriptors.TryGetValue(item, out var descriptor))
         {
-            Log.Warn($"ItemTextureManager: Missing textures for {missingItems.Count} item types (will use default):");
-            foreach (var item in missingItems)
+            Log.Warn($"ItemTextureManager: No descriptor for {item}, returning default material");
+            return defaultMaterial;
+        }
+
+        Log.Info($"ItemTextureManager: Creating material for {item}");
+        var material = Material.Create(
+            shader: shader,
+            textureDescriptor: descriptor,
+            diffuseColor: Vector3.One);
+
+        materials[key] = material;
+        return material;
+    }
+
+    private static void LoadItemDescriptors()
+    {
+        var loadedCount = 0;
+        var missingItems = new List<GameObjectId>();
+
+        // Get all registered objects from the single source of truth
+        foreach (var (objectId, objectDef) in GameContentRegistry.Objects)
+        {
+            if (objectId == GameObjectId.Air) continue;
+
+            var texturePath = GameContentRegistry.ResolveTexturePath(objectId);
+            if (texturePath == null || !File.Exists(texturePath))
             {
-                var expectedPath = GetTexturePathForItem(item);
+                missingItems.Add(objectId);
+                continue;
+            }
+
+            var descriptor = new TextureDescriptor(
+                texturePath,
+                MinFilter: TextureMinFilter.Nearest,
+                MagFilter: TextureMagFilter.Nearest,
+                TextureWrapS: TextureWrapMode.ClampToEdge,
+                TextureWrapT: TextureWrapMode.ClampToEdge
+            );
+
+            descriptors[objectId] = descriptor;
+            loadedCount++;
+        }
+
+        // Log warnings for missing textures (only non-block items)
+        var missingNonBlocks = missingItems
+            .Where(id => !GameContentRegistry.IsBlock(id))
+            .ToList();
+        if (missingNonBlocks.Count > 0)
+        {
+            Log.Warn($"ItemTextureManager: Missing textures for {missingNonBlocks.Count} pure items:");
+            foreach (var item in missingNonBlocks)
+            {
+                var expectedPath = GameContentRegistry.ResolveTexturePath(item);
                 Log.Warn($"  - {item} (expected: {expectedPath})");
             }
         }
@@ -89,100 +130,4 @@ public static class ItemTextureManager
         Log.Info($"ItemTextureManager: Loaded {loadedCount} item materials successfully");
     }
 
-    public static Material GetMaterial(ItemId item) => materials.TryGetValue(item, out var mat) ? mat : defaultMaterial;
-
-    private static string GetTexturePathForItem(ItemId itemId)
-    {
-        // Check if it's a block item
-        var itemDef = ItemRegistry.Get(itemId);
-        if (itemDef is BlockItem blockItem)
-        {
-             var blockName = blockItem.BlockId.ToString();
-             var blockPath = $"{BlockTextureDir}/{PascalToSnakeCase(blockName)}.png";
-             if (File.Exists(blockPath)) return blockPath;
-        }
-
-        var enumName = itemId.ToString();
-        var snakeCaseName = PascalToSnakeCase(enumName);
-        return $"{ItemTextureDir}/{snakeCaseName}.png";
-    }
-
-    private static string PascalToSnakeCase(string pascalCase)
-    {
-        if (string.IsNullOrEmpty(pascalCase))
-            return pascalCase;
-
-        var result = new System.Text.StringBuilder();
-
-        for (var i = 0; i < pascalCase.Length; i++)
-        {
-            var c = pascalCase[i];
-
-            if (char.IsUpper(c))
-            {
-                if (i > 0)
-                    result.Append('_');
-                result.Append(char.ToLowerInvariant(c));
-            }
-            else
-            {
-                result.Append(c);
-            }
-        }
-
-        return result.ToString();
-    }
-
-
-    /// <summary>
-    /// Creates a new material for the sprite by copying texture handles from the item material.
-    /// This creates a new material with a unique ID to ensure proper renderer caching.
-    /// </summary>
-    /// <param name="item">The item whose textures should be used.</param>
-    /// <param name="shader">The shader to use for the new material.</param>
-    /// <returns>A new Material instance with the item's textures and the provided shader.</returns>
-    public static Material CreateMaterialForItem(ItemId item, Shader shader)
-    {
-        var sourceMaterial = GetMaterial(item);
-        
-        // Create a new material with unique ID
-        // Clone the TextureDescriptors array to avoid sharing references
-        TextureDescriptor[]? clonedDescriptors = null;
-        if (sourceMaterial.TextureDescriptors != null && sourceMaterial.TextureDescriptors.Length > 0)
-        {
-            clonedDescriptors = [.. sourceMaterial.TextureDescriptors];
-        }
-        
-        var material = Material.Create(
-            shader,
-            clonedDescriptors,
-            sourceMaterial.DiffuseColor,
-            sourceMaterial.EmissiveColor,
-            sourceMaterial.SpecularColor,
-            sourceMaterial.Shininess,
-            sourceMaterial.DetailTextureScaleFactor,
-            sourceMaterial.DetailTextureBlendFactor
-        );
-        
-        return material;
-    }
-
-    /// <summary>
-    /// Applies the textures from an item to a sprite's existing material.
-    /// Note: Due to renderer caching, this may not take effect until the material ID changes.
-    /// Consider using CreateMaterialForItem for reliable texture updates.
-    /// </summary>
-    /// <param name="item">The item whose textures should be applied.</param>
-    /// <param name="targetMaterial">The sprite's material that will receive the textures.</param>
-    public static void ApplyItemTextures(ItemId item, Material targetMaterial)
-    {
-        var sourceMaterial = GetMaterial(item);
-        
-        // Copy texture handles from source to target (preserving target's shader)
-        for (var i = 0; i < Material.MaxTextures; i++)
-        {
-            targetMaterial.Textures[i] = sourceMaterial.Textures[i];
-            targetMaterial.BindlessTextureHandles[i] = sourceMaterial.BindlessTextureHandles[i];
-        }
-    }
 }

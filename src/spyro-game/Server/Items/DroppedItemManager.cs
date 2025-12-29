@@ -6,10 +6,13 @@ using SpyroGame.World.Registry;
 
 namespace SpyroGame.Server.Items;
 
+/// <summary>
+/// Represents a dropped item entity in the world.
+/// </summary>
 public class DroppedItemEntity
 {
     public int Id;
-    public ItemId Item;
+    public GameObjectId Item;
     public int Count;
     public Vector3 Position;
     public Vector3 Velocity;
@@ -18,12 +21,15 @@ public class DroppedItemEntity
     public const float DespawnTimeSeconds = 300.0f; // 5 minutes
 }
 
+/// <summary>
+/// Manages dropped items in the world, including physics and pickup.
+/// </summary>
 public class DroppedItemManager
 {
     private readonly List<DroppedItemEntity> items = [];
     private int nextId = 1;
 
-    public void Spawn(ItemId item, int count, Vector3 position, Vector3 velocity)
+    public void Spawn(GameObjectId item, int count, Vector3 position, Vector3 velocity)
     {
         items.Add(new DroppedItemEntity
         {

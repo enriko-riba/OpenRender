@@ -347,7 +347,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
             shader.SetVector3("uPickedBlockPos", ref vecPos);
             
             // Check block shape to decide outline method
-            var blockDef = BlockRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
+            var blockDef = GameContentRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
             var isBillboard = blockDef?.Shape == BlockRenderShape.CrossBillboard;
 
             if (isBillboard)
@@ -476,7 +476,7 @@ public class VoxelTerrainRenderer : SceneNode, IDisposable
         // Only render GL_LINES outline if shader outline is disabled (e.g. for billboards)
         if (PickedBlock.HasValue)
         {
-            var blockDef = BlockRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
+            var blockDef = GameContentRegistry.Blocks.GetValueOrDefault(PickedBlock.Value.Block);
             if (blockDef?.Shape == BlockRenderShape.CrossBillboard)
             {
                 RenderPickedBlockOutline();

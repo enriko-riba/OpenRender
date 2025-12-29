@@ -112,6 +112,12 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         player.TryEatFood();
     }
 
+    public void Submit(PlayerId playerId, InventoryMoveCommand command)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+        player.Inventory.TryMoveItem(command.SourceSlot, command.TargetSlot, command.Count);
+    }
+
     public void SubmitAttack(PlayerId playerId, MobId targetMob)
     {
         if (!players.TryGetValue(playerId, out var player)) return;
@@ -359,7 +365,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
             foreach (var player in players.Values)
             {
-                var playerCollider = player.Collider;
+                var playerCollider = Player.Collider;
                 var playerMinY = player.Position.Y;
                 var playerMaxY = player.Position.Y + playerCollider.Height;
 

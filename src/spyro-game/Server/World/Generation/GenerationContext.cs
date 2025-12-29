@@ -97,6 +97,13 @@ internal sealed class GenerationContext : IDisposable
         Column3DFactor = ArrayPool<float>.Shared.Rent(ColumnCount);
         Array.Clear(Column3DFactor);
         
+        // CRITICAL: Clear water body and biome arrays - stale values cause incorrect block placement
+        // and terrain pillars when ArrayPool returns dirty buffers from previous chunk generation
+        Array.Clear(ColumnWaterBody);
+        Array.Clear(ColumnOceanDistance);
+        Array.Clear(ColumnBeachThreshold);
+        Array.Clear(ColumnBiomes);
+        
         // Clear 3D volumes since ArrayPool returns dirty buffers and stale data
         // causes phantom solid blocks or incorrect terrain
         CheeseVolume = ArrayPool<float>.Shared.Rent(ColumnHeightWords);
@@ -123,6 +130,15 @@ internal sealed class GenerationContext : IDisposable
         
         SparseOverhangGrid = ArrayPool<float>.Shared.Rent(SparseVolumeSize);
         Array.Clear(SparseOverhangGrid);
+        
+        // CRITICAL: Clear sparse sampling and scratch buffers - stale values cause
+        // random terrain artifacts when interpolating 3D noise volumes
+        Array.Clear(SparseSampleX);
+        Array.Clear(SparseSampleY);
+        Array.Clear(SparseSampleZ);
+        Array.Clear(SparseSliceScratch);
+        Array.Clear(SampleScratch2D);
+        Array.Clear(Scratch3DOutput);
     }
 
     public void Dispose()

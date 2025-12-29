@@ -1,4 +1,4 @@
-﻿using OpenRender.Components;
+using OpenRender.Components;
 using OpenRender.Core;
 using OpenRender.Core.Rendering;
 using OpenRender.Core.Rendering.Text;
@@ -22,7 +22,7 @@ internal class HotBar : Sprite
 
     private readonly Inventory inventory;
     private readonly Sprite[] slotSprites = new Sprite[Slots];
-    private readonly ItemId[] lastDisplayedItems;
+    private readonly GameObjectId[] lastDisplayedItems;
     private readonly Sprite activeSlotSprite = default!;
     private readonly ITextRenderer textRenderer;
     private int lastInventoryVersion = -1;
@@ -64,10 +64,10 @@ internal class HotBar : Sprite
         Pivot = new(0.5f, 1.0f);
 
         // Initialize lastDisplayedItems with a sentinel value to force first update
-        lastDisplayedItems = new ItemId[Slots];
+        lastDisplayedItems = new GameObjectId[Slots];
         for (var i = 0; i < Slots; i++)
         {
-            lastDisplayedItems[i] = (ItemId)ushort.MaxValue; // Invalid sentinel value
+            lastDisplayedItems[i] = (GameObjectId)ushort.MaxValue; // Invalid sentinel value
         }
 
         for (var i = 0; i < Slots; i++)
@@ -92,19 +92,21 @@ internal class HotBar : Sprite
 
     public override void OnUpdate(Scene scene, double elapsed)
     {
-        // Don't update if the hotbar is hidden (e.g., inventory is open)
-        if (!base.IsVisible) return;
-
-        // Check if inventory changed - if so, force refresh of all items
+        // CRITICAL: Check inventory version even when hidden to detect changes made
+        // while the inventory panel was open. This ensures the HotBar refreshes 
+        // properly when it becomes visible again.
         if (lastInventoryVersion != inventory.Version)
         {
             lastInventoryVersion = inventory.Version;
             // Reset all tracked items to force material recreation
             for (var i = 0; i < Slots; i++)
             {
-                lastDisplayedItems[i] = (ItemId)ushort.MaxValue;
+                lastDisplayedItems[i] = (GameObjectId)ushort.MaxValue;
             }
         }
+
+        // Don't update visuals if the hotbar is hidden (e.g., inventory is open)
+        if (!base.IsVisible) return;
 
         //  for each item in inventory slots 0-9 render the item in the corresponding hotbar slot
         for (var i = 0; i < Slots; i++)
@@ -113,7 +115,7 @@ internal class HotBar : Sprite
             if (inventoryItem.IsEmpty)
             {
                 slotSprites[i].IsVisible = false;
-                lastDisplayedItems[i] = ItemId.Air;
+                lastDisplayedItems[i] = GameObjectId.Air;
                 continue;
             }
             slotSprites[i].IsVisible = true;
@@ -127,10 +129,10 @@ internal class HotBar : Sprite
             }
 
             var renderShape = BlockRenderShape.None;
-            var item = ItemRegistry.Get(inventoryItem.Item);
-            if (item is BlockItem blockItem)
+            var item = GameContentRegistry.Get(inventoryItem.Item);
+            if (item is Block blockItem)
             {
-                renderShape = BlockRegistry.GetRenderShape(blockItem.BlockId);
+                renderShape = GameContentRegistry.GetRenderShape(blockItem.BlockId);
             }
 
             //  cross billboards use the simple atlas 3x1 frames layout but only the last frame holds the texture
@@ -180,9 +182,9 @@ internal class HotBar : Sprite
         }
     }
 
-    private Dictionary<ItemId, int> BuildInventoryTotals()
+    private Dictionary<GameObjectId, int> BuildInventoryTotals()
     {
-        var totals = new Dictionary<ItemId, int>();
+        var totals = new Dictionary<GameObjectId, int>();
         for (var i = 0; i < Inventory.SlotCount; i++)
         {
             var slot = inventory.GetItem(i);
@@ -247,9 +249,6 @@ internal class HotBar : Sprite
             RenderGroup = RenderGroup.UI;
         }
 
-        public override void OnDraw(double elapsed)
-        {
-            hotBar.RenderItemCounts(textRenderer);
-        }
+        public override void OnDraw(double elapsed) => hotBar.RenderItemCounts(textRenderer);
     }
 }

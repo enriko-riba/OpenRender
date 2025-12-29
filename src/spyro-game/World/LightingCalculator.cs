@@ -65,7 +65,7 @@ public static class LightingCalculator
                         continue;
                     }
 
-                    var filter = BlockRegistry.GetLightFilter(block);
+                    var filter = GameContentRegistry.GetLightFilter(block);
                     if (filter > 0 && currentLight > 0)
                     {
                         currentLight = Math.Max(0, currentLight - filter);
@@ -685,7 +685,7 @@ public static class LightingCalculator
         if (block.IsOpaque()) return;
 
         var neighborLight = GetSkyLight(chunk, index);
-        var decay = BlockRegistry.GetLightDecay(block);
+        var decay = GameContentRegistry.GetLightDecay(block);
         var newLight = parentLight - decay;
 
         if (newLight > neighborLight)
@@ -838,7 +838,7 @@ public static class LightingCalculator
         if (block.IsOpaque()) return;
 
         var neighborLight = GetBlockLight(chunk, index);
-        var decay = BlockRegistry.GetLightDecay(block);
+        var decay = GameContentRegistry.GetLightDecay(block);
         var newLight = parentLight - decay;
 
         if (newLight > neighborLight)
@@ -865,8 +865,8 @@ public static class LightingCalculator
         // A more optimized approach would use light removal + re-propagation only in affected area
         // But that's more complex and can be implemented later if needed
 
-        var oldLightValue = BlockRegistry.GetLightValue(oldBlock);
-        var newLightValue = BlockRegistry.GetLightValue(newBlock);
+        var oldLightValue = GameContentRegistry.GetLightValue(oldBlock);
+        var newLightValue = GameContentRegistry.GetLightValue(newBlock);
         var oldWasOpaque = oldBlock.IsOpaque();
         var newIsOpaque = newBlock.IsOpaque();
 
@@ -1050,7 +1050,7 @@ public static class LightingCalculator
         var sourceLight = isSkyLight ? GetSkyLight(sourceChunk, sourceIndex) : GetBlockLight(sourceChunk, sourceIndex);
         var targetLight = isSkyLight ? GetSkyLight(targetChunk, targetIndex) : GetBlockLight(targetChunk, targetIndex);
 
-        var decay = BlockRegistry.GetLightDecay(targetBlock);
+        var decay = GameContentRegistry.GetLightDecay(targetBlock);
         var newLight = sourceLight - decay;
 
         if (newLight > targetLight)
@@ -1162,7 +1162,7 @@ public static class LightingCalculator
                     {
                         // Apply light filter for translucent blocks (water, ice, leaves, etc.)
                         // Air has filter=0 so no decay; water has filter=2 so decays
-                        var filter = BlockRegistry.GetLightFilter(block);
+                        var filter = GameContentRegistry.GetLightFilter(block);
                         if (filter > 0 && currentLight > 0)
                         {
                             currentLight = Math.Max(0, currentLight - filter);
@@ -1216,7 +1216,7 @@ public static class LightingCalculator
                     {
                         continue;
                     }
-                    var lightValue = BlockRegistry.GetLightValue(block);
+                    var lightValue = GameContentRegistry.GetLightValue(block);
 
                     if (lightValue > 0)
                     {
@@ -1304,7 +1304,7 @@ public static class LightingCalculator
         //   - Through translucent: apply filter
         // - Horizontal/upward OR from non-direct-sky source: normal decay of 1 per block
         int decay;
-        var blockFilter = (int)BlockRegistry.GetLightFilter(block);
+        var blockFilter = (int)GameContentRegistry.GetLightFilter(block);
 
         if (isSkyLight && isVerticalDown && currentLight == MaxLight && skyVisibility != null && skyVisibility[sourceIndex] != 0)
         {

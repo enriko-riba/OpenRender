@@ -181,13 +181,13 @@ internal static class ChunkMeshBuilder
                         var isTranslucent = IsTranslucent(block);
                         var isLiquid = block.IsLiquid();
                         var isWater = block.IsWater();
-                        var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
+                        var isAlphaTest = GameContentRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
                         
                         var targetVertexList = isTranslucent ? translucentVertices : opaqueVertices;
                         // Split translucent indices into Water and Other (Translucent)
                         // Split opaque indices into Solid and AlphaTest (Leaves/Flowers)
                         // Check if this block uses a special render shape
-                        var renderShape = BlockRegistry.GetRenderShape(block);
+                        var renderShape = GameContentRegistry.GetRenderShape(block);
                         var isBillboard = renderShape == BlockRenderShape.CrossBillboard;
 
                         // Route billboards to Opaque queue (Pass 0) so they render with Culling ON.
@@ -375,7 +375,7 @@ internal static class ChunkMeshBuilder
         
         // Only Blend needs translucent pass (Water, Stained Glass).
         // AlphaTest (Torches, Leaves) should be Opaque to write depth.
-        var renderMethod = BlockRegistry.GetRenderMethod(block);
+        var renderMethod = GameContentRegistry.GetRenderMethod(block);
         return renderMethod is RenderMethod.Blend;
     }
 
@@ -418,7 +418,7 @@ internal static class ChunkMeshBuilder
             // If it's leaves (or any AlphaTest block), we want to see internal faces
             // because they have holes (cutout).
             // Glass/Water (Blend) should still cull.
-            if (BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest)
+            if (GameContentRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest)
             {
                 return true;
             }
@@ -690,7 +690,7 @@ internal static class ChunkMeshBuilder
     /// </summary>
     private static uint PackVertexAttributes(BlockId block, uint light, BiomeId biome)
     {
-        var isAlphaTest = BlockRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
+        var isAlphaTest = GameContentRegistry.GetRenderMethod(block) == RenderMethod.AlphaTest;
 
         return (uint)block.GetId()
             | ((light & 0xFFu) << 10)

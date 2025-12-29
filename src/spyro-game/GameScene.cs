@@ -168,6 +168,9 @@ internal class GameScene : Scene
         base.Load();
         BackgroundColor = Color4.CornflowerBlue;
 
+        // Initialize item textures now that GL context is ready
+        ItemTextureManager.Initialize();
+
         // Capture default fog settings so we can restore them when not submerged.
         defaultFog = Fog;
         //defaultFogCaptured = true;
@@ -278,6 +281,11 @@ internal class GameScene : Scene
 
         inventorySprite = InventorySprite.Create(player.Inventory, tr);
         inventorySprite.SetPosition(new Vector2(SceneManager.ClientSize.X / 2f, SceneManager.ClientSize.Y / 2f));
+        inventorySprite.OnInventoryMove = (command) =>
+        {
+            // Send inventory move request to server
+            localClient?.Send(command);
+        };
         AddNode(inventorySprite);
 
         world!.Camera = camera!;
@@ -673,7 +681,7 @@ internal class GameScene : Scene
                     // Check if block is non-solid (e.g. grass, flowers)
                     var blockId = blockPickingService!.PickedBlock!.Value.Block;
                     var isNonSolidBlock = false;
-                    if (BlockRegistry.Blocks.TryGetValue(blockId, out var blockDef))
+                    if (GameContentRegistry.Blocks.TryGetValue(blockId, out var blockDef))
                     {
                         isNonSolidBlock = !blockDef.IsSolid;
                     }
@@ -723,11 +731,13 @@ internal class GameScene : Scene
                 if (SceneManager.MouseState.IsButtonDown(MouseButton.Left))
                 {
                     // Calculate potential damage for the target block
-                    var blockDef = BlockRegistry.Blocks.GetValueOrDefault(pickedBlock.Block);
+                    var blockDef = GameContentRegistry.Blocks.GetValueOrDefault(pickedBlock.Block);
                     var hardness = blockDef?.Hardness ?? 1.0f;
                     var item = player.Inventory.SelectedItem;
-                    var itemDef = ItemRegistry.Get(item.Item);
-                    var toolSpeed = itemDef.MiningSpeedMultiplier;
+                    
+                    // Get tool mining speed (1.0 for hand/non-tools)
+                    var tool = GameContentRegistry.GetTool(item.Item);
+                    var toolSpeed = tool?.MiningSpeed ?? 1.0f;
 
                     // Damage per tick (20 ticks/sec)
                     // Hardness 0 -> Instant break (damage = 1.0)
@@ -752,9 +762,9 @@ internal class GameScene : Scene
                                 if (!pickedBlock.Block.IsAir())
                                 {
                                     // Use loot table to determine drops (client is authoritative for inventory)
-                                    var brokenBlockDef = BlockRegistry.Get(pickedBlock.Block);
+                                    var brokenBlockDef = GameContentRegistry.GetBlock(pickedBlock.Block);
                                     var lootDrops = brokenBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
-                                    foreach (var (droppedItem, dropCount) in lootDrops)
+                                    foreach ((GameObjectId droppedItem, int dropCount) in lootDrops)
                                     {
                                         player.Inventory.AddItem(droppedItem, dropCount);
                                     }
@@ -796,9 +806,9 @@ internal class GameScene : Scene
                                 if (!pickedBlock.Block.IsAir())
                                 {
                                     // Use loot table to determine drops (client is authoritative for inventory)
-                                    var instaBlockDef = BlockRegistry.Get(pickedBlock.Block);
+                                    var instaBlockDef = GameContentRegistry.GetBlock(pickedBlock.Block);
                                     var instaDrops = instaBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
-                                    foreach (var (droppedItem, dropCount) in instaDrops)
+                                    foreach ((GameObjectId droppedItem, int dropCount) in instaDrops)
                                     {
                                         player.Inventory.AddItem(droppedItem, dropCount);
                                     }
@@ -829,28 +839,28 @@ internal class GameScene : Scene
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
                 {
                     var item = player.Inventory.SelectedItem;
-                    if (!item.IsEmpty && ItemRegistry.Items.TryGetValue(item.Item, out var itemDef))
+                    if (!item.IsEmpty && GameContentRegistry.TryGet(item.Item, out var itemDef) && itemDef != null)
                     {
-                        if (itemDef is BlockItem blockItem)
+                        if (itemDef is Block block)
                         {
                             // Place block
                             var hitNormal = blockPickingService.HitNormal;
                             var placePos = pickedBlock.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
 
                             // Predict locally: consume item + set voxel so the feedback is instant.
-                            if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, blockItem.BlockId) == true)
+                            if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, block.BlockId) == true)
                             {
                                 player.Inventory.TryConsumeSelectedItem();
                                 blockPickingService.Invalidate();
                                 blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
                             }
 
-                            localClient.Send(new PlaceBlockCommand(placePos, blockItem.BlockId));
+                            localClient.Send(new PlaceBlockCommand(placePos, block.BlockId));
                         }
-                        else if (itemDef is FoodItem foodItem)
+                        else if (itemDef is Food food)
                         {
                             // Consume food
-                            TryConsumeFood(foodItem);
+                            TryConsumeFood(food);
                         }
                     }
                 }
@@ -861,9 +871,9 @@ internal class GameScene : Scene
                 if (SceneManager.MouseState.IsButtonPressed(MouseButton.Right))
                 {
                     var item = player.Inventory.SelectedItem;
-                    if (!item.IsEmpty && ItemRegistry.GetFood(item.Item) is { } foodItem)
+                    if (!item.IsEmpty && GameContentRegistry.GetFood(item.Item) is { } food)
                     {
-                        TryConsumeFood(foodItem);
+                        TryConsumeFood(food);
                     }
                 }
 
@@ -1124,6 +1134,8 @@ internal class GameScene : Scene
 
 
 
+
+
         return biomeId.ToString();
     }
 
@@ -1131,11 +1143,11 @@ internal class GameScene : Scene
     /// Sends an EatFoodCommand to the server to consume the selected food item.
     /// The server handles validation and state updates.
     /// </summary>
-    private void TryConsumeFood(FoodItem foodItem)
+    private void TryConsumeFood(Food food)
     {
         // Check if we can eat (client-side check for immediate feedback)
         // The server will do authoritative validation
-        if (player.Attributes.Food >= player.Attributes.MaxFood && !foodItem.CanAlwaysEat)
+        if (player.Attributes.Food >= player.Attributes.MaxFood && !food.CanAlwaysEat)
         {
             return; // Hunger is full, can't eat
         }

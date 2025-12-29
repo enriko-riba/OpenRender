@@ -92,6 +92,8 @@ public sealed class LocalGameClient(
 
     public void Send(EatFoodCommand command) => connection.Send(new ClientEatFoodMessage(playerId, command));
 
+    public void Send(InventoryMoveCommand command) => connection.Send(new ClientInventoryMoveMessage(playerId, command));
+
     public void SendAttack(MobId targetMob) => connection.Send(new ClientAttackMobMessage(playerId, targetMob));
 
     public void Start()

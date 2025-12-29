@@ -1,16 +1,26 @@
+using OpenRender;
 using SpyroGame.Shared.State;
 using SpyroGame.World.Registry;
 
 namespace SpyroGame.Components;
 
+/// <summary>
+/// Represents an item slot in the inventory.
+/// </summary>
 public struct InventoryItem
 {
-    public ItemId Item;
+    /// <summary>The game object ID of the item in this slot.</summary>
+    public GameObjectId Item;
+    /// <summary>Number of items in this slot.</summary>
     public int Count;
 
-    public readonly bool IsEmpty => Count <= 0 || Item == ItemId.Air;
+    /// <summary>Returns true if this slot is empty.</summary>
+    public readonly bool IsEmpty => Count <= 0 || Item == GameObjectId.Air;
 }
 
+/// <summary>
+/// Player inventory with hotbar and storage slots.
+/// </summary>
 public class Inventory
 {
     public const int HotbarSize = 9;
@@ -37,34 +47,43 @@ public class Inventory
     public Inventory()
     {
         // Start with fewer blocks to allow picking up new ones
-        AddItem(ItemId.Stone, 10);
-        AddItem(ItemId.Dirt, 10);
-        AddItem(ItemId.Grass, 10);
-        AddItem(ItemId.Cobblestone, 10);
-        AddItem(ItemId.OakLog, 10);
+        AddItem(GameObjectId.Stone, 10);
+        AddItem(GameObjectId.Dirt, 10);
+        AddItem(GameObjectId.Grass, 10);
+        AddItem(GameObjectId.Cobblestone, 10);
+        AddItem(GameObjectId.OakLog, 10);
         // Light source blocks for testing the new lighting system
-        AddItem(ItemId.Torch, 64);
-        AddItem(ItemId.Glowstone, 32);
-        AddItem(ItemId.Lantern, 16);
-        AddItem(ItemId.Glass, 32);
+        AddItem(GameObjectId.Torch, 64);
+        AddItem(GameObjectId.Glowstone, 32);
+        AddItem(GameObjectId.Lantern, 16);
+        AddItem(GameObjectId.Glass, 32);
 
         // Add some items
-        AddItem(ItemId.Stick, 5);
-        AddItem(ItemId.Apple, 3);
-        AddItem(ItemId.DiamondSword, 1);
+        AddItem(GameObjectId.Stick, 5);
+        AddItem(GameObjectId.Apple, 3);
+        AddItem(GameObjectId.DiamondSword, 1);
     }
 
     public InventoryItem SelectedItem => slots[selectedSlot];
 
-    public void AddItem(ItemId item, int count = 1)
+    public void AddItem(GameObjectId item, int count = 1)
     {
-        if (item == ItemId.Air) return;
-        if (count <= 0) return;
+        Log.Info($"Inventory.AddItem called: {item} x{count}");
+        
+        if (item == GameObjectId.Air)
+        {
+            Log.Info($"Inventory.AddItem: Ignoring Air");
+            return;
+        }
+        if (count <= 0)
+        {
+            Log.Info($"Inventory.AddItem: Ignoring count <= 0");
+            return;
+        }
 
-        var itemDef = ItemRegistry.Items.TryGetValue(item, out var def) ? def : null;
-        if (itemDef == null) return;
-
+        var itemDef = GameContentRegistry.Get(item);
         var maxStack = itemDef.MaxStackSize;
+        Log.Info($"Inventory.AddItem: itemDef={itemDef.GetType().Name}, maxStack={maxStack}");
 
         // 1. Try to stack with existing items in Storage (indices 9-35)
         for (var i = HotbarSize; i < SlotCount; i++)
@@ -76,6 +95,7 @@ public class Inventory
                 slots[i].Count += toAdd;
                 count -= toAdd;
                 if (toAdd > 0) Version++;
+                Log.Info($"Inventory: Stacked {item} x{toAdd} in storage slot {i}, remaining={count}");
                 if (count <= 0) return;
             }
         }
@@ -102,10 +122,15 @@ public class Inventory
                     slots[i].Count = 1;
                     count--;
                     Version++;
+                    Log.Info($"Inventory: Added {item} to hotbar slot {i}, remaining={count}");
                     break; // Only add to ONE hotbar slot
                 }
             }
             if (count <= 0) return;
+        }
+        else
+        {
+            Log.Info($"Inventory: {item} already in hotbar, skipping hotbar placement");
         }
 
         // 3. Place remaining in empty Storage slots
@@ -117,8 +142,14 @@ public class Inventory
                 slots[i].Count = Math.Min(count, maxStack);
                 count -= slots[i].Count;
                 Version++;
+                Log.Info($"Inventory: Added {item} x{slots[i].Count} to storage slot {i}, remaining={count}");
                 if (count <= 0) return;
             }
+        }
+        
+        if (count > 0)
+        {
+            Log.Warn($"Inventory: Could not add {count} remaining {item} - inventory full!");
         }
     }
 
@@ -171,7 +202,6 @@ public class Inventory
             result[i] = new InventoryItemSnapshot(it.Item, it.Count);
         }
 
-
         return new InventorySnapshot(Version, result);
     }
 
@@ -189,16 +219,26 @@ public class Inventory
             return;
         }
 
+        // Check if any slot actually changed
+        var changed = false;
         for (var i = 0; i < SlotCount; i++)
         {
-            slots[i].Item = src[i].Item;
-            slots[i].Count = src[i].Count;
+            if (slots[i].Item != src[i].Item || slots[i].Count != src[i].Count)
+            {
+                slots[i].Item = src[i].Item;
+                slots[i].Count = src[i].Count;
+                changed = true;
+            }
         }
 
-        Version = snapshot.Version;
+        // Always increment version if content changed, so UI detects the update
+        if (changed)
+        {
+            Version++;
+        }
     }
 
-    public int GetTotalItemCount(ItemId item)
+    public int GetTotalItemCount(GameObjectId item)
     {
         var total = 0;
         for (var i = 0; i < SlotCount; i++)
@@ -221,9 +261,7 @@ public class Inventory
     {
         if (item.IsEmpty) return 0;
 
-        var itemDef = ItemRegistry.Items.TryGetValue(item.Item, out var def) ? def : null;
-        if (itemDef == null) return item.Count;
-
+        var itemDef = GameContentRegistry.Get(item.Item);
         var maxStack = itemDef.MaxStackSize;
         var remaining = item.Count;
 
@@ -254,6 +292,117 @@ public class Inventory
         }
 
         return remaining;
+    }
+
+    /// <summary>
+    /// Attempts to move items from one slot to another.
+    /// Handles stacking, swapping, and partial moves.
+    /// </summary>
+    /// <param name="sourceSlot">The slot to move from.</param>
+    /// <param name="targetSlot">The slot to move to.</param>
+    /// <param name="count">Number of items to move. Use -1 for entire stack.</param>
+    /// <returns>True if the move was successful.</returns>
+    public bool TryMoveItem(int sourceSlot, int targetSlot, int count = -1)
+    {
+        if (sourceSlot is < 0 or >= SlotCount) return false;
+        if (targetSlot is < 0 or >= SlotCount) return false;
+        if (sourceSlot == targetSlot) return false;
+
+        var source = slots[sourceSlot];
+        if (source.IsEmpty) return false;
+
+        var target = slots[targetSlot];
+        var moveCount = count < 0 ? source.Count : Math.Min(count, source.Count);
+
+        // Check if dropping from storage to hotbar - use special hotbar drop logic
+        // This only applies when source is a storage slot and target is a hotbar slot
+        if (sourceSlot >= HotbarSize && targetSlot < HotbarSize)
+        {
+            return ExecuteHotbarDrop(sourceSlot, targetSlot, source, target, moveCount);
+        }
+
+        // Standard move/swap/stack logic for all other cases
+        if (target.IsEmpty)
+        {
+            // Move to empty slot
+            slots[targetSlot] = new InventoryItem { Item = source.Item, Count = moveCount };
+            source.Count -= moveCount;
+            slots[sourceSlot] = source.Count <= 0 ? default : source;
+        }
+        else if (target.Item == source.Item)
+        {
+            // Stack same items
+            const int maxStack = 64;
+            var spaceAvailable = maxStack - target.Count;
+            var toMove = Math.Min(moveCount, spaceAvailable);
+            if (toMove <= 0) return false;
+
+            target.Count += toMove;
+            slots[targetSlot] = target;
+            source.Count -= toMove;
+            slots[sourceSlot] = source.Count <= 0 ? default : source;
+        }
+        else
+        {
+            // Swap different items (only if moving entire stack)
+            if (count >= 0 && count < source.Count) return false;
+
+            slots[sourceSlot] = target;
+            slots[targetSlot] = source;
+        }
+
+        Version++;
+        return true;
+    }
+
+    /// <summary>
+    /// Executes a hotbar drop operation with proper item management:
+    /// - Returns any existing item in the hotbar slot to storage
+    /// - Removes duplicates of the source item from other hotbar slots
+    /// - Places exactly 1 item in the target hotbar slot
+    /// - Returns remaining items to storage
+    /// </summary>
+    private bool ExecuteHotbarDrop(int sourceSlot, int targetSlot, InventoryItem source, InventoryItem target, int moveCount)
+    {
+        // Return existing hotbar item to storage (if any)
+        if (!target.IsEmpty)
+        {
+            var remaining = ReturnItemToStorage(target);
+            if (remaining > 0)
+            {
+                // Can't fit the displaced item - operation fails
+                return false;
+            }
+        }
+
+        // Clear the source slot FIRST, before returning duplicates
+        // This prevents duplicates from stacking into the source slot
+        slots[sourceSlot] = default;
+
+        // Remove duplicates of source item from other hotbar slots
+        for (var i = 0; i < HotbarSize; i++)
+        {
+            if (i != targetSlot && slots[i].Item == source.Item)
+            {
+                var duplicate = slots[i];
+                ReturnItemToStorage(duplicate);
+                slots[i] = default;
+            }
+        }
+
+        // Place exactly 1 item in the hotbar slot
+        slots[targetSlot] = new InventoryItem { Item = source.Item, Count = 1 };
+
+        // Return remaining items to storage
+        source.Count -= 1; // We moved 1 item to hotbar
+
+        if (source.Count > 0)
+        {
+            ReturnItemToStorage(source);
+        }
+
+        Version++;
+        return true;
     }
 
     /// <summary>

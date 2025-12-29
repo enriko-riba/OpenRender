@@ -20,6 +20,12 @@ public readonly record struct ClientAttackMobMessage(PlayerId PlayerId, MobId Ta
 
 public readonly record struct ClientHelloMessage(PlayerId PlayerId) : IClientToServerMessage;
 
+/// <summary>
+/// Client requests moving an item between inventory slots.
+/// Server validates and executes the move, then sends updated state.
+/// </summary>
+public readonly record struct ClientInventoryMoveMessage(PlayerId PlayerId, InventoryMoveCommand Command) : IClientToServerMessage;
+
 public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSnapshot Snapshot) : IServerToClientMessage;
 
 public readonly record struct ServerMobStateMessage(PlayerId PlayerId, MobStateSnapshot Snapshot) : IServerToClientMessage;

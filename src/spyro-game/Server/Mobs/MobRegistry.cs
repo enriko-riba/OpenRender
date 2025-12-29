@@ -45,8 +45,8 @@ public static class MobRegistry
             RenderScaleZ: 1.5f,
             YawOffsetDegrees: 180f, // Cow model has UV front/back swapped, needs 180° correction
             Drops: new DropTable(
-                new DropEntry(ItemId.RawBeef, 1, 3),
-                new DropEntry(ItemId.Leather, 0, 2)
+                new DropEntry(GameObjectId.RawBeef, 1, 3),
+                new DropEntry(GameObjectId.Leather, 0, 2)
             ),
             XpDropMin: 1,
             XpDropMax: 3
@@ -79,7 +79,7 @@ public static class MobRegistry
             RenderScaleY: 0.9f,
             RenderScaleZ: 0.9f,
             Drops: new DropTable(
-                new DropEntry(ItemId.RawPorkchop, 1, 3)
+                new DropEntry(GameObjectId.RawPorkchop, 1, 3)
             ),
             XpDropMin: 1,
             XpDropMax: 3
@@ -114,7 +114,7 @@ public static class MobRegistry
             RenderScaleY: 1.95f,
             RenderScaleZ: 0.6f,
             Drops: new DropTable(
-                new DropEntry(ItemId.RottenFlesh, 0, 2)
+                new DropEntry(GameObjectId.RottenFlesh, 0, 2)
             ),
             XpDropMin: 5,
             XpDropMax: 5
@@ -148,8 +148,8 @@ public static class MobRegistry
             RenderScaleY: 1.99f,
             RenderScaleZ: 0.6f,
             Drops: new DropTable(
-                new DropEntry(ItemId.Bone, 0, 2),
-                new DropEntry(ItemId.Arrow, 0, 2)
+                new DropEntry(GameObjectId.Bone, 0, 2),
+                new DropEntry(GameObjectId.Arrow, 0, 2)
             ),
             XpDropMin: 5,
             XpDropMax: 5
