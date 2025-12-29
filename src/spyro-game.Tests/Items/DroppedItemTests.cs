@@ -13,9 +13,9 @@ public class DroppedItemTests
     {
         public bool IsAlive { get; set; } = true;
         public Vector3 Position { get; set; }
-        public List<(ItemId Item, int Count)> CollectedItems { get; } = [];
+        public List<(GameObjectId Item, int Count)> CollectedItems { get; } = [];
 
-        public void AddItem(ItemId item, int count)
+        public void AddItem(GameObjectId item, int count)
         {
             CollectedItems.Add((item, count));
         }
@@ -25,7 +25,7 @@ public class DroppedItemTests
     public void Tick_ShouldApplyGravity_WhenNotGrounded()
     {
         var manager = new DroppedItemManager();
-        manager.Spawn(ItemId.Apple, 1, new Vector3(0, 10, 0), Vector3.Zero);
+        manager.Spawn(GameObjectId.Apple, 1, new Vector3(0, 10, 0), Vector3.Zero);
         
         // Empty world (air)
         manager.Tick(0.1, _ => null, []);
@@ -38,10 +38,10 @@ public class DroppedItemTests
     public void Tick_ShouldStopFalling_WhenHittingGround()
     {
         var manager = new DroppedItemManager();
-        manager.Spawn(ItemId.Apple, 1, new Vector3(0, 1.5f, 0), new Vector3(0, -10, 0));
+        manager.Spawn(GameObjectId.Apple, 1, new Vector3(0, 1.5f, 0), new Vector3(0, -10, 0));
 
         // Solid block at (0, 0, 0)
-        BlockState? BlockProvider(Vector3i pos)
+        static BlockState? BlockProvider(Vector3i pos)
         {
             if (pos.Y == 0) return new BlockState(pos, BlockId.Stone); // Stone is solid
             return null;
@@ -67,7 +67,7 @@ public class DroppedItemTests
     {
         var manager = new DroppedItemManager();
         var itemPos = new Vector3(10, 10, 10);
-        manager.Spawn(ItemId.DiamondSword, 1, itemPos, Vector3.Zero);
+        manager.Spawn(GameObjectId.DiamondSword, 1, itemPos, Vector3.Zero);
 
         var player = new MockLootCollector { Position = itemPos + new Vector3(1, 0, 0) }; // Distance 1
 
@@ -75,7 +75,7 @@ public class DroppedItemTests
 
         Assert.Empty(manager.GetSnapshots()); // Item removed
         Assert.Single(player.CollectedItems);
-        Assert.Equal(ItemId.DiamondSword, player.CollectedItems[0].Item);
+        Assert.Equal(GameObjectId.DiamondSword, player.CollectedItems[0].Item);
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public class DroppedItemTests
     {
         var manager = new DroppedItemManager();
         var itemPos = new Vector3(10, 10, 10);
-        manager.Spawn(ItemId.DiamondSword, 1, itemPos, Vector3.Zero);
+        manager.Spawn(GameObjectId.DiamondSword, 1, itemPos, Vector3.Zero);
 
         var player = new MockLootCollector { Position = itemPos + new Vector3(3, 0, 0) }; // Distance 3
 

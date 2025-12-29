@@ -25,16 +25,16 @@ public class InventoryTests
     {
         var inventory = CreateEmptyInventory();
 
-        inventory.AddItem(ItemId.Stone, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
 
         // Should have 1 stone in hotbar slot 0
         var hotbarItem = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, hotbarItem.Item);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
         Assert.Equal(1, hotbarItem.Count);
 
         // Should have 9 stones in storage slot 9
         var storageItem = inventory.GetItem(9);
-        Assert.Equal(ItemId.Stone, storageItem.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem.Item);
         Assert.Equal(9, storageItem.Count);
 
         // Hotbar slots 1-8 should be empty
@@ -50,19 +50,19 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Add 10 stones - should place 1 in hotbar, 9 in storage
-        inventory.AddItem(ItemId.Stone, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
 
         // Add 5 more stones - should NOT add another to hotbar
-        inventory.AddItem(ItemId.Stone, 5);
+        inventory.AddItem(GameObjectId.Stone, 5);
 
         // Should still have only 1 stone in hotbar slot 0
         var hotbarItem = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, hotbarItem.Item);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
         Assert.Equal(1, hotbarItem.Count);
 
         // Should have 14 stones in storage (9 + 5)
         var storageItem = inventory.GetItem(9);
-        Assert.Equal(ItemId.Stone, storageItem.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem.Item);
         Assert.Equal(14, storageItem.Count);
 
         // Hotbar slots 1-8 should be empty
@@ -78,24 +78,24 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Manually place 60 stones in storage slot 9
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 60 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 60 });
 
         // Add 10 stones
-        inventory.AddItem(ItemId.Stone, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
 
         // Should have 1 stone in hotbar (new item type for hotbar)
         var hotbarItem = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, hotbarItem.Item);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
         Assert.Equal(1, hotbarItem.Count);
 
         // Storage slot 9 should have 64 stones (60 + 4, capped at max stack)
         var storageItem9 = inventory.GetItem(9);
-        Assert.Equal(ItemId.Stone, storageItem9.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem9.Item);
         Assert.Equal(64, storageItem9.Count);
 
         // Remaining 5 stones (10 - 1 hotbar - 4 to fill stack) should be in next storage slot
         var storageItem10 = inventory.GetItem(10);
-        Assert.Equal(ItemId.Stone, storageItem10.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem10.Item);
         Assert.Equal(5, storageItem10.Count);
     }
 
@@ -105,25 +105,25 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Manually place 1 stone in hotbar and 60 in storage
-        inventory.SetItem(0, new InventoryItem { Item = ItemId.Stone, Count = 1 });
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 60 });
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 60 });
 
         // Add 10 more stones
-        inventory.AddItem(ItemId.Stone, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
 
         // Hotbar should still have 1 stone (no change)
         var hotbarItem = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, hotbarItem.Item);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
         Assert.Equal(1, hotbarItem.Count);
 
         // Storage slot 9 should have 64 stones (60 + 4)
         var storageItem9 = inventory.GetItem(9);
-        Assert.Equal(ItemId.Stone, storageItem9.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem9.Item);
         Assert.Equal(64, storageItem9.Count);
 
         // Remaining 6 stones should be in next storage slot
         var storageItem10 = inventory.GetItem(10);
-        Assert.Equal(ItemId.Stone, storageItem10.Item);
+        Assert.Equal(GameObjectId.Stone, storageItem10.Item);
         Assert.Equal(6, storageItem10.Count);
     }
 
@@ -132,30 +132,30 @@ public class InventoryTests
     {
         var inventory = CreateEmptyInventory();
 
-        inventory.AddItem(ItemId.Stone, 10);
-        inventory.AddItem(ItemId.Dirt, 10);
-        inventory.AddItem(ItemId.Grass, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
+        inventory.AddItem(GameObjectId.Dirt, 10);
+        inventory.AddItem(GameObjectId.Grass, 10);
 
         // Hotbar slot 0: 1 stone
-        Assert.Equal(ItemId.Stone, inventory.GetItem(0).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(0).Item);
         Assert.Equal(1, inventory.GetItem(0).Count);
 
         // Hotbar slot 1: 1 dirt
-        Assert.Equal(ItemId.Dirt, inventory.GetItem(1).Item);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(1).Item);
         Assert.Equal(1, inventory.GetItem(1).Count);
 
         // Hotbar slot 2: 1 grass
-        Assert.Equal(ItemId.Grass, inventory.GetItem(2).Item);
+        Assert.Equal(GameObjectId.Grass, inventory.GetItem(2).Item);
         Assert.Equal(1, inventory.GetItem(2).Count);
 
         // Storage should have 9 of each
-        Assert.Equal(ItemId.Stone, inventory.GetItem(9).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(9).Item);
         Assert.Equal(9, inventory.GetItem(9).Count);
 
-        Assert.Equal(ItemId.Dirt, inventory.GetItem(10).Item);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(10).Item);
         Assert.Equal(9, inventory.GetItem(10).Count);
 
-        Assert.Equal(ItemId.Grass, inventory.GetItem(11).Item);
+        Assert.Equal(GameObjectId.Grass, inventory.GetItem(11).Item);
         Assert.Equal(9, inventory.GetItem(11).Count);
     }
 
@@ -165,7 +165,7 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
         var versionBefore = inventory.Version;
 
-        inventory.AddItem(ItemId.Stone, 0);
+        inventory.AddItem(GameObjectId.Stone, 0);
 
         Assert.Equal(versionBefore, inventory.Version);
         Assert.True(inventory.GetItem(0).IsEmpty);
@@ -177,7 +177,7 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
         var versionBefore = inventory.Version;
 
-        inventory.AddItem(ItemId.Air, 10);
+        inventory.AddItem(GameObjectId.Air, 10);
 
         Assert.Equal(versionBefore, inventory.Version);
         Assert.True(inventory.GetItem(0).IsEmpty);
@@ -188,11 +188,11 @@ public class InventoryTests
     {
         var inventory = CreateEmptyInventory();
 
-        inventory.AddItem(ItemId.Stone, 1);
+        inventory.AddItem(GameObjectId.Stone, 1);
 
         // Should have 1 stone in hotbar slot 0
         var hotbarItem = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, hotbarItem.Item);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
         Assert.Equal(1, hotbarItem.Count);
 
         // Storage should be empty
@@ -207,15 +207,15 @@ public class InventoryTests
         // Fill all hotbar slots with different items
         for (var i = 0; i < Components.Inventory.HotbarSize; i++)
         {
-            inventory.SetItem(i, new InventoryItem { Item = (ItemId)(i + 3), Count = 1 }); // Stone=3, etc.
+            inventory.SetItem(i, new InventoryItem { Item = (GameObjectId)(i + 3), Count = 1 }); // Stone=3, etc.
         }
 
         // Add a new item type (Lantern = 104)
-        inventory.AddItem(ItemId.Lantern, 5);
+        inventory.AddItem(GameObjectId.Lantern, 5);
 
         // Should go directly to storage since hotbar is full
         var storageItem = inventory.GetItem(9);
-        Assert.Equal(ItemId.Lantern, storageItem.Item);
+        Assert.Equal(GameObjectId.Lantern, storageItem.Item);
         Assert.Equal(5, storageItem.Count);
     }
 
@@ -225,9 +225,9 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Place 1 in hotbar, 9 in storage
-        inventory.AddItem(ItemId.Stone, 10);
+        inventory.AddItem(GameObjectId.Stone, 10);
 
-        var total = inventory.GetTotalItemCount(ItemId.Stone);
+        var total = inventory.GetTotalItemCount(GameObjectId.Stone);
         Assert.Equal(10, total);
     }
 
@@ -237,10 +237,10 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Place 60 stones in storage
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 60 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 60 });
 
         // Return 10 stones
-        var remaining = inventory.ReturnItemToStorage(new InventoryItem { Item = ItemId.Stone, Count = 10 });
+        var remaining = inventory.ReturnItemToStorage(new InventoryItem { Item = GameObjectId.Stone, Count = 10 });
 
         Assert.Equal(0, remaining);
         Assert.Equal(64, inventory.GetItem(9).Count); // 60 + 4 (capped)
@@ -253,8 +253,8 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Place 1 stone in hotbar slot 0 and 5 in storage
-        inventory.SetItem(0, new InventoryItem { Item = ItemId.Stone, Count = 1 });
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 5 });
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 5 });
         inventory.SelectedSlot = 0;
 
         // Consume the hotbar stone
@@ -262,7 +262,7 @@ public class InventoryTests
 
         Assert.True(result);
         // Hotbar should be refilled from storage
-        Assert.Equal(ItemId.Stone, inventory.GetItem(0).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(0).Item);
         Assert.Equal(1, inventory.GetItem(0).Count);
         // Storage should have 4 remaining
         Assert.Equal(4, inventory.GetItem(9).Count);
@@ -274,7 +274,7 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
         var versionBefore = inventory.Version;
 
-        inventory.SetItem(0, new InventoryItem { Item = ItemId.Stone, Count = 1 });
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
 
         Assert.True(inventory.Version > versionBefore);
     }
@@ -298,11 +298,11 @@ public class InventoryTests
         // Fill all storage slots with different items
         for (var i = Components.Inventory.HotbarSize; i < Components.Inventory.SlotCount; i++)
         {
-            inventory.SetItem(i, new InventoryItem { Item = ItemId.Bedrock, Count = 64 });
+            inventory.SetItem(i, new InventoryItem { Item = GameObjectId.Bedrock, Count = 64 });
         }
 
         // Try to return stones
-        var remaining = inventory.ReturnItemToStorage(new InventoryItem { Item = ItemId.Stone, Count = 10 });
+        var remaining = inventory.ReturnItemToStorage(new InventoryItem { Item = GameObjectId.Stone, Count = 10 });
 
         // Should return all 10 since there's no space
         Assert.Equal(10, remaining);
@@ -336,8 +336,8 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
         var versionBefore = inventory.Version;
 
-        inventory.SetItem(-1, new InventoryItem { Item = ItemId.Stone, Count = 1 });
-        inventory.SetItem(100, new InventoryItem { Item = ItemId.Stone, Count = 1 });
+        inventory.SetItem(-1, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+        inventory.SetItem(100, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
 
         // Version should not change for invalid operations
         Assert.Equal(versionBefore, inventory.Version);
@@ -361,11 +361,11 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Manually set hotbar slot with count > 1 (shouldn't happen in normal flow)
-        inventory.SetItem(0, new InventoryItem { Item = ItemId.Stone, Count = 5 });
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 5 });
 
         // The inventory allows it (SetItem is direct), but UI logic should enforce count=1
         var item = inventory.GetItem(0);
-        Assert.Equal(ItemId.Stone, item.Item);
+        Assert.Equal(GameObjectId.Stone, item.Item);
         Assert.Equal(5, item.Count); // SetItem doesn't enforce hotbar rules
     }
 
@@ -377,8 +377,8 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Setup: Stone in slot 9, Dirt in slot 10
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 32 });
-        inventory.SetItem(10, new InventoryItem { Item = ItemId.Dirt, Count = 16 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Dirt, Count = 16 });
 
         // Simulate swap (pick up from 9, drop on 10)
         var heldItem = inventory.GetItem(9);
@@ -388,9 +388,9 @@ public class InventoryTests
         inventory.SetItem(9, targetItem); // Place target in source
 
         // Verify swap
-        Assert.Equal(ItemId.Dirt, inventory.GetItem(9).Item);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(9).Item);
         Assert.Equal(16, inventory.GetItem(9).Count);
-        Assert.Equal(ItemId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
         Assert.Equal(32, inventory.GetItem(10).Count);
     }
 
@@ -400,8 +400,8 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Setup: 32 stones in slot 9, 16 stones in slot 10
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 32 });
-        inventory.SetItem(10, new InventoryItem { Item = ItemId.Stone, Count = 16 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 16 });
 
         // Simulate merge: pick up from 9, drop on 10
         var heldItem = inventory.GetItem(9);
@@ -427,8 +427,8 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Setup: 60 stones in slot 9 (target), 32 stones in slot 10 (source)
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 60 });
-        inventory.SetItem(10, new InventoryItem { Item = ItemId.Stone, Count = 32 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 60 });
+        inventory.SetItem(10, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
 
         // Simulate partial merge: pick up from 10, drop on 9
         var heldItem = inventory.GetItem(10);
@@ -454,7 +454,7 @@ public class InventoryTests
         var inventory = CreateEmptyInventory();
 
         // Setup: 32 stones in slot 9
-        inventory.SetItem(9, new InventoryItem { Item = ItemId.Stone, Count = 32 });
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 32 });
 
         // Simulate move to empty slot 10
         var heldItem = inventory.GetItem(9);
@@ -463,7 +463,7 @@ public class InventoryTests
 
         // Verify move
         Assert.True(inventory.GetItem(9).IsEmpty);
-        Assert.Equal(ItemId.Stone, inventory.GetItem(10).Item);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(10).Item);
         Assert.Equal(32, inventory.GetItem(10).Count);
     }
 

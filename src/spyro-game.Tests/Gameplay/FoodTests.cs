@@ -9,9 +9,9 @@ public class FoodTests
     [Fact]
     public void FoodItem_ShouldHaveCorrectProperties()
     {
-        var apple = new FoodItem(ItemId.Apple, nutrition: 4, saturationModifier: 0.3f);
+        var apple = new Food(GameObjectId.Apple, nutrition: 4, saturationModifier: 0.3f);
 
-        Assert.Equal(ItemId.Apple, apple.Id);
+        Assert.Equal(GameObjectId.Apple, apple.Id);
         Assert.Equal(4, apple.Nutrition);
         Assert.Equal(0.3f, apple.SaturationModifier);
         Assert.Equal(4 * 0.3f * 2f, apple.SaturationRestored); // 2.4f
@@ -21,7 +21,7 @@ public class FoodTests
     [Fact]
     public void FoodItem_CanAlwaysEat_ShouldBeConfigurable()
     {
-        var goldenApple = new FoodItem(ItemId.Apple, nutrition: 4, saturationModifier: 1.2f, canAlwaysEat: true);
+        var goldenApple = new Food(GameObjectId.Apple, nutrition: 4, saturationModifier: 1.2f, canAlwaysEat: true);
 
         Assert.True(goldenApple.CanAlwaysEat);
     }
@@ -29,25 +29,25 @@ public class FoodTests
     [Fact]
     public void ItemRegistry_IsFood_ShouldReturnTrueForFoodItems()
     {
-        Assert.True(ItemRegistry.IsFood(ItemId.Apple));
-        Assert.True(ItemRegistry.IsFood(ItemId.RawBeef));
-        Assert.True(ItemRegistry.IsFood(ItemId.RawPorkchop));
-        Assert.True(ItemRegistry.IsFood(ItemId.RottenFlesh));
+        Assert.True(GameContentRegistry.IsFood(GameObjectId.Apple));
+        Assert.True(GameContentRegistry.IsFood(GameObjectId.RawBeef));
+        Assert.True(GameContentRegistry.IsFood(GameObjectId.RawPorkchop));
+        Assert.True(GameContentRegistry.IsFood(GameObjectId.RottenFlesh));
     }
 
     [Fact]
     public void ItemRegistry_IsFood_ShouldReturnFalseForNonFoodItems()
     {
-        Assert.False(ItemRegistry.IsFood(ItemId.Stone));
-        Assert.False(ItemRegistry.IsFood(ItemId.Stick));
-        Assert.False(ItemRegistry.IsFood(ItemId.DiamondSword));
-        Assert.False(ItemRegistry.IsFood(ItemId.Bone));
+        Assert.False(GameContentRegistry.IsFood(GameObjectId.Stone));
+        Assert.False(GameContentRegistry.IsFood(GameObjectId.Stick));
+        Assert.False(GameContentRegistry.IsFood(GameObjectId.DiamondSword));
+        Assert.False(GameContentRegistry.IsFood(GameObjectId.Bone));
     }
 
     [Fact]
     public void ItemRegistry_GetFood_ShouldReturnFoodItemForFoodItems()
     {
-        var apple = ItemRegistry.GetFood(ItemId.Apple);
+        var apple = GameContentRegistry.GetFood(GameObjectId.Apple);
         Assert.NotNull(apple);
         Assert.Equal(4, apple.Nutrition);
     }
@@ -55,7 +55,7 @@ public class FoodTests
     [Fact]
     public void ItemRegistry_GetFood_ShouldReturnNullForNonFoodItems()
     {
-        var stone = ItemRegistry.GetFood(ItemId.Stone);
+        var stone = GameContentRegistry.GetFood(GameObjectId.Stone);
         Assert.Null(stone);
     }
 }
@@ -139,7 +139,7 @@ public class PlayerAttributesFoodTests
         var attributes = new PlayerAttributes();
         attributes.SetFood(10, saturation: 0);
 
-        var apple = ItemRegistry.GetFood(ItemId.Apple);
+        var apple = GameContentRegistry.GetFood(GameObjectId.Apple);
         Assert.NotNull(apple);
 
         var consumed = attributes.ConsumeFood(apple.Nutrition, apple.SaturationRestored, apple.CanAlwaysEat);
