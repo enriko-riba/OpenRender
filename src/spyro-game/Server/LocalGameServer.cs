@@ -83,6 +83,10 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     /// <summary>Gets the performance metrics for terrain generation/meshing.</summary>
     public SpyroGame.World.ChunkProcessingMetrics? Metrics => streamingManager.Metrics;
 
+#if DEBUG
+    internal bool TryGetPlayerForTests(PlayerId playerId, out Player player) => players.TryGetValue(playerId, out player!);
+#endif
+
     public LocalGameServer(VoxelWorld world, SpyroGame.Server.Streaming.ChunkStreamingManager streamingManager, Vector3 spawnPosition)
     {
         this.world = world;

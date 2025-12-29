@@ -508,6 +508,12 @@ public class Player : ILootCollector
         if (consumed)
         {
             Inventory.TryConsumeSelectedItem();
+
+            if (Attributes.Health < Attributes.MaxHealth)
+            {
+                Attributes.Heal(1);
+            }
+
             Log.Info($"Player ate {foodItem.Name}: +{foodItem.Nutrition} hunger, +{foodItem.SaturationRestored:F1} saturation");
             return true;
         }

@@ -1117,6 +1117,16 @@ internal class GameScene : Scene
         WriteLine("  Esc - Exit", textColor);
     }
 
+    private void TryConsumeFood(Food food)
+    {
+        if (localClient == null) return;
+        if (!player.IsAlive) return;
+
+        // Server-authoritative: the server validates hunger, consumes the item,
+        // and applies attribute changes. Client updates via snapshots.
+        localClient.Send(new EatFoodCommand());
+    }
+
     /// <summary>
     /// Gets the biome name for a given block by querying the cached biome data.
     /// </summary>
@@ -1137,23 +1147,6 @@ internal class GameScene : Scene
 
 
         return biomeId.ToString();
-    }
-
-    /// <summary>
-    /// Sends an EatFoodCommand to the server to consume the selected food item.
-    /// The server handles validation and state updates.
-    /// </summary>
-    private void TryConsumeFood(Food food)
-    {
-        // Check if we can eat (client-side check for immediate feedback)
-        // The server will do authoritative validation
-        if (player.Attributes.Food >= player.Attributes.MaxFood && !food.CanAlwaysEat)
-        {
-            return; // Hunger is full, can't eat
-        }
-
-        // Send command to server - server handles consumption
-        localClient?.Send(new EatFoodCommand());
     }
 
     public override void Close()
