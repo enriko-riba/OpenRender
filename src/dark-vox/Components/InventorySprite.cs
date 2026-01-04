@@ -60,43 +60,20 @@ internal class InventorySprite : Sprite
         {
             IsVisible = value;
             
-            // Protect inventory from server sync while user is editing
-            inventory.IsUserEditing = value;
-            
             foreach (var child in Children)
             {
                 child.IsVisible = value;
             }
 
-            // When inventory closes, return held item to source slot or inventory
+            // When inventory closes, cancel any local drag state.
+            // Server snapshots remain authoritative and will drive the UI.
             if (!value)
             {
                 heldItemSprite.IsVisible = false;
-                
-                if (!heldItem.IsEmpty)
-                {
-                    // Try to return to source slot first
-                    if (dragSourceSlot >= 0 && inventory.GetItem(dragSourceSlot).IsEmpty)
-                    {
-                        inventory.SetItem(dragSourceSlot, heldItem);
-                    }
-                    else
-                    {
-                        // Return held item to storage
-                        var remaining = inventory.ReturnItemToStorage(heldItem);
-                        if (remaining > 0)
-                        {
-                            // If storage is full, try to add via normal AddItem
-                            inventory.AddItem(heldItem.Item, remaining);
-                        }
-                    }
-                    heldItem = default;
-                    dragSourceSlot = -1;
-                    lastHeldItemId = GameObjectId.Air;
-                }
-                
-                // Force HotBar to refresh all items
-                inventory.ForceVersionIncrement();
+
+                heldItem = default;
+                dragSourceSlot = -1;
+                lastHeldItemId = GameObjectId.Air;
             }
         }
     }
@@ -312,30 +289,30 @@ internal class InventorySprite : Sprite
             {
                 if (isHotbar)
                 {
-                    // Clicking on hotbar slot without dragging: remove item from hotbar
-                    // and return it to inventory storage
-                    HandleHotbarRemove(slotIndex, slotItem);
+                    // Request server to return hotbar item to storage.
+                    OnReturnToStorage?.Invoke(new ReturnToStorageCommand(slotIndex));
                 }
                 else
                 {
-                    // Start drag - pick up item from storage slot
+                    // Start drag (UI-only). Server remains authoritative.
                     heldItem = slotItem;
                     dragSourceSlot = slotIndex;
-                    inventory.SetItem(slotIndex, default);
                 }
             }
         }
         else
         {
-            // End drag - drop item
-            if (isHotbar)
+            // End drag - request move on server.
+            if (dragSourceSlot >= 0)
             {
-                HandleHotbarDrop(slotIndex, slotItem);
+                OnInventoryMove?.Invoke(new InventoryMoveCommand(
+                    SourceSlot: dragSourceSlot,
+                    TargetSlot: slotIndex,
+                    Count: isHotbar ? 1 : -1));
             }
-            else
-            {
-                HandleStorageDrop(slotIndex, slotItem);
-            }
+
+            heldItem = default;
+            dragSourceSlot = -1;
         }
     }
 
@@ -518,29 +495,34 @@ internal class InventorySprite : Sprite
 
         if (heldItem.IsEmpty)
         {
-            // Pick up half the stack
-            if (!slotItem.IsEmpty && slotItem.Count > 0)
+            // Start drag (UI-only). No local mutation; server snapshots drive actual state.
+            if (!slotItem.IsEmpty)
             {
-                var take = (int)Math.Ceiling(slotItem.Count / 2.0);
-                heldItem = new InventoryItem { Item = slotItem.Item, Count = take };
+                heldItem = slotItem;
                 dragSourceSlot = slotIndex;
-
-                slotItem.Count -= take;
-                inventory.SetItem(slotIndex, slotItem.Count <= 0 ? default : slotItem);
             }
         }
         else
         {
             if (isHotbar)
             {
-                // Same as left-click for hotbar
-                HandleHotbarDrop(slotIndex, slotItem);
+                // Configure hotbar by requesting 1 item moved to that slot.
+                if (dragSourceSlot >= 0)
+                {
+                    OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
+                }
             }
             else
             {
                 // Place 1 item
-                HandleStorageRightClickDrop(slotIndex, slotItem);
+                if (dragSourceSlot >= 0)
+                {
+                    OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
+                }
             }
+
+            heldItem = default;
+            dragSourceSlot = -1;
         }
     }
 

@@ -106,7 +106,11 @@ public class Player : ILootCollector
     
     public Inventory Inventory { get; } = new();
 
-    public void AddItem(GameObjectId item, int count) => Inventory.AddItem(item, count);
+    public void AddItem(GameObjectId item, int count)
+    {
+        // Server-authoritative: inventory changes must come from server snapshots.
+        // This method exists only to satisfy ILootCollector on the client.
+    }
 
     /// <summary>
     /// Applies client-produced input intent. This does not execute physics immediately.
@@ -269,9 +273,15 @@ public class Player : ILootCollector
             hasAppliedFirstServerSnapshot = true;
         }
 
+        // Server-authoritative: keep the camera's look direction consistent with the
+        // authoritative direction so movement always matches the visible view.
+        if (camera is OpenRender.Core.Rendering.CameraFps fps)
+        {
+            fps.SetLookDirection(snapshot.Direction);
+            camera.Update();
+        }
+
         Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
-        // Apply inventory snapshot from server. The ApplySnapshot method checks IsUserEditing
-        // internally, so drag-and-drop changes are protected when the inventory UI is open.
         Inventory.ApplySnapshot(snapshot.Inventory);
         Attributes.ApplySnapshot(snapshot.Attributes);
 
@@ -378,77 +388,12 @@ public class Player : ILootCollector
 
     public void TryBreakBlock(Vector3i globalPosition)
     {
-        if (streamingManager == null)
-        {
-            Log.Error("Player.TryBreakBlock: streamingManager is null!");
-            return;
-        }
-
-        var existing = world.GetBlockByPositionGlobalSafe(globalPosition.X, globalPosition.Y, globalPosition.Z);
-        if (!existing.HasValue) return;
-        if (existing.Value.Block.IsAir()) return;
-
-        var blockId = existing.Value.Block;
-        Log.Info($"Player breaking block {blockId} at {globalPosition}");
-        
-        // Get the block definition and its loot table
-        var blockDef = GameContentRegistry.GetBlock(blockId);
-        var drops = blockDef.LootTable.GenerateDrops(blockId);
-
-        // Add dropped items to inventory
-        foreach ((GameObjectId item, int count) in drops)
-        {
-            Inventory.AddItem(item, count);
-            Log.Info($"  Dropped: {item} x{count}");
-        }
-
-        streamingManager.ApplyBlockEdit(globalPosition, BlockId.Air, true);
+        // Server-authoritative: client should send a break command; inventory/edits apply via snapshots.
     }
 
     public void TryPlaceBlock(Vector3i placePos, BlockId blockId)
     {
-        if (streamingManager == null) return;
-        if (blockId.IsAir()) return;
-
-        var targetBlock = world.GetBlockByPositionGlobalSafe(placePos.X, placePos.Y, placePos.Z);
-        if (targetBlock.HasValue && !targetBlock.Value.Block.IsReplaceable())
-        {
-            return;
-        }
-
-        // Check if there's a solid cardinal neighbor to place against
-        // Blocks can only be placed if adjacent to at least one solid block
-        var hasSolidNeighbor = HasSolidCardinalNeighbor(placePos);
-        if (!hasSolidNeighbor)
-        {
-            return; // Can't place block in mid-air
-        }
-
-        // Check if player is occupying the space (simple AABB check)
-        var minX = position.X - PlayerConstants.HalfWidth;
-        var maxX = position.X + PlayerConstants.HalfWidth;
-        var minY = position.Y;
-        var maxY = position.Y + PlayerConstants.Height;
-
-        var bMinX = placePos.X;
-        var bMaxX = placePos.X + 1;
-        var bMinY = placePos.Y;
-        var bMaxY = placePos.Y + 1;
-        var bMinZ = placePos.Z;
-        var bMaxZ = placePos.Z + 1;
-
-        var intersects = (minX < bMaxX && maxX > bMinX) &&
-                         (minY < bMaxY && maxY > bMinY) &&
-                         (position.Z - PlayerConstants.HalfWidth < bMaxZ && position.Z + PlayerConstants.HalfWidth > bMinZ);
-
-        if (intersects && blockId.IsSolid())
-        {
-            return;
-        }
-
-        Log.Info($"Player placing block {blockId} at {placePos}");
-        streamingManager.ApplyBlockEdit(placePos, blockId, isBreaking: false);
-        Inventory.TryConsumeSelectedItem();
+        // Server-authoritative: client should send a place command; inventory/edits apply via snapshots.
     }
 
     /// <summary>
@@ -485,31 +430,7 @@ public class Player : ILootCollector
     /// </summary>
     public bool TryEatFood()
     {
-        var selectedItem = Inventory.SelectedItem;
-        if (selectedItem.IsEmpty) return false;
-
-        var foodItem = GameContentRegistry.GetFood(selectedItem.Item);
-        if (foodItem == null) return false;
-
-        // Try to consume the food (checks if hunger is full)
-        var consumed = Attributes.ConsumeFood(
-            foodItem.Nutrition,
-            foodItem.SaturationRestored,
-            foodItem.CanAlwaysEat);
-
-        if (consumed)
-        {
-            Inventory.TryConsumeSelectedItem();
-
-            if (Attributes.Health < Attributes.MaxHealth)
-            {
-                Attributes.Heal(1);
-            }
-
-            Log.Info($"Player ate {foodItem.Name}: +{foodItem.Nutrition} hunger, +{foodItem.SaturationRestored:F1} saturation");
-            return true;
-        }
-
+        // Server-authoritative: client should send an EatFoodCommand.
         return false;
     }
     #endregion

@@ -49,15 +49,15 @@ public class InventoryTests
         // Add 5 more stones - should NOT add another to hotbar
         inventory.AddItem(GameObjectId.Stone, 5);
 
-        // Should still have only 1 stone in hotbar slot 0
+        // Should still use the same hotbar slot (stacking into it)
         var hotbarItem = inventory.GetItem(0);
         Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
-        Assert.Equal(1, hotbarItem.Count);
+        Assert.Equal(6, hotbarItem.Count);
 
-        // Should have 14 stones in storage (9 + 5)
+        // Storage should still have the original 9 stones
         var storageItem = inventory.GetItem(9);
         Assert.Equal(GameObjectId.Stone, storageItem.Item);
-        Assert.Equal(14, storageItem.Count);
+        Assert.Equal(9, storageItem.Count);
 
         // Hotbar slots 1-8 should be empty
         for (var i = 1; i < DarkVox.Shared.Gameplay.Inventory.HotbarSize; i++)
@@ -94,6 +94,27 @@ public class InventoryTests
     }
 
     [Fact]
+    public void AddItem_WhenOnlyInStorage_ShouldSeedHotbarFirst()
+    {
+        var inventory = CreateEmptyInventory();
+
+        // Storage contains stones, hotbar does not.
+        inventory.SetItem(9, new InventoryItem { Item = GameObjectId.Stone, Count = 10 });
+
+        // Pick up 1 stone; expected UX: hotbar gets repopulated.
+        inventory.AddItem(GameObjectId.Stone, 1);
+
+        var hotbarItem = inventory.GetItem(0);
+        Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
+        Assert.Equal(1, hotbarItem.Count);
+
+        // Storage should have stacked the remaining pickup.
+        var storageItem9 = inventory.GetItem(9);
+        Assert.Equal(GameObjectId.Stone, storageItem9.Item);
+        Assert.Equal(10, storageItem9.Count);
+    }
+
+    [Fact]
     public void AddItem_ShouldStackInExistingStorageSlot_WhenItemAlreadyInHotbar()
     {
         var inventory = CreateEmptyInventory();
@@ -105,20 +126,17 @@ public class InventoryTests
         // Add 10 more stones
         inventory.AddItem(GameObjectId.Stone, 10);
 
-        // Hotbar should still have 1 stone (no change)
+        // Hotbar should stack first
         var hotbarItem = inventory.GetItem(0);
         Assert.Equal(GameObjectId.Stone, hotbarItem.Item);
-        Assert.Equal(1, hotbarItem.Count);
+        Assert.Equal(11, hotbarItem.Count);
 
-        // Storage slot 9 should have 64 stones (60 + 4)
+        // Storage is unchanged because the hotbar absorbed the pickup
         var storageItem9 = inventory.GetItem(9);
         Assert.Equal(GameObjectId.Stone, storageItem9.Item);
-        Assert.Equal(64, storageItem9.Count);
+        Assert.Equal(60, storageItem9.Count);
 
-        // Remaining 6 stones should be in next storage slot
-        var storageItem10 = inventory.GetItem(10);
-        Assert.Equal(GameObjectId.Stone, storageItem10.Item);
-        Assert.Equal(6, storageItem10.Count);
+        Assert.True(inventory.GetItem(10).IsEmpty);
     }
 
     [Fact]

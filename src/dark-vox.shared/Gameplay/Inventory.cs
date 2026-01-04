@@ -32,12 +32,6 @@ public class Inventory
 
     public int Version { get; private set; }
 
-    /// <summary>
-    /// When true, server snapshots are not applied to this inventory.
-    /// Used when the inventory UI is open and the user is manipulating items.
-    /// </summary>
-    public bool IsUserEditing { get; set; }
-
     public int SelectedSlot
     {
         get => selectedSlot;
@@ -54,34 +48,37 @@ public class Inventory
         var itemDef = GameContentRegistry.Get(item);
         var maxStack = itemDef.MaxStackSize;
 
-        // 1. Try to stack with existing items in Storage (indices 9-35)
-        for (var i = HotbarSize; i < SlotCount; i++)
+        // 1) Stack into existing hotbar stacks first (slots 0-8)
+        for (var i = 0; i < HotbarSize && count > 0; i++)
         {
             if (slots[i].Item == item && slots[i].Count < maxStack)
             {
                 var space = maxStack - slots[i].Count;
                 var toAdd = Math.Min(space, count);
-                slots[i].Count += toAdd;
-                count -= toAdd;
-                if (toAdd > 0) Version++;
-                if (count <= 0) return;
+                if (toAdd > 0)
+                {
+                    slots[i].Count += toAdd;
+                    count -= toAdd;
+                    Version++;
+                }
             }
         }
 
-        // 2. Check if item is already in hotbar - if not, add ONE to an empty hotbar slot
+        // 2) Ensure the item appears in the hotbar even if it already exists in storage.
+        // This matches expected UX: when the hotbar is empty for an item, the next pickup
+        // should repopulate the hotbar instead of silently stacking into storage.
         var isInHotbar = false;
         for (var i = 0; i < HotbarSize; i++)
         {
-            if (slots[i].Item == item)
+            if (slots[i].Item == item && slots[i].Count > 0)
             {
                 isInHotbar = true;
                 break;
             }
         }
 
-        if (!isInHotbar)
+        if (!isInHotbar && count > 0)
         {
-            // Find first empty hotbar slot and place 1 item
             for (var i = 0; i < HotbarSize; i++)
             {
                 if (slots[i].IsEmpty)
@@ -90,22 +87,37 @@ public class Inventory
                     slots[i].Count = 1;
                     count--;
                     Version++;
-                    break; // Only add to ONE hotbar slot
+                    break;
                 }
             }
-            if (count <= 0) return;
         }
 
-        // 3. Place remaining in empty Storage slots
-        for (var i = HotbarSize; i < SlotCount; i++)
+        // 3) Stack into existing storage stacks (slots 9-35)
+        for (var i = HotbarSize; i < SlotCount && count > 0; i++)
+        {
+            if (slots[i].Item == item && slots[i].Count < maxStack)
+            {
+                var space = maxStack - slots[i].Count;
+                var toAdd = Math.Min(space, count);
+                if (toAdd > 0)
+                {
+                    slots[i].Count += toAdd;
+                    count -= toAdd;
+                    Version++;
+                }
+            }
+        }
+
+        // 4) Place remaining into empty storage slots
+        for (var i = HotbarSize; i < SlotCount && count > 0; i++)
         {
             if (slots[i].IsEmpty)
             {
+                var toPlace = Math.Min(count, maxStack);
                 slots[i].Item = item;
-                slots[i].Count = Math.Min(count, maxStack);
-                count -= slots[i].Count;
+                slots[i].Count = toPlace;
+                count -= toPlace;
                 Version++;
-                if (count <= 0) return;
             }
         }
     }
@@ -164,12 +176,6 @@ public class Inventory
 
     public void ApplySnapshot(InventorySnapshot snapshot)
     {
-        // Don't apply server snapshots while user is editing inventory
-        if (IsUserEditing)
-        {
-            return;
-        }
-
         var src = snapshot.Slots;
         if (src == null || src.Length != SlotCount)
         {

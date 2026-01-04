@@ -766,14 +766,8 @@ internal class GameScene : Scene
                                 // Break the block!
                                 if (!pickedBlock.Block.IsAir())
                                 {
-                                    // Use loot table to determine drops (client is authoritative for inventory)
-                                    var brokenBlockDef = GameContentRegistry.GetBlock(pickedBlock.Block);
-                                    var lootDrops = brokenBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
-                                    foreach ((GameObjectId droppedItem, int dropCount) in lootDrops)
-                                    {
-                                        player.Inventory.AddItem(droppedItem, dropCount);
-                                    }
-                                    
+                                    // Predict locally: update voxels immediately for feedback.
+                                    // Inventory is server-authoritative; client updates via snapshots.
                                     terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
                                     blockPickingService.Invalidate();
                                     blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
@@ -810,14 +804,8 @@ internal class GameScene : Scene
                                 // Break immediately
                                 if (!pickedBlock.Block.IsAir())
                                 {
-                                    // Use loot table to determine drops (client is authoritative for inventory)
-                                    var instaBlockDef = GameContentRegistry.GetBlock(pickedBlock.Block);
-                                    var instaDrops = instaBlockDef.LootTable.GenerateDrops(pickedBlock.Block);
-                                    foreach ((GameObjectId droppedItem, int dropCount) in instaDrops)
-                                    {
-                                        player.Inventory.AddItem(droppedItem, dropCount);
-                                    }
-                                    
+                                    // Predict locally: update voxels immediately for feedback.
+                                    // Inventory is server-authoritative; client updates via snapshots.
                                     terrainSystem?.TryApplyPredictedBlockEdit(pickedBlock.GlobalPosition, BlockId.Air);
                                     blockPickingService.Invalidate();
                                     blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
@@ -855,7 +843,6 @@ internal class GameScene : Scene
                             // Predict locally: consume item + set voxel so the feedback is instant.
                             if (terrainSystem?.TryApplyPredictedBlockEdit(placePos, block.BlockId) == true)
                             {
-                                player.Inventory.TryConsumeSelectedItem();
                                 blockPickingService.Invalidate();
                                 blockPickingService.ForceUpdate(SceneManager.Time, camera!, maxDistance: 5.0f);
                             }
