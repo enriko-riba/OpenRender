@@ -1,0 +1,1032 @@
+using OpenRender;
+using OpenRender.Core.Rendering;
+using OpenTK.Mathematics;
+using DarkVox.Shared.Abstractions;
+using DarkVox.Shared.Gameplay;
+using DarkVox.Shared.Input;
+using DarkVox.Shared.State;
+using DarkVox.Shared.World;
+using DarkVox.Shared.World.Registry;
+using DarkVox.World;
+
+namespace DarkVox.Components;
+
+/// <summary>
+/// Client-side player representation.
+/// Handles camera, input mapping, and applying server snapshots.
+/// Physics/gameplay is authoritative on the server; this class is primarily for rendering.
+/// Uses shared constants from <see cref="PlayerConstants"/>.
+/// </summary>
+public class Player : ILootCollector
+{
+    // Use shared constants for collider
+    public static KinematicCollider Collider => PlayerPhysicsCore.CreateCollider();
+
+    private static readonly Vector3[] bottomCornerOffsets = [
+        new Vector3(-PlayerConstants.HalfWidth, 0, -PlayerConstants.HalfWidth),
+        new Vector3(-PlayerConstants.HalfWidth, 0, +PlayerConstants.HalfWidth),
+        new Vector3(+PlayerConstants.HalfWidth, 0, -PlayerConstants.HalfWidth),
+        new Vector3(+PlayerConstants.HalfWidth, 0, +PlayerConstants.HalfWidth),
+    ];
+
+    private readonly ICamera camera;
+    private readonly VoxelWorld world;
+    private IBlockEditService? streamingManager;
+    private Vector3 position;
+
+    // Client-side smoothing toward server-authoritative state.
+    private Vector3 serverTargetPosition;
+    private Vector3 serverTargetDirection;
+    private bool hasServerTarget;
+    private bool hasAppliedFirstServerSnapshot;
+
+    public Vector3 ServerPosition { get; private set; }
+
+    public IBlockEditService? StreamingManager
+    {
+        get => streamingManager;
+        set => streamingManager = value;
+    }
+
+    private bool isGrounded;
+    private Vector3 velocity;
+    private Vector2 moveAxes;
+    private float verticalAxis;
+    private Vector3 requestedRotation;
+    private bool jumpRequested;
+
+    // speed modifiers captured each Update() from KeyboardState
+    private bool _isSprinting, _isCrouching;
+
+    // === Combat State ===
+    private float attackCooldownRemaining;
+    private float invulnerabilityRemaining;
+
+    public PlayerAttributes Attributes { get; } = new();
+
+    public BlockPickingService? BlockPickingService { get; set; }
+
+    /// <summary>
+    /// Whether the player is alive.
+    /// </summary>
+    public bool IsAlive => Attributes.IsAlive;
+
+    /// <summary>
+    /// Remaining invulnerability time after being hit.
+    /// </summary>
+    public float InvulnerabilityRemaining => invulnerabilityRemaining;
+    public Player(ICamera camera, Vector3 position, VoxelWorld world, IBlockEditService? streamingManager = null)
+    {
+        this.camera = camera;
+        this.world = world;
+        this.streamingManager = streamingManager;
+        Position = position;
+        Direction = camera.Front;
+
+        if (world.GetChunkByGlobalPosition(Position, out var chunk))
+        {
+            CurrentChunk = chunk;
+            ChunkLocalPosition = Position - chunk!.Position;
+            var height = chunk!.GetTerrainHeightAt((int)ChunkLocalPosition.X, (int)ChunkLocalPosition.Z);
+            Position = new(Position.X, height + 3.1f, Position.Z);
+            isGrounded = true;
+        }
+        else
+        {
+            isGrounded = false;
+        }
+
+    }
+
+    internal bool IsGrounded => isGrounded;
+    internal bool IsJumping => !isGrounded && velocity.Y > 0;
+    internal float VelocityY => velocity.Y;
+    internal Vector3 Velocity => velocity;
+    internal Vector3 RequestedMovement { get; private set; }
+    
+    public Inventory Inventory { get; } = new();
+
+    public void AddItem(GameObjectId item, int count) => Inventory.AddItem(item, count);
+
+    /// <summary>
+    /// Applies client-produced input intent. This does not execute physics immediately.
+    /// Use <see cref="Simulate"/> for the authoritative tick.
+    /// </summary>
+    public void ApplyInput(PlayerInputCommand input)
+    {
+        if (input.SetGhostMode is { } ghost)
+        {
+            IsGhostMode = ghost;
+        }
+
+        _isSprinting = input.SprintHeld;
+        _isCrouching = input.CrouchHeld;
+
+        moveAxes = input.MoveAxes;
+        verticalAxis = input.VerticalAxis;
+
+        if (input.LookDelta != Vector2.Zero)
+        {
+            AddRotation(input.LookDelta.X, input.LookDelta.Y, 0);
+        }
+
+        if (input.JumpPressed)
+        {
+            jumpRequested = true;
+        }
+
+        if (input.SelectHotbarSlot.HasValue)
+        {
+            Inventory.SelectedSlot = input.SelectHotbarSlot.Value;
+        }
+
+        if (input.HotbarScrollDelta != 0)
+        {
+            Inventory.SelectedSlot += input.HotbarScrollDelta;
+            if (Inventory.SelectedSlot < 0) Inventory.SelectedSlot = Inventory.HotbarSize - 1;
+            if (Inventory.SelectedSlot >= Inventory.HotbarSize) Inventory.SelectedSlot = 0;
+        }
+    }
+
+
+    /// <summary>
+    /// Server-authoritative simulation tick.
+    /// NOTE: This method is not called on the client - server handles physics.
+    /// Kept for potential client-side prediction in the future.
+    /// </summary>
+    public void Simulate(double elapsedSeconds)
+    {
+        // Apply rotation first so movement uses current view.
+        if (requestedRotation != Vector3.Zero)
+        {
+            camera.AddRotation(requestedRotation.X * PlayerConstants.RotationSpeed, requestedRotation.Y * PlayerConstants.RotationSpeed, requestedRotation.Z * PlayerConstants.RotationSpeed);
+            // IMPORTANT: CameraFps updates Front/Right/Up during Update().
+            // Server simulation doesn't run the render loop, so we must update explicitly.
+            camera.Update();
+            Direction = camera.Front;
+            requestedRotation = Vector3.Zero;
+        }
+
+        // Convert move intent into world-space vector using shared physics.
+        RequestedMovement = PlayerPhysicsCore.BuildMovementVector(Direction, moveAxes, verticalAxis, IsGhostMode);
+        var isMoving = RequestedMovement.LengthSquared > 0.0001f;
+
+        if (jumpRequested)
+        {
+            jumpRequested = false;
+            Jump();
+        }
+
+        if (IsGhostMode)
+        {
+            HandleGhostMode(elapsedSeconds);
+        }
+        else
+        {
+            HandleMovement(elapsedSeconds);
+        }
+
+        UpdateCamera();
+
+        // Update chunk tracking
+        if (world.GetChunkByGlobalPosition(Position, out var chunk))
+        {
+            CurrentChunk = chunk;
+            ChunkLocalPosition = Position - chunk!.Position;
+        }
+
+        Attributes.Tick(elapsedSeconds, new PlayerAttributeTickContext(isMoving, _isSprinting, IsGhostMode));
+
+        // Update combat cooldowns
+        if (attackCooldownRemaining > 0)
+            attackCooldownRemaining -= (float)elapsedSeconds;
+        if (invulnerabilityRemaining > 0)
+            invulnerabilityRemaining -= (float)elapsedSeconds;
+
+        // NOTE: movement intent is a held state (WASD, sprint, crouch, ghost vertical).
+        // It is updated when input state changes and must persist across ticks.
+        RequestedMovement = Vector3.Zero;
+    }
+
+    /// <summary>
+    /// If true, the player can walk through blocks and is not attached to the terrain.
+    /// Reset vertical dynamics when toggled to avoid stale velocities.
+    /// </summary>
+    private bool _isGhostMode;
+    public bool IsGhostMode
+    {
+        get => _isGhostMode;
+        set
+        {
+            if (_isGhostMode == value) return;
+            _isGhostMode = value;
+            velocity = Vector3.Zero;
+            isGrounded = false;
+        }
+    }
+
+    public ICamera Camera => camera;
+
+    /// <summary>
+    /// Sets new player position and updates the camera position
+    /// </summary>
+    public Vector3 Position
+    {
+        get => position;
+        set
+        {
+            position = value;
+            UpdateCamera();
+        }
+    }
+
+    public Vector3 Direction { get; set; }
+
+    public Vector3 ChunkLocalPosition { get; set; } = new Vector3(0, 0, 0);
+
+    public Chunk? CurrentChunk { get; set; } = null;
+
+    public BlockState? CurrentBlockBellow { get; set; } = null;
+
+    public void ApplyServerSnapshot(PlayerSnapshot snapshot)
+    {
+        // Keep state application minimal; this is the seam where interpolation/prediction can live later.
+        if (IsGhostMode != snapshot.IsGhostMode)
+        {
+            IsGhostMode = snapshot.IsGhostMode;
+        }
+
+        ServerPosition = snapshot.Position;
+        serverTargetPosition = snapshot.Position;
+        serverTargetDirection = snapshot.Direction;
+        hasServerTarget = true;
+
+        // Snap immediately on first snapshot to avoid long lerps from an arbitrary local spawn.
+        if (!hasAppliedFirstServerSnapshot)
+        {
+            Position = snapshot.Position;
+            Direction = snapshot.Direction;
+            hasAppliedFirstServerSnapshot = true;
+        }
+
+        Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
+        // Apply inventory snapshot from server. The ApplySnapshot method checks IsUserEditing
+        // internally, so drag-and-drop changes are protected when the inventory UI is open.
+        Inventory.ApplySnapshot(snapshot.Inventory);
+        Attributes.ApplySnapshot(snapshot.Attributes);
+
+        // The client does not run authoritative physics; keep diagnostics derived from the
+        // server simulation so debug UI (VelY/grounded/jumping) remains accurate.
+        velocity = snapshot.Velocity;
+        isGrounded = snapshot.IsGrounded;
+
+        // Keep chunk-local debug info in sync even when the client isn't simulating.
+        UpdateChunkTrackingFromCurrentPosition();
+    }
+
+    /// <summary>
+    /// Client-only: smooth the rendered/player-local position toward the last server snapshot.
+    /// The authoritative simulation still runs on the server.
+    /// </summary>
+    public void UpdateClientSmoothing(double elapsedSeconds)
+    {
+        if (!hasServerTarget)
+        {
+            return;
+        }
+
+        // Exponential smoothing with a stable time constant.
+        // Keep this fairly stiff so the rendered camera doesn't lag whole chunks behind the server,
+        // otherwise server-authoritative streaming will appear to keep "too-far" chunks loaded.
+        const float positionSmoothingRate = 60.0f; // 1/s
+        var dt = (float)Math.Clamp(elapsedSeconds, 0.0, 0.25);
+        var alpha = 1.0f - MathF.Exp(-positionSmoothingRate * dt);
+
+        // Smooth position (camera follows in Position setter).
+        var newPos = Vector3.Lerp(position, serverTargetPosition, alpha);
+        Position = newPos;
+
+        // Optionally smooth direction for UI/diagnostics. Do not drive the camera orientation here.
+        Direction = Vector3.Lerp(Direction, serverTargetDirection, alpha);
+
+        UpdateChunkTrackingFromCurrentPosition();
+    }
+
+    private void UpdateChunkTrackingFromCurrentPosition()
+    {
+        if (world.GetChunkByGlobalPosition(Position, out var chunk) && chunk != null)
+        {
+            CurrentChunk = chunk;
+            ChunkLocalPosition = Position - chunk.Position;
+        }
+    }
+
+    #region Commands
+    public void AddRotation(float yawDegrees, float pitchDegrees, float rollDegrees)
+        => requestedRotation += new Vector3(yawDegrees, pitchDegrees, rollDegrees);
+
+    // Legacy input helpers (kept for now).
+    public void MoveBack() => moveAxes.Y -= 1;
+    public void MoveForward() => moveAxes.Y += 1;
+    public void MoveLeft() => moveAxes.X -= 1;
+    public void MoveRight() => moveAxes.X += 1;
+
+    public void Jump()
+    {
+        // Prevent initiating a jump when inside a low tunnel (headroom < ~1 block)
+        if (isGrounded && !IsUpBlocked() && !IsInLowHeadroomTunnel())
+        {
+            isGrounded = false;
+            velocity.Y = PlayerConstants.JumpForce;
+            // Dampen horizontal velocity to prevent overjumping single blocks on cliffs
+            velocity.X *= PlayerConstants.JumpHorizontalDamping;
+            velocity.Z *= PlayerConstants.JumpHorizontalDamping;
+        }
+    }
+
+    public void ClimbingJump()
+    {
+        if (isGrounded && !IsUpBlocked() && !IsInLowHeadroomTunnel())
+        {
+            isGrounded = false;
+            velocity.Y = PlayerConstants.JumpForce;
+        }
+    }
+
+    public void BreakBlock()
+    {
+        var pickedBlock = BlockPickingService?.PickedBlock;
+        if (pickedBlock is null) return;
+        TryBreakBlock(pickedBlock.Value.GlobalPosition);
+    }
+    
+    public void PlaceBlock()
+    {
+        var pickedBlock = BlockPickingService?.PickedBlock;
+        if (pickedBlock is null) return;
+
+        var item = Inventory.SelectedItem;
+        if (item.IsEmpty) return;
+
+        if (GameContentRegistry.TryGet(item.Item, out var itemDef) && itemDef is Block block)
+        {
+            var hitNormal = BlockPickingService?.HitNormal ?? Vector3.Zero;
+            var placePos = pickedBlock.Value.GlobalPosition + new Vector3i((int)hitNormal.X, (int)hitNormal.Y, (int)hitNormal.Z);
+            TryPlaceBlock(placePos, block.BlockId);
+        }
+    }
+
+    public void TryBreakBlock(Vector3i globalPosition)
+    {
+        if (streamingManager == null)
+        {
+            Log.Error("Player.TryBreakBlock: streamingManager is null!");
+            return;
+        }
+
+        var existing = world.GetBlockByPositionGlobalSafe(globalPosition.X, globalPosition.Y, globalPosition.Z);
+        if (!existing.HasValue) return;
+        if (existing.Value.Block.IsAir()) return;
+
+        var blockId = existing.Value.Block;
+        Log.Info($"Player breaking block {blockId} at {globalPosition}");
+        
+        // Get the block definition and its loot table
+        var blockDef = GameContentRegistry.GetBlock(blockId);
+        var drops = blockDef.LootTable.GenerateDrops(blockId);
+
+        // Add dropped items to inventory
+        foreach ((GameObjectId item, int count) in drops)
+        {
+            Inventory.AddItem(item, count);
+            Log.Info($"  Dropped: {item} x{count}");
+        }
+
+        streamingManager.ApplyBlockEdit(globalPosition, BlockId.Air, true);
+    }
+
+    public void TryPlaceBlock(Vector3i placePos, BlockId blockId)
+    {
+        if (streamingManager == null) return;
+        if (blockId.IsAir()) return;
+
+        var targetBlock = world.GetBlockByPositionGlobalSafe(placePos.X, placePos.Y, placePos.Z);
+        if (targetBlock.HasValue && !targetBlock.Value.Block.IsReplaceable())
+        {
+            return;
+        }
+
+        // Check if there's a solid cardinal neighbor to place against
+        // Blocks can only be placed if adjacent to at least one solid block
+        var hasSolidNeighbor = HasSolidCardinalNeighbor(placePos);
+        if (!hasSolidNeighbor)
+        {
+            return; // Can't place block in mid-air
+        }
+
+        // Check if player is occupying the space (simple AABB check)
+        var minX = position.X - PlayerConstants.HalfWidth;
+        var maxX = position.X + PlayerConstants.HalfWidth;
+        var minY = position.Y;
+        var maxY = position.Y + PlayerConstants.Height;
+
+        var bMinX = placePos.X;
+        var bMaxX = placePos.X + 1;
+        var bMinY = placePos.Y;
+        var bMaxY = placePos.Y + 1;
+        var bMinZ = placePos.Z;
+        var bMaxZ = placePos.Z + 1;
+
+        var intersects = (minX < bMaxX && maxX > bMinX) &&
+                         (minY < bMaxY && maxY > bMinY) &&
+                         (position.Z - PlayerConstants.HalfWidth < bMaxZ && position.Z + PlayerConstants.HalfWidth > bMinZ);
+
+        if (intersects && blockId.IsSolid())
+        {
+            return;
+        }
+
+        Log.Info($"Player placing block {blockId} at {placePos}");
+        streamingManager.ApplyBlockEdit(placePos, blockId, isBreaking: false);
+        Inventory.TryConsumeSelectedItem();
+    }
+
+    /// <summary>
+    /// Checks if any cardinal neighbor (±X, ±Y, ±Z) is a solid block.
+    /// </summary>
+    private bool HasSolidCardinalNeighbor(Vector3i pos)
+    {
+        // Check all 6 cardinal directions
+        Vector3i[] neighbors =
+        [
+            new(pos.X - 1, pos.Y, pos.Z),
+            new(pos.X + 1, pos.Y, pos.Z),
+            new(pos.X, pos.Y - 1, pos.Z),
+            new(pos.X, pos.Y + 1, pos.Z),
+            new(pos.X, pos.Y, pos.Z - 1),
+            new(pos.X, pos.Y, pos.Z + 1)
+        ];
+
+        foreach (var neighbor in neighbors)
+        {
+            var block = world.GetBlockByPositionGlobalSafe(neighbor.X, neighbor.Y, neighbor.Z);
+            if (block.HasValue && block.Value.IsSolid)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Attempts to eat food from the currently selected hotbar slot.
+    /// Server-authoritative: consumes the item and restores hunger/saturation.
+    /// </summary>
+    public bool TryEatFood()
+    {
+        var selectedItem = Inventory.SelectedItem;
+        if (selectedItem.IsEmpty) return false;
+
+        var foodItem = GameContentRegistry.GetFood(selectedItem.Item);
+        if (foodItem == null) return false;
+
+        // Try to consume the food (checks if hunger is full)
+        var consumed = Attributes.ConsumeFood(
+            foodItem.Nutrition,
+            foodItem.SaturationRestored,
+            foodItem.CanAlwaysEat);
+
+        if (consumed)
+        {
+            Inventory.TryConsumeSelectedItem();
+
+            if (Attributes.Health < Attributes.MaxHealth)
+            {
+                Attributes.Heal(1);
+            }
+
+            Log.Info($"Player ate {foodItem.Name}: +{foodItem.Nutrition} hunger, +{foodItem.SaturationRestored:F1} saturation");
+            return true;
+        }
+
+        return false;
+    }
+    #endregion
+
+    private Vector3 BuildMovementVector(Vector2 axes, float vertical)
+    {
+        // Use the player view direction, but keep XZ movement on the ground plane.
+        var forward = new Vector3(Direction.X, 0, Direction.Z);
+        if (forward.LengthSquared < 0.0001f)
+        {
+            forward = -Vector3.UnitZ;
+        }
+        else
+        {
+            forward = forward.Normalized();
+        }
+
+        var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.UnitY));
+        var move = forward * axes.Y + right * axes.X;
+
+        if (IsGhostMode && Math.Abs(vertical) > 0.001f)
+        {
+            move += Vector3.UnitY * vertical;
+        }
+
+        return move;
+    }
+
+    private void UpdateCamera()
+    {
+        var p = Position;
+        p.Y += PlayerConstants.EyeHeight;
+        camera.Position = p;
+    }
+
+    private void HandleGhostMode(double elapsedSeconds)
+    {
+        velocity = Vector3.Zero;
+        var moveInput = RequestedMovement;
+        var remaining = (float)elapsedSeconds;
+
+        while (remaining > 0f && moveInput.LengthSquared > 0f)
+        {
+            var dt = MathF.Min(remaining, PlayerConstants.MaxPhysicsStepSeconds);
+            var dir = moveInput.Normalized();
+            position += dir * dt * PlayerConstants.MoveSpeed * PlayerConstants.GhostModeMultiplier;
+            remaining -= dt;
+        }
+
+        RequestedMovement = Vector3.Zero;
+    }
+
+    private void HandleMovement(double elapsedSeconds)
+    {
+        var moveInput = RequestedMovement;
+        var remaining = (float)elapsedSeconds;
+        var steps = 0;
+
+        while (remaining > 0f)
+        {
+            var dt = MathF.Min(remaining, PlayerConstants.MaxPhysicsStepSeconds);
+            ApplyMovementStep(moveInput, dt);
+            remaining -= dt;
+            steps++;
+
+            if (steps > 64)
+            {
+                break; // safety valve
+            }
+        }
+
+        RequestedMovement = Vector3.Zero;
+    }
+
+    private void ApplyMovementStep(Vector3 moveInput, float dt)
+    {
+        // Apply gravity
+        velocity.Y += PlayerConstants.Gravity * dt;
+
+        // Calculate wish direction
+        var wishDir = Vector3.Zero;
+        if (moveInput.LengthSquared > 0.001f)
+        {
+            wishDir = moveInput.Normalized();
+        }
+
+        var speed = PlayerConstants.MoveSpeed;
+        if (_isSprinting) speed *= PlayerConstants.SprintMultiplier;
+        if (_isCrouching) speed *= PlayerConstants.CrouchMultiplier;
+
+        if (isGrounded)
+        {
+            // Ground movement: direct control.
+            velocity.X = wishDir.X * speed;
+            velocity.Z = wishDir.Z * speed;
+        }
+        else if (wishDir.LengthSquared > 0.001f)
+        {
+            // Air control: allow steering while falling so controls don't feel "stuck".
+            // Keep this intentionally conservative.
+            Accelerate(wishDir, speed, PlayerConstants.AirControl * 10.0f, dt);
+        }
+
+        Move(velocity * dt);
+
+        var maxSpeed = _isSprinting 
+            ? PlayerConstants.MoveSpeed * PlayerConstants.SprintMultiplier 
+            : (_isCrouching 
+                ? PlayerConstants.MoveSpeed * PlayerConstants.CrouchMultiplier 
+                : PlayerConstants.MoveSpeed);
+        var hVel = new Vector2(velocity.X, velocity.Z);
+        if (hVel.LengthSquared > maxSpeed * maxSpeed)
+        {
+            hVel = hVel.Normalized() * maxSpeed;
+            velocity.X = hVel.X;
+            velocity.Z = hVel.Y;
+        }
+
+        // Grounding is resolved inside VoxelKinematicMover.
+    }
+
+    private void Accelerate(Vector3 wishDir, float wishSpeed, float accel, float dt)
+    {
+        var currentSpeed = Vector3.Dot(velocity, wishDir);
+        var addSpeed = wishSpeed - currentSpeed;
+        if (addSpeed <= 0) return;
+
+        var accelSpeed = accel * dt * wishSpeed;
+        if (accelSpeed > addSpeed) accelSpeed = addSpeed;
+
+        velocity.X += accelSpeed * wishDir.X;
+        velocity.Z += accelSpeed * wishDir.Z;
+    }
+
+    private void Move(Vector3 delta)
+    {
+        VoxelKinematicMover.Move(
+            world,
+            ref position,
+            ref velocity,
+            ref isGrounded,
+            Collider,
+            delta,
+            worldFloorY: 1.0f,
+            enableAutoJump: true,
+            gravityMagnitude: MathF.Abs(PlayerConstants.Gravity),
+            autoJumpHorizontalDamping: PlayerConstants.JumpHorizontalDamping);
+    }
+
+    private void ResolveCollisionXZ()
+    {
+        var currentBlock = world.GetBlockByPositionGlobalSafe((int)position.X, (int)position.Y, (int)position.Z);
+        if (currentBlock == null) return;
+
+        // Check 3 blocks high to ensure head (at ~1.7m) is covered even if standing on a slab/edge
+        var neighbors = world.GetCollideCandidateBlocks(currentBlock.Value, 3);
+        foreach (var neighbor in neighbors)
+        {
+            if (neighbor == null || !neighbor.Value.IsSolid) continue;
+
+            var (Min, Max) = neighbor.Value.Aabb;
+
+            // Check vertical overlap (Capsule height)
+            if (position.Y >= Max.Y || position.Y + PlayerConstants.Height <= Min.Y) continue;
+
+            // Closest point on AABB to cylinder axis
+            var closestX = Math.Clamp(position.X, Min.X, Max.X);
+            var closestZ = Math.Clamp(position.Z, Min.Z, Max.Z);
+
+            var dx = position.X - closestX;
+            var dz = position.Z - closestZ;
+            var distSq = dx * dx + dz * dz;
+
+            if (distSq < PlayerConstants.HalfWidth * PlayerConstants.HalfWidth)
+            {
+                var dist = MathF.Sqrt(distSq);
+                var penetration = PlayerConstants.HalfWidth - dist;
+
+                Vector3 normal;
+                if (dist < 1e-4f)
+                {
+                    // Fallback normal
+                    normal = Vector3.Normalize(new Vector3(position.X - (Min.X + Max.X) * 0.5f, 0, position.Z - (Min.Z + Max.Z) * 0.5f));
+                    if (normal.LengthSquared < 0.1f) normal = Vector3.UnitX;
+                }
+                else
+                {
+                    normal = new Vector3(dx / dist, 0, dz / dist);
+                }
+
+                // Auto-jump check
+                var autoJumpTriggered = false;
+                if (isGrounded)
+                {
+                    autoJumpTriggered = CheckAutoJump(neighbor.Value, normal);
+                }
+                else
+                {
+                    // Airborne collision logic
+                    var obstacleTop = Max.Y;
+                    var stepHeight = obstacleTop - position.Y;
+
+                    // Allow penetration for 1-block high obstacles while jumping
+                    if (stepHeight <= 1.1f && velocity.Y > 0)
+                    {
+                        continue; // Ignore collision
+                    }
+                    
+                    // Stop horizontal movement on collision if not a step-able block
+                    // Only if moving into the wall
+                    if (Vector3.Dot(velocity, normal) < 0)
+                    {
+                        // If falling, stop completely to prevent head clipping issues
+                        if (velocity.Y < 0)
+                        {
+                             velocity.X = 0;
+                             velocity.Z = 0;
+                        }
+                        else
+                        {
+                            // Slide instead of stop to allow movement along walls while jumping/rising
+                            var dot = Vector3.Dot(velocity, normal);
+                            velocity -= normal * dot;
+                        }
+                    }
+                }
+
+                // Push out (skip if auto-jump triggered to allow smooth transition)
+                if (!autoJumpTriggered)
+                {
+                    position += normal * (penetration + 0.001f);
+
+                    // Slide velocity (only if grounded)
+                    if (isGrounded)
+                    {
+                        var dot = Vector3.Dot(velocity, normal);
+                        if (dot < 0)
+                        {
+                            velocity -= normal * dot;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void ResolveCollisionY()
+    {
+        // Ceiling check
+        if (velocity.Y > 0)
+        {
+            if (IsHeadHittingCeiling())
+            {
+                velocity.Y = 0;
+                // Push down slightly to avoid sticking
+                var ceilingY = MathF.Floor(position.Y + PlayerConstants.Height);
+                position.Y = ceilingY - PlayerConstants.Height - 0.001f;
+            }
+        }
+        
+        // Ground collision is handled by CheckGround mostly, but we need to stop falling if we hit something
+        // Actually, CheckGround handles the "landing" part.
+        // But if we are moving up and hit a ceiling, we stop.
+        // If we are moving down, CheckGround will snap us.
+    }
+
+    private bool IsHeadHittingCeiling()
+    {
+        if (IsGhostMode) return false;
+
+        var topY = position.Y + PlayerConstants.Height;
+        var checkRadius = PlayerConstants.HalfWidth - 0.05f; // Slightly smaller to avoid wall friction
+
+        var offsets = new[]
+        {
+            new Vector3(-checkRadius, 0, -checkRadius),
+            new Vector3(-checkRadius, 0, +checkRadius),
+            new Vector3(+checkRadius, 0, -checkRadius),
+            new Vector3(+checkRadius, 0, +checkRadius)
+        };
+
+        foreach (var off in offsets)
+        {
+            var p = position + off;
+            var block = world.GetBlockByPositionGlobalSafe((int)p.X, (int)topY, (int)p.Z);
+            if (block != null && block.Value.IsSolid)
+                return true;
+        }
+        return false;
+    }
+
+    private bool CheckAutoJump(BlockState obstacle, Vector3 wallNormal)
+    {
+        if (!isGrounded) return false; // Only auto-jump from ground
+
+        // Check height
+        var obstacleTop = obstacle.Aabb.Max.Y;
+        var stepHeight = obstacleTop - position.Y;
+
+        if (stepHeight is > 0 and <= 1.1f)
+        {
+            // Check if the obstacle itself is blocked above (wall > 1 block high)
+            var blockAbove = world.GetBlockByPositionGlobalSafe((int)obstacle.GlobalPosition.X, (int)obstacle.GlobalPosition.Y + 1, (int)obstacle.GlobalPosition.Z);
+            if (blockAbove != null && blockAbove.Value.IsSolid)
+            {
+                return false;
+            }
+
+
+            // Check clearance above obstacle at the landing spot
+            // We project where we would land
+            var moveDir = new Vector3(velocity.X, 0, velocity.Z).Normalized();
+            var landPos = position + moveDir * 0.5f; // Look slightly ahead
+            landPos.Y = obstacleTop + 0.01f;
+
+            // Check for headroom at landing position
+            // We check a box of player size at landPos
+            if (IsBoxBlocked(landPos))
+            {
+                return false;
+            }
+            
+            // Angle check
+            var dot = Vector3.Dot(moveDir, -wallNormal);
+            
+            if (dot > 0.7f)
+            {
+                // Trigger auto-jump with velocity impulse
+                // v = sqrt(2 * g * h)
+                var jumpHeight = stepHeight + 0.2f; // Clear the edge
+                var jumpVel = MathF.Sqrt(2 * MathF.Abs(PlayerConstants.Gravity) * jumpHeight);
+
+                velocity.Y = jumpVel;
+                // Dampen horizontal velocity to prevent overjumping
+                velocity.X *= PlayerConstants.JumpHorizontalDamping;
+                velocity.Z *= PlayerConstants.JumpHorizontalDamping;
+                isGrounded = false;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool IsBoxBlocked(Vector3 pos)
+    {
+        var minX = (int)MathF.Floor(pos.X - PlayerConstants.HalfWidth + 0.1f);
+        var maxX = (int)MathF.Floor(pos.X + PlayerConstants.HalfWidth - 0.1f);
+        var minZ = (int)MathF.Floor(pos.Z - PlayerConstants.HalfWidth + 0.1f);
+        var maxZ = (int)MathF.Floor(pos.Z + PlayerConstants.HalfWidth - 0.1f);
+        var minY = (int)MathF.Floor(pos.Y + 0.1f);
+        var maxY = (int)MathF.Floor(pos.Y + PlayerConstants.Height - 0.1f);
+
+        for (var y = minY; y <= maxY; y++)
+        {
+            for (var x = minX; x <= maxX; x++)
+            {
+                for (var z = minZ; z <= maxZ; z++)
+                {
+                    var b = world.GetBlockByPositionGlobalSafe(x, y, z);
+                    if (b != null && b.Value.IsSolid)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private void CheckGround()
+    {
+        // Shape cast downwards
+        // For simplicity, check blocks around feet
+
+        var minX = (int)MathF.Floor(position.X - PlayerConstants.HalfWidth + 0.1f);
+        var maxX = (int)MathF.Floor(position.X + PlayerConstants.HalfWidth - 0.1f);
+        var minZ = (int)MathF.Floor(position.Z - PlayerConstants.HalfWidth + 0.1f);
+        var maxZ = (int)MathF.Floor(position.Z + PlayerConstants.HalfWidth - 0.1f);
+        var y = (int)MathF.Floor(position.Y - 0.1f); // Check block below feet
+
+        var maxY = -float.MaxValue;
+        var foundGround = false;
+
+        for (var x = minX; x <= maxX; x++)
+        {
+            for (var z = minZ; z <= maxZ; z++)
+            {
+                var block = world.GetBlockByPositionGlobalSafe(x, y, z);
+                if (block != null && block.Value.IsSolid)
+                {
+                    if (block.Value.Aabb.Max.Y > maxY)
+                    {
+                        maxY = block.Value.Aabb.Max.Y;
+                        foundGround = true;
+                        CurrentBlockBellow = block;
+                    }
+                }
+            }
+        }
+
+        if (foundGround)
+        {
+            // Snap to ground if close enough (Step Down) or if we were already grounded/falling slightly
+            // Allow snapping down up to 1.1m (step height) to handle stairs smoothly
+            var snapDist = 1.1f;
+            
+            if (position.Y <= maxY + snapDist && velocity.Y <= 0)
+            {
+                position.Y = maxY;
+                velocity.Y = 0;
+                
+                if (!isGrounded)
+                {
+                    // Landing impact: dampen horizontal velocity
+                    velocity.X *= 0.5f;
+                    velocity.Z *= 0.5f;
+                }
+                
+                isGrounded = true;
+            }
+            else
+            {
+                isGrounded = false;
+            }
+        }
+        else
+        {
+            isGrounded = false;
+            CurrentBlockBellow = null;
+        }
+    }
+
+    private bool IsUpBlocked()
+    {
+        if (IsGhostMode) return false;
+        if (CurrentChunk == null) return false;
+
+        var c1 = position - bottomCornerOffsets[0];
+        var c2 = position - bottomCornerOffsets[1];
+        var c3 = position - bottomCornerOffsets[2];
+        var c4 = position - bottomCornerOffsets[3];
+        c1.Y += PlayerConstants.Height + 0.3f;
+        c2.Y += PlayerConstants.Height + 0.3f;
+        c3.Y += PlayerConstants.Height + 0.3f;
+        c4.Y += PlayerConstants.Height + 0.3f;
+        return HasBlockAbove(c1) || HasBlockAbove(c2) || HasBlockAbove(c3) || HasBlockAbove(c4);
+    }
+
+    // Returns true if the vertical clearance above the player's head is less than ~1 block
+    // (e.g., inside a 1-block-high tunnel). In that case, suppress jump to avoid head penetration.
+    private bool IsInLowHeadroomTunnel()
+    {
+        if (IsGhostMode) return false;
+        // Evaluate at the current position using the player horizontal footprint
+        const float eps = 0.001f;
+        var headTop = position.Y + PlayerConstants.Height - 0.05f;
+        var tileY = (int)MathF.Floor(headTop) + 1; // immediate block above head tile
+        var minX = (int)MathF.Floor(position.X - PlayerConstants.HalfWidth + eps);
+        var maxX = (int)MathF.Floor(position.X + PlayerConstants.HalfWidth - eps);
+        var minZ = (int)MathF.Floor(position.Z - PlayerConstants.HalfWidth + eps);
+        var maxZ = (int)MathF.Floor(position.Z + PlayerConstants.HalfWidth - eps);
+
+        for (var tz = minZ; tz <= maxZ; tz++)
+            for (var tx = minX; tx <= maxX; tx++)
+            {
+                var b = world.GetBlockByPositionGlobalSafe(tx, tileY, tz);
+                if (b is not null && b.Value.IsSolid)
+                    return true; // ceiling within one block above head
+            }
+        return false;
+    }
+
+    private bool HasBlockAbove(Vector3 globalPosition)
+    {
+        var x = (int)globalPosition.X;
+        var y = (int)globalPosition.Y;
+        var z = (int)globalPosition.Z;
+        
+        var block = world.GetBlockByPositionGlobalSafe(x, y, z);
+        return block is not null && block.Value.IsSolid;
+    }
+
+    // === Combat Methods ===
+
+    /// <summary>
+    /// Check if the player can attack (cooldown expired).
+    /// </summary>
+    public bool CanAttack() => attackCooldownRemaining <= 0;
+
+    /// <summary>
+    /// Start attack cooldown based on weapon attack speed.
+    /// </summary>
+    /// <param name="attackSpeed">Attacks per second (e.g., 4.0 for fists, 1.6 for swords)</param>
+    public void StartAttackCooldown(float attackSpeed)
+    {
+        // Cooldown = 1 / attackSpeed seconds
+        attackCooldownRemaining = attackSpeed > 0 ? 1f / attackSpeed : 0.25f;
+    }
+
+    /// <summary>
+    /// Start invulnerability after being hit.
+    /// </summary>
+    public void StartInvulnerability(float seconds)
+    {
+        invulnerabilityRemaining = seconds;
+    }
+
+    /// <summary>
+    /// Apply knockback velocity to the player.
+    /// </summary>
+    public void ApplyKnockback(Vector3 horizontalKnockback, float verticalKnockback)
+    {
+        velocity.X += horizontalKnockback.X;
+        velocity.Z += horizontalKnockback.Z;
+        if (isGrounded || velocity.Y < verticalKnockback)
+        {
+            velocity.Y = verticalKnockback;
+        }
+    }
+}

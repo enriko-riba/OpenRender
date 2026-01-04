@@ -1,0 +1,21 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/samples/">
+    <Project Path="samples/batching/batching.csproj" />
+    <Project Path="samples/instancing/instancing.csproj" />
+    <Project Path="samples/playground/playground.csproj" />
+    <Project Path="samples/snake/snake.csproj" />
+    <Project Path="samples/testing/testing.csproj" />
+    <Project Path="samples/triangle/triangle.csproj" />
+  </Folder>
+  <Project Path="dark-vox.server/dark-vox.server.csproj" Id="776b5afe-663b-4103-af1b-1a0ca54f4bf8" />
+  <Project Path="dark-vox.shared/dark-vox.shared.csproj" Id="7ea1aa0e-f99a-4bde-a24c-33341ae47f61" />
+  <Project Path="dark-vox.tests/dark-vox.Tests.csproj" />
+  <Project Path="dark-vox/dark-vox.csproj" />
+  <Project Path="OpenRender/OpenRender.csproj" />
+  <Project Path="TextRendering/TextRendering.csproj" />
+</Solution>
