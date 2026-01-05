@@ -221,6 +221,14 @@ public sealed class LocalGameServerHost(
                 if (returnStorage.PlayerId.Equals(playerId))
                     server.Submit(returnStorage.PlayerId, returnStorage.Command);
                 break;
+            case ClientContainerMoveMessage move:
+                if (move.PlayerId.Equals(playerId) && server is LocalGameServer concreteMove)
+                    concreteMove.Submit(move.PlayerId, move.Command);
+                break;
+            case ClientCraftFromGridMessage craft:
+                if (craft.PlayerId.Equals(playerId) && server is LocalGameServer concreteCraft)
+                    concreteCraft.Submit(craft.PlayerId, craft.Command);
+                break;
             case ClientAttackMobMessage attack:
                 if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
                     gs.SubmitAttack(attack.PlayerId, attack.TargetMob);

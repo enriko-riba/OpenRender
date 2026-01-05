@@ -11,6 +11,7 @@ using DarkVox.Shared.Commands;
 using DarkVox.Shared.Gameplay;
 using DarkVox.Shared.World.Registry;
 using DarkVox.World;
+using DarkVox.Shared.Gameplay.Crafting;
 
 namespace DarkVox.Components;
 
@@ -26,20 +27,48 @@ internal class InventorySprite : Sprite
     private const int HotbarStartX = 30;
     private const int HotbarStartY = 566;
 
+    // Crafting (2x2) and result slot positions (relative to the inventory panel top-left).
+    private const int CraftingStartX = 390;
+    private const int CraftingStartY = 70;
+    private const int CraftingResultX = 614;
+    private const int CraftingResultY = 110;
+
     private const int FontSize = 16;
     private const int OverlayPadding = 4;
     private static readonly Vector3 CountColor = new(0.95f, 0.98f, 0.2f);
     private const int ScaleFactor = 1;
 
     private readonly Inventory inventory;
+    private readonly CraftingGrid crafting;
     private readonly Sprite[] slotSprites = new Sprite[Inventory.SlotCount];
     private readonly GameObjectId[] lastDisplayedItems = new GameObjectId[Inventory.SlotCount];
 
+    private readonly Sprite[] craftingSlotSprites = new Sprite[CraftingGrid.SlotCount];
+    private readonly GameObjectId[] lastDisplayedCraftingItems = new GameObjectId[CraftingGrid.SlotCount];
+    private readonly Sprite craftingResultSprite;
+    private GameObjectId lastDisplayedCraftingResult = GameObjectId.Air;
+
     private InventoryItem heldItem;
-    private int dragSourceSlot = -1; // Track where the drag started
+    private SlotRef dragSource = default;
+    private bool isFullStackPickup;
     private GameObjectId lastHeldItemId = GameObjectId.Air;
     private readonly Sprite heldItemSprite;
     private int lastInventoryVersion = -1;
+    private int lastCraftingVersion = -1;
+
+    private bool leftWasDown;
+    private bool rightWasDown;
+
+    private enum DragPaintMode
+    {
+        None = 0,
+        LeftDistribute = 1,
+        RightPaintOne = 2,
+    }
+
+    private DragPaintMode paintMode;
+    private readonly HashSet<SlotRef> paintVisited = [];
+    private readonly List<SlotRef> paintSequence = [];
 
     /// <summary>
     /// Called when an inventory move operation is performed.
@@ -52,6 +81,16 @@ internal class InventorySprite : Sprite
     /// The callback should send the return-to-storage command to the server.
     /// </summary>
     public Action<ReturnToStorageCommand>? OnReturnToStorage { get; set; }
+
+    /// <summary>
+    /// Called when an item is moved between inventory and crafting grid.
+    /// </summary>
+    public Action<ContainerMoveCommand>? OnContainerMove { get; set; }
+
+    /// <summary>
+    /// Called when the player clicks the crafting result slot.
+    /// </summary>
+    public Action<CraftFromGridCommand>? OnCraftFromGrid { get; set; }
 
     public bool IsOpen
     {
@@ -77,28 +116,44 @@ internal class InventorySprite : Sprite
                 heldItemSprite.IsVisible = false;
 
                 heldItem = default;
-                dragSourceSlot = -1;
+                dragSource = default;
                 lastHeldItemId = GameObjectId.Air;
+
+                for (var i = 0; i < CraftingGrid.SlotCount; i++)
+                {
+                    craftingSlotSprites[i].IsVisible = false;
+                }
+
+                craftingResultSprite.IsVisible = false;
+
+                paintMode = DragPaintMode.None;
+                paintVisited.Clear();
+                paintSequence.Clear();
+                leftWasDown = false;
+                rightWasDown = false;
             }
             else
             {
                 // Inventory just opened: refresh slot visuals immediately.
                 UpdateSlots();
+                UpdateCraftingSlots();
                 lastInventoryVersion = inventory.Version;
+                lastCraftingVersion = crafting.Version;
             }
         }
     }
 
-    public static InventorySprite Create(Inventory inventory, ITextRenderer textRenderer)
+    public static InventorySprite Create(Inventory inventory, CraftingGrid crafting, ITextRenderer textRenderer)
     {
         var (mesh, material) = Sprite.CreateMeshAndMaterial("Resources/gui/inventory.png");
-        return new InventorySprite(mesh, material, inventory, textRenderer);
+        return new InventorySprite(mesh, material, inventory, crafting, textRenderer);
     }
 
-    public InventorySprite(Mesh mesh, Material material, Inventory inventory, ITextRenderer textRenderer)
+    public InventorySprite(Mesh mesh, Material material, Inventory inventory, CraftingGrid crafting, ITextRenderer textRenderer)
         : base(mesh, material)
     {
         this.inventory = inventory;
+        this.crafting = crafting;
 
         Pivot = new Vector2(0.5f, 0.5f);
         RenderGroup = RenderGroup.UI;
@@ -108,6 +163,13 @@ internal class InventorySprite : Sprite
         Size = new Vector2i(Size.X * ScaleFactor, Size.Y * ScaleFactor);
 
         InitializeSlots();
+
+        craftingResultSprite = Sprite.Create("Resources/voxel/items/stick.png");
+        craftingResultSprite.Size = new Vector2i(ContentSize);
+        craftingResultSprite.Pivot = Vector2.Zero;
+        craftingResultSprite.SetPosition(new Vector2(CraftingResultX + ContentOffset, CraftingResultY + ContentOffset));
+        craftingResultSprite.IsVisible = false;
+        AddChild(craftingResultSprite);
 
         heldItemSprite = Sprite.Create("Resources/voxel/items/stick.png");
         heldItemSprite.Size = new Vector2i(ContentSize);
@@ -141,6 +203,24 @@ internal class InventorySprite : Sprite
             var y = HotbarStartY + ContentOffset;
             CreateSlotSprite(index, x, y);
         }
+
+        // Crafting 2x2 (TL, TR, BL, BR)
+        CreateCraftingSlotSprite(0, CraftingStartX, CraftingStartY);
+        CreateCraftingSlotSprite(1, CraftingStartX + SlotSpacing, CraftingStartY);
+        CreateCraftingSlotSprite(2, CraftingStartX, CraftingStartY + SlotSpacing);
+        CreateCraftingSlotSprite(3, CraftingStartX + SlotSpacing, CraftingStartY + SlotSpacing);
+    }
+
+    private void CreateCraftingSlotSprite(int index, int slotX, int slotY)
+    {
+        var sprite = Sprite.Create("Resources/voxel/items/stick.png");
+        sprite.Size = new Vector2i(ContentSize);
+        sprite.Pivot = Vector2.Zero;
+        sprite.SetPosition(new Vector2(slotX + ContentOffset, slotY + ContentOffset));
+        sprite.IsVisible = false;
+
+        craftingSlotSprites[index] = sprite;
+        AddChild(sprite);
     }
 
     private void CreateSlotSprite(int index, int x, int y)
@@ -163,6 +243,12 @@ internal class InventorySprite : Sprite
         {
             UpdateSlots();
             lastInventoryVersion = inventory.Version;
+        }
+
+        if (crafting.Version != lastCraftingVersion)
+        {
+            UpdateCraftingSlots();
+            lastCraftingVersion = crafting.Version;
         }
 
         base.OnUpdate(scene, elapsed);
@@ -213,6 +299,52 @@ internal class InventorySprite : Sprite
         }
     }
 
+    private void UpdateCraftingSlots()
+    {
+        for (var i = 0; i < CraftingGrid.SlotCount; i++)
+        {
+            var item = crafting.GetSlot(i);
+            var sprite = craftingSlotSprites[i];
+
+            if (item.IsEmpty)
+            {
+                sprite.IsVisible = false;
+                lastDisplayedCraftingItems[i] = GameObjectId.Air;
+                continue;
+            }
+
+            sprite.IsVisible = true;
+
+            if (lastDisplayedCraftingItems[i] != item.Item)
+            {
+                lastDisplayedCraftingItems[i] = item.Item;
+                var shader = sprite.Material.Shader;
+                sprite.Material = ItemTextureManager.CreateMaterialForItem(item.Item, shader);
+            }
+
+            sprite.SourceRectangle = new Rectangle(0, 0, 50, 50);
+        }
+
+        var result = crafting.ResultPreview;
+        if (result.IsEmpty)
+        {
+            craftingResultSprite.IsVisible = false;
+            lastDisplayedCraftingResult = GameObjectId.Air;
+        }
+        else
+        {
+            craftingResultSprite.IsVisible = true;
+            if (lastDisplayedCraftingResult != result.Item)
+            {
+                lastDisplayedCraftingResult = result.Item;
+                var shader = craftingResultSprite.Material.Shader;
+                craftingResultSprite.Material = ItemTextureManager.CreateMaterialForItem(result.Item, shader);
+            }
+
+            craftingResultSprite.SourceRectangle = new Rectangle(0, 0, 50, 50);
+        }
+    }
+
     public bool ProcessInput(MouseState mouse, KeyboardState keyboard)
     {
         if (!IsOpen) return false;
@@ -245,26 +377,336 @@ internal class InventorySprite : Sprite
             lastHeldItemId = GameObjectId.Air;
         }
 
-        if (mouse.IsButtonPressed(MouseButton.Left))
+        var leftDown = mouse.IsButtonDown(MouseButton.Left);
+        var rightDown = mouse.IsButtonDown(MouseButton.Right);
+        var leftPressed = mouse.IsButtonPressed(MouseButton.Left);
+        var rightPressed = mouse.IsButtonPressed(MouseButton.Right);
+
+        // Craft result is an immediate click (no drag paint).
+        if (leftPressed)
         {
-            var slotIndex = GetSlotAtMouse(mouse.Position);
-            if (slotIndex != -1)
+            var hit = GetHitSlot(mouse.Position);
+            if (hit.Kind == SlotKind.Result)
             {
-                HandleLeftClick(slotIndex);
-                return true;
-            }
-        }
-        else if (mouse.IsButtonPressed(MouseButton.Right))
-        {
-            var slotIndex = GetSlotAtMouse(mouse.Position);
-            if (slotIndex != -1)
-            {
-                HandleRightClick(slotIndex);
+                if (heldItem.IsEmpty && !crafting.ResultPreview.IsEmpty)
+                {
+                    OnCraftFromGrid?.Invoke(new CraftFromGridCommand());
+                }
                 return true;
             }
         }
 
+        // --- Right-drag painting (drop 1 per slot visited) ---
+        if (rightPressed)
+        {
+            var hit = GetHitSlot(mouse.Position);
+            if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+            {
+                if (heldItem.IsEmpty)
+                {
+                    // Normal right-click behavior: split stack (rounded up).
+                    HandleRightClick(hit);
+                    return true;
+                }
+
+                // Start painting with the held stack.
+                paintMode = DragPaintMode.RightPaintOne;
+                paintVisited.Clear();
+                paintSequence.Clear();
+                TryPaintDropOne(hit);
+                return true;
+            }
+        }
+
+        if (paintMode == DragPaintMode.RightPaintOne)
+        {
+            if (!rightDown)
+            {
+                paintMode = DragPaintMode.None;
+                paintVisited.Clear();
+                paintSequence.Clear();
+            }
+            else if (!heldItem.IsEmpty)
+            {
+                var hit = GetHitSlot(mouse.Position);
+                if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+                {
+                    TryPaintDropOne(hit);
+                }
+            }
+        }
+
+        // --- Left-drag distribution (evenly split across visited slots on release) ---
+        if (leftPressed)
+        {
+            var hit = GetHitSlot(mouse.Position);
+            if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+            {
+                if (heldItem.IsEmpty)
+                {
+                    // Normal left click: pick up / drop full stack.
+                    HandleLeftClick(hit);
+                    return true;
+                }
+
+                // Begin a distribution drag. If the user releases without touching more than one slot,
+                // we'll treat it like a normal left-click drop on that slot.
+                paintMode = DragPaintMode.LeftDistribute;
+                paintVisited.Clear();
+                paintSequence.Clear();
+                AddPaintTarget(hit);
+                return true;
+            }
+        }
+
+        if (paintMode == DragPaintMode.LeftDistribute)
+        {
+            if (leftDown)
+            {
+                var hit = GetHitSlot(mouse.Position);
+                if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+                {
+                    AddPaintTarget(hit);
+                }
+            }
+            else if (leftWasDown)
+            {
+                // Released: apply distribution.
+                ApplyLeftDistributeOnRelease();
+                return true;
+            }
+        }
+
+        // If not painting, keep existing single-click semantics.
+        if (paintMode == DragPaintMode.None)
+        {
+            if (leftPressed)
+            {
+                var hit = GetHitSlot(mouse.Position);
+                if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+                {
+                    HandleLeftClick(hit);
+                    return true;
+                }
+            }
+            else if (rightPressed)
+            {
+                var hit = GetHitSlot(mouse.Position);
+                if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
+                {
+                    HandleRightClick(hit);
+                    return true;
+                }
+            }
+        }
+
+        leftWasDown = leftDown;
+        rightWasDown = rightDown;
+
         return true;
+    }
+
+    private void AddPaintTarget(SlotRef hit)
+    {
+        if (!IsEligiblePaintTarget(hit))
+        {
+            return;
+        }
+
+        if (paintVisited.Add(hit))
+        {
+            paintSequence.Add(hit);
+        }
+    }
+
+    private bool IsEligiblePaintTarget(SlotRef hit)
+    {
+        // Never paint into result slot.
+        if (hit.Kind == SlotKind.Result || hit.Kind == SlotKind.None)
+        {
+            return false;
+        }
+
+        // Keep hotbar out of crafting-style paint flows.
+        if (hit.Kind == SlotKind.Inventory && hit.Index < Inventory.HotbarSize)
+        {
+            return false;
+        }
+
+        // Disallow crafting from hotbar.
+        if (dragSource.Kind == SlotKind.Inventory && dragSource.Index < Inventory.HotbarSize)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private void TryPaintDropOne(SlotRef hit)
+    {
+        if (heldItem.IsEmpty) return;
+        if (!IsEligiblePaintTarget(hit)) return;
+
+        if (!paintVisited.Add(hit))
+        {
+            return;
+        }
+
+        paintSequence.Add(hit);
+
+        SendMoveFromDragSource(hit, 1);
+
+        heldItem.Count--;
+        if (heldItem.Count <= 0)
+        {
+            heldItem = default;
+            dragSource = default;
+            isFullStackPickup = false;
+
+            paintMode = DragPaintMode.None;
+            paintVisited.Clear();
+            paintSequence.Clear();
+        }
+    }
+
+    private void ApplyLeftDistributeOnRelease()
+    {
+        try
+        {
+            if (paintSequence.Count <= 0)
+            {
+                return;
+            }
+
+            if (paintSequence.Count == 1)
+            {
+                // Treat as normal left click drop.
+                HandleLeftClick(paintSequence[0]);
+                return;
+            }
+
+            if (heldItem.IsEmpty)
+            {
+                return;
+            }
+
+            var itemId = heldItem.Item;
+            var maxStack = GameContentRegistry.Get(itemId).MaxStackSize;
+            var totalToDistribute = heldItem.Count;
+
+            // Filter to targets that are empty or already contain the same item.
+            var eligible = new List<(SlotRef Slot, int Capacity)>(paintSequence.Count);
+            foreach (var slot in paintSequence)
+            {
+                if (!IsEligiblePaintTarget(slot))
+                {
+                    continue;
+                }
+
+                var existing = GetItemAt(slot);
+                if (!existing.IsEmpty && existing.Item != itemId)
+                {
+                    continue;
+                }
+
+                var currentCount = existing.IsEmpty ? 0 : existing.Count;
+                var capacity = Math.Max(0, maxStack - currentCount);
+                if (capacity <= 0) continue;
+                eligible.Add((slot, capacity));
+            }
+
+            if (eligible.Count == 0)
+            {
+                return;
+            }
+
+            var perSlot = totalToDistribute / eligible.Count;
+            var remainder = totalToDistribute % eligible.Count;
+
+            var distributed = 0;
+            for (var i = 0; i < eligible.Count; i++)
+            {
+                var want = perSlot + (remainder > 0 ? 1 : 0);
+                if (remainder > 0) remainder--;
+
+                var amount = Math.Min(want, eligible[i].Capacity);
+                if (amount <= 0) continue;
+
+                SendMoveFromDragSource(eligible[i].Slot, amount);
+                distributed += amount;
+            }
+
+            heldItem.Count -= distributed;
+            if (heldItem.Count <= 0)
+            {
+                heldItem = default;
+                dragSource = default;
+                isFullStackPickup = false;
+            }
+            else
+            {
+                // After distributing, the cursor is effectively a partial stack.
+                isFullStackPickup = false;
+            }
+        }
+        finally
+        {
+            paintMode = DragPaintMode.None;
+            paintVisited.Clear();
+            paintSequence.Clear();
+        }
+    }
+
+    private InventoryItem GetItemAt(SlotRef slot)
+    {
+        return slot.Kind switch
+        {
+            SlotKind.Inventory => inventory.GetItem(slot.Index),
+            SlotKind.Crafting => crafting.GetSlot(slot.Index),
+            _ => default,
+        };
+    }
+
+    private void SendMoveFromDragSource(SlotRef target, int count)
+    {
+        if (count <= 0) return;
+        if (dragSource.Kind == SlotKind.None) return;
+        if (target.Kind == SlotKind.None || target.Kind == SlotKind.Result) return;
+
+        if (dragSource.Kind == SlotKind.Inventory && dragSource.Index < Inventory.HotbarSize) return;
+        if (target.Kind == SlotKind.Inventory && target.Index < Inventory.HotbarSize) return;
+
+        if (dragSource.Kind == SlotKind.Inventory && target.Kind == SlotKind.Inventory)
+        {
+            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, target.Index, count));
+        }
+        else if (dragSource.Kind == SlotKind.Inventory && target.Kind == SlotKind.Crafting)
+        {
+            OnContainerMove?.Invoke(new ContainerMoveCommand(
+                SourceContainer: ItemContainer.Inventory,
+                SourceSlot: dragSource.Index,
+                TargetContainer: ItemContainer.Crafting,
+                TargetSlot: target.Index,
+                Count: count));
+        }
+        else if (dragSource.Kind == SlotKind.Crafting && target.Kind == SlotKind.Inventory)
+        {
+            OnContainerMove?.Invoke(new ContainerMoveCommand(
+                SourceContainer: ItemContainer.Crafting,
+                SourceSlot: dragSource.Index,
+                TargetContainer: ItemContainer.Inventory,
+                TargetSlot: target.Index,
+                Count: count));
+        }
+        else if (dragSource.Kind == SlotKind.Crafting && target.Kind == SlotKind.Crafting)
+        {
+            OnContainerMove?.Invoke(new ContainerMoveCommand(
+                SourceContainer: ItemContainer.Crafting,
+                SourceSlot: dragSource.Index,
+                TargetContainer: ItemContainer.Crafting,
+                TargetSlot: target.Index,
+                Count: count));
+        }
     }
 
     private int GetSlotAtMouse(Vector2 mousePos)
@@ -279,6 +721,47 @@ internal class InventorySprite : Sprite
             }
         }
         return -1;
+    }
+
+    private enum SlotKind
+    {
+        None = 0,
+        Inventory = 1,
+        Crafting = 2,
+        Result = 3,
+    }
+
+    private readonly record struct SlotRef(SlotKind Kind, int Index)
+    {
+        public static SlotRef None => new(SlotKind.None, -1);
+    }
+
+    private SlotRef GetHitSlot(Vector2 mousePos)
+    {
+        var invSlot = GetSlotAtMouse(mousePos);
+        if (invSlot != -1)
+        {
+            return new SlotRef(SlotKind.Inventory, invSlot);
+        }
+
+        for (var i = 0; i < CraftingGrid.SlotCount; i++)
+        {
+            var rect = GetCraftingSlotScreenRectangle(i);
+            if (mousePos.X >= rect.X && mousePos.X < rect.X + rect.Width &&
+                mousePos.Y >= rect.Y && mousePos.Y < rect.Y + rect.Height)
+            {
+                return new SlotRef(SlotKind.Crafting, i);
+            }
+        }
+
+        var resultRect = GetResultSlotScreenRectangle();
+        if (mousePos.X >= resultRect.X && mousePos.X < resultRect.X + resultRect.Width &&
+            mousePos.Y >= resultRect.Y && mousePos.Y < resultRect.Y + resultRect.Height)
+        {
+            return new SlotRef(SlotKind.Result, 0);
+        }
+
+        return SlotRef.None;
     }
 
     private Rectangle GetSlotScreenRectangle(int index)
@@ -300,41 +783,133 @@ internal class InventorySprite : Sprite
             ContentSize);
     }
 
-    private void HandleLeftClick(int slotIndex)
+    private Rectangle GetCraftingSlotScreenRectangle(int index)
     {
-        var slotItem = inventory.GetItem(slotIndex);
-        var isHotbar = slotIndex < Inventory.HotbarSize;
+        if (Scene == null) return new Rectangle(0, 0, 0, 0);
 
-        if (heldItem.IsEmpty)
+        GetPosition(out var invPos);
+        var invTopLeft = new Vector2(
+            invPos.X - Size.X * Pivot.X,
+            invPos.Y - Size.Y * Pivot.Y);
+
+        craftingSlotSprites[index].GetPosition(out var slotLocalPos);
+        return new Rectangle(
+            (int)MathF.Round(invTopLeft.X + slotLocalPos.X),
+            (int)MathF.Round(invTopLeft.Y + slotLocalPos.Y),
+            ContentSize,
+            ContentSize);
+    }
+
+    private Rectangle GetResultSlotScreenRectangle()
+    {
+        if (Scene == null) return new Rectangle(0, 0, 0, 0);
+
+        GetPosition(out var invPos);
+        var invTopLeft = new Vector2(
+            invPos.X - Size.X * Pivot.X,
+            invPos.Y - Size.Y * Pivot.Y);
+
+        craftingResultSprite.GetPosition(out var localPos);
+        return new Rectangle(
+            (int)MathF.Round(invTopLeft.X + localPos.X),
+            (int)MathF.Round(invTopLeft.Y + localPos.Y),
+            ContentSize,
+            ContentSize);
+    }
+
+    private void HandleLeftClick(SlotRef hit)
+    {
+        if (hit.Kind == SlotKind.Inventory)
         {
-            if (!slotItem.IsEmpty)
+            var slotIndex = hit.Index;
+            var slotItem = inventory.GetItem(slotIndex);
+            var isHotbar = slotIndex < Inventory.HotbarSize;
+
+            if (heldItem.IsEmpty)
             {
-                if (isHotbar)
+                if (!slotItem.IsEmpty)
                 {
-                    // Request server to return hotbar item to storage.
-                    OnReturnToStorage?.Invoke(new ReturnToStorageCommand(slotIndex));
+                    if (isHotbar)
+                    {
+                        OnReturnToStorage?.Invoke(new ReturnToStorageCommand(slotIndex));
+                    }
+                    else
+                    {
+                        heldItem = slotItem;
+                        dragSource = new SlotRef(SlotKind.Inventory, slotIndex);
+                        isFullStackPickup = true;
+                    }
                 }
-                else
-                {
-                    // Start drag (UI-only). Server remains authoritative.
-                    heldItem = slotItem;
-                    dragSourceSlot = slotIndex;
-                }
+
+                return;
             }
-        }
-        else
-        {
-            // End drag - request move on server.
-            if (dragSourceSlot >= 0)
+
+            // Dropping while holding.
+            if (dragSource.Kind == SlotKind.Inventory && dragSource.Index >= 0)
             {
                 OnInventoryMove?.Invoke(new InventoryMoveCommand(
-                    SourceSlot: dragSourceSlot,
+                    SourceSlot: dragSource.Index,
                     TargetSlot: slotIndex,
-                    Count: isHotbar ? 1 : -1));
+                    Count: isHotbar ? 1 : (isFullStackPickup ? -1 : heldItem.Count)));
+            }
+            else if (dragSource.Kind == SlotKind.Crafting)
+            {
+                // Crafting -> Inventory (storage only)
+                if (!isHotbar)
+                {
+                    OnContainerMove?.Invoke(new ContainerMoveCommand(
+                        SourceContainer: ItemContainer.Crafting,
+                        SourceSlot: dragSource.Index,
+                        TargetContainer: ItemContainer.Inventory,
+                        TargetSlot: slotIndex,
+                        Count: isFullStackPickup ? -1 : heldItem.Count));
+                }
             }
 
             heldItem = default;
-            dragSourceSlot = -1;
+            dragSource = default;
+            isFullStackPickup = false;
+            return;
+        }
+
+        if (hit.Kind == SlotKind.Crafting)
+        {
+            var craftIndex = hit.Index;
+            var slotItem = crafting.GetSlot(craftIndex);
+
+            if (heldItem.IsEmpty)
+            {
+                if (!slotItem.IsEmpty)
+                {
+                    heldItem = slotItem;
+                    dragSource = new SlotRef(SlotKind.Crafting, craftIndex);
+                    isFullStackPickup = true;
+                }
+                return;
+            }
+
+            if (dragSource.Kind == SlotKind.Inventory)
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Inventory,
+                    SourceSlot: dragSource.Index,
+                    TargetContainer: ItemContainer.Crafting,
+                    TargetSlot: craftIndex,
+                    Count: isFullStackPickup ? -1 : heldItem.Count));
+            }
+            else if (dragSource.Kind == SlotKind.Crafting)
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Crafting,
+                    SourceSlot: dragSource.Index,
+                    TargetContainer: ItemContainer.Crafting,
+                    TargetSlot: craftIndex,
+                    Count: isFullStackPickup ? -1 : heldItem.Count));
+            }
+
+            heldItem = default;
+            dragSource = default;
+            isFullStackPickup = false;
         }
     }
 
@@ -371,6 +946,11 @@ internal class InventorySprite : Sprite
     /// </summary>
     private void HandleHotbarDrop(int slotIndex, InventoryItem slotItem)
     {
+        if (dragSource.Kind != SlotKind.Inventory || dragSource.Index < 0)
+        {
+            return;
+        }
+
         // Check if we can return the previous item to inventory (if slot is occupied)
         if (!slotItem.IsEmpty)
         {
@@ -409,16 +989,16 @@ internal class InventorySprite : Sprite
         inventory.SetItem(slotIndex, hotbarItem);
 
         // Send move command to server (source -> hotbar slot, count = 1)
-        OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
+        OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, slotIndex, 1));
 
         // Return remaining items to source slot or inventory
         heldItem.Count--;
         if (heldItem.Count > 0)
         {
             // Return remaining to source slot if it was a storage slot and is empty
-            if (dragSourceSlot >= Inventory.HotbarSize && inventory.GetItem(dragSourceSlot).IsEmpty)
+            if (dragSource.Index >= Inventory.HotbarSize && inventory.GetItem(dragSource.Index).IsEmpty)
             {
-                inventory.SetItem(dragSourceSlot, heldItem);
+                inventory.SetItem(dragSource.Index, heldItem);
             }
             else
             {
@@ -429,7 +1009,7 @@ internal class InventorySprite : Sprite
 
         // End drag operation
         heldItem = default;
-        dragSourceSlot = -1;
+        dragSource = default;
     }
 
     /// <summary>
@@ -440,16 +1020,21 @@ internal class InventorySprite : Sprite
     /// </summary>
     private void HandleStorageDrop(int slotIndex, InventoryItem slotItem)
     {
+        if (dragSource.Kind != SlotKind.Inventory || dragSource.Index < 0)
+        {
+            return;
+        }
+
         if (slotItem.IsEmpty)
         {
             // Place entire held stack in empty storage slot - move operation
             inventory.SetItem(slotIndex, heldItem);
             
             // Send move command to server
-            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, -1));
+            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, slotIndex, -1));
             
             heldItem = default;
-            dragSourceSlot = -1;
+            dragSource = default;
         }
         else if (slotItem.Item == heldItem.Item)
         {
@@ -466,16 +1051,16 @@ internal class InventorySprite : Sprite
                 inventory.SetItem(slotIndex, slotItem);
                 
                 // Send move command to server
-                OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, toAdd));
+                OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, slotIndex, toAdd));
             }
 
             // Always end drag operation for merge - remaining items stay in source slot
             if (heldItem.Count > 0)
             {
                 // Return remaining to source slot if empty, otherwise to inventory
-                if (dragSourceSlot >= 0 && inventory.GetItem(dragSourceSlot).IsEmpty)
+                if (dragSource.Index >= 0 && inventory.GetItem(dragSource.Index).IsEmpty)
                 {
-                    inventory.SetItem(dragSourceSlot, heldItem);
+                    inventory.SetItem(dragSource.Index, heldItem);
                 }
                 else
                 {
@@ -483,7 +1068,7 @@ internal class InventorySprite : Sprite
                 }
             }
             heldItem = default;
-            dragSourceSlot = -1;
+            dragSource = default;
         }
         else
         {
@@ -492,12 +1077,12 @@ internal class InventorySprite : Sprite
             inventory.SetItem(slotIndex, heldItem);
             
             // Send move command to server (swap = move entire stack)
-            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, -1));
+            OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, slotIndex, -1));
             
             // Return the swapped item to the original source slot
-            if (dragSourceSlot >= 0 && inventory.GetItem(dragSourceSlot).IsEmpty)
+            if (dragSource.Index >= 0 && inventory.GetItem(dragSource.Index).IsEmpty)
             {
-                inventory.SetItem(dragSourceSlot, previousItem);
+                inventory.SetItem(dragSource.Index, previousItem);
             }
             else
             {
@@ -506,45 +1091,116 @@ internal class InventorySprite : Sprite
             }
             
             heldItem = default;
-            dragSourceSlot = -1;
+            dragSource = default;
         }
     }
 
-    private void HandleRightClick(int slotIndex)
+    private void HandleRightClick(SlotRef hit)
     {
-        var slotItem = inventory.GetItem(slotIndex);
-        var isHotbar = slotIndex < Inventory.HotbarSize;
+        // Minecraft-like right click:
+        // - If cursor empty: pick up half (rounded up)
+        // - If cursor holds items: place exactly 1 (keep holding remaining)
 
-        if (heldItem.IsEmpty)
+        if (hit.Kind == SlotKind.Inventory)
         {
-            // Start drag (UI-only). No local mutation; server snapshots drive actual state.
-            if (!slotItem.IsEmpty)
+            var slotIndex = hit.Index;
+            var slotItem = inventory.GetItem(slotIndex);
+            var isHotbar = slotIndex < Inventory.HotbarSize;
+
+            if (heldItem.IsEmpty)
             {
-                heldItem = slotItem;
-                dragSourceSlot = slotIndex;
+                if (slotItem.IsEmpty) return;
+
+                // Keep existing hotbar behavior (shortcut bar). For storage, split.
+                if (isHotbar)
+                {
+                    heldItem = slotItem;
+                    dragSource = new SlotRef(SlotKind.Inventory, slotIndex);
+                    isFullStackPickup = true;
+                    return;
+                }
+
+                var split = DarkVox.Shared.Gameplay.MinecraftUiRules.SplitHalfRoundedUp(slotItem.Count);
+                heldItem = new InventoryItem { Item = slotItem.Item, Count = split };
+                dragSource = new SlotRef(SlotKind.Inventory, slotIndex);
+                isFullStackPickup = false;
+                return;
             }
+
+            // Place exactly 1 from held stack.
+            if (dragSource.Kind == SlotKind.Inventory && dragSource.Index >= 0)
+            {
+                OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSource.Index, slotIndex, 1));
+            }
+            else if (dragSource.Kind == SlotKind.Crafting)
+            {
+                // Crafting -> Inventory (storage only)
+                if (!isHotbar)
+                {
+                    OnContainerMove?.Invoke(new ContainerMoveCommand(
+                        SourceContainer: ItemContainer.Crafting,
+                        SourceSlot: dragSource.Index,
+                        TargetContainer: ItemContainer.Inventory,
+                        TargetSlot: slotIndex,
+                        Count: 1));
+                }
+            }
+
+            heldItem.Count--;
+            if (heldItem.Count <= 0)
+            {
+                heldItem = default;
+                dragSource = default;
+                isFullStackPickup = false;
+            }
+
+            return;
         }
-        else
+
+        if (hit.Kind == SlotKind.Crafting)
         {
-            if (isHotbar)
+            var craftIndex = hit.Index;
+            var slotItem = crafting.GetSlot(craftIndex);
+
+            if (heldItem.IsEmpty)
             {
-                // Configure hotbar by requesting 1 item moved to that slot.
-                if (dragSourceSlot >= 0)
-                {
-                    OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
-                }
-            }
-            else
-            {
-                // Place 1 item
-                if (dragSourceSlot >= 0)
-                {
-                    OnInventoryMove?.Invoke(new InventoryMoveCommand(dragSourceSlot, slotIndex, 1));
-                }
+                if (slotItem.IsEmpty) return;
+
+                var split = DarkVox.Shared.Gameplay.MinecraftUiRules.SplitHalfRoundedUp(slotItem.Count);
+                heldItem = new InventoryItem { Item = slotItem.Item, Count = split };
+                dragSource = new SlotRef(SlotKind.Crafting, craftIndex);
+                isFullStackPickup = false;
+                return;
             }
 
-            heldItem = default;
-            dragSourceSlot = -1;
+            if (dragSource.Kind == SlotKind.Inventory)
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Inventory,
+                    SourceSlot: dragSource.Index,
+                    TargetContainer: ItemContainer.Crafting,
+                    TargetSlot: craftIndex,
+                    Count: 1));
+            }
+            else if (dragSource.Kind == SlotKind.Crafting)
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Crafting,
+                    SourceSlot: dragSource.Index,
+                    TargetContainer: ItemContainer.Crafting,
+                    TargetSlot: craftIndex,
+                    Count: 1));
+            }
+
+            heldItem.Count--;
+            if (heldItem.Count <= 0)
+            {
+                heldItem = default;
+                dragSource = default;
+                isFullStackPickup = false;
+            }
+
+            return;
         }
     }
 
@@ -560,7 +1216,7 @@ internal class InventorySprite : Sprite
             if (heldItem.Count <= 0)
             {
                 heldItem = default;
-                dragSourceSlot = -1;
+                dragSource = default;
             }
         }
         else if (slotItem.Item == heldItem.Item)
@@ -576,7 +1232,7 @@ internal class InventorySprite : Sprite
                 if (heldItem.Count <= 0)
                 {
                     heldItem = default;
-                    dragSourceSlot = -1;
+                    dragSource = default;
                 }
             }
         }
@@ -675,6 +1331,34 @@ internal class InventorySprite : Sprite
 
                 textRenderer.Render(text, FontSize, x, y, CountColor);
             }
+        }
+
+        // Render counts on crafting grid slots
+        for (var i = 0; i < CraftingGrid.SlotCount; i++)
+        {
+            var item = crafting.GetSlot(i);
+            if (item.IsEmpty) continue;
+            if (item.Count <= 1) continue;
+
+            var rect = GetCraftingSlotScreenRectangle(i);
+            var text = item.Count.ToString();
+            var measure = textRenderer.Measure(text, FontSize);
+
+            var x = rect.X + rect.Width - measure.Width - OverlayPadding;
+            var y = rect.Y + rect.Height - measure.Height - OverlayPadding;
+            textRenderer.Render(text, FontSize, x, y, CountColor);
+        }
+
+        // Render result count if > 1
+        if (!crafting.ResultPreview.IsEmpty && crafting.ResultPreview.Count > 1)
+        {
+            var rect = GetResultSlotScreenRectangle();
+            var text = crafting.ResultPreview.Count.ToString();
+            var measure = textRenderer.Measure(text, FontSize);
+
+            var x = rect.X + rect.Width - measure.Width - OverlayPadding;
+            var y = rect.Y + rect.Height - measure.Height - OverlayPadding;
+            textRenderer.Render(text, FontSize, x, y, CountColor);
         }
     }
 

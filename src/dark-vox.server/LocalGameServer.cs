@@ -11,6 +11,7 @@ using DarkVox.Shared.State;
 using System.Runtime.InteropServices;
 using DarkVox.Shared.World;
 using DarkVox.World;
+using DarkVox.Shared.Gameplay.Crafting;
 
 namespace DarkVox.Server;
 
@@ -137,6 +138,165 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         // Clear the hotbar slot and return item to storage
         player.Inventory.SetItem(slot, default);
         player.Inventory.ReturnItemToStorage(item);
+    }
+
+    public void Submit(PlayerId playerId, ContainerMoveCommand command)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+
+        // For now, only allow moves between inventory storage and the 2x2 crafting grid.
+        // Hotbar is treated as a shortcut bar and is not craftable directly.
+        if (command.SourceContainer == ItemContainer.Inventory && command.SourceSlot < Inventory.HotbarSize) return;
+        if (command.TargetContainer == ItemContainer.Inventory && command.TargetSlot < Inventory.HotbarSize) return;
+
+        if (command.SourceContainer == ItemContainer.Inventory && command.TargetContainer == ItemContainer.Crafting)
+        {
+            TryMoveInventoryToCrafting(player, command.SourceSlot, command.TargetSlot, command.Count);
+        }
+        else if (command.SourceContainer == ItemContainer.Crafting && command.TargetContainer == ItemContainer.Inventory)
+        {
+            TryMoveCraftingToInventory(player, command.SourceSlot, command.TargetSlot, command.Count);
+        }
+        else if (command.SourceContainer == ItemContainer.Crafting && command.TargetContainer == ItemContainer.Crafting)
+        {
+            TryMoveWithinCrafting(player, command.SourceSlot, command.TargetSlot, command.Count);
+        }
+
+        player.Crafting.RecomputeResultPreview();
+    }
+
+    public void Submit(PlayerId playerId, CraftFromGridCommand command)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+
+        // Atomic craft: do nothing if inventory can't accept the output.
+        var before = player.Crafting.BuildSnapshot();
+
+        if (!player.Crafting.TryConsumeForRecipe(out var recipe))
+        {
+            player.Crafting.RecomputeResultPreview();
+            return;
+        }
+
+        if (!player.Inventory.CanAddItem(recipe.ResultItem, recipe.ResultCount))
+        {
+            player.Crafting.ApplySnapshot(before);
+            player.Crafting.RecomputeResultPreview();
+            return;
+        }
+
+        player.Inventory.AddItem(recipe.ResultItem, recipe.ResultCount);
+        player.Crafting.RecomputeResultPreview();
+    }
+
+    private static void TryMoveInventoryToCrafting(Player player, int invSlot, int craftSlot, int count)
+    {
+        if (invSlot is < Inventory.HotbarSize or >= Inventory.SlotCount) return;
+        if (craftSlot is < 0 or >= CraftingGrid.SlotCount) return;
+
+        var source = player.Inventory.GetItem(invSlot);
+        if (source.IsEmpty) return;
+
+        var target = player.Crafting.GetSlot(craftSlot);
+        var moveCount = count < 0 ? source.Count : Math.Min(count, source.Count);
+        if (moveCount <= 0) return;
+
+        if (target.IsEmpty)
+        {
+            target = new InventoryItem { Item = source.Item, Count = moveCount };
+            source.Count -= moveCount;
+        }
+        else if (target.Item == source.Item)
+        {
+            var maxStack = DarkVox.Shared.World.Registry.GameContentRegistry.Get(source.Item).MaxStackSize;
+            var space = maxStack - target.Count;
+            var toMove = Math.Min(space, moveCount);
+            if (toMove <= 0) return;
+            target.Count += toMove;
+            source.Count -= toMove;
+        }
+        else
+        {
+            // Swap only if moving entire stack.
+            if (count >= 0 && count < source.Count) return;
+            (source, target) = (target, source);
+        }
+
+        player.Inventory.SetItem(invSlot, source.Count <= 0 ? default : source);
+        player.Crafting.SetSlot(craftSlot, target);
+    }
+
+    private static void TryMoveCraftingToInventory(Player player, int craftSlot, int invSlot, int count)
+    {
+        if (craftSlot is < 0 or >= CraftingGrid.SlotCount) return;
+        if (invSlot is < Inventory.HotbarSize or >= Inventory.SlotCount) return;
+
+        var source = player.Crafting.GetSlot(craftSlot);
+        if (source.IsEmpty) return;
+
+        var target = player.Inventory.GetItem(invSlot);
+        var moveCount = count < 0 ? source.Count : Math.Min(count, source.Count);
+        if (moveCount <= 0) return;
+
+        if (target.IsEmpty)
+        {
+            target = new InventoryItem { Item = source.Item, Count = moveCount };
+            source.Count -= moveCount;
+        }
+        else if (target.Item == source.Item)
+        {
+            var maxStack = DarkVox.Shared.World.Registry.GameContentRegistry.Get(source.Item).MaxStackSize;
+            var space = maxStack - target.Count;
+            var toMove = Math.Min(space, moveCount);
+            if (toMove <= 0) return;
+            target.Count += toMove;
+            source.Count -= toMove;
+        }
+        else
+        {
+            if (count >= 0 && count < source.Count) return;
+            (source, target) = (target, source);
+        }
+
+        player.Crafting.SetSlot(craftSlot, source.Count <= 0 ? default : source);
+        player.Inventory.SetItem(invSlot, target);
+    }
+
+    private static void TryMoveWithinCrafting(Player player, int from, int to, int count)
+    {
+        if (from is < 0 or >= CraftingGrid.SlotCount) return;
+        if (to is < 0 or >= CraftingGrid.SlotCount) return;
+        if (from == to) return;
+
+        var source = player.Crafting.GetSlot(from);
+        if (source.IsEmpty) return;
+
+        var target = player.Crafting.GetSlot(to);
+        var moveCount = count < 0 ? source.Count : Math.Min(count, source.Count);
+        if (moveCount <= 0) return;
+
+        if (target.IsEmpty)
+        {
+            target = new InventoryItem { Item = source.Item, Count = moveCount };
+            source.Count -= moveCount;
+        }
+        else if (target.Item == source.Item)
+        {
+            var maxStack = DarkVox.Shared.World.Registry.GameContentRegistry.Get(source.Item).MaxStackSize;
+            var space = maxStack - target.Count;
+            var toMove = Math.Min(space, moveCount);
+            if (toMove <= 0) return;
+            target.Count += toMove;
+            source.Count -= toMove;
+        }
+        else
+        {
+            if (count >= 0 && count < source.Count) return;
+            (source, target) = (target, source);
+        }
+
+        player.Crafting.SetSlot(from, source.Count <= 0 ? default : source);
+        player.Crafting.SetSlot(to, target);
     }
 
     public void SubmitAttack(PlayerId playerId, MobId targetMob)
@@ -765,7 +925,8 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             IsGhostMode: player.IsGhostMode,
             SelectedHotbarSlot: player.Inventory.SelectedSlot,
             Inventory: player.Inventory.BuildSnapshot(),
-            Attributes: attrSnap);
+            Attributes: attrSnap,
+            Crafting: player.Crafting.BuildSnapshot());
 
         return new GameStateSnapshot(
             TickId: tickId,

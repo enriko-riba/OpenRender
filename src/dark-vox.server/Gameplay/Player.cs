@@ -1,11 +1,11 @@
-using OpenTK.Mathematics;
 using DarkVox.Shared.Abstractions;
 using DarkVox.Shared.Gameplay;
+using DarkVox.Shared.Gameplay.Crafting;
 using DarkVox.Shared.Input;
 using DarkVox.Shared.State;
 using DarkVox.Shared.World;
 using DarkVox.Shared.World.Registry;
-using DarkVox.World;
+using OpenTK.Mathematics;
 
 namespace DarkVox.Server.Gameplay;
 
@@ -51,6 +51,7 @@ public sealed class Player : ILootCollector
 
     public PlayerAttributes Attributes { get; } = new();
     public Inventory Inventory { get; } = new();
+    public CraftingGrid Crafting { get; } = new();
 
     public Player(VoxelWorld world, Vector3 spawnPosition, IBlockEditService? blockEdits = null)
     {
@@ -166,8 +167,8 @@ public sealed class Player : ILootCollector
 
         // Tick attributes with exhaustion context
         Attributes.Tick(elapsedSeconds, new PlayerAttributeTickContext(
-            IsMoving: isMoving, 
-            IsSprinting: isSprinting, 
+            IsMoving: isMoving,
+            IsSprinting: isSprinting,
             IsGhostMode: IsGhostMode,
             JumpedThisTick: didJump || jumpedThisTick,
             AttackedThisTick: attackedThisTick,
@@ -220,7 +221,7 @@ public sealed class Player : ILootCollector
         }
 
         blockEdits.ApplyBlockEdit(globalPosition, BlockId.Air, true);
-        
+
         // Track block breaking for exhaustion
         blocksBrokenThisTick++;
     }
@@ -297,7 +298,7 @@ public sealed class Player : ILootCollector
     public void StartAttackCooldown(float attackSpeed)
     {
         attackCooldownRemaining = attackSpeed > 0 ? 1f / attackSpeed : PlayerConstants.AttackCooldown;
-        
+
         // Track attack for exhaustion
         attackedThisTick = true;
     }
@@ -327,7 +328,8 @@ public sealed class Player : ILootCollector
             IsGhostMode: IsGhostMode,
             SelectedHotbarSlot: selectedHotbarSlot,
             Inventory: Inventory.BuildSnapshot(),
-            Attributes: Attributes.BuildSnapshot());
+            Attributes: Attributes.BuildSnapshot(),
+            Crafting: Crafting.BuildSnapshot());
     }
 
     /// <summary>
@@ -442,10 +444,10 @@ public sealed class Player : ILootCollector
 
         Move(velocity * dt);
 
-        var maxSpeed = isSprinting 
-            ? PlayerConstants.MoveSpeed * PlayerConstants.SprintMultiplier 
-            : (isCrouching 
-                ? PlayerConstants.MoveSpeed * PlayerConstants.CrouchMultiplier 
+        var maxSpeed = isSprinting
+            ? PlayerConstants.MoveSpeed * PlayerConstants.SprintMultiplier
+            : (isCrouching
+                ? PlayerConstants.MoveSpeed * PlayerConstants.CrouchMultiplier
                 : PlayerConstants.MoveSpeed);
         var hVel = new Vector2(velocity.X, velocity.Z);
         if (hVel.LengthSquared > maxSpeed * maxSpeed)

@@ -187,9 +187,6 @@ public static class GameContentRegistry
 
     private static void RegisterBlocks(Dictionary<GameObjectId, GameObject> builder)
     {
-        // NOTE: This should stay in sync with BlockRegistry registration.
-        // We register blocks into the unified object dictionary using the block IDs.
-
         void Add(BlockId id, Block block) => builder[id.ToGameObjectId()] = block;
 
         Add(BlockId.Air, new Block(BlockId.Air) {

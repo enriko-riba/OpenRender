@@ -8,6 +8,7 @@ using DarkVox.Shared.State;
 using DarkVox.Shared.World;
 using DarkVox.Shared.World.Registry;
 using DarkVox.World;
+using DarkVox.Shared.Gameplay.Crafting;
 
 namespace DarkVox.Components;
 
@@ -105,6 +106,7 @@ public class Player : ILootCollector
     internal Vector3 RequestedMovement { get; private set; }
     
     public Inventory Inventory { get; } = new();
+    public CraftingGrid Crafting { get; } = new();
 
     public void AddItem(GameObjectId item, int count)
     {
@@ -283,6 +285,7 @@ public class Player : ILootCollector
 
         Inventory.SelectedSlot = snapshot.SelectedHotbarSlot;
         Inventory.ApplySnapshot(snapshot.Inventory);
+        Crafting.ApplySnapshot(snapshot.Crafting);
         Attributes.ApplySnapshot(snapshot.Attributes);
 
         // The client does not run authoritative physics; keep diagnostics derived from the

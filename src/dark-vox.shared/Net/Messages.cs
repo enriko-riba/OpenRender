@@ -32,6 +32,16 @@ public readonly record struct ClientInventoryMoveMessage(PlayerId PlayerId, Inve
 /// </summary>
 public readonly record struct ClientReturnToStorageMessage(PlayerId PlayerId, ReturnToStorageCommand Command) : IClientToServerMessage;
 
+/// <summary>
+/// Client requests moving an item between inventory and crafting grid.
+/// </summary>
+public readonly record struct ClientContainerMoveMessage(PlayerId PlayerId, ContainerMoveCommand Command) : IClientToServerMessage;
+
+/// <summary>
+/// Client requests crafting the current result from the 2x2 grid.
+/// </summary>
+public readonly record struct ClientCraftFromGridMessage(PlayerId PlayerId, CraftFromGridCommand Command) : IClientToServerMessage;
+
 public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSnapshot Snapshot) : IServerToClientMessage;
 
 public readonly record struct ServerMobStateMessage(PlayerId PlayerId, MobStateSnapshot Snapshot) : IServerToClientMessage;

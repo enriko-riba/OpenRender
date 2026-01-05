@@ -21,6 +21,29 @@ public readonly record struct EatFoodCommand();
 /// <param name="Count">Number of items to move. Use -1 for entire stack.</param>
 public readonly record struct InventoryMoveCommand(int SourceSlot, int TargetSlot, int Count = -1);
 
+public enum ItemContainer : byte
+{
+	Inventory = 0,
+	Crafting = 1,
+}
+
+/// <summary>
+/// Command sent from client to server to request moving an item between the inventory and the 2x2 crafting grid.
+/// Slot order for crafting: 0=TL, 1=TR, 2=BL, 3=BR.
+/// </summary>
+public readonly record struct ContainerMoveCommand(
+	ItemContainer SourceContainer,
+	int SourceSlot,
+	ItemContainer TargetContainer,
+	int TargetSlot,
+	int Count = -1);
+
+/// <summary>
+/// Command sent from client to server when the player clicks the crafting result slot.
+/// Server validates recipe + inventory space and, if valid, consumes materials and grants the result.
+/// </summary>
+public readonly record struct CraftFromGridCommand();
+
 /// <summary>
 /// Command sent from client to server to return an item from a hotbar slot to storage.
 /// Server clears the hotbar slot and calls ReturnItemToStorage to redistribute.

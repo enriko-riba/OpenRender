@@ -329,6 +329,8 @@ public enum GameObjectId : ushort
     /// <summary>Bone - mob drop from skeletons.</summary>
     Bone = 1202,
 
+    /// <summary>Coal - mining resource, used as fuel.</summary>
+    Coal = 1203,
     #endregion
 
     #region Placeables (1300-1399)

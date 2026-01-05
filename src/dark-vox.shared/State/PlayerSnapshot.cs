@@ -10,4 +10,5 @@ public readonly record struct PlayerSnapshot(
     bool IsGhostMode,
     int SelectedHotbarSlot,
     PlayerAttributesSnapshot Attributes,
-    InventorySnapshot Inventory);
+    InventorySnapshot Inventory,
+    CraftingSnapshot Crafting);

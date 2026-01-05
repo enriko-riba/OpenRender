@@ -96,6 +96,10 @@ public sealed class LocalGameClient(
 
     public void Send(ReturnToStorageCommand command) => connection.Send(new ClientReturnToStorageMessage(playerId, command));
 
+    public void Send(ContainerMoveCommand command) => connection.Send(new ClientContainerMoveMessage(playerId, command));
+
+    public void Send(CraftFromGridCommand command) => connection.Send(new ClientCraftFromGridMessage(playerId, command));
+
     public void SendAttack(MobId targetMob) => connection.Send(new ClientAttackMobMessage(playerId, targetMob));
 
     public void Start()

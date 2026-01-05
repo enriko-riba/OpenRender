@@ -239,6 +239,43 @@ public class Inventory
     }
 
     /// <summary>
+    /// Returns true if the inventory (hotbar + storage) can accept the given quantity.
+    /// This is used for operations that must not partially apply (e.g., crafting).
+    /// </summary>
+    public bool CanAddItem(GameObjectId item, int count)
+    {
+        if (item == GameObjectId.Air) return true;
+        if (count <= 0) return true;
+
+        var itemDef = GameContentRegistry.Get(item);
+        var maxStack = itemDef.MaxStackSize;
+        var remaining = count;
+
+        // Count free space in existing stacks.
+        for (var i = 0; i < SlotCount && remaining > 0; i++)
+        {
+            var slot = slots[i];
+            if (slot.Item == item && slot.Count > 0 && slot.Count < maxStack)
+            {
+                var space = maxStack - slot.Count;
+                remaining -= Math.Min(space, remaining);
+            }
+        }
+
+        // Count empty slots.
+        for (var i = 0; i < SlotCount && remaining > 0; i++)
+        {
+            var slot = slots[i];
+            if (slot.IsEmpty)
+            {
+                remaining -= Math.Min(maxStack, remaining);
+            }
+        }
+
+        return remaining <= 0;
+    }
+
+    /// <summary>
     /// Attempts to return an item to storage slots (indices 9-35).
     /// First tries to stack with existing items of the same type, then uses empty slots.
     /// </summary>

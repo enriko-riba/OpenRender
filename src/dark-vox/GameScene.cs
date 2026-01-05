@@ -280,18 +280,16 @@ internal class GameScene : Scene
         statusBar.IsVisible = true;
         AddNode(statusBar);
 
-        inventorySprite = InventorySprite.Create(player.Inventory, tr);
+        inventorySprite = InventorySprite.Create(player.Inventory, player.Crafting, tr);
         inventorySprite.SetPosition(new Vector2(SceneManager.ClientSize.X / 2f, SceneManager.ClientSize.Y / 2f));
         inventorySprite.OnInventoryMove = (command) =>
-        {
             // Send inventory move request to server
             localClient?.Send(command);
-        };
         inventorySprite.OnReturnToStorage = (command) =>
-        {
             // Send return-to-storage request to server
             localClient?.Send(command);
-        };
+        inventorySprite.OnContainerMove = (command) => localClient?.Send(command);
+        inventorySprite.OnCraftFromGrid = (command) => localClient?.Send(command);
         AddNode(inventorySprite);
 
         camera!.Invalidate();
