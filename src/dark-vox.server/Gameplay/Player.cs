@@ -375,6 +375,10 @@ public sealed class Player : ILootCollector
                 }
             }
         }
+
+        // Server-side normalization: hotbar is a shortcut bar (Count=1).
+        // Move any overflow quantities into storage so UI + save data stay consistent.
+        Inventory.NormalizeHotbarShortcuts();
     }
 
     private void HandleGhostMode(double elapsedSeconds)

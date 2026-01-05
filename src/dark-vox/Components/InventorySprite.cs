@@ -59,21 +59,32 @@ internal class InventorySprite : Sprite
         set
         {
             IsVisible = value;
-            
-            foreach (var child in Children)
-            {
-                child.IsVisible = value;
-            }
+
+            // NOTE: Do not blindly toggle all children visible when opening.
+            // Slot sprites are initialized with a placeholder texture (stick.png) and must be
+            // shown/hidden based on actual inventory state via UpdateSlots().
 
             // When inventory closes, cancel any local drag state.
             // Server snapshots remain authoritative and will drive the UI.
             if (!value)
             {
+                // Ensure no slot sprites remain visible while closed.
+                for (var i = 0; i < Inventory.SlotCount; i++)
+                {
+                    slotSprites[i].IsVisible = false;
+                }
+
                 heldItemSprite.IsVisible = false;
 
                 heldItem = default;
                 dragSourceSlot = -1;
                 lastHeldItemId = GameObjectId.Air;
+            }
+            else
+            {
+                // Inventory just opened: refresh slot visuals immediately.
+                UpdateSlots();
+                lastInventoryVersion = inventory.Version;
             }
         }
     }
@@ -274,8 +285,19 @@ internal class InventorySprite : Sprite
     {
         if (Scene == null) return new Rectangle(0, 0, 0, 0);
 
-        slotSprites[index].GetWorldPosition(out var pos);
-        return new Rectangle((int)pos.X, (int)pos.Y, ContentSize, ContentSize);
+        // Use local layout coordinates relative to the inventory panel, similar to HotBar.
+        // This avoids depending on world-space transforms for UI hit tests and overlays.
+        GetPosition(out var invPos);
+        var invTopLeft = new Vector2(
+            invPos.X - Size.X * Pivot.X,
+            invPos.Y - Size.Y * Pivot.Y);
+
+        slotSprites[index].GetPosition(out var slotLocalPos);
+        return new Rectangle(
+            (int)MathF.Round(invTopLeft.X + slotLocalPos.X),
+            (int)MathF.Round(invTopLeft.Y + slotLocalPos.Y),
+            ContentSize,
+            ContentSize);
     }
 
     private void HandleLeftClick(int slotIndex)

@@ -40,6 +40,53 @@ public class Inventory
 
     public InventoryItem SelectedItem => slots[selectedSlot];
 
+    /// <summary>
+    /// Normalizes the hotbar to the "shortcut" model:
+    /// - Hotbar slots contain at most 1 item each.
+    /// - Duplicate item types in hotbar are removed (returned to storage).
+    /// Any overflow is stacked into storage.
+    /// Intended for server-side use after loading persisted inventory.
+    /// </summary>
+    public void NormalizeHotbarShortcuts()
+    {
+        var seen = new HashSet<GameObjectId>();
+
+        for (var i = 0; i < HotbarSize; i++)
+        {
+            var slot = slots[i];
+            if (slot.IsEmpty)
+            {
+                if (slots[i].Item != GameObjectId.Air || slots[i].Count != 0)
+                {
+                    slots[i] = default;
+                    Version++;
+                }
+                continue;
+            }
+
+            // Only one hotbar slot per item type.
+            if (seen.Contains(slot.Item))
+            {
+                slots[i] = default;
+                Version++;
+                ReturnItemToStorage(slot);
+                continue;
+            }
+
+            seen.Add(slot.Item);
+
+            // Hotbar should be a shortcut: keep 1, return overflow to storage.
+            if (slot.Count > 1)
+            {
+                var overflow = slot.Count - 1;
+                slot.Count = 1;
+                slots[i] = slot;
+                Version++;
+                ReturnItemToStorage(new InventoryItem { Item = slot.Item, Count = overflow });
+            }
+        }
+    }
+
     public void AddItem(GameObjectId item, int count = 1)
     {
         if (item == GameObjectId.Air) return;
@@ -48,25 +95,8 @@ public class Inventory
         var itemDef = GameContentRegistry.Get(item);
         var maxStack = itemDef.MaxStackSize;
 
-        // 1) Stack into existing hotbar stacks first (slots 0-8)
-        for (var i = 0; i < HotbarSize && count > 0; i++)
-        {
-            if (slots[i].Item == item && slots[i].Count < maxStack)
-            {
-                var space = maxStack - slots[i].Count;
-                var toAdd = Math.Min(space, count);
-                if (toAdd > 0)
-                {
-                    slots[i].Count += toAdd;
-                    count -= toAdd;
-                    Version++;
-                }
-            }
-        }
-
-        // 2) Ensure the item appears in the hotbar even if it already exists in storage.
-        // This matches expected UX: when the hotbar is empty for an item, the next pickup
-        // should repopulate the hotbar instead of silently stacking into storage.
+        // Hotbar is a shortcut bar: keep exactly 1 in hotbar, stack quantities into storage.
+        // Ensure the item appears in the hotbar (when possible), but never increase hotbar count beyond 1.
         var isInHotbar = false;
         for (var i = 0; i < HotbarSize; i++)
         {
@@ -128,27 +158,21 @@ public class Inventory
         if (slots[SelectedSlot].IsEmpty) return false;
 
         var itemType = slots[SelectedSlot].Item;
-        slots[SelectedSlot].Count--;
-        
-        if (slots[SelectedSlot].Count <= 0)
+
+        // Consume from storage first while keeping the hotbar as a shortcut (Count=1).
+        for (var i = HotbarSize; i < SlotCount; i++)
         {
-            slots[SelectedSlot] = default;
-            
-            // Try to refill from storage
-            for (var i = HotbarSize; i < SlotCount; i++)
+            if (slots[i].Item == itemType && slots[i].Count > 0)
             {
-                if (slots[i].Item == itemType && slots[i].Count > 0)
-                {
-                    slots[i].Count--;
-                    if (slots[i].Count <= 0) slots[i] = default;
-                    
-                    slots[SelectedSlot].Item = itemType;
-                    slots[SelectedSlot].Count = 1;
-                    break;
-                }
+                slots[i].Count--;
+                if (slots[i].Count <= 0) slots[i] = default;
+                Version++;
+                return true;
             }
         }
 
+        // No storage remainder: consume the last item by clearing the hotbar slot.
+        slots[SelectedSlot] = default;
         Version++;
         return true;
     }
