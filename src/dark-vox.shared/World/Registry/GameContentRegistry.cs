@@ -22,8 +22,17 @@ public static class GameContentRegistry
     /// </summary>
     public static FrozenDictionary<BlockId, Block> Blocks { get; }
 
+    /// <summary>
+    /// Authoritative object transformation rules (e.g. BreakDrop, Smelting).
+    /// </summary>
+    public static FrozenDictionary<GameObjectTransformationKey, GameObjectId> Transformations { get; }
+
     static GameContentRegistry()
     {
+        var transformBuilder = new Dictionary<GameObjectTransformationKey, GameObjectId>();
+        RegisterTransformations(transformBuilder);
+        Transformations = transformBuilder.ToFrozenDictionary();
+
         var builder = new Dictionary<GameObjectId, GameObject>();
         RegisterAll(builder);
 
@@ -45,6 +54,12 @@ public static class GameContentRegistry
     /// Tries to get a game object by ID.
     /// </summary>
     public static bool TryGet(GameObjectId id, out GameObject? obj) => Objects.TryGetValue(id, out obj);
+
+    public static bool TryGetTransformation(GameObjectId source, GameObjectTransformationKind kind, out GameObjectId result) =>
+        Transformations.TryGetValue(new GameObjectTransformationKey(source, kind), out result);
+
+    public static bool TryGetSmeltingResult(GameObjectId source, out GameObjectId result) =>
+        TryGetTransformation(source, GameObjectTransformationKind.Smelting, out result);
 
     /// <summary>
     /// Gets a block by ID. Returns Air block if not found.
@@ -185,9 +200,32 @@ public static class GameContentRegistry
         });
     }
 
+    private static void RegisterTransformations(Dictionary<GameObjectTransformationKey, GameObjectId> builder)
+    {
+        // Break drops: ore blocks drop crafting materials (not the ore block itself).
+        builder[new GameObjectTransformationKey(GameObjectId.CoalOre, GameObjectTransformationKind.BreakDrop)] = GameObjectId.Coal;
+        builder[new GameObjectTransformationKey(GameObjectId.DiamondOre, GameObjectTransformationKind.BreakDrop)] = GameObjectId.Diamond;
+        builder[new GameObjectTransformationKey(GameObjectId.IronOre, GameObjectTransformationKind.BreakDrop)] = GameObjectId.RawIron;
+        builder[new GameObjectTransformationKey(GameObjectId.GoldOre, GameObjectTransformationKind.BreakDrop)] = GameObjectId.RawGold;
+        builder[new GameObjectTransformationKey(GameObjectId.CopperOre, GameObjectTransformationKind.BreakDrop)] = GameObjectId.RawCopper;
+
+        // Smelting: only certain raw materials can be smelted.
+        builder[new GameObjectTransformationKey(GameObjectId.RawIron, GameObjectTransformationKind.Smelting)] = GameObjectId.Iron;
+        builder[new GameObjectTransformationKey(GameObjectId.RawGold, GameObjectTransformationKind.Smelting)] = GameObjectId.Gold;
+        builder[new GameObjectTransformationKey(GameObjectId.RawCopper, GameObjectTransformationKind.Smelting)] = GameObjectId.Copper;
+    }
+
     private static void RegisterBlocks(Dictionary<GameObjectId, GameObject> builder)
     {
         void Add(BlockId id, Block block) => builder[id.ToGameObjectId()] = block;
+
+        LootTable OreLoot(BlockId ore)
+        {
+            var oreObjId = ore.ToGameObjectId();
+            return TryGetTransformation(oreObjId, GameObjectTransformationKind.BreakDrop, out var dropItem)
+                ? LootTable.WithChanceDrops(new LootEntry(dropItem, 1, 1, 1.0f))
+                : LootTable.Self;
+        }
 
         Add(BlockId.Air, new Block(BlockId.Air) {
             IsSolid = false, IsOpaque = false, IsReplaceable = true,
@@ -253,11 +291,11 @@ public static class GameContentRegistry
         Add(BlockId.BrownTerracotta, new Block(BlockId.BrownTerracotta));
         Add(BlockId.YellowTerracotta, new Block(BlockId.YellowTerracotta));
 
-        Add(BlockId.CoalOre, new Block(BlockId.CoalOre));
-        Add(BlockId.IronOre, new Block(BlockId.IronOre));
-        Add(BlockId.GoldOre, new Block(BlockId.GoldOre));
-        Add(BlockId.DiamondOre, new Block(BlockId.DiamondOre));
-        Add(BlockId.CopperOre, new Block(BlockId.CopperOre));
+        Add(BlockId.CoalOre, new Block(BlockId.CoalOre) { LootTable = OreLoot(BlockId.CoalOre) });
+        Add(BlockId.IronOre, new Block(BlockId.IronOre) { LootTable = OreLoot(BlockId.IronOre) });
+        Add(BlockId.GoldOre, new Block(BlockId.GoldOre) { LootTable = OreLoot(BlockId.GoldOre) });
+        Add(BlockId.DiamondOre, new Block(BlockId.DiamondOre) { LootTable = OreLoot(BlockId.DiamondOre) });
+        Add(BlockId.CopperOre, new Block(BlockId.CopperOre) { LootTable = OreLoot(BlockId.CopperOre) });
 
         Add(BlockId.OakLog, new Block(BlockId.OakLog) { IsTree = true });
         Add(BlockId.BirchLog, new Block(BlockId.BirchLog) { IsTree = true });
@@ -417,17 +455,11 @@ public static class GameContentRegistry
             _ => GameObjectId.OakSapling
         };
 
-        var isOak = blockId == BlockId.OakLeaves;
 
-        LootEntry[] drops = isOak
-            ? [
+        LootEntry[] drops = [
                 new LootEntry(saplingId, 1, 1, 0.05f),
                 new LootEntry(GameObjectId.Stick, 1, 2, 0.02f),
                 new LootEntry(GameObjectId.Apple, 1, 1, 0.005f)
-              ]
-            : [
-                new LootEntry(saplingId, 1, 1, 0.05f),
-                new LootEntry(GameObjectId.Stick, 1, 2, 0.02f)
               ];
 
         return new Block(blockId)
@@ -490,25 +522,17 @@ public static class GameContentRegistry
 
     private static void RegisterMaterials(Dictionary<GameObjectId, GameObject> builder)
     {
-        builder[GameObjectId.Stick] = new CraftingMaterial(GameObjectId.Stick)
-        {
-            TexturePath = $"{ItemTextureDir}/stick.png"
-        };
+        builder[GameObjectId.Stick] = new CraftingMaterial(GameObjectId.Stick) { TexturePath = $"{ItemTextureDir}/stick.png" };
+        builder[GameObjectId.Leather] = new CraftingMaterial(GameObjectId.Leather) { TexturePath = $"{ItemTextureDir}/leather.png" };
+        builder[GameObjectId.Bone] = new CraftingMaterial(GameObjectId.Bone) { TexturePath = $"{ItemTextureDir}/bone.png" };
 
-        builder[GameObjectId.Leather] = new CraftingMaterial(GameObjectId.Leather)
-        {
-            TexturePath = $"{ItemTextureDir}/leather.png"
-        };
+        // Mining materials
+        builder[GameObjectId.Coal] = new CraftingMaterial(GameObjectId.Coal) { TexturePath = $"{ItemTextureDir}/coal.png" };
+        builder[GameObjectId.Diamond] = new CraftingMaterial(GameObjectId.Diamond) { TexturePath = $"{ItemTextureDir}/diamond.png" };
+        builder[GameObjectId.RawIron] = new CraftingMaterial(GameObjectId.RawIron) { TexturePath = $"{ItemTextureDir}/raw_iron.png" };
+        builder[GameObjectId.Iron] = new CraftingMaterial(GameObjectId.Iron) { TexturePath = $"{ItemTextureDir}/iron.png" };
 
-        builder[GameObjectId.Bone] = new CraftingMaterial(GameObjectId.Bone)
-        {
-            TexturePath = $"{ItemTextureDir}/bone.png"
-        };
-
-        builder[GameObjectId.Arrow] = new CombatItem(GameObjectId.Arrow)
-        {
-            TexturePath = $"{ItemTextureDir}/arrow.png"
-        };
+        builder[GameObjectId.Arrow] = new CombatItem(GameObjectId.Arrow) { TexturePath = $"{ItemTextureDir}/arrow.png" };
     }
 
     private static void RegisterPlaceables(Dictionary<GameObjectId, GameObject> builder)

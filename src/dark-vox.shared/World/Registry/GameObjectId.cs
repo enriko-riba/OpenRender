@@ -331,6 +331,25 @@ public enum GameObjectId : ushort
 
     /// <summary>Coal - mining resource, used as fuel.</summary>
     Coal = 1203,
+
+    /// <summary>Diamond - rare mining resource, used for high tier crafting.</summary>
+    Diamond = 1204,
+
+    /// <summary>Raw iron - dropped from iron ore, must be smelted into iron.</summary>
+    RawIron = 1205,
+    /// <summary>Iron - smelted from raw iron.</summary>
+    Iron = 1206,
+
+    /// <summary>Raw gold - dropped from gold ore, must be smelted into gold.</summary>
+    RawGold = 1207,
+    /// <summary>Gold - smelted from raw gold.</summary>
+    Gold = 1208,
+
+    /// <summary>Raw copper - dropped from copper ore, must be smelted into copper.</summary>
+    RawCopper = 1209,
+    /// <summary>Copper - smelted from raw copper.</summary>
+    Copper = 1210,
+
     #endregion
 
     #region Placeables (1300-1399)
