@@ -27,6 +27,11 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
 
     // Continuous hostile spawning state.
     private double hostileSpawnAccumulatorSeconds;
+    private double hostileSpawnTimeSeconds;
+
+    // Per-area hostile spawn cooldowns to avoid rapidly filling a single cave/surface pocket.
+    // Key is density-area key; value is last spawn time (seconds) for the layer.
+    private readonly Dictionary<long, (double Surface, double Cave)> lastHostileSpawnTimeByArea = [];
 
     // Bedrock-like: global entity cap shared by all players in the dimension.
     // (This includes hostiles + passives + ambient; currently we only have passive + hostile.)
@@ -54,13 +59,16 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     // Hostile continuous spawning: attempt packs at a fixed cadence.
     // Spawning is "continuous" but should not be *high frequency*.
     // A high tick rate quickly slams into density caps and feels like instant overcrowding.
-    private const double HostileSpawnCycleSeconds = 1.0;
+    private const double HostileSpawnCycleSeconds = 2.5;
     private const int HostilePackAttemptsPerCyclePerPlayer = 1;
-    private const double HostileSpawnChancePerCycle = 0.25; // 25% chance per cycle per player
+    private const double HostileSpawnChancePerCycle = 0.12; // per cycle (further reduced by soft-caps)
     private const int HostilePackSizeMin = 1;
-    private const int HostilePackSizeMax = 3;
+    private const int HostilePackSizeMax = 2;
     private const float HostileMinSpawnRadiusBlocks = 24;
     private const float HostileMaxSpawnRadiusBlocks = 128;
+
+    private const double HostileSurfaceAreaCooldownSeconds = 20.0;
+    private const double HostileCaveAreaCooldownSeconds = 30.0;
 
     public void Tick(
         ulong tickId,
@@ -166,198 +174,289 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             return;
         }
 
+        hostileSpawnTimeSeconds += elapsedSeconds;
+
         hostileSpawnAccumulatorSeconds += elapsedSeconds;
         if (hostileSpawnAccumulatorSeconds < HostileSpawnCycleSeconds)
         {
             return;
         }
 
-        // Run as many cycles as needed if the server is catching up.
-        var cycles = (int)Math.Floor(hostileSpawnAccumulatorSeconds / HostileSpawnCycleSeconds);
-        hostileSpawnAccumulatorSeconds -= cycles * HostileSpawnCycleSeconds;
-        cycles = Math.Min(cycles, 5); // prevent runaway on long frames
+        // Avoid catch-up bursts (which feel like instant overcrowding).
+        // If the server lags, we do NOT run multiple spawn cycles back-to-back.
+        hostileSpawnAccumulatorSeconds -= HostileSpawnCycleSeconds;
 
         var isDaytime = WorldTimeService.IsDaytime(worldTime.TimeOfDaySeconds);
         var noSpawnRadiusSq = settings.NoSpawnRadiusBlocks * settings.NoSpawnRadiusBlocks;
 
-        for (var cycle = 0; cycle < cycles; cycle++)
+        var (passiveCount, hostileCount) = CountByCategory(mobManager);
+        if (mobManager.Mobs.Count >= GlobalEntityHardCap)
         {
-            var (passiveCount, hostileCount) = CountByCategory(mobManager);
+            return;
+        }
+
+        var density = BuildHostileDensityByArea(mobManager);
+
+        // Bedrock-style: do not scale aggressively with player count.
+        // We still pick spawn anchors around players, but keep attempts modest.
+        var packAttemptsThisCycle = HostilePackAttemptsPerCyclePerPlayer * Math.Min(players.Length, 2);
+        for (var attempt = 0; attempt < packAttemptsThisCycle; attempt++)
+        {
             if (mobManager.Mobs.Count >= GlobalEntityHardCap)
             {
                 return;
             }
 
-            var density = BuildHostileDensityByArea(mobManager);
+            var playerPos = players[Random.Shared.Next(players.Length)].Position;
 
-            // Bedrock-style: do not scale aggressively with player count.
-            // We still pick spawn anchors around players, but keep attempts modest.
-            var packAttemptsThisCycle = HostilePackAttemptsPerCyclePerPlayer * Math.Min(players.Length, 2);
-            for (var attempt = 0; attempt < packAttemptsThisCycle; attempt++)
+            // Soft-cap: as local density approaches the cap, make spawns increasingly unlikely.
+            // Cap remains a hard maximum.
+            var localCount = GetHostileCountAround(mobManager, playerPos, HostileLocalDensityRadiusBlocks);
+            if (localCount >= CaveHostileDensityCap)
             {
-                if (Random.Shared.NextDouble() > HostileSpawnChancePerCycle)
-                {
-                    continue;
-                }
+                continue;
+            }
 
+            var localFactor = ComputeSoftCapChanceFactor(localCount, CaveHostileDensityCap, softStartFraction: 0.50);
+            var effectiveChance = HostileSpawnChancePerCycle * localFactor;
+            if (Random.Shared.NextDouble() > effectiveChance)
+            {
+                continue;
+            }
+
+            if (!TryPickHostileSpawnAnchor(worldSeed, worldTime, playerPos, readyChunkIndices, world, voxelCache, isDaytime, out var anchorPos))
+            {
+                continue;
+            }
+
+            // Pick which layer to attempt for this cycle.
+            // At night we allow surface spawns, but we don't try surface + cave in the same attempt.
+            var preferSurface = !isDaytime && Random.Shared.NextDouble() < 0.60;
+            var trySurface = preferSurface;
+            var tryCave = !preferSurface;
+            if (isDaytime)
+            {
+                trySurface = false;
+                tryCave = true;
+            }
+
+            var packSize = Random.Shared.Next(HostilePackSizeMin, HostilePackSizeMax + 1);
+            var placed = 0;
+            long? placedAreaKey = null;
+            MobSpawnLayer? placedLayer = null;
+
+            // Attempt a small pack around the anchor.
+            for (var k = 0; k < packSize; k++)
+            {
                 if (mobManager.Mobs.Count >= GlobalEntityHardCap)
                 {
-                    return;
+                    break;
                 }
 
-                var playerPos = players[Random.Shared.Next(players.Length)].Position;
+                // Small jitter around the anchor.
+                var ox = Random.Shared.Next(-4, 5);
+                var oz = Random.Shared.Next(-4, 5);
+                var x = (int)MathF.Floor(anchorPos.X) + ox;
+                var z = (int)MathF.Floor(anchorPos.Z) + oz;
 
-                // Check if player is already overwhelmed (local density check around player)
-                if (GetHostileCountAround(mobManager, playerPos, HostileLocalDensityRadiusBlocks) >= CaveHostileDensityCap)
+                // Keep spawns in the active ring around this player.
+                var dx = (x + 0.5f) - playerPos.X;
+                var dz = (z + 0.5f) - playerPos.Z;
+                var distSqXZ = dx * dx + dz * dz;
+                if (distSqXZ < HostileMinSpawnRadiusBlocks * HostileMinSpawnRadiusBlocks || distSqXZ > HostileMaxSpawnRadiusBlocks * HostileMaxSpawnRadiusBlocks)
                 {
                     continue;
                 }
 
-                if (!TryPickHostileSpawnAnchor(worldSeed, worldTime, playerPos, readyChunkIndices, world, voxelCache, isDaytime, out var anchorPos))
+                // Also ensure we are not too close to any other player.
+                var tooClose = false;
+                foreach (var (_, p) in players)
                 {
-                    continue;
-                }
-
-                var packSize = Random.Shared.Next(HostilePackSizeMin, HostilePackSizeMax + 1);
-                for (var k = 0; k < packSize; k++)
-                {
-                    if (mobManager.Mobs.Count >= GlobalEntityHardCap)
+                    var px = (x + 0.5f) - p.X;
+                    var pz = (z + 0.5f) - p.Z;
+                    if ((px * px + pz * pz) < noSpawnRadiusSq)
                     {
+                        tooClose = true;
                         break;
                     }
+                }
+                if (tooClose)
+                {
+                    continue;
+                }
 
-                    // Small jitter around the anchor.
-                    var ox = Random.Shared.Next(-4, 5);
-                    var oz = Random.Shared.Next(-4, 5);
-                    var x = (int)MathF.Floor(anchorPos.X) + ox;
-                    var z = (int)MathF.Floor(anchorPos.Z) + oz;
+                var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(x, 0, z));
+                if (!Contains(readyChunkIndices, chunkIndex))
+                {
+                    continue;
+                }
 
-                    // Keep spawns in the active ring around this player.
-                    var dx = (x + 0.5f) - playerPos.X;
-                    var dz = (z + 0.5f) - playerPos.Z;
-                    var distSqXZ = dx * dx + dz * dz;
-                    if (distSqXZ < HostileMinSpawnRadiusBlocks * HostileMinSpawnRadiusBlocks || distSqXZ > HostileMaxSpawnRadiusBlocks * HostileMaxSpawnRadiusBlocks)
+                if (!voxelCache.TryAcquireChunkData(chunkIndex, out var chunkLease))
+                {
+                    continue;
+                }
+
+                using (chunkLease)
+                {
+                    var chunkData = chunkLease.Data;
+                    if (chunkData.LightData == null)
                     {
                         continue;
                     }
 
-                    // Also ensure we are not too close to any other player.
-                    var tooClose = false;
-                    foreach (var (_, p) in players)
-                    {
-                        var px = (x + 0.5f) - p.X;
-                        var pz = (z + 0.5f) - p.Z;
-                        if ((px * px + pz * pz) < noSpawnRadiusSq)
-                        {
-                            tooClose = true;
-                            break;
-                        }
-                    }
-                    if (tooClose)
+                    var chunk = world[chunkIndex];
+                    if (chunk is null || !chunk.HasCollisionData)
                     {
                         continue;
                     }
 
-                    var chunkIndex = VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(x, 0, z));
-                    if (!Contains(readyChunkIndices, chunkIndex))
+                    var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
+                    var lx = x - origin.X;
+                    var lz = z - origin.Z;
+                    if (lx is < 0 or >= VoxelHelper.ChunkSideSize || lz is < 0 or >= VoxelHelper.ChunkSideSize)
                     {
                         continue;
                     }
 
-                    if (!voxelCache.TryAcquireChunkData(chunkIndex, out var chunkLease))
+                    var topY = chunk.GetTerrainHeightAt(lx, lz);
+                    if (topY <= 1 || topY >= VoxelHelper.ChunkYSize - 2)
                     {
                         continue;
                     }
 
-                    using (chunkLease)
+                    var areaKey = GetDensityAreaKey(x, z);
+                    var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
+
+                    // Per-area cooldown: avoid repeatedly spawning into the same 128x128 area.
+                    var lastTimes = lastHostileSpawnTimeByArea.TryGetValue(areaKey, out var lt) ? lt : (Surface: double.NegativeInfinity, Cave: double.NegativeInfinity);
+
+                    if (trySurface)
                     {
-                        var chunkData = chunkLease.Data;
-                        if (chunkData.LightData == null)
+                        if (counts.Surface >= SurfaceHostileDensityCap)
                         {
                             continue;
                         }
 
-                        var chunk = world[chunkIndex];
-                        if (chunk is null || !chunk.HasCollisionData)
+                        var areaFactor = ComputeSoftCapChanceFactor(counts.Surface, SurfaceHostileDensityCap, softStartFraction: 0.60);
+                        if (areaFactor <= 0.0)
                         {
                             continue;
                         }
 
-                        var origin = VoxelHelper.GetChunkPositionGlobal(chunkIndex);
-                        var lx = x - origin.X;
-                        var lz = z - origin.Z;
-                        if (lx is < 0 or >= VoxelHelper.ChunkSideSize || lz is < 0 or >= VoxelHelper.ChunkSideSize)
+                        if ((hostileSpawnTimeSeconds - lastTimes.Surface) < HostileSurfaceAreaCooldownSeconds)
                         {
                             continue;
                         }
 
-                        var topY = chunk.GetTerrainHeightAt(lx, lz);
-                        if (topY <= 1 || topY >= VoxelHelper.ChunkYSize - 2)
+                        if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Surface, SurfaceHostileDensityCap))
                         {
                             continue;
                         }
 
-                        // At night, allow surface hostiles (effective light handled inside TrySpawnAt).
-                        // During day, only allow caves/dark areas.
-                        if (!isDaytime)
+                        // Extra throttling near area cap.
+                        if (Random.Shared.NextDouble() > areaFactor)
                         {
-                            var areaKey = GetDensityAreaKey(x, z);
-                            var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
-                            if (counts.Surface >= SurfaceHostileDensityCap)
-                            {
-                                continue;
-                            }
-
-                            if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Surface, SurfaceHostileDensityCap))
-                            {
-                                continue;
-                            }
-
-                            if (TrySpawnAt(isDaytime: false, passiveCount, hostileCount, isCaveSpawn: false, x, topY, z, chunkData, world, voxelCache, out var spawnPos, out var spawnedDef))
-                            {
-                                var mob = mobManager.CreateMob(spawnedDef);
-                                mob.Position = spawnPos;
-                                mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
-                                mob.PitchDegrees = 0;
-                                mob.SpawnLayer = MobSpawnLayer.Surface;
-                                hostileCount++;
-
-                                density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
-                                continue;
-                            }
+                            continue;
                         }
 
+                        if (TrySpawnAt(isDaytime: false, passiveCount, hostileCount, isCaveSpawn: false, x, topY, z, chunkData, world, voxelCache, out var spawnPos, out var spawnedDef))
+                        {
+                            var mob = mobManager.CreateMob(spawnedDef);
+                            mob.Position = spawnPos;
+                            mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
+                            mob.PitchDegrees = 0;
+                            mob.SpawnLayer = MobSpawnLayer.Surface;
+                            hostileCount++;
+
+                            density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
+                            placed++;
+                            placedAreaKey = areaKey;
+                            placedLayer = MobSpawnLayer.Surface;
+                        }
+                    }
+                    else if (tryCave)
+                    {
                         // Cave spawn: scan downward for a dark pocket (raw skylight <= 7).
-                        if (TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out var y))
+                        if (!TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out var y))
                         {
-                            var areaKey = GetDensityAreaKey(x, z);
-                            var counts = density.TryGetValue(areaKey, out var existing) ? existing : (Surface: 0, Cave: 0);
-                            if (counts.Cave >= CaveHostileDensityCap)
-                            {
-                                continue;
-                            }
+                            continue;
+                        }
 
-                            if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Cave, CaveHostileDensityCap))
-                            {
-                                continue;
-                            }
+                        if (counts.Cave >= CaveHostileDensityCap)
+                        {
+                            continue;
+                        }
 
-                            if (TrySpawnAt(isDaytime, passiveCount, hostileCount, isCaveSpawn: true, x, y, z, chunkData, world, voxelCache, out var cavePos, out var caveDef))
-                            {
-                                var mob = mobManager.CreateMob(caveDef);
-                                mob.Position = cavePos;
-                                mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
-                                mob.PitchDegrees = 0;
-                                mob.SpawnLayer = MobSpawnLayer.Cave;
-                                hostileCount++;
+                        var areaFactor = ComputeSoftCapChanceFactor(counts.Cave, CaveHostileDensityCap, softStartFraction: 0.60);
+                        if (areaFactor <= 0.0)
+                        {
+                            continue;
+                        }
 
-                                density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
-                            }
+                        if ((hostileSpawnTimeSeconds - lastTimes.Cave) < HostileCaveAreaCooldownSeconds)
+                        {
+                            continue;
+                        }
+
+                        if (!HasHostileLocalHeadroom(mobManager, x, z, MobSpawnLayer.Cave, CaveHostileDensityCap))
+                        {
+                            continue;
+                        }
+
+                        if (Random.Shared.NextDouble() > areaFactor)
+                        {
+                            continue;
+                        }
+
+                        if (TrySpawnAt(isDaytime, passiveCount, hostileCount, isCaveSpawn: true, x, y, z, chunkData, world, voxelCache, out var cavePos, out var caveDef))
+                        {
+                            var mob = mobManager.CreateMob(caveDef);
+                            mob.Position = cavePos;
+                            mob.YawDegrees = (float)(Random.Shared.NextDouble() * 360.0);
+                            mob.PitchDegrees = 0;
+                            mob.SpawnLayer = MobSpawnLayer.Cave;
+                            hostileCount++;
+
+                            density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
+                            placed++;
+                            placedAreaKey = areaKey;
+                            placedLayer = MobSpawnLayer.Cave;
                         }
                     }
                 }
             }
+
+            // Apply cooldown only if we actually spawned something.
+            if (placed > 0 && placedAreaKey.HasValue && placedLayer.HasValue)
+            {
+                var key = placedAreaKey.Value;
+                var existingTimes = lastHostileSpawnTimeByArea.TryGetValue(key, out var t)
+                    ? t
+                    : (Surface: double.NegativeInfinity, Cave: double.NegativeInfinity);
+
+                lastHostileSpawnTimeByArea[key] = placedLayer.Value switch
+                {
+                    MobSpawnLayer.Surface => (Surface: hostileSpawnTimeSeconds, Cave: existingTimes.Cave),
+                    MobSpawnLayer.Cave => (Surface: existingTimes.Surface, Cave: hostileSpawnTimeSeconds),
+                    _ => existingTimes
+                };
+            }
         }
+    }
+
+    private static double ComputeSoftCapChanceFactor(int count, int cap, double softStartFraction)
+    {
+        if (cap <= 0) return 0.0;
+
+        var softStart = (int)Math.Round(cap * softStartFraction);
+        softStart = Math.Clamp(softStart, 0, cap - 1);
+
+        if (count <= softStart) return 1.0;
+        if (count >= cap) return 0.0;
+
+        var remaining = cap - count;
+        var range = cap - softStart;
+        return range <= 0 ? 0.0 : (double)remaining / range;
     }
 
     private static bool HasHostileLocalHeadroom(MobManager mobManager, int x, int z, MobSpawnLayer layer, int cap)

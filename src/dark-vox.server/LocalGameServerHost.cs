@@ -229,6 +229,10 @@ public sealed class LocalGameServerHost(
                 if (craft.PlayerId.Equals(playerId) && server is LocalGameServer concreteCraft)
                     concreteCraft.Submit(craft.PlayerId, craft.Command);
                 break;
+            case ClientClearCraftingGridMessage clear:
+                if (clear.PlayerId.Equals(playerId) && server is LocalGameServer concreteClear)
+                    concreteClear.Submit(clear.PlayerId, clear.Command);
+                break;
             case ClientAttackMobMessage attack:
                 if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
                     gs.SubmitAttack(attack.PlayerId, attack.TargetMob);

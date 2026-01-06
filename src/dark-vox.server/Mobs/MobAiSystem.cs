@@ -1,6 +1,8 @@
 using OpenTK.Mathematics;
 using DarkVox.Server.Combat;
 using DarkVox.Shared.State;
+using DarkVox.Shared.World;
+using DarkVox.Shared.World.Registry;
 using DarkVox.World;
 
 namespace DarkVox.Server.Mobs;
@@ -10,7 +12,7 @@ namespace DarkVox.Server.Mobs;
 /// </summary>
 public readonly record struct MobAttackIntent(MobId MobId, PlayerId TargetPlayer);
 
-public sealed class MobAiSystem()
+public sealed class MobAiSystem(VoxelWorld world)
 {
     /// <summary>
     /// Stores attack intents generated during this tick for processing by combat system.
@@ -199,8 +201,87 @@ public sealed class MobAiSystem()
         if (dir.LengthSquared > 0.001f)
         {
             dir.Normalize();
+
+            // Water avoidance: non-swimming mobs should not follow targets into liquid.
+            // Keep it simple and local: if the next step would enter liquid, attempt a sidestep;
+            // otherwise stop at the shoreline.
+            if (!mob.Definition.CanFly && !mob.Definition.CanSwim)
+            {
+                if (WouldStepFromLandIntoLiquid(mob, dir))
+                {
+                    if (TryFindNonLiquidDirection(mob, dir, out var adjusted))
+                    {
+                        dir = adjusted;
+                    }
+                    else
+                    {
+                        mob.Velocity.X = 0;
+                        mob.Velocity.Z = 0;
+                        return;
+                    }
+                }
+            }
+
             mob.Velocity.X = dir.X * speed;
             mob.Velocity.Z = dir.Z * speed;
         }
+    }
+
+    private bool WouldStepFromLandIntoLiquid(MobEntity mob, Vector3 dir)
+    {
+        var x0 = (int)MathF.Floor(mob.Position.X);
+        var y0 = (int)MathF.Floor(mob.Position.Y);
+        var z0 = (int)MathF.Floor(mob.Position.Z);
+
+        // Look a short distance ahead at the mob's feet.
+        var ahead = mob.Position + dir * 0.75f;
+        var x1 = (int)MathF.Floor(ahead.X);
+        var y1 = y0;
+        var z1 = (int)MathF.Floor(ahead.Z);
+
+        var cur = world.GetBlockByPositionGlobalSafe(x0, y0, z0);
+        var next = world.GetBlockByPositionGlobalSafe(x1, y1, z1);
+
+        var curLiquid = cur.HasValue && cur.Value.Block.IsLiquid();
+        var nextLiquid = next.HasValue && next.Value.Block.IsLiquid();
+
+        return !curLiquid && nextLiquid;
+    }
+
+    private bool TryFindNonLiquidDirection(MobEntity mob, Vector3 preferred, out Vector3 dir)
+    {
+        // Try preferred direction first (in case we're already in liquid or the check was conservative).
+        if (!WouldStepFromLandIntoLiquid(mob, preferred))
+        {
+            dir = preferred;
+            return true;
+        }
+
+        // Try sidesteps.
+        var left = new Vector3(-preferred.Z, 0, preferred.X);
+        var right = new Vector3(preferred.Z, 0, -preferred.X);
+
+        if (left.LengthSquared > 0.001f)
+        {
+            left.Normalize();
+            if (!WouldStepFromLandIntoLiquid(mob, left))
+            {
+                dir = left;
+                return true;
+            }
+        }
+
+        if (right.LengthSquared > 0.001f)
+        {
+            right.Normalize();
+            if (!WouldStepFromLandIntoLiquid(mob, right))
+            {
+                dir = right;
+                return true;
+            }
+        }
+
+        dir = default;
+        return false;
     }
 }

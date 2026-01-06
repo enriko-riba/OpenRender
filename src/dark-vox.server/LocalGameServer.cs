@@ -99,7 +99,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         this.streamingManager.Initialize(world.Seed);
 
         mobPhysicsSystem = new MobPhysicsSystem(world);
-        mobAiSystem = new MobAiSystem();
+        mobAiSystem = new MobAiSystem(world);
         combatSystem = new CombatSystem(droppedItemManager);
     }
 
@@ -187,6 +187,38 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
         player.Inventory.AddItem(recipe.ResultItem, recipe.ResultCount);
         player.Crafting.RecomputeResultPreview();
+    }
+
+    public void Submit(PlayerId playerId, ClearCraftingGridCommand command)
+    {
+        if (!players.TryGetValue(playerId, out var player)) return;
+
+        var changed = false;
+
+        // Move every slot back to inventory storage; drop overflow so the grid always empties.
+        for (var i = 0; i < CraftingGrid.SlotCount; i++)
+        {
+            var item = player.Crafting.GetSlot(i);
+            if (item.IsEmpty) continue;
+
+            changed = true;
+            player.Crafting.SetSlot(i, default);
+
+            var remaining = player.Inventory.ReturnItemToStorage(item);
+            if (remaining > 0)
+            {
+                droppedItemManager.Spawn(
+                    item.Item,
+                    remaining,
+                    player.Position + new Vector3(0, 1.0f, 0),
+                    new Vector3(0, 2.0f, 0));
+            }
+        }
+
+        if (changed)
+        {
+            player.Crafting.RecomputeResultPreview();
+        }
     }
 
     private static void TryMoveInventoryToCrafting(Player player, int invSlot, int craftSlot, int count)

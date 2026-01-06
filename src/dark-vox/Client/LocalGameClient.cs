@@ -100,6 +100,8 @@ public sealed class LocalGameClient(
 
     public void Send(CraftFromGridCommand command) => connection.Send(new ClientCraftFromGridMessage(playerId, command));
 
+    public void Send(ClearCraftingGridCommand command) => connection.Send(new ClientClearCraftingGridMessage(playerId, command));
+
     public void SendAttack(MobId targetMob) => connection.Send(new ClientAttackMobMessage(playerId, targetMob));
 
     public void Start()

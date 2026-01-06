@@ -42,6 +42,11 @@ public readonly record struct ClientContainerMoveMessage(PlayerId PlayerId, Cont
 /// </summary>
 public readonly record struct ClientCraftFromGridMessage(PlayerId PlayerId, CraftFromGridCommand Command) : IClientToServerMessage;
 
+/// <summary>
+/// Client requests clearing the 2x2 crafting grid.
+/// </summary>
+public readonly record struct ClientClearCraftingGridMessage(PlayerId PlayerId, ClearCraftingGridCommand Command) : IClientToServerMessage;
+
 public readonly record struct ServerStateMessage(PlayerId PlayerId, GameStateSnapshot Snapshot) : IServerToClientMessage;
 
 public readonly record struct ServerMobStateMessage(PlayerId PlayerId, MobStateSnapshot Snapshot) : IServerToClientMessage;

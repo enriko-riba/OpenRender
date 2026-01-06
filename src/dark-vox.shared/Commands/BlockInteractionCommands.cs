@@ -45,6 +45,12 @@ public readonly record struct ContainerMoveCommand(
 public readonly record struct CraftFromGridCommand();
 
 /// <summary>
+/// Command sent from client to server to clear the 2x2 crafting grid.
+/// Server attempts to return items to inventory storage; any overflow is dropped into the world.
+/// </summary>
+public readonly record struct ClearCraftingGridCommand();
+
+/// <summary>
 /// Command sent from client to server to return an item from a hotbar slot to storage.
 /// Server clears the hotbar slot and calls ReturnItemToStorage to redistribute.
 /// </summary>

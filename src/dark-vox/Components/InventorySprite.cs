@@ -92,6 +92,11 @@ internal class InventorySprite : Sprite
     /// </summary>
     public Action<CraftFromGridCommand>? OnCraftFromGrid { get; set; }
 
+    /// <summary>
+    /// Called when the player requests clearing the 2x2 crafting grid.
+    /// </summary>
+    public Action<ClearCraftingGridCommand>? OnClearCraftingGrid { get; set; }
+
     public bool IsOpen
     {
         get => IsVisible;
@@ -388,10 +393,21 @@ internal class InventorySprite : Sprite
             var hit = GetHitSlot(mouse.Position);
             if (hit.Kind == SlotKind.Result)
             {
-                if (heldItem.IsEmpty && !crafting.ResultPreview.IsEmpty)
+                if (!crafting.ResultPreview.IsEmpty)
                 {
                     OnCraftFromGrid?.Invoke(new CraftFromGridCommand());
                 }
+                return true;
+            }
+        }
+
+        // Quick clear action: right-click the result slot to return all crafting items.
+        if (rightPressed)
+        {
+            var hit = GetHitSlot(mouse.Position);
+            if (hit.Kind == SlotKind.Result)
+            {
+                OnClearCraftingGrid?.Invoke(new ClearCraftingGridCommand());
                 return true;
             }
         }
@@ -402,6 +418,12 @@ internal class InventorySprite : Sprite
             var hit = GetHitSlot(mouse.Position);
             if (hit.Kind != SlotKind.None && hit.Kind != SlotKind.Result)
             {
+                if (hit.Kind == SlotKind.Crafting)
+                {
+                    HandleCraftingRightClickPressed(hit);
+                    return true;
+                }
+
                 if (heldItem.IsEmpty)
                 {
                     // Normal right-click behavior: split stack (rounded up).
@@ -546,6 +568,12 @@ internal class InventorySprite : Sprite
     {
         if (heldItem.IsEmpty) return;
         if (!IsEligiblePaintTarget(hit)) return;
+
+        // Crafting rule: painting over a non-empty crafting slot has no effect.
+        if (hit.Kind == SlotKind.Crafting && !crafting.GetSlot(hit.Index).IsEmpty)
+        {
+            return;
+        }
 
         if (!paintVisited.Add(hit))
         {
@@ -1093,6 +1121,148 @@ internal class InventorySprite : Sprite
             heldItem = default;
             dragSource = default;
         }
+    }
+
+    private void HandleCraftingRightClickPressed(SlotRef hit)
+    {
+        if (hit.Kind != SlotKind.Crafting) return;
+
+        var craftIndex = hit.Index;
+        var slotItem = crafting.GetSlot(craftIndex);
+
+        // c) If no items are being dragged: empty the slot.
+        if (heldItem.IsEmpty)
+        {
+            if (slotItem.IsEmpty) return;
+
+            if (TryFindStorageSlotFor(slotItem, out var invSlot))
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Crafting,
+                    SourceSlot: craftIndex,
+                    TargetContainer: ItemContainer.Inventory,
+                    TargetSlot: invSlot,
+                    Count: -1));
+            }
+
+            return;
+        }
+
+        // d) If crafting slot is empty and user is dragging, start painting.
+        // Painting over non-empty crafting slots has no effect (enforced in TryPaintDropOne).
+        if (slotItem.IsEmpty)
+        {
+            paintMode = DragPaintMode.RightPaintOne;
+            paintVisited.Clear();
+            paintSequence.Clear();
+            TryPaintDropOne(hit);
+            return;
+        }
+
+        // a) Dragging same item: empty the slot.
+        if (slotItem.Item == heldItem.Item)
+        {
+            if (TryFindStorageSlotFor(slotItem, out var invSlot))
+            {
+                OnContainerMove?.Invoke(new ContainerMoveCommand(
+                    SourceContainer: ItemContainer.Crafting,
+                    SourceSlot: craftIndex,
+                    TargetContainer: ItemContainer.Inventory,
+                    TargetSlot: invSlot,
+                    Count: -1));
+            }
+            return;
+        }
+
+        // b) Different item: replace the slot with the dragged item.
+        // Return existing slot item to inventory storage, then drop the dragged stack into the crafting slot.
+        if (!TryFindStorageSlotFor(slotItem, out var storageSlot))
+        {
+            return;
+        }
+
+        OnContainerMove?.Invoke(new ContainerMoveCommand(
+            SourceContainer: ItemContainer.Crafting,
+            SourceSlot: craftIndex,
+            TargetContainer: ItemContainer.Inventory,
+            TargetSlot: storageSlot,
+            Count: -1));
+
+        if (dragSource.Kind == SlotKind.Inventory)
+        {
+            if (dragSource.Index < Inventory.HotbarSize) return;
+
+            OnContainerMove?.Invoke(new ContainerMoveCommand(
+                SourceContainer: ItemContainer.Inventory,
+                SourceSlot: dragSource.Index,
+                TargetContainer: ItemContainer.Crafting,
+                TargetSlot: craftIndex,
+                Count: isFullStackPickup ? -1 : heldItem.Count));
+        }
+        else if (dragSource.Kind == SlotKind.Crafting)
+        {
+            OnContainerMove?.Invoke(new ContainerMoveCommand(
+                SourceContainer: ItemContainer.Crafting,
+                SourceSlot: dragSource.Index,
+                TargetContainer: ItemContainer.Crafting,
+                TargetSlot: craftIndex,
+                Count: isFullStackPickup ? -1 : heldItem.Count));
+        }
+
+        heldItem = default;
+        dragSource = default;
+        isFullStackPickup = false;
+    }
+
+    private bool TryFindStorageSlotFor(InventoryItem item, out int slotIndex)
+    {
+        slotIndex = -1;
+        if (item.IsEmpty) return false;
+
+        var maxStack = GameContentRegistry.Get(item.Item).MaxStackSize;
+
+        // Prefer stacking into an existing stack with enough space.
+        for (var i = Inventory.HotbarSize; i < Inventory.SlotCount; i++)
+        {
+            var slot = inventory.GetItem(i);
+            if (slot.Item == item.Item)
+            {
+                var space = maxStack - slot.Count;
+                if (space >= item.Count)
+                {
+                    slotIndex = i;
+                    return true;
+                }
+            }
+        }
+
+        // Otherwise pick the first empty storage slot.
+        for (var i = Inventory.HotbarSize; i < Inventory.SlotCount; i++)
+        {
+            var slot = inventory.GetItem(i);
+            if (slot.IsEmpty)
+            {
+                slotIndex = i;
+                return true;
+            }
+        }
+
+        // Finally, allow partial stacking if any space exists.
+        for (var i = Inventory.HotbarSize; i < Inventory.SlotCount; i++)
+        {
+            var slot = inventory.GetItem(i);
+            if (slot.Item == item.Item)
+            {
+                var space = maxStack - slot.Count;
+                if (space > 0)
+                {
+                    slotIndex = i;
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private void HandleRightClick(SlotRef hit)

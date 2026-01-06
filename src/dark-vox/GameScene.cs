@@ -290,6 +290,7 @@ internal class GameScene : Scene
             localClient?.Send(command);
         inventorySprite.OnContainerMove = (command) => localClient?.Send(command);
         inventorySprite.OnCraftFromGrid = (command) => localClient?.Send(command);
+        inventorySprite.OnClearCraftingGrid = (command) => localClient?.Send(command);
         AddNode(inventorySprite);
 
         camera!.Invalidate();
@@ -325,6 +326,7 @@ internal class GameScene : Scene
                 hotBar.IsVisible = true;
                 statusBar.IsVisible = true;
                 crosshair.IsVisible = true;
+                localClient?.Send(new ClearCraftingGridCommand());
                 return;
             }
             SceneManager.Close();
@@ -338,6 +340,10 @@ internal class GameScene : Scene
             hotBar.IsVisible = !inventorySprite.IsOpen;
             statusBar.IsVisible = !inventorySprite.IsOpen;
             crosshair.IsVisible = !inventorySprite.IsOpen;
+
+            // On open: ensure crafting grid is empty regardless of prior state.
+            // On close: return any crafting items back to inventory (dropping overflow).
+            localClient?.Send(new ClearCraftingGridCommand());
             
             if (inventorySprite.IsOpen)
             {
