@@ -82,7 +82,6 @@ internal class GameScene : Scene
     private Sprite crosshair = default!;
     private DayNightCycle dayNightCycle = default!;
     private SkyBoxSun skyBox = default!;
-    private bool hasAppliedServerWorldTime;
     //private WaterNode waterNode = default!;
 
     // Block breaking state
@@ -240,7 +239,7 @@ internal class GameScene : Scene
 
         // Setup day/night cycle and lighting
         dayNightCycle = new DayNightCycle(this);
-        dayNightCycle.Tick(0);
+        dayNightCycle.SetTimeOfDaySeconds(7 * 60 * 60);
 
         // dirLight field no longer needed - managed by DayNightCycle
         // (Remove the manual AddLight call below)
@@ -375,13 +374,6 @@ internal class GameScene : Scene
                 terrainRenderer.DebugWireframe = !terrainRenderer.DebugWireframe;
                 Log.Info($"Debug Wireframe: {(terrainRenderer.DebugWireframe ? "ENABLED" : "DISABLED")}");
             }
-        }
-
-
-        // Update day/night cycle
-        if (!hasAppliedServerWorldTime)
-        {
-            dayNightCycle.Tick(elapsedSeconds);
         }
 
         // Check if camera is underwater (for visual effects)
@@ -539,7 +531,6 @@ internal class GameScene : Scene
             if (latestTime.HasValue)
             {
                 dayNightCycle.SetTimeOfDaySeconds(latestTime.Value.TimeOfDaySeconds);
-                hasAppliedServerWorldTime = true;
             }
 
             // Apply latest mob snapshot (if any) to the renderer.

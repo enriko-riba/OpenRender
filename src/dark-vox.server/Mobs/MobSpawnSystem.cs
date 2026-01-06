@@ -59,9 +59,9 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     // Hostile continuous spawning: attempt packs at a fixed cadence.
     // Spawning is "continuous" but should not be *high frequency*.
     // A high tick rate quickly slams into density caps and feels like instant overcrowding.
-    private const double HostileSpawnCycleSeconds = 2.5;
+    private const double HostileSpawnCycleSeconds = 1.5;
     private const int HostilePackAttemptsPerCyclePerPlayer = 1;
-    private const double HostileSpawnChancePerCycle = 0.12; // per cycle (further reduced by soft-caps)
+    private const double HostileSpawnChancePerCycle = 0.10; // baseline; boosted heavily when local density is low
     private const int HostilePackSizeMin = 1;
     private const int HostilePackSizeMax = 2;
     private const float HostileMinSpawnRadiusBlocks = 24;
@@ -207,7 +207,8 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 return;
             }
 
-            var playerPos = players[Random.Shared.Next(players.Length)].Position;
+            var chosenPlayer = players[Random.Shared.Next(players.Length)];
+            var playerPos = chosenPlayer.Position;
 
             // Soft-cap: as local density approaches the cap, make spawns increasingly unlikely.
             // Cap remains a hard maximum.
@@ -219,6 +220,19 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
 
             var localFactor = ComputeSoftCapChanceFactor(localCount, CaveHostileDensityCap, softStartFraction: 0.50);
             var effectiveChance = HostileSpawnChancePerCycle * localFactor;
+
+            // Ensure a high probability of at least one hostile nearby at night when conditions allow.
+            // This avoids long stretches of "nothing happens" on open terrain.
+            if (!isDaytime)
+            {
+                effectiveChance = localCount switch
+                {
+                    0 => Math.Max(effectiveChance, 0.70),
+                    1 => Math.Max(effectiveChance, 0.35),
+                    _ => effectiveChance
+                };
+            }
+            effectiveChance = Math.Min(effectiveChance, 0.95);
             if (Random.Shared.NextDouble() > effectiveChance)
             {
                 continue;
@@ -240,7 +254,10 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                 tryCave = true;
             }
 
-            var packSize = Random.Shared.Next(HostilePackSizeMin, HostilePackSizeMax + 1);
+            // Keep the first encounter from instantly becoming a crowd.
+            var packSize = localCount == 0
+                ? 1
+                : Random.Shared.Next(HostilePackSizeMin, HostilePackSizeMax + 1);
             var placed = 0;
             long? placedAreaKey = null;
             MobSpawnLayer? placedLayer = null;
@@ -343,7 +360,7 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             continue;
                         }
 
-                        if ((hostileSpawnTimeSeconds - lastTimes.Surface) < HostileSurfaceAreaCooldownSeconds)
+                        if (counts.Surface > 0 && (hostileSpawnTimeSeconds - lastTimes.Surface) < HostileSurfaceAreaCooldownSeconds)
                         {
                             continue;
                         }
@@ -367,6 +384,8 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             mob.PitchDegrees = 0;
                             mob.SpawnLayer = MobSpawnLayer.Surface;
                             hostileCount++;
+
+                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, spawnPos, spawnedDef, MobSpawnLayer.Surface);
 
                             density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
                             placed++;
@@ -393,7 +412,7 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             continue;
                         }
 
-                        if ((hostileSpawnTimeSeconds - lastTimes.Cave) < HostileCaveAreaCooldownSeconds)
+                        if (counts.Cave > 0 && (hostileSpawnTimeSeconds - lastTimes.Cave) < HostileCaveAreaCooldownSeconds)
                         {
                             continue;
                         }
@@ -416,6 +435,8 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             mob.PitchDegrees = 0;
                             mob.SpawnLayer = MobSpawnLayer.Cave;
                             hostileCount++;
+
+                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, cavePos, caveDef, MobSpawnLayer.Cave);
 
                             density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
                             placed++;
@@ -457,6 +478,28 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         var remaining = cap - count;
         var range = cap - softStart;
         return range <= 0 ? 0.0 : (double)remaining / range;
+    }
+
+    private static void LogHostileSpawn(
+        MobManager mobManager,
+        PlayerId playerId,
+        Vector3 playerPos,
+        Vector3 spawnPos,
+        MobDefinition def,
+        MobSpawnLayer layer)
+    {
+        var globalCount = mobManager.Mobs.Count;
+        var localCount = GetHostileCountAround(mobManager, playerPos, HostileLocalDensityRadiusBlocks);
+
+        var dx = spawnPos.X - playerPos.X;
+        var dz = spawnPos.Z - playerPos.Z;
+        var distSqXZ = dx * dx + dz * dz;
+        var isLocal = distSqXZ <= HostileMaxSpawnRadiusBlocks * HostileMaxSpawnRadiusBlocks;
+        var distXZ = isLocal ? MathF.Sqrt(distSqXZ) : -1f;
+
+        var distPart = isLocal ? $", distXZ={distXZ:0.0}" : string.Empty;
+        Console.WriteLine(
+            $"[MobSpawnSystem] Spawned {def.Kind} ({layer}) for player={playerId}, global={globalCount}, local64={localCount}{distPart}, pos=({spawnPos.X:0.0},{spawnPos.Y:0.0},{spawnPos.Z:0.0})");
     }
 
     private static bool HasHostileLocalHeadroom(MobManager mobManager, int x, int z, MobSpawnLayer layer, int cap)

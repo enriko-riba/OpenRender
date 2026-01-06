@@ -16,7 +16,7 @@ internal class DayNightCycle : IDayNightTimeProvider
 {
     private readonly Scene scene;
     private LightUniform dirLight;
-    private DateTimeOffset timeOfDay = new(DateTime.UtcNow.Date.AddHours(7));
+    private int timeOfDaySeconds = 7 * 60 * 60;
 
     public DayNightCycle(Scene scene)
     {
@@ -39,30 +39,21 @@ internal class DayNightCycle : IDayNightTimeProvider
     public float DayFactor { get; private set; }
     public Vector3 SunDirection { get; private set; }
 
-    // Call this *each frame* with elapsedSeconds
-    public void Tick(double elapsedSeconds)
-    {
-        // 1 real second = 1 game minute
-        timeOfDay = timeOfDay.AddMinutes(elapsedSeconds);
-        UpdateSunDirection(timeOfDay);
-    }
-
     public void SetTimeOfDaySeconds(int secondsOfDay)
     {
-        // Treat as server-authoritative: override local progression.
         const int secondsPerDay = 24 * 60 * 60;
         var normalized = ((secondsOfDay % secondsPerDay) + secondsPerDay) % secondsPerDay;
-        var baseDate = DateTime.UtcNow.Date;
-        timeOfDay = new DateTimeOffset(baseDate, TimeSpan.Zero).AddSeconds(normalized);
-        UpdateSunDirection(timeOfDay);
+        timeOfDaySeconds = normalized;
+        UpdateSunDirection(timeOfDaySeconds);
     }
 
     public LightUniform DirLight => dirLight;
-    public TimeSpan TimeOfDay => timeOfDay.TimeOfDay;
+    public TimeSpan TimeOfDay => TimeSpan.FromSeconds(timeOfDaySeconds);
 
-    private void UpdateSunDirection(DateTimeOffset dayTime)
+    private void UpdateSunDirection(int secondsOfDay)
     {
-        var t = (float)dayTime.TimeOfDay.TotalHours / 24.0f;
+        const float secondsPerDay = 24.0f * 60.0f * 60.0f;
+        var t = secondsOfDay / secondsPerDay;
         var angle = (t - 0.25f) * 2.0f * MathF.PI; // -0.25 to make 6am the sunrise point
 
         var x = MathF.Cos(angle);

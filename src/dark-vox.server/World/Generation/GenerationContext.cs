@@ -84,6 +84,38 @@ public sealed class GenerationContext : IDisposable
 
     public GenerationContext()
     {
+        // Defensive: clear ALL pooled buffers we own.
+        // Many stages only write the first ColumnCount entries (and keep BufferSize padding for SIMD),
+        // but any accidental use of BufferSize-length spans would otherwise read stale data.
+        // Clearing these is cheap (~288 floats) and avoids rare, timing-dependent artifacts.
+        Array.Clear(Continentalness);
+        Array.Clear(Erosion);
+        Array.Clear(PeaksValleys);
+        Array.Clear(Temperature);
+        Array.Clear(Humidity);
+        Array.Clear(Weirdness);
+        Array.Clear(AquiferNoise);
+
+        Array.Clear(Continentalness01);
+        Array.Clear(Erosion01);
+        Array.Clear(PeaksValleys01);
+        Array.Clear(Temperature01);
+        Array.Clear(Humidity01);
+        Array.Clear(Weirdness01);
+        Array.Clear(AquiferNoise01);
+
+        Array.Clear(WarpX);
+        Array.Clear(WarpZ);
+        Array.Clear(WorldX);
+        Array.Clear(WorldZ);
+
+        Array.Clear(Scratch1);
+        Array.Clear(Scratch2);
+        Array.Clear(Scratch3);
+        Array.Clear(NoiseScratchOctave);
+        Array.Clear(NoiseScratchX);
+        Array.Clear(NoiseScratchZ);
+
         // CRITICAL: Clear column height arrays - stale values cause phantom terrain pillars
         ColumnHeights = ArrayPool<float>.Shared.Rent(ColumnCount);
         Array.Clear(ColumnHeights);

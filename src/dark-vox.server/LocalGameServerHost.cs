@@ -195,6 +195,10 @@ public sealed class LocalGameServerHost(
                 if (hello.PlayerId.Equals(playerId) && server is LocalGameServer concrete)
                 {
                     concrete.Connect(hello.PlayerId);
+
+                    // Handshake: ensure server-authoritative time is sent immediately,
+                    // without waiting for the first tick.
+                    connection.Send(new ServerWorldTimeMessage(playerId, concrete.GetWorldTimeSnapshot()));
                 }
                 break;
             case ClientInputMessage input:
