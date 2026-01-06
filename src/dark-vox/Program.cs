@@ -10,6 +10,7 @@ using DarkVox.Server;
 using DarkVox.Shared.Net;
 using DarkVox.Shared.State;
 using DarkVox.World;
+using DarkVox.Shared.Diagnostics;
 
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
@@ -55,7 +56,8 @@ OpenRender.Log.Info($"[Program] Using player UUID: {localPlayerId.Value}");
 
 var (clientConn, serverConn) = InMemoryDuplexConnection.CreatePair<IClientToServerMessage, IServerToClientMessage>();
 var serverStreamer = new DarkVox.Server.Streaming.ChunkStreamingManager(world);
-var server = new LocalGameServer(world, serverStreamer, spawnPosition: new Vector3(6450, 80, 7850));
+var serverLog = new ConsoleLogger();
+var server = new LocalGameServer(world, serverStreamer, spawnPosition: new Vector3(6450, 80, 7850), log: serverLog);
 
 // Server is GL-free; it can tick safely on its own host thread.
 var serverHost = new LocalGameServerHost(server, serverConn, localPlayerId);

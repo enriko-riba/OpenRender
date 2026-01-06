@@ -696,6 +696,24 @@ public class InventoryTests
     }
 
     [Fact]
+    public void TryMoveItem_HotbarToStorage_DifferentItemOccupied_ShouldFailWithoutSwap()
+    {
+        var inventory = CreateEmptyInventory();
+        inventory.SetItem(0, new InventoryItem { Item = GameObjectId.Stone, Count = 1 });
+        inventory.SetItem(15, new InventoryItem { Item = GameObjectId.Dirt, Count = 20 });
+        var versionBefore = inventory.Version;
+
+        var result = inventory.TryMoveItem(0, 15);
+
+        Assert.False(result);
+        Assert.Equal(versionBefore, inventory.Version);
+        Assert.Equal(GameObjectId.Stone, inventory.GetItem(0).Item);
+        Assert.Equal(1, inventory.GetItem(0).Count);
+        Assert.Equal(GameObjectId.Dirt, inventory.GetItem(15).Item);
+        Assert.Equal(20, inventory.GetItem(15).Count);
+    }
+
+    [Fact]
     public void TryMoveItem_HotbarSwap_ShouldWork()
     {
         var inventory = CreateEmptyInventory();

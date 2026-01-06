@@ -471,6 +471,32 @@ internal class InventorySprite : Sprite
                     return true;
                 }
 
+                var hitKind = hit.Kind == SlotKind.Inventory ? InventoryUiSlotKind.Inventory : InventoryUiSlotKind.Crafting;
+                var dragKind = dragSource.Kind == SlotKind.Inventory ? InventoryUiSlotKind.Inventory :
+                    dragSource.Kind == SlotKind.Crafting ? InventoryUiSlotKind.Crafting :
+                    InventoryUiSlotKind.None;
+
+                var action = InventoryUiInputRules.DecideLeftPressAction(
+                    heldItemIsEmpty: heldItem.IsEmpty,
+                    hitKind: hitKind,
+                    hitIndex: hit.Index,
+                    dragSourceKind: dragKind,
+                    dragSourceIndex: dragSource.Index);
+
+                if (action == InventoryUiLeftPressAction.HotbarConfigureDrop)
+                {
+                    var slotItem = inventory.GetItem(hit.Index);
+                    HandleHotbarDrop(hit.Index, slotItem);
+                    return true;
+                }
+
+                if (action == InventoryUiLeftPressAction.NormalClick)
+                {
+                    // E.g. dragging from hotbar: allow swap/move and allow dropping back into storage.
+                    HandleLeftClick(hit);
+                    return true;
+                }
+
                 // Begin a distribution drag. If the user releases without touching more than one slot,
                 // we'll treat it like a normal left-click drop on that slot.
                 paintMode = DragPaintMode.LeftDistribute;
@@ -852,6 +878,7 @@ internal class InventorySprite : Sprite
             var slotIndex = hit.Index;
             var slotItem = inventory.GetItem(slotIndex);
             var isHotbar = slotIndex < Inventory.HotbarSize;
+            var dragFromHotbar = dragSource.Kind == SlotKind.Inventory && dragSource.Index >= 0 && dragSource.Index < Inventory.HotbarSize;
 
             if (heldItem.IsEmpty)
             {
@@ -859,7 +886,11 @@ internal class InventorySprite : Sprite
                 {
                     if (isHotbar)
                     {
-                        OnReturnToStorage?.Invoke(new ReturnToStorageCommand(slotIndex));
+                        // Hotbar left-click starts dragging so the shortcut can be moved/swapped
+                        // or dropped back into storage.
+                        heldItem = slotItem;
+                        dragSource = new SlotRef(SlotKind.Inventory, slotIndex);
+                        isFullStackPickup = true;
                     }
                     else
                     {
@@ -875,6 +906,67 @@ internal class InventorySprite : Sprite
             // Dropping while holding.
             if (dragSource.Kind == SlotKind.Inventory && dragSource.Index >= 0)
             {
+                // Storage -> hotbar is a special "configure shortcut" operation.
+                if (isHotbar && dragSource.Index >= Inventory.HotbarSize)
+                {
+                    HandleHotbarDrop(slotIndex, slotItem);
+                    return;
+                }
+
+                // Hotbar -> storage: only allow placing into empty, or stacking into same-not-full.
+                // Never swap a storage stack into the hotbar.
+                if (dragFromHotbar && !isHotbar)
+                {
+                    if (!slotItem.IsEmpty && slotItem.Item != heldItem.Item)
+                    {
+                        return;
+                    }
+
+                    if (!slotItem.IsEmpty)
+                    {
+                        var maxStack = GameContentRegistry.Get(slotItem.Item).MaxStackSize;
+                        if (slotItem.Count >= maxStack)
+                        {
+                            return;
+                        }
+                    }
+
+                    // Move exactly 1 (hotbar shortcut) into storage.
+                    if (!inventory.TryMoveItem(dragSource.Index, slotIndex, 1))
+                    {
+                        return;
+                    }
+
+                    OnInventoryMove?.Invoke(new InventoryMoveCommand(
+                        SourceSlot: dragSource.Index,
+                        TargetSlot: slotIndex,
+                        Count: 1));
+
+                    heldItem = default;
+                    dragSource = default;
+                    isFullStackPickup = false;
+                    return;
+                }
+
+                // Hotbar -> hotbar: allow move/swap of the shortcut.
+                if (dragFromHotbar && isHotbar)
+                {
+                    if (!inventory.TryMoveItem(dragSource.Index, slotIndex, 1))
+                    {
+                        return;
+                    }
+
+                    OnInventoryMove?.Invoke(new InventoryMoveCommand(
+                        SourceSlot: dragSource.Index,
+                        TargetSlot: slotIndex,
+                        Count: 1));
+
+                    heldItem = default;
+                    dragSource = default;
+                    isFullStackPickup = false;
+                    return;
+                }
+
                 OnInventoryMove?.Invoke(new InventoryMoveCommand(
                     SourceSlot: dragSource.Index,
                     TargetSlot: slotIndex,
@@ -918,6 +1010,12 @@ internal class InventorySprite : Sprite
 
             if (dragSource.Kind == SlotKind.Inventory)
             {
+                // Disallow crafting from hotbar shortcuts.
+                if (dragSource.Index < Inventory.HotbarSize)
+                {
+                    return;
+                }
+
                 OnContainerMove?.Invoke(new ContainerMoveCommand(
                     SourceContainer: ItemContainer.Inventory,
                     SourceSlot: dragSource.Index,
@@ -1277,18 +1375,17 @@ internal class InventorySprite : Sprite
             var slotItem = inventory.GetItem(slotIndex);
             var isHotbar = slotIndex < Inventory.HotbarSize;
 
+            // Hotbar right-click always returns the shortcut to storage (never starts dragging).
+            if (isHotbar)
+            {
+                if (slotItem.IsEmpty) return;
+                HandleHotbarRemove(slotIndex, slotItem);
+                return;
+            }
+
             if (heldItem.IsEmpty)
             {
                 if (slotItem.IsEmpty) return;
-
-                // Keep existing hotbar behavior (shortcut bar). For storage, split.
-                if (isHotbar)
-                {
-                    heldItem = slotItem;
-                    dragSource = new SlotRef(SlotKind.Inventory, slotIndex);
-                    isFullStackPickup = true;
-                    return;
-                }
 
                 var split = DarkVox.Shared.Gameplay.MinecraftUiRules.SplitHalfRoundedUp(slotItem.Count);
                 heldItem = new InventoryItem { Item = slotItem.Item, Count = split };
@@ -1345,6 +1442,12 @@ internal class InventorySprite : Sprite
 
             if (dragSource.Kind == SlotKind.Inventory)
             {
+                // Disallow crafting from hotbar shortcuts.
+                if (dragSource.Index < Inventory.HotbarSize)
+                {
+                    return;
+                }
+
                 OnContainerMove?.Invoke(new ContainerMoveCommand(
                     SourceContainer: ItemContainer.Inventory,
                     SourceSlot: dragSource.Index,
@@ -1443,7 +1546,7 @@ internal class InventorySprite : Sprite
             var slot = inventory.GetItem(i);
             if (slot.IsEmpty)
             {
-                remaining -= Math.Min(remaining, maxStack);
+                remaining -= Math.Min(maxStack, remaining);
             }
         }
 

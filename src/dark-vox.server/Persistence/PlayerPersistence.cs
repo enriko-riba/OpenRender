@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DarkVox.Shared.Abstractions;
 using DarkVox.Shared.State;
 
 namespace DarkVox.Server.Persistence;
@@ -46,7 +47,7 @@ public static class PlayerPersistence
     /// Loads player data from the canonical world save folder path.
     /// Canonical format: save/&lt;world&gt;_&lt;seed&gt;/&lt;uuid&gt;.dat
     /// </summary>
-    public static PlayerSaveData? Load(Guid playerUuid, string worldSaveDirectory)
+    public static PlayerSaveData? Load(Guid playerUuid, string worldSaveDirectory, ILog? log = null)
     {
         var path = GetPlayerSavePath(playerUuid, worldSaveDirectory);
         if (!File.Exists(path))
@@ -61,7 +62,7 @@ public static class PlayerPersistence
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[PlayerPersistence] Failed to load player data: {ex.Message}");
+            (log ?? NullLog.Instance).Error($"[PlayerPersistence] Failed to load player data: {ex.Message}");
             return null;
         }
     }

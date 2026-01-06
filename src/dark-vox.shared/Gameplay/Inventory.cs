@@ -372,6 +372,13 @@ public class Inventory
             // Swap different items (only if moving entire stack)
             if (count >= 0 && count < source.Count) return false;
 
+            // Hotbar is a shortcut bar (Count <= 1). Never allow swapping a storage stack into hotbar.
+            // Moving hotbar -> storage onto a different non-empty item must fail instead of swapping.
+            if (sourceSlot < HotbarSize && targetSlot >= HotbarSize)
+            {
+                return false;
+            }
+
             slots[sourceSlot] = target;
             slots[targetSlot] = source;
         }

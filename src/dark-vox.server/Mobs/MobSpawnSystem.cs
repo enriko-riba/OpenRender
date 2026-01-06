@@ -3,6 +3,7 @@ using DarkVox.Shared.World;
 using DarkVox.Shared.World.Registry;
 using DarkVox.World;
 using OpenTK.Mathematics;
+using DarkVox.Shared.Abstractions;
 
 namespace DarkVox.Server.Mobs;
 
@@ -12,10 +13,13 @@ namespace DarkVox.Server.Mobs;
 /// </summary>
 public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
 {
+    private readonly ILog log = settings.Log ?? NullLog.Instance;
+
     public sealed record Settings(
         int NoSpawnRadiusBlocks,
         int SpawnRadiusBlocks,
-        int MaxSpawnAttemptsPerTick);
+        int MaxSpawnAttemptsPerTick,
+        ILog? Log = null);
 
     // Track chunks we've already "rolled" for spawning in this session.
     // This keeps spawn distribution stable and avoids flooding when re-entering areas.
@@ -66,6 +70,11 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     private const int HostilePackSizeMax = 2;
     private const float HostileMinSpawnRadiusBlocks = 24;
     private const float HostileMaxSpawnRadiusBlocks = 128;
+
+    // Light rules:
+    // - Daytime: hostiles only spawn at total light == 0 (includes torch/block light).
+    // - Nighttime: hostiles can spawn in a small range of light levels.
+    private const int HostileNightMaxLight = 5;
 
     private const double HostileSurfaceAreaCooldownSeconds = 20.0;
     private const double HostileCaveAreaCooldownSeconds = 30.0;
@@ -223,15 +232,14 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
 
             // Ensure a high probability of at least one hostile nearby at night when conditions allow.
             // This avoids long stretches of "nothing happens" on open terrain.
-            if (!isDaytime)
+            // When there are zero nearby hostiles, strongly encourage at least one spawn.
+            // Night gets a larger boost, but daytime caves/overhangs should still produce hostiles.
+            effectiveChance = localCount switch
             {
-                effectiveChance = localCount switch
-                {
-                    0 => Math.Max(effectiveChance, 0.70),
-                    1 => Math.Max(effectiveChance, 0.35),
-                    _ => effectiveChance
-                };
-            }
+                0 => Math.Max(effectiveChance, isDaytime ? 0.35 : 0.70),
+                1 => Math.Max(effectiveChance, isDaytime ? 0.18 : 0.35),
+                _ => effectiveChance
+            };
             effectiveChance = Math.Min(effectiveChance, 0.95);
             if (Random.Shared.NextDouble() > effectiveChance)
             {
@@ -385,7 +393,10 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             mob.SpawnLayer = MobSpawnLayer.Surface;
                             hostileCount++;
 
-                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, spawnPos, spawnedDef, MobSpawnLayer.Surface);
+                            var (sky, block) = GetLightLevels(chunkData, lx, (int)MathF.Floor(spawnPos.Y), lz);
+                            var effectiveSky = 0; // night
+                            var light = Math.Max(effectiveSky, block);
+                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, spawnPos, spawnedDef, MobSpawnLayer.Surface, isDaytime: false, sky, block, effectiveSky, light);
 
                             density[areaKey] = (Surface: (counts.Surface + 1), Cave: counts.Cave);
                             placed++;
@@ -436,7 +447,10 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                             mob.SpawnLayer = MobSpawnLayer.Cave;
                             hostileCount++;
 
-                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, cavePos, caveDef, MobSpawnLayer.Cave);
+                            var (sky, block) = GetLightLevels(chunkData, lx, (int)MathF.Floor(cavePos.Y), lz);
+                            var effectiveSky = isDaytime ? (IsSkyExposed(world, x, (int)MathF.Floor(cavePos.Y), z) ? sky : 0) : 0;
+                            var light = Math.Max(effectiveSky, block);
+                            LogHostileSpawn(mobManager, chosenPlayer.PlayerId, playerPos, cavePos, caveDef, MobSpawnLayer.Cave, isDaytime, sky, block, effectiveSky, light);
 
                             density[areaKey] = (Surface: counts.Surface, Cave: (counts.Cave + 1));
                             placed++;
@@ -480,13 +494,18 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         return range <= 0 ? 0.0 : (double)remaining / range;
     }
 
-    private static void LogHostileSpawn(
+    private void LogHostileSpawn(
         MobManager mobManager,
         PlayerId playerId,
         Vector3 playerPos,
         Vector3 spawnPos,
         MobDefinition def,
-        MobSpawnLayer layer)
+        MobSpawnLayer layer,
+        bool isDaytime,
+        int sky,
+        int block,
+        int effectiveSky,
+        int effectiveLight)
     {
         var globalCount = mobManager.Mobs.Count;
         var localCount = GetHostileCountAround(mobManager, playerPos, HostileLocalDensityRadiusBlocks);
@@ -498,8 +517,10 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
         var distXZ = isLocal ? MathF.Sqrt(distSqXZ) : -1f;
 
         var distPart = isLocal ? $", distXZ={distXZ:0.0}" : string.Empty;
-        Console.WriteLine(
-            $"[MobSpawnSystem] Spawned {def.Kind} ({layer}) for player={playerId}, global={globalCount}, local64={localCount}{distPart}, pos=({spawnPos.X:0.0},{spawnPos.Y:0.0},{spawnPos.Z:0.0})");
+        var msg =
+            $"[MobSpawnSystem] Spawned {def.Kind} ({layer}) for player={playerId}, global={globalCount}, local64={localCount}{distPart}, pos=({spawnPos.X:0.0},{spawnPos.Y:0.0},{spawnPos.Z:0.0}), day={isDaytime}, sky={sky}, block={block}, effSky={effectiveSky}, light={effectiveLight}";
+
+        log.Info(msg);
     }
 
     private static bool HasHostileLocalHeadroom(MobManager mobManager, int x, int z, MobSpawnLayer layer, int cap)
@@ -655,16 +676,8 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
                     continue;
                 }
 
-                // Determine if this anchor can ever spawn a hostile:
-                // - at night: surface is allowed (effective light will be 0)
-                // - at day: require a dark cave in the column
-                if (isDaytime)
-                {
-                    if (!TryFindCaveSpawnY(world, chunkData, lx, lz, x, z, topY, out _))
-                    {
-                        continue;
-                    }
-                }
+                // NOTE: do not pre-require a dark cave during the day.
+                // The light checks are evaluated per-placement attempt in TrySpawnAt/TryFindCaveSpawnY.
 
                 anchorPos = new Vector3(x + 0.5f, topY, z + 0.5f);
                 return true;
@@ -773,7 +786,8 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
     {
         spawnY = 0;
         var startY = Math.Clamp(topY - 3, 4, VoxelHelper.ChunkYSize - 3);
-        var yMin = Math.Max(2, startY - 80);
+        // Scan deeper so spawns can happen in deeper caves (not just shallow pockets).
+        var yMin = Math.Max(2, startY - 200);
 
         for (var y = startY; y >= yMin; y--)
         {
@@ -783,8 +797,13 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             }
 
             var (sky, block) = GetLightLevels(chunkData, lx, y, lz);
+
+            // Treat sky light as 0 when the position is not actually exposed to the sky.
+            // This makes enclosed caves correctly count as dark even if cached skylight is coarse.
+            var effectiveSky = IsSkyExposed(world, wx, y, wz) ? sky : 0;
+
             // Must be dark to be a valid cave spawn (checking both sky and block light).
-            if (Math.Max(sky, block) > 7)
+            if (Math.Max(effectiveSky, block) > 7)
             {
                 continue;
             }
@@ -828,18 +847,23 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
 
         // Sky-light is a static precomputed value in our current lighting system.
         // At night the surface still has skyLight=15, but gameplay should treat it as dark.
-        // So for *surface* spawns at night, consider sky light as 0 for the spawn rule.
+        // During daytime, use a simple sky-exposure test: enclosed areas count as skyLight=0.
         // We must also consider block light (torches), which is valid regardless of time.
-        var effectiveSky = isDaytime ? sky : 0;
+        var effectiveSky = isDaytime
+            ? (IsSkyExposed(world, x, y, z) ? sky : 0)
+            : 0;
         var light = Math.Max(effectiveSky, block);
+
+        var hostileTimeMaxLight = isDaytime ? 0 : HostileNightMaxLight;
 
         // Pick a mob that fits
         var candidates = MobRegistry.AllDefinitions
-            .Where(d => light >= d.SpawnLightLevelMin && light <= d.SpawnLightLevelMax)
+            .Where(d => light >= d.SpawnLightLevelMin && light <= (d.Category == MobCategory.Hostile ? Math.Min(d.SpawnLightLevelMax, hostileTimeMaxLight) : d.SpawnLightLevelMax))
             .Where(d => d.Category switch
             {
                 MobCategory.Passive => isDaytime,
-                MobCategory.Hostile => !isDaytime || isCaveSpawn,
+                // Hostiles are governed by light + probability (and caps), not by time of day.
+                MobCategory.Hostile => true,
                 _ => true
             })
             .Where(d => !isInLiquid || (d.Category == MobCategory.Passive && d.CanSwim))
@@ -950,5 +974,29 @@ public sealed class MobSpawnSystem(MobSpawnSystem.Settings settings)
             if (d.LengthSquared <= rSq) count++;
         }
         return count;
+    }
+
+    private static bool IsSkyExposed(VoxelWorld world, int x, int y, int z)
+    {
+        // A conservative skylight-occlusion test based on opacity:
+        // if there is any *opaque* block above (within the world height), the position is not sky-exposed.
+        // Translucent blocks (leaves, water, glass) do NOT fully block sky exposure here.
+        // This is used only for spawn light evaluation (low frequency), not per-voxel lighting.
+        for (var yy = y + 1; yy < VoxelHelper.ChunkYSize; yy++)
+        {
+            var b = world.GetBlockByPositionGlobalSafe(x, yy, z);
+            if (!b.HasValue)
+            {
+                // If we can't query the block, assume sky-exposed to avoid treating unknown space as "dark".
+                return true;
+            }
+
+            if (b.Value.Block.IsOpaque())
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -22,6 +22,7 @@ namespace DarkVox.Server;
 /// </summary>
 public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoadingProgressSource
 {
+    private readonly ILog log;
     private sealed class PendingChunkPayloadQueue
     {
         private readonly Queue<int> queue = new();
@@ -61,11 +62,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     private readonly WorldTimeService worldTime = new();
 
     private readonly MobManager mobManager = new();
-    private readonly MobSpawnSystem mobSpawnSystem = new(
-        new MobSpawnSystem.Settings(
-            NoSpawnRadiusBlocks: 16,
-            SpawnRadiusBlocks: 64,
-            MaxSpawnAttemptsPerTick: 4));
+    private readonly MobSpawnSystem mobSpawnSystem;
     private readonly MobPhysicsSystem mobPhysicsSystem;
     private readonly MobAiSystem mobAiSystem;
     private readonly Items.DroppedItemManager droppedItemManager = new();
@@ -90,13 +87,21 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     public bool TryGetPlayerForTests(PlayerId playerId, out Player player) => players.TryGetValue(playerId, out player!);
 #endif
 
-    public LocalGameServer(VoxelWorld world, Streaming.ChunkStreamingManager streamingManager, Vector3 spawnPosition)
+    public LocalGameServer(VoxelWorld world, Streaming.ChunkStreamingManager streamingManager, Vector3 spawnPosition, ILog? log = null)
     {
+        this.log = log ?? NullLog.Instance;
         this.world = world;
         this.streamingManager = streamingManager;
         this.spawnPosition = spawnPosition;
 
         this.streamingManager.Initialize(world.Seed);
+
+        mobSpawnSystem = new MobSpawnSystem(
+            new MobSpawnSystem.Settings(
+                NoSpawnRadiusBlocks: 16,
+                SpawnRadiusBlocks: 64,
+                MaxSpawnAttemptsPerTick: 4,
+                Log: this.log));
 
         mobPhysicsSystem = new MobPhysicsSystem(world);
         mobAiSystem = new MobAiSystem(world);
@@ -410,6 +415,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         if (mobManager.Mobs.Count > 0)
         {
             List<MobId>? toRemove = null;
+            Dictionary<string, int>? removeReasons = null;
             foreach (var mob in mobManager.Mobs.Values)
             {
                 var chunkIdx = GetChunkIndexFromWorldPos(mob.Position);
@@ -426,11 +432,13 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 }
 
                 var shouldRemove = false;
+                var reason = "";
                 if (mob.Definition.Category == MobCategory.Hostile)
                 {
                     if (minDistSq > 128f * 128f)
                     {
                         shouldRemove = true;
+                        reason = "too_far";
                     }
                     else if (minDistSq > 32f * 32f)
                     {
@@ -446,6 +454,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                             if (Random.Shared.NextDouble() < chance)
                             {
                                 shouldRemove = true;
+                                reason = "random_despawn";
                             }
                         }
                     }
@@ -459,12 +468,20 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 if (!shouldRemove && anyReadyChunks.Count > 0 && !anyReadyChunks.Contains(chunkIdx))
                 {
                     shouldRemove = true;
+                    reason = "unready_chunk";
                 }
 
                 if (shouldRemove)
                 {
                     toRemove ??= [];
                     toRemove.Add(mob.Id);
+
+                    removeReasons ??= new Dictionary<string, int>(StringComparer.Ordinal);
+                    if (string.IsNullOrEmpty(reason))
+                    {
+                        reason = "despawn";
+                    }
+                    removeReasons[reason] = removeReasons.TryGetValue(reason, out var c) ? (c + 1) : 1;
                 }
             }
 
@@ -474,6 +491,21 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 {
                     mobManager.Remove(id);
                 }
+
+                var globalNow = mobManager.Mobs.Count;
+                var localParts = new List<string>(players.Count);
+                foreach (var kvp in players)
+                {
+                    if (!kvp.Value.IsAlive) continue;
+                    var localHostiles = CountHostilesAround(kvp.Value.Position, radius: 64f, mobManager);
+                    localParts.Add($"{kvp.Key}={localHostiles}");
+                }
+
+                var reasonsPart = removeReasons != null
+                    ? string.Join(", ", removeReasons.Select(kvp => $"{kvp.Key}={kvp.Value}"))
+                    : "unknown";
+
+                log.Info($"[MobUnload] removed={toRemove.Count}, globalNow={globalNow}, localHostiles64={{ {string.Join(", ", localParts)} }}, reasons={{ {reasonsPart} }}");
             }
         }
 
@@ -851,15 +883,15 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
 
         // Try to load saved player data
         var worldSaveDir = streamingManager.GetWorldSaveDirectory();
-        var saveData = PlayerPersistence.Load(playerId.Value, worldSaveDir);
+        var saveData = PlayerPersistence.Load(playerId.Value, worldSaveDir, log);
         if (saveData != null)
         {
             player.ApplySaveData(saveData);
-            Console.WriteLine($"[LocalGameServer] Loaded player data for {playerId}");
+            log.Info($"[LocalGameServer] Loaded player data for {playerId}");
         }
         else
         {
-            Console.WriteLine($"[LocalGameServer] New player {playerId}, using default spawn position");
+            log.Info($"[LocalGameServer] New player {playerId}, using default spawn position");
         }
 
         players[playerId] = player;
@@ -885,11 +917,11 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 var saveData = player.BuildSaveData();
                 var worldSaveDir = streamingManager.GetWorldSaveDirectory();
                 PlayerPersistence.Save(playerId.Value, saveData, worldSaveDir);
-                Console.WriteLine($"[LocalGameServer] Saved player data for {playerId}");
+                log.Info($"[LocalGameServer] Saved player data for {playerId}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[LocalGameServer] Failed to save player {playerId}: {ex.Message}");
+                log.Warn($"[LocalGameServer] Failed to save player {playerId}: {ex.Message}");
             }
         }
     }
@@ -906,11 +938,11 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             var saveData = player.BuildSaveData();
             var worldSaveDir = streamingManager.GetWorldSaveDirectory();
             PlayerPersistence.Save(playerId.Value, saveData, worldSaveDir);
-            Console.WriteLine($"[LocalGameServer] Saved player data for {playerId}");
+            log.Info($"[LocalGameServer] Saved player data for {playerId}");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[LocalGameServer] Failed to save player {playerId}: {ex.Message}");
+            log.Warn($"[LocalGameServer] Failed to save player {playerId}: {ex.Message}");
         }
     }
 
@@ -975,5 +1007,18 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         var x = (int)MathF.Floor(worldPos.X);
         var z = (int)MathF.Floor(worldPos.Z);
         return VoxelHelper.GetChunkIndexFromPositionGlobal(new Vector3i(x, 0, z));
+    }
+
+    private static int CountHostilesAround(in Vector3 position, float radius, MobManager mobManager)
+    {
+        var rSq = radius * radius;
+        var count = 0;
+        foreach (var mob in mobManager.Mobs.Values)
+        {
+            if (mob.Definition.Category != MobCategory.Hostile) continue;
+            var d = mob.Position - position;
+            if (d.LengthSquared <= rSq) count++;
+        }
+        return count;
     }
 }
