@@ -53,8 +53,9 @@ public class DroppedItemManager
             {
                 if (!player.IsAlive) continue;
 
-                var distSq = Vector3.DistanceSquared(item.Position, player.Position);
-                if (distSq <= 2.0f * 2.0f) // 2 block radius
+                var d = item.Position - player.Position;
+                var distSqXZ = (d.X * d.X) + (d.Z * d.Z);
+                if (distSqXZ <= 2.0f * 2.0f) // 2 block radius (horizontal)
                 {
                     player.AddItem(item.Item, item.Count);
                     // Log pickup (would send message to client here)

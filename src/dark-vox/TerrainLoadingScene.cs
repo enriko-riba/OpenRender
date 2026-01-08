@@ -28,7 +28,9 @@ internal class TerrainLoadingScene : Scene
     private VoxelTerrainRenderer? terrainRenderer;
 
     private readonly LocalGameClient localClient;
-    private int appliedChunkPayloadCount;
+    private readonly HashSet<int> appliedChunkPayloadIndices = [];
+    private double lastPayloadSeconds;
+    private double lastResendRequestSeconds;
 
     private readonly Vector3 textColor = Vector3.One;
     private readonly Vector3 progressColor = new(1.0f, 0.8f, 0.3f);
@@ -64,6 +66,8 @@ internal class TerrainLoadingScene : Scene
         startPosition = new Vector3(6450, 80, 7850);    //  TODO: hardcoded position to debug Ocean biome
 
         Log.Info("TerrainLoadingScene: Initializing client terrain + connecting to local server...");
+        lastPayloadSeconds = 0;
+        lastResendRequestSeconds = -999;
     }
 
     private void BuildOperationQueue()
@@ -152,7 +156,10 @@ internal class TerrainLoadingScene : Scene
                 while (appliedThisFrame < MaxChunkPayloadsToApplyPerFrame && localClient.TryDequeueChunkPayload(out var payload))
                 {
                     terrainSystem.ApplyChunkPayloadBytes(payload.ChunkIndex, payload.Payload);
-                    appliedChunkPayloadCount++;
+                    if (appliedChunkPayloadIndices.Add(payload.ChunkIndex))
+                    {
+                        lastPayloadSeconds = timer.Elapsed.TotalSeconds;
+                    }
                     appliedThisFrame++;
                 }
 
@@ -162,6 +169,20 @@ internal class TerrainLoadingScene : Scene
                 var haveTargets = desired > 0;
                 var generationDone = haveTargets && ready >= desired;
                 var meshingDone = haveTargets && meshed >= desired && terrainSystem.PendingMeshCount == 0;
+
+                // Hang recovery: if we appear stuck (missing payload/mesh) with no pending work,
+                // request the server to re-enqueue ready chunk payloads.
+                if (haveTargets && localClient.HasServerGameStarted && !meshingDone)
+                {
+                    var secondsSincePayload = timer.Elapsed.TotalSeconds - lastPayloadSeconds;
+                    var stalled = terrainSystem.PendingMeshCount == 0 && meshed < desired && secondsSincePayload >= 2.0;
+                    if (stalled && (timer.Elapsed.TotalSeconds - lastResendRequestSeconds) >= 2.0)
+                    {
+                        lastResendRequestSeconds = timer.Elapsed.TotalSeconds;
+                        Log.Warn($"TerrainLoadingScene: Detected stall (meshed={meshed}/{desired}, payloads={appliedChunkPayloadIndices.Count}/{desired}). Requesting resend...");
+                        localClient.RequestChunkPayloadResend();
+                    }
+                }
 
                 // Transition when the server has started gameplay AND the client finished meshing the initial set.
                 if (localClient.HasServerGameStarted && (!haveTargets || (generationDone && meshingDone)))
@@ -205,7 +226,7 @@ internal class TerrainLoadingScene : Scene
                         progressTracker.UpdateOperation(
                             "Meshing",
                             meshProgress,
-                            $"Client: payloads {appliedChunkPayloadCount:N0}, meshed {meshed}/{desired}, pending meshes {terrainSystem.PendingMeshCount:N0}");
+                            $"Client: payloads {appliedChunkPayloadIndices.Count:N0}, meshed {meshed}/{desired}, pending meshes {terrainSystem.PendingMeshCount:N0}");
                     }
                 }
             }

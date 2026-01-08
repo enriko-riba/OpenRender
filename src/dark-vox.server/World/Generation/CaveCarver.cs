@@ -79,8 +79,15 @@ internal sealed class CaveCarver(TerrainConfig config)
         ReadOnlySpan<bool> isLandColumn,
         Func<int, int, float> globalHeightProvider)
     {
-        // Clear previous data
+        // CRITICAL: Clear ALL internal buffers to prevent stale data from previous chunk
+        // CaveCarver is reused per-thread, so buffers may contain old values
         Array.Clear(_caveMask);
+        Array.Clear(_cheeseVolume);
+        Array.Clear(_spaghettiVolume);
+        Array.Clear(_sparseCheeseGrid);
+        Array.Clear(_sparseSpaghettiA);
+        Array.Clear(_sparseSpaghettiB);
+        Array.Clear(_sparseSliceScratch);
 
         // Step 1-2: Sample and interpolate 3D cave noise
         SampleSparse3DNoise(chunkX, chunkZ);

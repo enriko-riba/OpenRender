@@ -21,6 +21,7 @@ public sealed class LocalGameServerHost(
     public double TickRateHz { get; set; } = 20.0;
 
     private const int MaxChunkPayloadsPerTick = 4;
+    private const int MaxCombatEventsPerTick = 16;
 
     public void Start()
     {
@@ -148,6 +149,20 @@ public sealed class LocalGameServerHost(
                 connection.Send(new ServerMobStateMessage(playerId, mobSnapshot));
             }
 
+            // Send combat events (damage numbers, etc.)
+            if (server is DarkVox.Server.Combat.ICombatEventSource combatEvents)
+            {
+                for (var i = 0; i < MaxCombatEventsPerTick; i++)
+                {
+                    if (!combatEvents.TryDequeueCombatEvent(playerId, out var evt))
+                    {
+                        break;
+                    }
+
+                    connection.Send(new ServerCombatEventMessage(playerId, evt));
+                }
+            }
+
             // Send chunk voxel payloads for any loaded/changed chunks.
             if (server is IChunkPayloadSource payloadSource)
             {
@@ -240,6 +255,11 @@ public sealed class LocalGameServerHost(
             case ClientAttackMobMessage attack:
                 if (attack.PlayerId.Equals(playerId) && server is LocalGameServer gs)
                     gs.SubmitAttack(attack.PlayerId, attack.TargetMob);
+                break;
+
+            case ClientRequestChunkPayloadResendMessage resend:
+                if (resend.PlayerId.Equals(playerId) && server is LocalGameServer concreteResend)
+                    concreteResend.RequestChunkPayloadResend(resend.PlayerId);
                 break;
         }
     }

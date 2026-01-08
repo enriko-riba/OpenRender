@@ -18,6 +18,7 @@ public static class ItemTextureManager
     private static readonly Dictionary<(GameObjectId Id, int ShaderId), Material> materials = [];
     private static readonly Material defaultMaterial = Material.Default;
     private static Shader? spriteShader;
+    private static Shader? worldItemShader;
     private static bool initialized;
 
     /// <summary>
@@ -29,6 +30,7 @@ public static class ItemTextureManager
         initialized = true;
         
         spriteShader = new Shader("Shaders/sprite.vert", "Shaders/sprite.frag");
+        worldItemShader = new Shader("Shaders/standard.vert", "Shaders/standard-alpha.frag");
         LoadItemDescriptors();
     }
 
@@ -40,8 +42,40 @@ public static class ItemTextureManager
     /// <summary>
     /// Gets the material for rendering an item.
     /// </summary>
-    public static Material GetMaterial(GameObjectId item) =>
-        materials.TryGetValue((item, 0), out var mat) ? mat : defaultMaterial;
+    public static Material GetMaterial(GameObjectId item) => GetWorldMaterial(item);
+
+    /// <summary>
+    /// Gets/creates a material suitable for 3D world rendering (SceneNode meshes).
+    /// Uses a shader that preserves diffuse alpha so transparent item textures don't render as black quads.
+    /// </summary>
+    public static Material GetWorldMaterial(GameObjectId item)
+    {
+        if (!initialized)
+        {
+            Initialize();
+        }
+
+        var shader = worldItemShader!;
+        var key = (item, shader.Handle);
+        if (materials.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        if (!descriptors.TryGetValue(item, out var descriptor))
+        {
+            Log.Warn($"ItemTextureManager: No descriptor for {item}, returning default material");
+            return defaultMaterial;
+        }
+
+        var material = Material.Create(
+            shader: shader,
+            textureDescriptor: descriptor,
+            diffuseColor: Vector3.One);
+
+        materials[key] = material;
+        return material;
+    }
 
     /// <summary>
     /// Creates a new material for a sprite by copying texture handles from the item material.

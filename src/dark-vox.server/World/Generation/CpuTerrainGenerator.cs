@@ -892,6 +892,13 @@ internal sealed class CpuTerrainGenerator
         var zSpan = ctx.SparseSampleZ.AsSpan(0, SparseSampleCount);
         var scratchSpan = ctx.SparseSliceScratch.AsSpan(0, SparseSampleCount);
 
+        // CRITICAL: Clear sparse grids before sampling to prevent stale data
+        // These grids are rented from ArrayPool and may contain garbage
+        Array.Clear(ctx.SparseCheeseGrid, 0, SparseVolumeSize);
+        Array.Clear(ctx.SparseSpaghettiA, 0, SparseVolumeSize);
+        Array.Clear(ctx.SparseSpaghettiB, 0, SparseVolumeSize);
+        Array.Clear(ctx.SparseOverhangGrid, 0, SparseVolumeSize);
+
         // Sample sparse 3D grid for each noise type using SIMD-accelerated functions
         for (var sy = 0; sy < SparseSamplesY; sy++)
         {
@@ -1002,6 +1009,14 @@ internal sealed class CpuTerrainGenerator
     private void InterpolateSparseVolumes(GenerationContext ctx)
     {
         var chunkY = VoxelHelper.ChunkYSize;
+
+        // CRITICAL: Clear output volumes before interpolation to prevent stale data
+        // Even though GenerationContext clears in constructor, ArrayPool may return
+        // larger buffers with garbage past the cleared region. Defensive clear ensures
+        // any missed voxel indices during interpolation don't contain random values.
+        Array.Clear(ctx.CheeseVolume, 0, ColumnHeightWords);
+        Array.Clear(ctx.SpaghettiVolume, 0, ColumnHeightWords);
+        Array.Clear(ctx.OverhangVolume, 0, ColumnHeightWords);
 
         for (var lz = 0; lz < VoxelHelper.ChunkSideSize; lz++)
         {

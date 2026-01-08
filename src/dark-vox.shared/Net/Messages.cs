@@ -1,11 +1,23 @@
 using DarkVox.Shared.Commands;
 using DarkVox.Shared.Input;
 using DarkVox.Shared.State;
+using OpenTK.Mathematics;
 
 namespace DarkVox.Shared.Net;
 
 public interface IClientToServerMessage;
 public interface IServerToClientMessage;
+
+public enum CombatEventKind : byte
+{
+	PlayerDealtDamage = 1,
+	PlayerTookDamage = 2,
+}
+
+public readonly record struct CombatEventSnapshot(
+	CombatEventKind Kind,
+	int Damage,
+	Vector3 WorldPosition);
 
 public readonly record struct ClientInputMessage(PlayerId PlayerId, PlayerInputCommand Input) : IClientToServerMessage;
 public readonly record struct ClientBreakBlockMessage(PlayerId PlayerId, BreakBlockCommand Command) : IClientToServerMessage;
@@ -19,6 +31,12 @@ public readonly record struct ClientEatFoodMessage(PlayerId PlayerId, EatFoodCom
 public readonly record struct ClientAttackMobMessage(PlayerId PlayerId, MobId TargetMob) : IClientToServerMessage;
 
 public readonly record struct ClientHelloMessage(PlayerId PlayerId) : IClientToServerMessage;
+
+/// <summary>
+/// Client requests the server to re-enqueue chunk payloads.
+/// Used as a recovery mechanism if the client detects it is missing one or more initial chunk payloads.
+/// </summary>
+public readonly record struct ClientRequestChunkPayloadResendMessage(PlayerId PlayerId) : IClientToServerMessage;
 
 /// <summary>
 /// Client requests moving an item between inventory slots.
@@ -56,6 +74,8 @@ public readonly record struct ServerWorldTimeMessage(PlayerId PlayerId, WorldTim
 public readonly record struct ServerLoadingProgressMessage(PlayerId PlayerId, LoadingProgressSnapshot Progress) : IServerToClientMessage;
 
 public readonly record struct ServerGameStartMessage(PlayerId PlayerId) : IServerToClientMessage;
+
+public readonly record struct ServerCombatEventMessage(PlayerId PlayerId, CombatEventSnapshot Event) : IServerToClientMessage;
 
 /// <summary>
 /// Server-to-client payload for voxel data of a single chunk.

@@ -326,6 +326,7 @@ public sealed class Player : ILootCollector
             Velocity: velocity,
             IsGrounded: isGrounded,
             IsGhostMode: IsGhostMode,
+            InvulnerabilityRemainingSeconds: MathF.Max(0f, invulnerabilityRemaining),
             SelectedHotbarSlot: selectedHotbarSlot,
             Inventory: Inventory.BuildSnapshot(),
             Attributes: Attributes.BuildSnapshot(),
@@ -381,6 +382,36 @@ public sealed class Player : ILootCollector
         // Server-side normalization: hotbar is a shortcut bar (Count=1).
         // Move any overflow quantities into storage so UI + save data stay consistent.
         Inventory.NormalizeHotbarShortcuts();
+    }
+
+    public void Respawn(Vector3 spawnPosition)
+    {
+        position = spawnPosition;
+        velocity = Vector3.Zero;
+        isGrounded = false;
+
+        moveAxes = Vector2.Zero;
+        verticalAxis = 0f;
+        jumpRequested = false;
+        isSprinting = false;
+        isCrouching = false;
+
+        attackCooldownRemaining = 0f;
+        invulnerabilityRemaining = 0f;
+
+        jumpedThisTick = false;
+        attackedThisTick = false;
+        blocksBrokenThisTick = 0;
+
+        var maxHealth = Math.Max(1, Attributes.MaxHealth);
+        var maxFood = Math.Max(1, Attributes.MaxFood);
+        Attributes.ApplySnapshot(new PlayerAttributesSnapshot(
+            MaxHealth: maxHealth,
+            Health: maxHealth,
+            MaxFood: maxFood,
+            Food: maxFood,
+            Saturation: 0.0f,
+            Exhaustion: 0.0f));
     }
 
     private void HandleGhostMode(double elapsedSeconds)

@@ -30,6 +30,8 @@ public sealed class GameSession(
     public void Start()
     {
         Host.Start();
+        // Register the player with the server so snapshots/spawns/pickups work.
+        Client.Connect();
         Client.Start();
     }
 

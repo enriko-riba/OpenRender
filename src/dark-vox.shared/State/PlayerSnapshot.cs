@@ -8,6 +8,7 @@ public readonly record struct PlayerSnapshot(
     Vector3 Velocity,
     bool IsGrounded,
     bool IsGhostMode,
+    float InvulnerabilityRemainingSeconds,
     int SelectedHotbarSlot,
     PlayerAttributesSnapshot Attributes,
     InventorySnapshot Inventory,

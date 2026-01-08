@@ -293,6 +293,9 @@ public class Player : ILootCollector
         velocity = snapshot.Velocity;
         isGrounded = snapshot.IsGrounded;
 
+        // Server-authoritative combat timers.
+        invulnerabilityRemaining = MathF.Max(0f, snapshot.InvulnerabilityRemainingSeconds);
+
         // Keep chunk-local debug info in sync even when the client isn't simulating.
         UpdateChunkTrackingFromCurrentPosition();
     }

@@ -38,7 +38,7 @@ public sealed class PlayerAttributes
     {
         MaxFood = Math.Max(1, maxFood);
         Food = Math.Clamp(Food, 0, MaxFood);
-        Saturation = Math.Clamp(Saturation, 0, MaxFood);
+        Saturation = Math.Clamp(Saturation, 0, Food);
     }
 
     public void SetFood(int food, float? saturation = null)
@@ -46,7 +46,11 @@ public sealed class PlayerAttributes
         Food = Math.Clamp(food, 0, MaxFood);
         if (saturation.HasValue)
         {
-            Saturation = Math.Clamp(saturation.Value, 0, MaxFood);
+            Saturation = Math.Clamp(saturation.Value, 0, Food);
+        }
+        else
+        {
+            Saturation = Math.Clamp(Saturation, 0, Food);
         }
     }
 
@@ -220,8 +224,24 @@ public sealed class PlayerAttributes
 
         Health = Math.Clamp(snapshot.Health, 0, MaxHealth);
         Food = Math.Clamp(snapshot.Food, 0, MaxFood);
-        Saturation = Math.Clamp(snapshot.Saturation, 0, MaxFood);
+        Saturation = Math.Clamp(snapshot.Saturation, 0, Food);
         Exhaustion = Math.Max(0.0f, snapshot.Exhaustion);
+
+        // Maintain invariant: Exhaustion should be < 4.0, applying any pending drains immediately.
+        // This prevents a large persisted exhaustion value from causing an instant multi-point
+        // saturation drop on the next tiny exhaustion event (which feels like "eating reduced saturation").
+        while (Exhaustion >= 4.0f)
+        {
+            Exhaustion -= 4.0f;
+            if (Saturation > 0.0f)
+            {
+                Saturation = Math.Max(0.0f, Saturation - 1.0f);
+            }
+            else
+            {
+                Food = Math.Max(0, Food - 1);
+            }
+        }
     }
 }
 

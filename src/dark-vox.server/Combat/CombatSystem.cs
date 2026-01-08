@@ -158,29 +158,29 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
     /// Process a mob attacking a player.
     /// Called from MobAiSystem when mob is in attack range.
     /// </summary>
-    public void ProcessMobAttackPlayer(MobEntity mob, Player player)
+    public int ProcessMobAttackPlayer(MobEntity mob, Player player)
     {
         if (mob.IsDead || !player.IsAlive)
-            return;
+            return 0;
 
         // Check mob attack cooldown
         if (mob.AttackCooldownRemaining > 0)
-            return;
+            return 0;
 
         // Check range
         var distance = Vector3.Distance(mob.Position, player.Position);
         if (distance > mob.Definition.AttackRange + mob.Definition.HitboxWidth * 0.5f)
-            return;
+            return 0;
 
         // Check player invulnerability
         if (player.InvulnerabilityRemaining > 0)
-            return;
+            return 0;
 
         // Calculate damage (could be modified by difficulty later)
         var damage = mob.Definition.BaseDamage;
 
         // Apply damage to player
-        var actualDamage = ApplyDamageToPlayer(player, damage);
+        var actualDamage = (int)ApplyDamageToPlayer(player, damage);
 
         // Apply knockback to player
         ApplyKnockbackToPlayer(mob.Position, player, mob.Definition.KnockbackStrength);
@@ -192,6 +192,8 @@ public sealed class CombatSystem(DroppedItemManager droppedItemManager)
 
         // Start player invulnerability
         player.StartInvulnerability(InvulnerabilitySeconds);
+
+        return actualDamage;
     }
 
     /// <summary>

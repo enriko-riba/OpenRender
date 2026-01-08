@@ -7,20 +7,20 @@ using DarkVox.Shared.Abstractions;
 using DarkVox.Shared.Commands;
 using DarkVox.Shared.Gameplay;
 using DarkVox.Shared.Input;
+using DarkVox.Shared.Net;
+using System.Collections.Concurrent;
 using DarkVox.Shared.State;
 using System.Runtime.InteropServices;
 using DarkVox.Shared.World;
 using DarkVox.World;
 using DarkVox.Shared.Gameplay.Crafting;
-
 namespace DarkVox.Server;
 
 /// <summary>
 /// In-process server used to prepare for client/server segregation.
-/// Designed to behave like a standalone server: players are keyed by <see cref="PlayerId"/>,
 /// and each player receives its own slice of state.
 /// </summary>
-public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoadingProgressSource
+public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoadingProgressSource, ICombatEventSource
 {
     private readonly ILog log;
     private sealed class PendingChunkPayloadQueue
@@ -52,6 +52,23 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         }
     }
 
+    private void EnqueueCombatEvent(PlayerId playerId, CombatEventSnapshot combatEvent)
+    {
+        var queue = combatEventsByPlayer.GetOrAdd(playerId, static _ => new ConcurrentQueue<CombatEventSnapshot>());
+        queue.Enqueue(combatEvent);
+    }
+
+    public bool TryDequeueCombatEvent(PlayerId playerId, out CombatEventSnapshot combatEvent)
+    {
+        if (combatEventsByPlayer.TryGetValue(playerId, out var queue) && queue.TryDequeue(out combatEvent))
+        {
+            return true;
+        }
+
+        combatEvent = default;
+        return false;
+    }
+
     private readonly VoxelWorld world;
     private readonly Streaming.ChunkStreamingManager streamingManager;
     private readonly Vector3 spawnPosition;
@@ -67,6 +84,8 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
     private readonly MobAiSystem mobAiSystem;
     private readonly Items.DroppedItemManager droppedItemManager = new();
     private readonly CombatSystem combatSystem;
+
+    private readonly ConcurrentDictionary<PlayerId, ConcurrentQueue<CombatEventSnapshot>> combatEventsByPlayer = new();
 
     private readonly Dictionary<PlayerId, Player> players = [];
     private readonly Dictionary<PlayerId, HashSet<int>> lastVisibleReadyChunksByPlayer = [];
@@ -341,7 +360,13 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         if (!players.TryGetValue(playerId, out var player)) return;
         if (!mobManager.Mobs.TryGetValue(targetMob, out var mob)) return;
 
-        combatSystem.ProcessPlayerAttackMob(player, mob, mobManager);
+        var result = combatSystem.ProcessPlayerAttackMob(player, mob, mobManager);
+        if (result.Hit && result.DamageDealt > 0)
+        {
+            var dmg = Math.Max(1, (int)MathF.Round(result.DamageDealt));
+            var worldPos = mob.Position + new Vector3(0, mob.Definition.HitboxHeight, 0);
+            EnqueueCombatEvent(playerId, new CombatEventSnapshot(CombatEventKind.PlayerDealtDamage, dmg, worldPos));
+        }
     }
 
     public void Tick(double elapsedSeconds)
@@ -543,12 +568,30 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 if (mobManager.Mobs.TryGetValue(intent.MobId, out var mob) &&
                     players.TryGetValue(intent.TargetPlayer, out var targetPlayer))
                 {
-                    combatSystem.ProcessMobAttackPlayer(mob, targetPlayer);
+                    var dmg = combatSystem.ProcessMobAttackPlayer(mob, targetPlayer);
+                    if (dmg > 0)
+                    {
+                        EnqueueCombatEvent(intent.TargetPlayer, new CombatEventSnapshot(CombatEventKind.PlayerTookDamage, dmg, targetPlayer.Position));
+                    }
                 }
             }
 
             ResolveMobVsPlayerCollisions(mobManager, players);
             ResolveMobVsMobCollisions(mobManager);
+        }
+
+        // Temporary death handling: respawn immediately.
+        // A dedicated death/respawn scene will be added later.
+        foreach (var kvp in players)
+        {
+            var playerId = kvp.Key;
+            var player = kvp.Value;
+            if (!player.IsAlive)
+            {
+                log.Info($"[LocalGameServer] Player {playerId} died. Respawning at default spawn.");
+                player.Respawn(spawnPosition);
+                player.StartInvulnerability(10f);
+            }
         }
 
 
@@ -744,9 +787,33 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
                 }
                 return true;
             }
+
+            // Rare but possible: chunk was reported as ready, but payload bytes were not available.
+            // Retry later instead of permanently dropping it (prevents loading hangs).
+            log.Warn($"[LocalGameServer] Chunk payload bytes not available yet (player={playerId}, idx={idx}). Will retry.");
+            queue.Enqueue(idx);
         }
 
         return false;
+    }
+
+    public void RequestChunkPayloadResend(PlayerId playerId)
+    {
+        // Recovery mechanism: re-enqueue all chunks that are currently ready for this player.
+        // PendingChunkPayloadQueue deduplicates so this is cheap.
+        var ready = streamingManager.GetReadyChunksForPlayer(playerId);
+        if (ready.Count == 0)
+        {
+            return;
+        }
+
+        var pending = GetOrCreatePendingPayloadQueue(playerId);
+        foreach (var idx in ready)
+        {
+            pending.Enqueue(idx);
+        }
+
+        log.Warn($"[LocalGameServer] Resend requested; re-enqueued {ready.Count} chunk payloads for {playerId}.");
     }
 
     public bool TryGetLoadingProgress(PlayerId playerId, out LoadingProgressSnapshot progress)
@@ -888,6 +955,16 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
         {
             player.ApplySaveData(saveData);
             log.Info($"[LocalGameServer] Loaded player data for {playerId}");
+
+            // Grace period after loading into the world.
+            player.StartInvulnerability(10f);
+
+            if (!player.IsAlive)
+            {
+                log.Warn($"[LocalGameServer] Player {playerId} loaded with Health=0. Respawning at default spawn.");
+                player.Respawn(spawnPosition);
+                player.StartInvulnerability(10f);
+            }
         }
         else
         {
@@ -987,6 +1064,7 @@ public sealed class LocalGameServer : IGameServer, IChunkPayloadSource, ILoading
             Velocity: player.Velocity,
             IsGrounded: player.IsGrounded,
             IsGhostMode: player.IsGhostMode,
+            InvulnerabilityRemainingSeconds: MathF.Max(0f, player.InvulnerabilityRemaining),
             SelectedHotbarSlot: player.Inventory.SelectedSlot,
             Inventory: player.Inventory.BuildSnapshot(),
             Attributes: attrSnap,

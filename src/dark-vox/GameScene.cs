@@ -21,6 +21,7 @@ using DarkVox.Client.Terrain;
 using DarkVox.Components;
 using DarkVox.Shared.Commands;
 using DarkVox.Shared.Input;
+using DarkVox.Shared.Net;
 using DarkVox.Shared.State;
 using DarkVox.World;
 
@@ -58,6 +59,9 @@ internal class GameScene : Scene
     private HotBar hotBar = default!;
     private InventorySprite inventorySprite = default!;
     private StatusBar statusBar = default!;
+
+    private RuntimeEventTextDisplay runtimeEventTextDisplay = default!;
+    private CombatDamageTextHelper combatDamageTextHelper = default!;
 
     // Client-side view of server streaming state (chunk indices that are Ready).
     // This is the seam for future remote server chunk streaming.
@@ -170,6 +174,12 @@ internal class GameScene : Scene
 
         // Initialize item textures now that GL context is ready
         ItemTextureManager.Initialize();
+
+        runtimeEventTextDisplay = new RuntimeEventTextDisplay(textRenderer);
+        combatDamageTextHelper = new CombatDamageTextHelper(
+            runtimeEventTextDisplay,
+            viewportSize: () => new Vector2(Width, Height),
+            camera: () => camera);
 
         // Capture default fog settings so we can restore them when not submerged.
         defaultFog = Fog;
@@ -553,7 +563,22 @@ internal class GameScene : Scene
 
             // Smooth rendered position between server ticks.
             player.UpdateClientSmoothing(elapsedSeconds);
+
+            while (localClient.TryDequeueCombatEvent(out var combatEvent))
+            {
+                switch (combatEvent.Kind)
+                {
+                    case CombatEventKind.PlayerDealtDamage:
+                        combatDamageTextHelper.ShowPlayerDealtDamage(combatEvent.Damage, combatEvent.WorldPosition);
+                        break;
+                    case CombatEventKind.PlayerTookDamage:
+                        combatDamageTextHelper.ShowPlayerTookDamage(combatEvent.Damage);
+                        break;
+                }
+            }
         }
+
+        runtimeEventTextDisplay.Update(elapsedSeconds);
 
         // Apply any received voxel payloads and upload meshes.
         if (localClient != null && terrainSystem != null)
@@ -939,6 +964,21 @@ internal class GameScene : Scene
         WriteLine($"Time: {dayNightCycle.TimeOfDay:hh\\:mm\\:ss}", new Vector3(1, 1, 0));
         WriteLine("", textColor);
 
+        // Invulnerability countdown (top-center)
+        {
+            var invuln = player.InvulnerabilityRemaining;
+            if (invuln > 0f)
+            {
+                var secondsLeft = invuln >= 1f ? (int)MathF.Ceiling(invuln) : 0;
+                var text = $"Invulnerability {secondsLeft} seconds";
+                const int fontSize = 28;
+                var rect = textRenderer.Measure(text, fontSize);
+                var x = (Width - rect.Width) * 0.5f;
+                const float y = 20f;
+                textRenderer.Render(text, fontSize, x, y, new Vector3(1f, 0f, 1f));
+            }
+        }
+
         // Rendering Stats (Merged Chunks + Rendering)
         var readyChunks = serverReadyChunkIndices.Count;
 
@@ -1109,6 +1149,8 @@ internal class GameScene : Scene
         WriteLine("  F5 - Toggle Wireframe", textColor);
         WriteLine("  Hold Left Click - Break Block", textColor);
         WriteLine("  Esc - Exit", textColor);
+
+        runtimeEventTextDisplay.Render();
     }
 
     private void TryConsumeFood(Food food)
